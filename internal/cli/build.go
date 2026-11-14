@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -61,10 +63,15 @@ func buildCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command
 			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 		}, func(inv *selectedInvocation) selectedPayload {
 			groups := make([]output.DocumentGroup, len(inv.groups))
+			inventory := make([][2][]manifest.NamedResource, len(inv.groups))
+			var payloadErr error
 			for i, group := range inv.groups {
-				groups[i] = output.DocumentGroup{Cluster: group.cluster, Documents: collectRendered(group.sides[0], b)}
+				groups[i].Cluster = group.cluster
+				var err error
+				groups[i].Documents, inventory[i][0], err = collectRendered(group.sides[0], b)
+				payloadErr = errors.Join(payloadErr, err)
 			}
-			return selectedPayload{write: func() error {
+			return selectedPayload{output: inventory, err: payloadErr, write: func() error {
 				return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DocumentGroups(
 					groups,
 				)
@@ -77,24 +84,35 @@ func buildCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command
 	return cmd
 }
 
-func collectRendered(res *selection.Result, b *buildFlags) []map[string]any {
-	out := make([]map[string]any, 0, renderedDocumentCount(res))
-	for _, batch := range res.Manifests {
-		out = append(out, emissionDocs(batch.Documents, b)...)
+func collectRendered(res *selection.Result, b *buildFlags) ([]map[string]any, []manifest.NamedResource, error) {
+	count := renderedDocumentCount(res)
+	out := make([]map[string]any, 0, count)
+	identities := make([]manifest.NamedResource, 0, count)
+	for j, batch := range res.Manifests {
+		identity, err := batch.IdentityAccessor()
+		if err != nil {
+			return nil, nil, fmt.Errorf("batch %d: %w", j, err)
+		}
+		for _, i := range emissionOrder(batch.Documents, b) {
+			out = append(out, batch.Documents[i])
+			identities = append(identities, identity(i))
+		}
 	}
-	return out
+	return out, identities, nil
 }
 
-// emissionDocs sorts a cloned batch without changing the selected snapshot.
-func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
-	docs := slices.Clone(mans)
-	slices.SortStableFunc(docs, compareDocs)
+func emissionOrder(documents []map[string]any, b *buildFlags) []int {
+	order := make([]int, len(documents))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return compareDocs(documents[a], documents[b]) })
 	if len(b.onlyKinds) > 0 {
-		return slices.DeleteFunc(docs, func(doc map[string]any) bool {
-			return !slices.Contains(b.onlyKinds, manifest.DocKind(doc))
+		return slices.DeleteFunc(order, func(i int) bool {
+			return !slices.Contains(b.onlyKinds, manifest.DocKind(documents[i]))
 		})
 	}
-	return docs
+	return order
 }
 
 func compareDocs(a, b map[string]any) int {

@@ -593,21 +593,16 @@ func testIndependentModelObservationRejectsCase(
 
 		if testCaseInput.name == "unselected-output" {
 			side.Result.Manifests = []manifest.DocumentBatch{
-				{
-					Parent: obj,
-					Documents: []map[string]any{
-						{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
-					},
-				},
+				testutil.DocumentBatch(obj, []map[string]any{
+					{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
+				}),
 			}
 		}
 	case "ownerless-extra-document":
 		side.Result.Manifests = []manifest.DocumentBatch{
-			{
-				Documents: []map[string]any{
-					{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
-				},
-			},
+			testutil.DocumentBatch(nil, []map[string]any{
+				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}},
+			}),
 		}
 	}
 	got, _, err := observeRenderModel(world, side, selected)

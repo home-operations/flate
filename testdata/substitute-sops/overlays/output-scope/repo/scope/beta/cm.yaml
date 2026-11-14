@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: live-config, namespace: apps}
+data:
+  OTHER: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+  value: beta
+sops: {mac: encrypted}

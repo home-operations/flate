@@ -1,6 +1,4 @@
 
-  ⚠ warnings (3)
+  ⚠ warnings (2)
     [OmittedValues] HelmRelease apps/demo: required valuesFrom ConfigMap/apps/absent omitted from offline render
     [OmittedValues] HelmRelease apps/demo: required valuesFrom ConfigMap/apps/input omitted from offline render: key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply
-    [SOPSUnreadable] ConfigMap apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      encrypted

@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    resourceset.fluxcd.controlplane.io/name: first
+    resourceset.fluxcd.controlplane.io/namespace: apps
+  name: config

@@ -1,0 +1,5 @@
+
+  ⚠ warnings (2)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+    [SOPSUnreadable] ConfigMap apps/orphan: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      ORPHAN

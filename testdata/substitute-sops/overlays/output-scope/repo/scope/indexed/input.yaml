@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: indexed, namespace: apps}
+data:
+  INDEXED: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+  value: unused
+sops: {mac: encrypted}

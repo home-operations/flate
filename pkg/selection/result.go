@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"slices"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -58,4 +60,23 @@ func (r *Result) Diagnostic(id manifest.NamedResource) manifest.DiagnosticIdenti
 		return subject
 	}
 	return manifest.DiagnosticFor(id, nil)
+}
+
+// WarningsFor borrows warning details, which MUST remain immutable.
+func (r *Result) WarningsFor(output []manifest.NamedResource) []manifest.Warning {
+	hidden := func(warning manifest.Warning) bool {
+		return warning.Category == manifest.WarnSOPSUnreadable && !slices.Contains(output, warning.Resource)
+	}
+	first := slices.IndexFunc(r.Warnings, hidden)
+	if first < 0 {
+		return r.Warnings
+	}
+	warnings := make([]manifest.Warning, 0, len(r.Warnings)-1)
+	warnings = append(warnings, r.Warnings[:first]...)
+	for i := first + 1; i < len(r.Warnings); i++ {
+		if !hidden(r.Warnings[i]) {
+			warnings = append(warnings, r.Warnings[i])
+		}
+	}
+	return warnings
 }

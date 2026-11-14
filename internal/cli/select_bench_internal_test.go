@@ -299,7 +299,7 @@ func completedScopeFixtureLoop(loopInputs struct {
 		}
 		(*loopInputs.res).Manifests = append(
 			(*loopInputs.res).Manifests,
-			manifest.DocumentBatch{Parent: (*loopInputs.o).Store().GetObject(id), Documents: []map[string]any{
+			testutil.DocumentBatch((*loopInputs.o).Store().GetObject(id), []map[string]any{
 				{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
@@ -322,7 +322,7 @@ func completedScopeFixtureLoop(loopInputs struct {
 					"metadata": map[string]any{"name": id.Name, "namespace": id.Namespace},
 					"data":     map[string]any{"mode": "fixture"},
 				},
-			}},
+			}),
 		)
 	}
 }

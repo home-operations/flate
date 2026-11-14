@@ -363,10 +363,10 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	other := testutil.KustomizationID("apps", "other")
 	res := &orchestrator.Result{
 		Manifests: []manifest.DocumentBatch{
-			{
-				Parent:    selected,
-				Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}},
-			},
+			testutil.DocumentBatch(
+				selected,
+				[]map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}},
+			),
 		},
 		Failed: map[manifest.NamedResource]store.StatusInfo{
 			other: {Status: store.StatusFailed, Message: "unrelated failure"},

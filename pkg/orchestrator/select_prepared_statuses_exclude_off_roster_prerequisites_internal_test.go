@@ -106,12 +106,9 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	for _, obj := range run.store.ListObjects("", "") {
 		run.Result.Manifests = append(
 			run.Result.Manifests,
-			manifest.DocumentBatch{
-				Parent: obj,
-				Documents: []map[string]any{
-					{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}},
-				},
-			},
+			testutil.DocumentBatch(obj, []map[string]any{
+				{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}},
+			}),
 		)
 	}
 	for _, tc := range []struct {

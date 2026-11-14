@@ -47,9 +47,14 @@ func (c *execution) recordOmittedValues(hr *manifest.HelmRelease, refs []depwait
 			continue
 		}
 		seen[message] = true
+		var related []manifest.NamedResource
+		if len(ref.Result.UnreadableKeys()) != 0 {
+			related = []manifest.NamedResource{ref.NamedResource}
+		}
 		c.run.Reads.AddWarning(
 			manifest.Warning{
 				Resource: hr.Named(),
+				Related:  related,
 				Category: manifest.WarnOmittedValues,
 				Message:  message,
 			},

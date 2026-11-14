@@ -2,6 +2,7 @@ package selection
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -67,7 +68,11 @@ func Project(
 			}
 		}
 	}()
-	selected := collectProjectionSides(sides, request, kinds, complete)
+	selected, err := collectProjectionSides(sides, request, kinds, complete)
+	if err != nil {
+		err = errors.Join(err, runErr)
+		return nil, ProjectionErrors{Selected: err, Remaining: nonResourceErrors(err)}
+	}
 	if !complete {
 		return selected, ProjectionErrors{Selected: runErr, Remaining: runErr}
 	}
@@ -82,7 +87,21 @@ func collectProjectionSides(
 	request Request,
 	kinds map[manifest.NamedResource]bool,
 	complete bool,
-) []*Result {
+) ([]*Result, error) {
+	var inputErr error
+	for i := range sides {
+		if !complete || sides[i].run.Absent {
+			continue
+		}
+		for j, batch := range sides[i].run.Manifests {
+			if _, err := batch.IdentityAccessor(); err != nil {
+				inputErr = errors.Join(inputErr, fmt.Errorf("run %d batch %d: %w", i, j, err))
+			}
+		}
+	}
+	if inputErr != nil {
+		return nil, inputErr
+	}
 	selected := make([]*Result, len(sides))
 	roots, labels := request.Roots, request.Labels
 	for i := range sides {
@@ -91,10 +110,10 @@ func collectProjectionSides(
 		if len(sides) == comparisonSides {
 			other = &sides[1-i]
 		}
-		if complete && !run.Absent {
-			sides[i].collect(roots, labels, other)
-		} else {
+		if !complete || run.Absent {
 			sides[i].result = &Result{}
+		} else if err := sides[i].collect(roots, labels, other); err != nil {
+			return nil, err
 		}
 		sides[i].collectWarnings(roots[0], kinds, len(sides) == comparisonSides)
 		if run.Store != nil {
@@ -103,7 +122,7 @@ func collectProjectionSides(
 
 		selected[i] = sides[i].result
 	}
-	return selected
+	return selected, nil
 }
 
 func incompleteSelectionError(runs []Snapshot, runErr error) error {
@@ -171,14 +190,14 @@ func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]b
 	return kinds, nil
 }
 
-func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, other *selectionSide) {
+func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, other *selectionSide) error {
 	s.result = &Result{Counts: make(map[string]int, len(roots))}
 	if binding := s.run.Entry; binding.Producer != (manifest.NamedResource{}) {
 		s.result.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{binding.Producer: binding.Key}
 	}
 	c := selectionCollection{side: s, intent: Request{Roots: roots}, labels: labels, other: other}
 	c.collectObjects()
-	c.collectBatches()
+	return c.collectBatches()
 }
 
 type selectionCollection struct {
@@ -267,7 +286,7 @@ func (s *selectionSide) selectedObject(obj manifest.BaseManifest) bool {
 	return owned && parentSelected
 }
 
-func (c *selectionCollection) collectBatches() {
+func (c *selectionCollection) collectBatches() error {
 	s := c.side
 	scoped := s.namespaces != nil
 	if c.other != nil && !c.other.run.Absent {
@@ -289,74 +308,110 @@ func (c *selectionCollection) collectBatches() {
 				continue
 			}
 			batch := batchSelection{collection: c, object: obj, batch: s.run.Manifests[i]}
-			batch.selectDocuments(scoped)
+			if err := batch.selectDocuments(scoped); err != nil {
+				return err
+			}
 			if len(batch.batch.Documents) != 0 {
 				s.result.Manifests = append(s.result.Manifests, batch.batch)
 			}
 		}
 	}
+	return nil
 }
 
 type batchSelection struct {
 	collection       *selectionCollection
 	object           manifest.BaseManifest
 	batch            manifest.DocumentBatch
-	counterpart      []map[string]any
+	counterpart      *manifest.DocumentBatch
 	counterpartKnown bool
 }
 
-func (b *batchSelection) selectedOutput(id manifest.NamedResource) bool {
+func (b *batchSelection) selectedOutput(id manifest.NamedResource) (bool, error) {
 	s, other := b.collection.side, b.collection.other
 	selected := s.run.Decision.Output(id)
 	if selected || other == nil || other.run.Absent {
-		return selected
+		return selected, nil
 	}
 	if selected := other.run.Decision.Output(id); !selected {
-		return false
+		return false, nil
 	}
 	if !b.counterpartKnown {
-		for _, batch := range other.run.Manifests {
+		for i := range other.run.Manifests {
+			batch := &other.run.Manifests[i]
 			if batch.Parent != nil && batch.Parent.Named() == b.object.Named() {
-				b.counterpart = batch.Documents
+				b.counterpart = batch
 				break
 			}
 		}
 		b.counterpartKnown = true
 	}
-	return slices.ContainsFunc(b.counterpart, func(doc map[string]any) bool { return manifest.DocIdentity(doc) == id })
+	if b.counterpart == nil {
+		return false, nil
+	}
+	identity, err := b.counterpart.IdentityAccessor()
+	if err != nil {
+		return false, err
+	}
+	for i := range b.counterpart.Documents {
+		if identity(i) == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-func (b *batchSelection) selectDocuments(scoped bool) {
+func (b *batchSelection) selectDocuments(scoped bool) error {
+	identity, err := b.batch.IdentityAccessor()
+	if err != nil {
+		return err
+	}
 	var policy manifest.EmissionPolicy
 	if manifest.KindOf(b.object).Parent {
 		policy = b.object.EmissionPolicy()
 	}
 	if policy.DocumentScope {
-		b.selectScopedDocuments(scoped)
+		return b.selectScopedDocuments(scoped, identity)
 	}
 	s := b.collection.side
-	if s.run.Decision.restricted() && !policy.DocumentScope {
-		if selected := s.run.Decision.Output(b.object.Named()); !selected {
-			documents := []map[string]any{}
-			for _, doc := range b.batch.Documents {
-				if b.selectedOutput(manifest.DocIdentity(doc)) {
-					documents = append(documents, doc)
-				}
-			}
-			b.batch.Documents = documents
+	if !s.run.Decision.restricted() || s.run.Decision.Output(b.object.Named()) {
+		return nil
+	}
+	documents := []map[string]any{}
+	identities := []manifest.NamedResource{}
+	for i, doc := range b.batch.Documents {
+		id := identity(i)
+		selected, selectionErr := b.selectedOutput(id)
+		if selectionErr != nil {
+			return selectionErr
+		}
+		if selected {
+			documents = append(documents, doc)
+			identities = append(identities, id)
 		}
 	}
+	b.batch.Documents = documents
+	b.batch.Identities = identities
+	return nil
 }
 
-func (b *batchSelection) selectScopedDocuments(scoped bool) {
+func (b *batchSelection) selectScopedDocuments(scoped bool, identity func(int) manifest.NamedResource) error {
 	s, other := b.collection.side, b.collection.other
 	compared := other == nil || other.run.Absent ||
 		other.run.Decision.Reconcile(other.actualProducer(s.comparisonKey(b.object.Named())))
 	documents := b.batch.Documents
 	b.batch.Documents = nil
-	for _, doc := range documents {
-		if s.run.Decision.restricted() && !scoped && !b.declarationSelected(doc, compared) {
-			continue
+	b.batch.Identities = nil
+	for i, doc := range documents {
+		id := identity(i)
+		if s.run.Decision.restricted() && !scoped {
+			selected, err := b.declarationSelected(id, compared)
+			if err != nil {
+				return err
+			}
+			if !selected {
+				continue
+			}
 		}
 		selected := selectOutput(doc, b.collection.intent.Roots, s.namespaces, b.collection.labels)
 		if !selected && other != nil && !other.run.Absent {
@@ -364,16 +419,20 @@ func (b *batchSelection) selectScopedDocuments(scoped bool) {
 		}
 		if selected {
 			b.batch.Documents = append(b.batch.Documents, doc)
+			b.batch.Identities = append(b.batch.Identities, id)
 		}
 	}
+	return nil
 }
 
-func (b *batchSelection) declarationSelected(doc map[string]any, compared bool) bool {
-	id := manifest.DocIdentity(doc)
+func (b *batchSelection) declarationSelected(id manifest.NamedResource, compared bool) (bool, error) {
 	declaration := compared && slices.ContainsFunc(b.collection.intent.Roots, func(root manifest.NamedResource) bool {
 		return root.Group == id.Group && root.Kind == id.Kind
 	})
-	return declaration || b.selectedOutput(id)
+	if declaration {
+		return true, nil
+	}
+	return b.selectedOutput(id)
 }
 
 //nolint:ireturn // Declarations retain their heterogeneous manifest types.

@@ -71,6 +71,10 @@
     {
       "name": "missing-key-supply",
       "directory": "overlays/missing-key-supply"
+    },
+    {
+      "name": "requested-key-isolation",
+      "directory": "overlays/requested-key-isolation"
     }
   ],
   "cases": [
@@ -507,6 +511,84 @@
           }
         }
       ]
+    },
+    {
+      "name": "requested-key-isolation",
+      "description": "A requested encrypted key retains its exact cause. Other encrypted keys do not enter the consumer warning. Supply resolves only the requested key.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "requested-key-isolation"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "strict",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/strict-encryption.stdout",
+              "stderr": "expect/strict-encryption.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/produced-strict.stdout",
+              "stderr": "expect/requested-key-isolation.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "supplied",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--supply",
+              "@@repo@@/supplied.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/missing-key-supply.stdout",
+              "stderr": "expect/missing-key-supply.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -923,6 +1005,34 @@
         "missing-key-supply"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
+    },
+    {
+      "path": "overlays/requested-key-isolation/repo/app/input.yaml",
+      "cases": [
+        "requested-key-isolation"
+      ],
+      "purpose": "Authored encrypted requested-key isolation and strict or supplied outcomes."
+    },
+    {
+      "path": "overlays/requested-key-isolation/repo/app/release.yaml",
+      "cases": [
+        "requested-key-isolation"
+      ],
+      "purpose": "Authored encrypted requested-key isolation and strict or supplied outcomes."
+    },
+    {
+      "path": "overlays/requested-key-isolation/repo/supplied.yaml",
+      "cases": [
+        "requested-key-isolation"
+      ],
+      "purpose": "Authored encrypted requested-key isolation and strict or supplied outcomes."
+    },
+    {
+      "path": "expect/requested-key-isolation.stderr",
+      "cases": [
+        "requested-key-isolation"
+      ],
+      "purpose": "Authored encrypted requested-key isolation and strict or supplied outcomes."
     }
   ]
 }

@@ -79,6 +79,7 @@ Readable siblings, missing keys, kind permission, and supplied precedence retain
 | `unavailable-values/missing-key-allowed` | missing key allowed. |
 | `unavailable-values/missing-key-strict` | missing key strict. |
 | `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
+| `unavailable-values/requested-key-isolation` | Strict, permitted, and supplied references preserve the requested encrypted key cause without unrelated keys or excluded object warnings. |
 
 `component-secret-producer/shared-file-ordered` and `component-secret-producer/shared-file-unordered` model a shared-file parent with and without `dependsOn`.
 A native Component holds an ExternalSecret whose metadata and target names resolve through `${BUCKET}` substitution.
@@ -787,6 +788,15 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 | `substitute-sops/sops-unreadable-diff-both-directions-ciphertext` | `TestE2E_SOPSUnreadableDiffBothDirections/ciphertext` |
 | `substitute-sops/sops-unreadable-diff-both-directions-plaintext` | `TestE2E_SOPSUnreadableDiffBothDirections/plaintext` |
 | `substitute-sops/sops-unreadable-diff-both-directions-metadata` | `TestE2E_SOPSUnreadableDiffBothDirections/metadata` |
+| `substitute-sops/sops-output-scope` | Transformed identities, duplicate producers, indexed declarations, kind filters, namespaces, resource rows, images, and test rosters use final output membership. |
+| `substitute-sops/sops-output-orphan` | Static orphan output retains warnings in full and changed-only builds. Excluded output retains the existing scan diagnostic. |
+| `substitute-sops/sops-output-mixed` | Required mixed substitution retains readable siblings and all unavailable keys. Empty supplied data removes its key from consumer details. |
+| `substitute-sops/sops-output-diff` | Native changed pairs retain both side warnings. Reversed, normalized, brief, and image-only comparisons use their own output membership. |
+| `substitute-sops/sops-output-shallow` | Shallow history preserves transformed identities and warnings in full and changed-only builds. |
+| `substitute-sops/sops-output-absent-side` | Added and removed objects expose warnings only on their present comparison side. |
+| `substitute-sops/sops-output-partial-failure` | A selected failure on both sides preserves strict errors and suppression. Healthy output retains its own encrypted warning causes. |
+| `substitute-sops/sops-output-internal-namespace` | ResourceSet namespaces identify raw child output in build and changed comparisons. Producer namespaces, exclusions, and comparison sides remain separate. |
+| `substitute-sops/sops-output-explicit-namespace` | An explicit child namespace takes precedence over the ResourceSet namespace without changing output bytes. |
 
 `helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` preserves the shared Helm dependency consumer, merged in U3. Its unchanged dependency producer remains skipped.
 

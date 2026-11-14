@@ -38,6 +38,19 @@ func (p EmissionPolicy) SelectDocument(doc map[string]any, skipKinds []string) (
 	return visible, visible || !p.ExcludeChildren
 }
 
+// EmittedIdentity preserves internal namespaces without changing output documents.
+// The SDK scope resolver MUST be registered before namespace defaulting.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
+func (p EmissionPolicy) EmittedIdentity(doc map[string]any) NamedResource {
+	id := DocIdentity(doc)
+	kind := KindInfo{Kind: id.Kind, apiVersion: DocAPIVersion(doc)}
+	if p.Namespace != "" && id.Namespace == "" && kind.Namespaced() {
+		id.Namespace = p.Namespace
+	}
+	return id
+}
+
 // IsOwnershipLabel reports whether semantic comparison ignores an owner stamp.
 func IsOwnershipLabel(key string) bool {
 	for _, keys := range ownershipKeys {

@@ -10,6 +10,7 @@ import (
 type pair struct {
 	Parent             Parent
 	Resource           manifest.NamedResource
+	Output             [2]manifest.NamedResource
 	APIVersion         string
 	OldPos, NewPos     int
 	Old, New           map[string]any
@@ -27,10 +28,11 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		resource := manifest.DocIdentity(d.Manifest)
 		parent := d.Parent.NamedResource
-		keys := opts.producerKeys[0]
+		sideIndex := 0
 		if side == SideCurrent {
-			keys = opts.producerKeys[1]
+			sideIndex = 1
 		}
+		keys := opts.producerKeys[sideIndex]
 		if key, known := keys[parent]; known {
 			parent = key
 		}
@@ -42,16 +44,17 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		}
 		p.Parent = d.Parent
 		p.APIVersion = apiVersion
+		p.Output[sideIndex] = resource
+		if opts.identities[sideIndex] != nil {
+			p.Output[sideIndex] = opts.identities[sideIndex][pos]
+		}
 		dst, dstChart, dstPos := &p.Old, &p.OldChart, &p.OldPos
 		if side == SideCurrent {
 			dst, dstChart, dstPos = &p.New, &p.NewChart, &p.NewPos
 		}
 		if *dst != nil {
 			parent := d.Parent.String()
-			subjects := opts.subjects[0]
-			if side == SideCurrent {
-				subjects = opts.subjects[1]
-			}
+			subjects := opts.subjects[sideIndex]
 			if subject, ok := subjects[d.Parent.NamedResource]; ok {
 				parent = subject.String()
 			}

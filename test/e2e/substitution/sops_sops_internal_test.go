@@ -27,3 +27,18 @@ func TestE2E_SOPSUnreadableDiffBothDirections(t *testing.T) {
 		"sops-unreadable-diff-both-directions-metadata",
 	)
 }
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_SOPSOutputMembership(t *testing.T) {
+	runSubstitutionCases(t, "substitute-sops",
+		"sops-output-scope",
+		"sops-output-orphan",
+		"sops-output-mixed",
+		"sops-output-diff",
+		"sops-output-shallow",
+		"sops-output-absent-side",
+		"sops-output-partial-failure",
+		"sops-output-internal-namespace",
+		"sops-output-explicit-namespace",
+	)
+}

@@ -1,4 +1,3 @@
 
   ⚠ warnings (1)
-    [SOPSUnreadable] Secret flux-system/creds: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      API_KEY
+    [UnresolvedSubstitution] substituteFrom Secret "flux-system/creds" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "API_KEY" is SOPS-encrypted and unreadable; supply it with --supply

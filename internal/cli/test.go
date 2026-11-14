@@ -50,10 +50,16 @@ func testCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command 
 			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(), test: true,
 		}, func(inv *selectedInvocation) selectedPayload {
 			rosters := make([]output.TestReport, len(inv.groups))
+			inventory := make([][2][]manifest.NamedResource, len(inv.groups))
 			for i, group := range inv.groups {
 				rosters[i] = testrunner.Run(group.sides[0])
+				for _, cases := range [2][]output.Case{rosters[i].Cases, rosters[i].Blocked} {
+					for _, test := range cases {
+						inventory[i][0] = append(inventory[i][0], test.ID)
+					}
+				}
 			}
-			return selectedPayload{rosters: rosters}
+			return selectedPayload{rosters: rosters, output: inventory}
 		})
 	}
 	bindCommon(cmd.Flags(), c)

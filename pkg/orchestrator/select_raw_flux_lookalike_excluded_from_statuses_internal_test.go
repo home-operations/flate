@@ -405,7 +405,7 @@ func testSelectDiagnosticOnlyRunsCase(t *testing.T, testCaseInput testSelectDiag
 	failed := Rendered{
 		Result: &Result{
 			Warnings:  []manifest.Warning{(*testCaseInput.warning), (*testCaseInput.coverage)},
-			Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{"kind": "ConfigMap"}}}},
+			Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{{"kind": "ConfigMap"}})},
 		},
 		Err: (*testCaseInput.failure),
 	}

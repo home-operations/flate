@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [ConflictingProducers] ConfigMap apps/live-config: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/apps/beta
+      Kustomization.kustomize.toolkit.fluxcd.io/apps/alpha, Kustomization.kustomize.toolkit.fluxcd.io/apps/beta

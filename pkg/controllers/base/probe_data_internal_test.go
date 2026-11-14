@@ -222,3 +222,77 @@ func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
 		assert.Equal(t, required == producer.Named(), false)
 	}
 }
+
+func TestAwaitData_EncryptedSubstitutionAdvisory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		optional   bool
+		allowed    []string
+		unreadable int
+	}{
+		{name: "required mixed input"},
+		{name: "permitted mixed input", allowed: []string{manifest.KindSecret}, unreadable: 1},
+		{name: "optional mixed input", optional: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindSecret, Name: "input", Optional: tc.optional},
+				},
+			}}
+			input := &manifest.Secret{
+				Name:       "input",
+				Namespace:  "apps",
+				StringData: map[string]any{"PLAIN": "readable", "SUPPLIED": ""},
+			}
+			st.AddObject(owner)
+			st.AddDeclaration(store.Declaration{Obj: input, Warnings: []manifest.Warning{
+				{
+					Resource: input.Named(),
+					Category: manifest.WarnSOPSUnreadable,
+					Detail:   []string{"ZETA", "ALPHA", "SUPPLIED", "ZETA"},
+				},
+			}})
+			c := New(st, nil)
+			c.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)})
+			var e Execution
+			e.Init(c, owner.Named())
+			defer e.Close()
+			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+			assert.NoError(t, err)
+			assert.Equal(t, len(e.Unreadable), tc.unreadable)
+			resumed := false
+			assert.NoError(t, e.AwaitData(t.Context(), DataWait{
+				Inputs: inputs,
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+					resumed = true
+					return nil
+				},
+			}, manifest.DrainNone))
+			assert.Equal(t, resumed, true)
+			assert.Equal(t, len(st.Warnings()), 1)
+			e.Reads.Accept(store.AssessmentReconciled)
+			var advisories []manifest.Warning
+			for _, warning := range st.Warnings() {
+				if warning.Category == manifest.WarnUnresolvedSubstitution {
+					advisories = append(advisories, warning)
+				}
+			}
+			if tc.optional {
+				assert.Equal(t, len(advisories), 0)
+				return
+			}
+			assert.FatalIf(t, len(advisories) != 1, "advisories=%+v", advisories)
+			assert.Equal(
+				t,
+				advisories[0].Message,
+				`substituteFrom Secret "apps/input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "ALPHA" is SOPS-encrypted and unreadable; supply it with --supply`,
+			)
+			assert.Diff(t, advisories[0].Detail, []string{"ZETA"})
+			assert.Diff(t, advisories[0].Related, []manifest.NamedResource{input.Named()})
+		})
+	}
+}

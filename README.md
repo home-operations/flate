@@ -182,7 +182,9 @@ With `--allow-missing-kinds` naming its kind, flate renders and warns `Unresolve
 Readable keys from the same object still apply.
 Without matching permission, an absent required object with no producer fails.
 Encrypted SOPS keys are absent, so their variables are unavailable.
-The `SOPSUnreadable` warning names the removed encrypted keys.
+The `SOPSUnreadable` warning names removed encrypted keys only when the command output includes the affected object.
+Kind filters and command scope determine that output.
+Consumer warnings still name encrypted inputs and unavailable keys, even when output excludes those inputs.
 If a variable is readable or inline, Flux substitution runs.
 If the strategy is `Always`, substitution also runs.
 
@@ -322,7 +324,9 @@ flate does not use the working tree in place of their content.
 ## Differences from a live cluster
 
 - SOPS-encrypted keys are absent. flate keeps readable keys and removes the `sops` metadata.
-  A `SOPSUnreadable` warning names the object and its unreadable keys.
+  A `SOPSUnreadable` warning names the object and its unreadable keys only when the command output includes that object.
+  Kind filters and command scope determine that output.
+  `UnresolvedSubstitution` and `OmittedValues` still explain encrypted input causes when output excludes the input object.
   Supply a dummy Secret or ConfigMap with those keys through `--supply`.
   Re-encrypted ciphertext cannot produce a value diff.
 - flate ignores Git and OCI signatures.

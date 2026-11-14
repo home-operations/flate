@@ -142,7 +142,7 @@ func publishUnavailableValuesState(t *testing.T, c *Controller, state string, mi
 			secret.StringData["value"] = "readable"
 		case "encrypted":
 			warnings = []manifest.Warning{
-				{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"value"}},
+				{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"unused", "value"}},
 			}
 		}
 		st.AddDeclaration(store.Declaration{Obj: secret, Warnings: warnings})
@@ -186,6 +186,19 @@ func assertUnavailableValuesState(
 	if len(omissions) != 0 {
 		assert.Equal(t, strings.Contains(omissions[0].Message, "SOPS-encrypted"), state == "encrypted")
 		assert.Equal(t, strings.Contains(omissions[0].Message, "produced in the cluster"), state == "produced")
+		if state == "encrypted" {
+			assert.Equal(
+				t,
+				omissions[0].Message,
+				`required valuesFrom Secret/apps/input omitted from offline render: key "value" is SOPS-encrypted and unreadable; supply it with --supply`,
+			)
+			assert.Equal(t, len(omissions[0].Detail), 0)
+			assert.Diff(
+				t,
+				omissions[0].Related,
+				[]manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}},
+			)
+		}
 	}
 	previous := c.PreviousRender(t.Context(), hr, schedule.Result{})
 	assert.Equal(t, previous.Complete, true)

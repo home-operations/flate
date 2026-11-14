@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  value: shallow
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: alpha
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: live-config
+  namespace: apps

@@ -168,7 +168,7 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 	docs := []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
 	}
-	run.Result.Manifests = []manifest.DocumentBatch{{Parent: entry, Documents: docs}}
+	run.Result.Manifests = []manifest.DocumentBatch{testutil.DocumentBatch(entry, docs)}
 	projectedResults1, projectionErrors1 := Select(
 		[]Rendered{run},
 		nil,
@@ -610,7 +610,7 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 					"metadata":   map[string]any{"name": "root-inventory"},
 				},
 			}
-			runs[i].Result.Manifests = []manifest.DocumentBatch{{Parent: obj, Documents: docs}}
+			runs[i].Result.Manifests = []manifest.DocumentBatch{testutil.DocumentBatch(obj, docs)}
 		} else {
 			runs[i].store.UpdateStatus(
 				obj.Named(),
@@ -624,16 +624,13 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 		runs[1].store.AddObject(unrelated)
 		runs[1].store.UpdateStatus(unrelated.Named(), store.StatusInfo{Status: store.StatusReady})
 		runs[1].Result.Manifests = []manifest.DocumentBatch{
-			{
-				Parent: unrelated,
-				Documents: []map[string]any{
-					{
-						"apiVersion": "v1",
-						"kind":       "ConfigMap",
-						"metadata":   map[string]any{"name": "unrelated-output"},
-					},
+			testutil.DocumentBatch(unrelated, []map[string]any{
+				{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata":   map[string]any{"name": "unrelated-output"},
 				},
-			},
+			}),
 		}
 	}
 	if *testCaseInput.reverse {

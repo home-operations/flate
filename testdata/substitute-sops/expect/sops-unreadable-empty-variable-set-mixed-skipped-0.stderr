@@ -1,8 +1,4 @@
 
-  ⚠ warnings (3)
+  ⚠ warnings (1)
     [SuppliedPrecedence] repository data takes precedence over supplied data
       ConfigMap/apps/settings: CONFIG_EMPTY (@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-0.yaml), ConfigMap/apps/settings: CONFIG_PLAIN (@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-0.yaml), Secret/apps/input: EMPTY (@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-1.yaml), Secret/apps/input: READABLE (@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-1.yaml)
-    [SOPSUnreadable] ConfigMap apps/settings: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      CONFIG_ENCRYPTED
-    [SOPSUnreadable] Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      VALUE

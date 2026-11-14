@@ -26,6 +26,7 @@ type Doc struct {
 type Options struct {
 	subjects     [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
 	producerKeys [2]map[manifest.NamedResource]manifest.NamedResource
+	identities   [2][]manifest.NamedResource
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
 	// is computed. Cuts chart-bump noise — annotations like

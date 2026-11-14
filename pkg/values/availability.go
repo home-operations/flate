@@ -3,6 +3,7 @@ package values
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -33,14 +34,15 @@ const (
 
 // Result MUST retain the selected evidence, including readable siblings of encrypted keys.
 type Result struct {
-	warnings []manifest.Warning
-	state    State
-	id       manifest.NamedResource
-	use      string
-	optional bool
-	data     manifest.Data
-	value    string
-	key      string
+	warnings   []manifest.Warning
+	unreadable []string
+	state      State
+	id         manifest.NamedResource
+	use        string
+	optional   bool
+	data       manifest.Data
+	value      string
+	key        string
 }
 
 // Classify MUST resolve effective readable keys before interpreting unavailable evidence.
@@ -75,20 +77,24 @@ func Classify(ref *manifest.Reference, input *store.ReferenceFacts) (Result, err
 		if warning.Category != manifest.WarnSOPSUnreadable {
 			continue
 		}
-		key, err := unreadableWarning(warning, input.Data, ref.Key)
+		keys, err := unreadableWarning(warning, input.Data, ref.Key, result.unreadable)
 		if err != nil {
 			return result, err
 		}
-		if key != "" && (result.key == "" || key < result.key) {
+		result.unreadable = keys
+	}
+	if len(result.unreadable) != 0 {
+		slices.Sort(result.unreadable)
+		result.unreadable = slices.Compact(result.unreadable)
+		if key := result.unreadable[0]; result.key == "" || key < result.key {
 			result.key = key
 		}
-		if key != "" {
-			result.state = Encrypted
-		}
+		result.state = Encrypted
 	}
 	state := unresolvedState(input, ref.Key, result.state)
 	if state == Absent && result.state == Encrypted {
 		result.data = nil
+		result.unreadable = nil
 	}
 	result.state = state
 	return result, nil
@@ -111,6 +117,9 @@ func (r *Result) State() State { return r.state }
 
 // Value MUST be consumed only when State reports Readable.
 func (r *Result) Value() string { return r.value }
+
+// UnreadableKeys MUST use captured evidence without reading or decoding data again.
+func (r *Result) UnreadableKeys() []string { return r.unreadable }
 
 // Data MUST remain immutable, including readable siblings of unavailable keys.
 //
@@ -188,26 +197,28 @@ func (r *Result) supplyGuidance() string {
 	return ""
 }
 
-func unreadableWarning(warning *manifest.Warning, data manifest.Data, requested string) (string, error) {
-	first := ""
+func unreadableWarning(
+	warning *manifest.Warning,
+	data manifest.Data,
+	requested string,
+	keys []string,
+) ([]string, error) {
 	for _, key := range warning.Detail {
-		if requested != "" && key != requested {
+		if key == "" || requested != "" && key != requested {
 			continue
 		}
 		if data != nil {
 			value, err := data.Value(key)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if value.Found {
 				continue
 			}
 		}
-		if first == "" || key < first {
-			first = key
-		}
+		keys = append(keys, key)
 	}
-	return first, nil
+	return keys, nil
 }
 
 const substitutionUse = "substituteFrom"

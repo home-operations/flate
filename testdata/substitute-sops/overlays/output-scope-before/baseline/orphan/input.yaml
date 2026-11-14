@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: orphan, namespace: apps}
+data:
+  ORPHAN: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+  value: before
+sops: {mac: encrypted}

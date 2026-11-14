@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,12 +30,173 @@ func selectedSnapshot(parentValue *Parent, docs []Doc, unavailable store.StatusI
 		batch = append(batch, doc.Manifest)
 	}
 	result := Snapshot{
-		Manifests: []manifest.DocumentBatch{{Parent: obj, Documents: batch}},
+		Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(obj, batch)},
 	}
 	if unavailable.Status != "" {
 		result.Unavailable = map[manifest.NamedResource]store.StatusInfo{id: unavailable}
 	}
 	return result
+}
+
+func TestCompare_OptionalBatchIdentities(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config"}
+	left := []Doc{cmDoc(&Parent{}, id, "old", "")}
+	right := []Doc{cmDoc(&Parent{}, id, "new", "")}
+	want, _, err := RenderDocs(left, right, Options{Format: FormatJSON})
+	assert.NoError(t, err)
+	expected, err := json.MarshalIndent(struct {
+		Changes    []Change      `json:"changes"`
+		Suppressed []Suppression `json:"suppressed"`
+	}{[]Change{{
+		APIVersion: "v1", Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config",
+		Status: StatusChanged, Old: left[0].Manifest, New: right[0].Manifest,
+	}}, []Suppression{}}, "", "  ")
+	assert.NoError(t, err)
+	assert.Diff(t, string(want), string(expected)+"\n")
+	for _, tc := range []struct {
+		name       string
+		identities []manifest.NamedResource
+	}{
+		{name: "omitted"},
+		{name: "empty", identities: []manifest.NamedResource{}},
+		{name: "complete zero identity", identities: []manifest.NamedResource{{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			groups := []Group{{
+				Orig: Snapshot{Manifests: []manifest.DocumentBatch{{
+					Documents: []map[string]any{left[0].Manifest}, Identities: tc.identities,
+				}}},
+				Current: Snapshot{Manifests: []manifest.DocumentBatch{{
+					Documents: []map[string]any{right[0].Manifest}, Identities: tc.identities,
+				}}},
+			}}
+			before, err := json.Marshal(
+				[2][]manifest.DocumentBatch{groups[0].Orig.Manifests, groups[0].Current.Manifests},
+			)
+			assert.NoError(t, err)
+			comparison, err := Compare(groups, Options{Format: FormatJSON})
+			assert.NoError(t, err)
+			outputID := id
+			if len(tc.identities) != 0 {
+				outputID = tc.identities[0]
+			}
+			assert.Diff(t, comparison.Groups[0].Output, [2][]manifest.NamedResource{{outputID}, {outputID}})
+			var first, second bytes.Buffer
+			assert.NoError(t, comparison.Write(&first, nil))
+			assert.NoError(t, comparison.Write(&second, nil))
+			assert.Diff(t, first.String(), string(want))
+			assert.Diff(t, second.String(), first.String())
+			after, err := json.Marshal(
+				[2][]manifest.DocumentBatch{groups[0].Orig.Manifests, groups[0].Current.Manifests},
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, after, before)
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		omitted int
+		reverse bool
+	}{
+		{name: "mixed orig", omitted: 0},
+		{name: "mixed current", omitted: 1},
+		{name: "mixed orig reversed", omitted: 0, reverse: true},
+		{name: "mixed current reversed", omitted: 1, reverse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testCompareMixedBatchIdentities(t, tc.omitted, tc.reverse)
+		})
+	}
+}
+
+func TestCompare_InvalidBatchIdentities(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config"}
+	doc := cmDoc(&Parent{}, id, "value", "").Manifest
+	for _, side := range []Side{SideOrig, SideCurrent} {
+		for _, tc := range []struct {
+			name       string
+			documents  []map[string]any
+			identities []manifest.NamedResource
+			suppressed bool
+		}{
+			{name: "too few", documents: []map[string]any{doc, doc}, identities: []manifest.NamedResource{id}},
+			{name: "too many", documents: []map[string]any{doc}, identities: []manifest.NamedResource{id, id}},
+			{name: "no documents", identities: []manifest.NamedResource{id}},
+			{name: "suppressed too few", documents: []map[string]any{doc, doc}, identities: []manifest.NamedResource{id}, suppressed: true},
+			{name: "suppressed too many", documents: []map[string]any{doc}, identities: []manifest.NamedResource{id, id}, suppressed: true},
+			{name: "suppressed no documents", identities: []manifest.NamedResource{id}, suppressed: true},
+		} {
+			t.Run(string(side)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				invalid := Snapshot{Manifests: []manifest.DocumentBatch{{}, {
+					Documents: tc.documents, Identities: tc.identities,
+				}}}
+				selectedErr := errors.New("partial render")
+				group := Group{Orig: invalid, SelectedErr: selectedErr}
+				var notes []Suppression
+				if tc.suppressed {
+					parent := &manifest.ResourceSet{Name: "unavailable", Namespace: "apps"}
+					invalid.Manifests[1].Parent = parent
+					subject := manifest.DiagnosticIdentity{
+						ID:   parent.Named(),
+						Path: "clusters/apps",
+						Resource: manifest.NamedResource{
+							Group: manifest.FluxOperatorDomain,
+							Kind:  "FluxInstance",
+							Name:  "cluster",
+						},
+					}
+					invalid.Subjects = map[manifest.NamedResource]manifest.DiagnosticIdentity{parent.Named(): subject}
+					invalid.Unavailable = map[manifest.NamedResource]store.StatusInfo{
+						parent.Named(): {Status: store.StatusFailed, Message: "failed"},
+					}
+					group.Orig = invalid
+					group.Current = Snapshot{
+						Manifests: []manifest.DocumentBatch{{Parent: parent, Documents: []map[string]any{doc}}},
+					}
+					notes = []Suppression{
+						{Parent: objectParent(parent), Subject: subject, Side: side, Count: 1, Reason: "failed"},
+					}
+				}
+				if side == SideCurrent {
+					group.Orig, group.Current = group.Current, group.Orig
+				}
+				before, err := json.Marshal([2][]manifest.DocumentBatch{group.Orig.Manifests, group.Current.Manifests})
+				assert.NoError(t, err)
+				comparison, err := Compare([]Group{group}, Options{Format: FormatJSON})
+				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+					!errors.Is(err, selectedErr), "classified or selected error lost: %v", err)
+				message := fmt.Sprintf("%s batch 1: identity count %d does not match document count %d",
+					side, len(tc.identities), len(tc.documents))
+				assert.ErrorIf(t, !strings.Contains(err.Error(), message), "input error lacks context: %v", err)
+				assert.Diff(t, comparison.Groups[0].Output, [2][]manifest.NamedResource{})
+				assert.Diff(t, comparison.Groups[0].Suppressed, notes)
+				var out, second bytes.Buffer
+				assert.NoError(t, comparison.Write(&out, nil))
+				assert.NoError(t, comparison.Write(&second, nil))
+				assert.Diff(t, second.String(), out.String())
+				if tc.suppressed {
+					displayed := notes[0]
+					displayed.Parent = Parent{NamedResource: displayed.Subject.Resource, Path: displayed.Subject.Path}
+					want, marshalErr := json.MarshalIndent(struct {
+						Changes    []Change      `json:"changes"`
+						Suppressed []Suppression `json:"suppressed"`
+					}{[]Change{}, []Suppression{displayed}}, "", "  ")
+					assert.NoError(t, marshalErr)
+					assert.Diff(t, out.String(), string(want)+"\n")
+				} else {
+					assert.Diff(t, out.String(), "{\n  \"changes\": [],\n  \"suppressed\": []\n}\n")
+				}
+				after, err := json.Marshal([2][]manifest.DocumentBatch{group.Orig.Manifests, group.Current.Manifests})
+				assert.NoError(t, err)
+				assert.Diff(t, after, before)
+			})
+		}
+	}
 }
 
 func TestCompare_SelectedErrorsRetained(t *testing.T) {
@@ -237,20 +400,20 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 	other := &manifest.HelmRelease{Name: "healthy", Namespace: "monitoring"}
 	left.Manifests = append(
 		left.Manifests,
-		manifest.DocumentBatch{
-			Parent:    other,
-			Documents: []map[string]any{{"containers": []any{map[string]any{"image": "ghcr.io/demo/removed:v1"}}}},
-		},
+		testutil.DocumentBatch(
+			other,
+			[]map[string]any{{"containers": []any{map[string]any{"image": "ghcr.io/demo/removed:v1"}}}},
+		),
 	)
 	right.Manifests = append(
 		right.Manifests,
-		manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"containers": []any{
+		testutil.DocumentBatch(other, []map[string]any{{"containers": []any{
 			map[string]any{
 				"image": "ghcr.io/demo/shared:v1",
 			},
 			map[string]any{"image": "ghcr.io/demo/new:v2"},
 			map[string]any{"image": "ghcr.io/demo/new:v2"},
-		}, "unencoded": func() {}}}},
+		}, "unencoded": func() {}}}),
 	)
 	selectedErr := errors.New("partial render")
 	for _, tc := range []struct {
@@ -292,7 +455,7 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 
 func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
 	t.Parallel()
-	left := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{
+	left := Snapshot{Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{
 		{
 			"kind": "UnknownResource",
 			"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v1", "image": "nginx"},
@@ -302,8 +465,8 @@ func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
 				"address": "0.0.0.0:80",
 			},
 		},
-	}}}}
-	right := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{
+	})}}
+	right := Snapshot{Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{
 		{
 			"kind": "UnknownResource",
 			"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v2", "image": "nginx"},
@@ -313,12 +476,12 @@ func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
 				"address": "127.0.0.1:9234",
 			},
 		},
-	}}}}
-	junk := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{
+	})}}
+	junk := Snapshot{Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{{
 		"kind": "UnknownResource",
 		"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v1", "image": "nginx"},
 		"data": map[string]any{"tool": "ghcr.io/demo/config:v1", "record": "count:up0", "address": "127.0.0.1:9234"},
-	}}}}}
+	}})}}
 	for _, tc := range []struct {
 		name           string
 		reverse        bool
@@ -499,4 +662,73 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		imageNotes,
 		err,
 	)
+}
+
+func testCompareMixedBatchIdentities(t *testing.T, omitted int, reverse bool) {
+	t.Helper()
+	parents := [2]*manifest.ResourceSet{
+		{Name: "a-derived", Namespace: "policy"},
+		{Name: "b-reporting", Namespace: "reporting"},
+	}
+	ids := [2]manifest.NamedResource{
+		{Kind: manifest.KindConfigMap, Namespace: "policy", Name: "derived"},
+		{Kind: manifest.KindConfigMap, Namespace: "emitter", Name: "supplied"},
+	}
+	var snapshots [2]Snapshot
+	expected := make([]Change, 0, len(parents))
+	var backing [2][]manifest.NamedResource
+	for producer, parent := range parents {
+		var docs [2]map[string]any
+		for side := range snapshots {
+			value := "old"
+			if side == 1 {
+				value = "new"
+			}
+			docs[side] = cmDoc(&Parent{}, manifest.NamedResource{Name: ids[producer].Name}, value, "").Manifest
+			identities := []manifest.NamedResource{ids[producer]}
+			if producer == 0 && side == omitted {
+				identities = nil
+			}
+			if producer == 1 {
+				backing[side] = []manifest.NamedResource{ids[producer], {Name: "untouched"}}
+				identities = backing[side][:1]
+			}
+			snapshots[side].Manifests = append(snapshots[side].Manifests, manifest.DocumentBatch{
+				Parent: parent, Documents: []map[string]any{docs[side]}, Identities: identities,
+			})
+		}
+		expected = append(expected, Change{
+			Parent: Parent{NamedResource: parent.Named()}, APIVersion: "v1",
+			Kind: manifest.KindConfigMap, Name: ids[producer].Name,
+			Status: StatusChanged, Old: docs[0], New: docs[1],
+		})
+	}
+	if reverse {
+		for side := range snapshots {
+			slices.Reverse(snapshots[side].Manifests)
+		}
+	}
+	before, err := json.Marshal([2][]manifest.DocumentBatch{snapshots[0].Manifests, snapshots[1].Manifests})
+	assert.NoError(t, err)
+	wantBytes, err := json.MarshalIndent(struct {
+		Changes    []Change      `json:"changes"`
+		Suppressed []Suppression `json:"suppressed"`
+	}{expected, []Suppression{}}, "", "  ")
+	assert.NoError(t, err)
+	comparison, err := Compare([]Group{{Orig: snapshots[0], Current: snapshots[1]}}, Options{Format: FormatJSON})
+	assert.NoError(t, err)
+	want := [2][]manifest.NamedResource{{ids[0], ids[1]}, {ids[0], ids[1]}}
+	assert.Diff(t, comparison.Groups[0].Output, want)
+	var first, second bytes.Buffer
+	assert.NoError(t, comparison.Write(&first, nil))
+	assert.NoError(t, comparison.Write(&second, nil))
+	assert.Diff(t, first.String(), string(wantBytes)+"\n")
+	assert.Diff(t, second.String(), first.String())
+	assert.Diff(t, comparison.Groups[0].Output, want)
+	after, err := json.Marshal([2][]manifest.DocumentBatch{snapshots[0].Manifests, snapshots[1].Manifests})
+	assert.NoError(t, err)
+	assert.Diff(t, after, before)
+	for _, identities := range backing {
+		assert.Diff(t, identities, []manifest.NamedResource{ids[1], {Name: "untouched"}})
+	}
 }

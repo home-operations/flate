@@ -200,3 +200,94 @@ func TestPrepareTemplate_RetainedValuesReplacement(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, final.key != next.key, true)
 }
+
+func TestPrepareTemplate_SourceBinding(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"revision", "url", "observed_content"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			testPrepareTemplateSourceBinding(t, name)
+		})
+	}
+}
+
+func testPrepareTemplateSourceBinding(t *testing.T, name string) {
+	t.Helper()
+	root := testutil.WriteTree(t, map[string]string{
+		"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
+	})
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	hr := newHR()
+	assert.Equal(t, hr.TracksDigest(), false)
+	sources := store.New()
+	original := *localChartResolver(t, "chart-repo", "flux-system", root).chartInput(hr)
+	original.Revision = "first"
+	if name != "observed_content" {
+		original.Content = "immutable-source"
+	}
+	sources.SetArtifact(hr.ChartSource(), &original)
+	var recorder manifest.WorkRecorder
+	recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+	var preparation Preparation
+	defer preparation.Retire()
+	input := RenderOptions{
+		Preparation: &preparation,
+		Sources:     NewSources(sources),
+		SkipKinds:   []string{"Pod"},
+		Work:        recorder.Scope().RenderWork(),
+	}
+	first, err := client.prepareTemplate(t.Context(), hr, nil, &input)
+	assert.NoError(t, err)
+	assert.Equal(t, &first.binding.Options.SkipKinds[0] != &input.SkipKinds[0], true)
+	current := &original
+	if name == "observed_content" {
+		preparation.binding.Revision, preparation.loaded.artifact.Revision = "stale", "stale"
+		preparation.binding.URL, preparation.loaded.artifact.URL = "stale", "stale"
+		first.Preparation = preparation
+	} else {
+		replacement := original
+		if name == "revision" {
+			replacement.Revision = "second"
+		} else {
+			replacement.URL = "https://example.com/second"
+		}
+		current = &replacement
+		sources.SetArtifact(hr.ChartSource(), current)
+	}
+	priorRevision, priorURL := first.binding.Revision, first.binding.URL
+	next, err := client.prepareTemplate(t.Context(), hr, nil, &input)
+	assert.NoError(t, err)
+	repeated, err := client.prepareTemplate(t.Context(), hr, nil, &input)
+	assert.NoError(t, err)
+	for _, prepared := range []*Preparation{&next.Preparation, &repeated.Preparation, &preparation} {
+		assert.Equal(t, prepared.binding.Revision, current.Revision)
+		assert.Equal(t, prepared.binding.URL, current.URL)
+		assert.Equal(t, prepared.loaded.artifact.Revision, current.Revision)
+		assert.Equal(t, prepared.loaded.artifact.URL, current.URL)
+		assert.Equal(t, prepared.source, current)
+		assert.Equal(t, prepared.key, first.key)
+		assert.Equal(t, prepared.loaded.fingerprint, first.loaded.fingerprint)
+		assert.Equal(t, prepared.loaded.values.key, first.loaded.values.key)
+		assert.Equal(t, prepared.loaded.chart, first.loaded.chart)
+		assert.Equal(t, prepared.loaded.record, first.loaded.record)
+		assert.Equal(t, prepared.loaded.oci, first.loaded.oci)
+		assert.Equal(t, prepared.caps, first.caps)
+		assert.Equal(t, &prepared.binding.Options.SkipKinds[0], &first.binding.Options.SkipKinds[0])
+	}
+	assert.Equal(t, first.binding.Revision, priorRevision)
+	assert.Equal(t, first.binding.URL, priorURL)
+	assert.Equal(t, first.loaded.artifact.Revision, priorRevision)
+	assert.Equal(t, first.loaded.artifact.URL, priorURL)
+	assert.Equal(t, original.Revision, "first")
+	assert.Equal(t, original.URL, "file://"+root)
+	var counts manifest.WorkCounts
+	records := recorder.Scope().Snapshot(0)
+	for i := range records {
+		record := &records[i]
+		if record.Key.Phase == manifest.WorkPreparation {
+			counts.Add(&record.Counts)
+		}
+	}
+	assert.Equal(t, counts, manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1, RawKeyPrepares: 3})
+	t.Logf("preparation work: %+v", counts)
+}

@@ -138,3 +138,67 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 		false,
 	)
 }
+
+func TestPrepareRender_SourceBinding(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"revision", "url"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			original := store.SourceArtifact{
+				Kind: manifest.KindGitRepository, FS: os.DirFS(root), LocalPath: root,
+				Content: "immutable-source", Revision: "first", URL: "https://example.com/first",
+			}
+			cache := &TreeCache{}
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			var recorder manifest.WorkRecorder
+			recorder.Init(&manifest.WorkKey{Owner: owner.Named()}, manifest.WorkScope{})
+			var preparation Preparation
+			defer preparation.Retire()
+			req := RenderRequest{
+				Preparation: &preparation, Source: &original, Spec: owner,
+				SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
+			}
+			first, err := cache.prepareRender(t.Context(), &req)
+			assert.NoError(t, err)
+			assert.Equal(t, &first.binding.Skip[0] != &req.SkipKinds[0], true)
+			replacement := original
+			prepares := uint64(1)
+			if name == "revision" {
+				replacement.Revision = "second"
+				prepares++
+			} else {
+				replacement.URL = "https://example.com/second"
+			}
+			req.Source = &replacement
+			next, err := cache.prepareRender(t.Context(), &req)
+			assert.NoError(t, err)
+			repeated, err := cache.prepareRender(t.Context(), &req)
+			assert.NoError(t, err)
+			for _, prepared := range []*Preparation{&next.Preparation, &repeated.Preparation, &preparation} {
+				assert.Equal(t, prepared.binding.Revision, replacement.Revision)
+				assert.Equal(t, prepared.binding.URL, replacement.URL)
+				assert.Equal(t, prepared.source, &replacement)
+				assert.Equal(t, prepared.key, first.key)
+				assert.Equal(t, prepared.lower, first.lower)
+			}
+			assert.Equal(t, &next.binding.Skip[0], &repeated.binding.Skip[0])
+			if name == "url" {
+				assert.Equal(t, &next.binding.Skip[0], &first.binding.Skip[0])
+			}
+			assert.Equal(t, first.binding.Revision, original.Revision)
+			assert.Equal(t, first.binding.URL, original.URL)
+			assert.Equal(t, first.source, &original)
+			var counts manifest.WorkCounts
+			for _, record := range recorder.Scope().Snapshot(0) {
+				if record.Key.Phase == manifest.WorkPreparation {
+					counts.Add(&record.Counts)
+				}
+			}
+			assert.Equal(t, counts, manifest.WorkCounts{
+				Attempts: prepares, Completed: prepares, OwnerPrepares: prepares, RawKeyPrepares: 3,
+			})
+			t.Logf("preparation work: %+v", counts)
+		})
+	}
+}

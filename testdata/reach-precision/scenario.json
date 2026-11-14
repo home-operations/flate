@@ -331,6 +331,34 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "-n",
+              "media",
+              "-p",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--path-orig",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "-o",
+              "diff"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/consumed-variable-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -506,6 +534,13 @@
         "consumed-variable",
         "unused-variable",
         "metadata-only"
+      ],
+      "purpose": "Independently specified complete CLI stream."
+    },
+    {
+      "path": "expect/consumed-variable-diff.stdout",
+      "cases": [
+        "consumed-variable"
       ],
       "purpose": "Independently specified complete CLI stream."
     },

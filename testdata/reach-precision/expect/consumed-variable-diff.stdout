@@ -1,0 +1,21 @@
+--- ConfigMap media/cluster-settings (kubernetes/flux/cluster)
++++ ConfigMap media/cluster-settings (kubernetes/flux/cluster)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  NFS_MUSIC: /volume1/test/music
++  NFS_MUSIC: /volume1/test/music-edited
+   UNUSED: before
+ kind: ConfigMap
+ metadata:
+
+--- ConfigMap media/plex (kubernetes/apps/media/plex/app)
++++ ConfigMap media/plex (kubernetes/apps/media/plex/app)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  value: /volume1/test/music
++  value: /volume1/test/music-edited
+ kind: ConfigMap
+ metadata:
+   labels:

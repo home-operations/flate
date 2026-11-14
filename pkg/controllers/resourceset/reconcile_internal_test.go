@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/internal/testutil"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -94,7 +92,9 @@ func testReconcileParentUpdateDuringRenderCase(
 		)
 	}
 	publish(docA)
-	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	if *testCaseInput == "render" {
+		st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	}
 	id := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
 		Kind:      manifest.KindResourceSet,
@@ -112,7 +112,7 @@ func testReconcileParentUpdateDuringRenderCase(
 	assert.FatalIf(t, err != nil, "%v", err)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
-	var runState *execution
+	var run *base.Execution
 	var accepted atomic.Pointer[store.Emission]
 	unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 		if emission, localOk := payload.(*store.Emission); other == id && localOk && emission.Complete {
@@ -120,6 +120,25 @@ func testReconcileParentUpdateDuringRenderCase(
 		}
 	}, false)
 	t.Cleanup(unsubscribe)
+	pauseID, pauseStatus, pauseMessage := id, store.StatusPending, "rendering"
+	if *testCaseInput == "capture" {
+		pauseID, pauseStatus, pauseMessage = parent.Named(), store.StatusReady, ""
+	}
+	var paused atomic.Bool
+	var pauses atomic.Int32
+	unsubscribePause := st.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, payload any) {
+		info := payload.(store.StatusInfo)
+		if other != pauseID || info.Status != pauseStatus || info.Message != pauseMessage {
+			return
+		}
+		if !paused.CompareAndSwap(false, true) {
+			return
+		}
+		pauses.Add(1)
+		close(started)
+		tasks.YieldSlot(func() { <-resume })
+	}, false)
+	t.Cleanup(unsubscribePause)
 	tasks.Go(t.Context(), "parent", func(context.Context) {
 		defer release()
 		reached := false
@@ -136,54 +155,60 @@ func testReconcileParentUpdateDuringRenderCase(
 		}
 		publish(docB)
 	})
-	startReplacementRender(
-		t,
-		&replacementRenderInputs{
-			testCaseInput: &testCaseInput,
-			tasks:         &tasks,
-			c:             &c,
-			started:       &started,
-			resume:        &resume,
-			rendered:      &rendered,
-			id:            &id,
-			rs:            &rs,
-			runState:      &runState,
-		},
-	)
+	tasks.Go(t.Context(), "render", func(ctx context.Context) {
+		defer close(rendered)
+		if *testCaseInput == "capture" {
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+		}
+		run = c.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{})
+	})
 	tasks.BlockTillDone()
+	defer run.Close()
 	assert.FatalIf(t, tasks.Failures() != 0,
 		"task failures = %d", tasks.Failures())
 
 	if (*testCaseInput) == "render" {
-		assert.FatalIf(t, runState.run.Reads.Valid() || accepted.Load() != nil ||
-			st.GetArtifact(
-				id,
-				store.ArtifactContent,
-			) != nil, "%v", "replaced input A published stale output")
+		assert.FatalIf(t, run.Reads.Valid(), "%v", "replaced input A remains valid")
+		assert.FatalIf(t, accepted.Load() != nil, "%v", "replaced input A published stale output")
+		assert.FatalIf(t, st.GetArtifact(id, store.ArtifactContent) != nil,
+			"%v", "replaced input A left a content artifact")
 	} else {
 		{
 			emission := accepted.Load()
+			assert.FatalIf(t, emission == nil, "%v", "capture did not publish replacement B")
 			assert.FatalIf(
 				t,
-				emission == nil || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b"),
+				!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b"),
 				"capture did not use replacement B: %+v",
 				emission,
 			)
 		}
 	}
 	current, ok := st.Get[*manifest.ResourceSet](id)
+	assert.FatalIf(t, !ok, "%v", "current input B is missing")
 	assert.FatalIf(
 		t,
-		!ok || string(current.Inputs[0]["name"].Raw) != `"from-b"`,
+		string(current.Inputs[0]["name"].Raw) != `"from-b"`,
 		"current input is not B: %+v",
 		current,
 	)
-	run := c.ReconcileNode(t.Context(), id, manifest.DrainNone, schedule.Result{})
-	assert.FatalIf(t, run.Outcome() == schedule.Blocked,
-		"replacement blocked: %v", run.Blocked)
+	var replacement *base.Execution
+	tasks.Go(t.Context(), "replacement", func(ctx context.Context) {
+		replacement = c.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{})
+	})
+	tasks.BlockTillDone()
+	defer replacement.Close()
+	assert.FatalIf(t, tasks.Failures() != 0,
+		"task failures = %d", tasks.Failures())
+	assert.FatalIf(t, replacement.Outcome() == schedule.Blocked,
+		"replacement blocked: %v", replacement.Blocked)
+	assert.FatalIf(t, pauses.Load() != 1, "admitted pauses = %d, want 1", pauses.Load())
 
 	emission := accepted.Load()
-	assert.FatalIf(t, emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint ||
+	assert.FatalIf(t, emission == nil, "%v", "replacement B did not publish")
+	assert.FatalIf(t, !emission.Complete,
+		"replacement B did not complete: %+v", emission)
+	assert.FatalIf(t, emission.Fingerprint == wantFingerprint ||
 		!hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") ||
 		hasRenderedDoc(
 			emission,
@@ -318,78 +343,4 @@ func testReconcileProviderInventorySettlementCase(
 		) != nil, "%v", "complete empty inventory retained a provider or output")
 	publish(&broken)
 	check(0, store.StatusFailed)
-}
-
-type replacementRenderInputs struct {
-	testCaseInput **string
-	tasks         **task.Service
-	c             **Controller
-	started       *chan struct{}
-	resume        *chan struct{}
-	rendered      *chan struct{}
-	id            *manifest.NamedResource
-	rs            **manifest.ResourceSet
-	runState      **execution
-}
-
-func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
-	t.Helper()
-	(*scope.tasks).Go(t.Context(), "render", func(context.Context) {
-		defer close((*scope.rendered))
-		if (*(*scope.testCaseInput)) == "capture" {
-			close((*scope.started))
-			(*scope.tasks).YieldSlot(func() { <-(*scope.resume) })
-		}
-		(*scope.runState) = (*scope.c).newExecution((*scope.id))
-		defer (*scope.runState).run.Close()
-		if (*(*scope.testCaseInput)) == "capture" {
-			(*scope.runState).run.Dispatch(t.Context(), manifest.DrainNone, (*scope.runState), (*execution).reconcile)
-			return
-		}
-		_, _, attempt := (*scope.runState).run.Reads.GetEmission((*scope.id))
-		docs, warnings, err := renderProviders(
-			(*scope.rs),
-			resourceset.StoreResolver(&(*scope.runState).run.Reads),
-			func(content any) (bool, error) {
-				fingerprintDedupResult1, fingerprintDedupResult1Err := (*scope.runState).run.FingerprintDedup(
-					t.Context(),
-					(*scope.id),
-					content,
-					&store.Emission{},
-				)
-				fp, hit, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
-				if hit || err != nil {
-					return hit, err
-				}
-				attempt.Fingerprint = fp
-				close((*scope.started))
-				(*scope.tasks).YieldSlot(func() { <-(*scope.resume) })
-				return false, nil
-			},
-		)
-		defer attempt.Finish()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		{
-			warningValues := warnings
-			for warningIndex := range warningValues {
-				warning := warningValues[warningIndex]
-				(*scope.runState).run.Reads.AddWarning(warning)
-			}
-		}
-		parsed := (&base.Execution{Controller: (*scope.c).Controller}).ParseChildren(
-			(*scope.c).Store.GetObject((*scope.id)),
-			testutil.DocumentOccurrences(testutil.DocumentMaps(docs)),
-			manifest.ParseDocOptions{},
-		)
-		if failure := manifest.DocumentFailure(parsed.Failures); failure != nil {
-			panic(failure)
-		}
-		children, retained := parsed.Children, testutil.DocumentMaps(parsed.Visible)
-		attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
-		attempt.Complete = true
-		(*scope.runState).run.Emit(t.Context(), (*scope.id), &attempt, nil)
-	})
 }

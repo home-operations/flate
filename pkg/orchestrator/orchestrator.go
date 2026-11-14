@@ -362,6 +362,9 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 	o.admission = o.session.Admission()
 	o.configureSources(true)
 	for {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
 			return phaseErr
 		}
@@ -385,12 +388,15 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 	return nil
 }
 
-func (o *Orchestrator) completeBootstrap() {
-	o.failDependsOnCycles()
+func (o *Orchestrator) completeBootstrap(ctx context.Context) error {
+	if err := o.failDependsOnCycles(ctx); err != nil {
+		return err
+	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher
 	o.rsc.Retry = o.cfg.SourceRetry
 	o.rsc.AllowMissingSecrets = o.cfg.allowMissingSecrets
+	return nil
 }
 
 // replacePreflightFailures replaces the current preflight-failure map

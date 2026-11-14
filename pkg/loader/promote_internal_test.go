@@ -134,7 +134,7 @@ spec:
 	data, err := result.AsYaml()
 	assert.NoError(t, err)
 	docs := builtObjectsForTest(t, string(data))
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -144,7 +144,7 @@ spec:
 			},
 		),
 		docs,
-	)
+	))
 	{
 		err := retainedErrorsForTest(l)[selectedFile]
 		assert.FatalIf(t, err != nil, "selected raw error survived successful built registration: %v", err)
@@ -183,7 +183,7 @@ spec:
 		rs,
 	)
 	for range 2 {
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 	}
 	extra := &manifest.GitRepository{Name: "external", Namespace: "apps"}
 	st.AddObject(extra)
@@ -206,7 +206,7 @@ spec:
 		"%s",
 		"colliding source document was not loaded",
 	)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
@@ -229,7 +229,7 @@ spec:
 		"reloaded independent raw error = %v, want ErrInput",
 		independentError,
 	)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
@@ -281,14 +281,14 @@ spec:
 			t,
 			release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n",
 		)
-		l.RegisterBuilt(
+		assert.NoError(t, l.RegisterBuilt(t.Context(),
 			supportedBuiltInputForTest(l, &BuiltInput{
 				Root:   root,
 				Source: manifest.BootstrapSourceID,
 				Owner:  testutil.KustomizationID("apps", "entry"),
 			}),
 			docs,
-		)
+		))
 		hr, _ := l.Index.Lookup(docs[0].Obj.Named())
 		generated, _ := l.Index.Lookup(docs[1].Obj.Named())
 		assert.Equal(t, hr.File, "release.yaml")
@@ -343,14 +343,14 @@ spec:
 				strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1),
 			)
 			raw := docs[0].Obj.(*manifest.RawObject)
-			l.RegisterBuilt(
+			assert.NoError(t, l.RegisterBuilt(t.Context(),
 				supportedBuiltInputForTest(l, &BuiltInput{
 					Root:   root,
 					Source: manifest.BootstrapSourceID,
 					Owner:  testutil.KustomizationID("apps", "entry"),
 				}),
 				docs,
-			)
+			))
 			record, ok := l.Index.Lookup(raw.Named())
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.File, tc.file)
@@ -377,7 +377,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	docs := []store.Child{
 		{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}},
 	}
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -387,8 +387,8 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 			},
 		),
 		docs,
-	)
-	l.Admit(root)
+	))
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "finalization fetched an already built remote generator: %v", err)
@@ -454,7 +454,7 @@ spec:
 	docs := builtObjectsForTest(t, string(data))
 	assert.FatalIf(t, len(docs) != 1 ||
 		docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}), "deletion patch did not leave only the retained ConfigMap: %v", docs)
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -464,7 +464,7 @@ spec:
 			},
 		),
 		docs,
-	)
+	))
 	{
 		err := retainedErrorsForTest(l)[selectedFile]
 		assert.FatalIf(t, err != nil, "deleted resource raw error survived successful built registration: %v", err)
@@ -478,7 +478,7 @@ spec:
 		assert.FatalIf(t, err != nil ||
 			!promoted, "%s", "retained built promotion failed")
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
@@ -526,7 +526,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	}
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -536,20 +536,20 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			},
 		),
 		nil,
-	)
+	))
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
 	{
 		_, ok := l.Index.Lookup(id)
 		assert.FatalIf(t, ok || l.PromotionDocuments(id) != nil, "%s", "empty output retained raw resource evidence")
 	}
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(l, &BuiltInput{
 			Root:   filepath.Join(root, "entry", "independent"),
 			Source: manifest.BootstrapSourceID,
 			Owner:  testutil.KustomizationID("apps", "entry"),
 		}),
 		nil,
-	)
+	))
 	assert.FatalIf(t, l.documents.cache[entry].built == nil ||
 		l.documents.cache[filepath.Join(root, "entry", "independent")].built == nil, "%s", "empty builds did not retain completion evidence")
 	for _, tc := range []struct {

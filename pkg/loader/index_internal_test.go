@@ -23,7 +23,7 @@ func loadForTest(ctx context.Context, t *testing.T, l *Loader, dir string) (int,
 	t.Helper()
 	n, err := l.Load(ctx, dir, manifest.NamedResource{}, nil)
 	if err == nil {
-		l.Admit(cmp.Or(l.SourceRoot, new(l.documents).mountedRoot(dir)))
+		err = l.Admit(ctx, cmp.Or(l.SourceRoot, new(l.documents).mountedRoot(dir)))
 	}
 	return n, err
 }

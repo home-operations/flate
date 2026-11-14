@@ -176,7 +176,7 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 
 		{
 			err := l.FinalizeIndex(t.Context(), root, true)
@@ -440,9 +440,16 @@ func testPromoteOrphansNamespaceAdmissionCase(
 		support := new(store.ReadSet)
 		support.Init(st, manifest.NamedResource{}, nil)
 		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support}, batch)
+		assert.NoError(
+			t,
+			l.RegisterBuilt(
+				t.Context(),
+				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support},
+				batch,
+			),
+		)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	bare := testutil.KustomizationID("", "bare")
 
 	assert.ErrorIf(t, st.GetObject(bare) != nil, "%v", "early admission published the namespace-less seed")
@@ -563,7 +570,7 @@ sops: {version: 3.9.0}
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.NoError(t, l.PromoteOrphans(t.Context()))
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}

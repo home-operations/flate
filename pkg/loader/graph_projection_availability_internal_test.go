@@ -40,7 +40,7 @@ func testAdmitGraphProjectionInactiveUnresolvedSource(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	child := testutil.KustomizationID("apps", "child")
 	assert.FatalIf(t, l.Store.GetObject(child) != nil ||
@@ -69,7 +69,7 @@ func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := testutil.KustomizationID("apps", "direct")
 	assert.FatalIf(t, l.Store.GetObject(id) == nil ||
@@ -115,7 +115,7 @@ func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
 		_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -171,9 +171,9 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	before := l.Kustomizations()
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.FatalIf(
 		t,
 		!slices.EqualFunc(before, l.Kustomizations(), func(a, b store.Child) bool { return a.Obj == b.Obj }),
@@ -278,7 +278,7 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 	}
 	owner, _ := st.Get[*manifest.Kustomization](testutil.KustomizationID("flux-system", "parent"))
 	assert.FatalIf(t, owner == nil, "%s", "parent missing")
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		external := SourceView(st, owner.SourceID(), root).External
 		assert.FatalIf(t, !external, "%s", "unavailable source borrowed bootstrap coordinates")
@@ -336,7 +336,7 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 		)
 		raw[name] = record
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, name := range []string{"child", "explicit"} {
 		id := testutil.KustomizationID("media", name)
 		record, ok := l.Index.Lookup(id)
@@ -384,7 +384,7 @@ func testAdmitGraphProjectionStaleDeclaration(t *testing.T) {
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps"))
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -141,7 +142,7 @@ func rootAtForTest(l *Loader, object manifest.BaseManifest, file string) selecti
 
 func standaloneRootsForTest(t *testing.T, l *Loader, root string) []string {
 	t.Helper()
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	if err := l.captureNativeRoots(root); err != nil {
 		t.Fatal(err)
 	}

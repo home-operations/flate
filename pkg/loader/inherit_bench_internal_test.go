@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -27,7 +28,7 @@ func BenchmarkProjectAuthored_SharedBootstrapPath(b *testing.B) {
 	if _, err := l.Load(b.Context(), root, manifest.NamedResource{}, nil); err != nil {
 		b.Fatal(err)
 	}
-	l.Admit(root)
+	assert.NoError(b, l.Admit(b.Context(), root))
 	if len(l.kustomizations()) != 64 || len(l.Kustomizations()) != 0 {
 		b.Fatal("inactive bootstrap evidence missing or runnable")
 	}

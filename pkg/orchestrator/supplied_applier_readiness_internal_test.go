@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -44,7 +45,7 @@ func testSuppliedApplierReadiness(t *testing.T) {
 	if _, exists := o.depGraph.outEdges[supplied]; exists {
 		t.Fatal("supplied applier entered initial producer graph")
 	}
-	o.updateDependencyGraphFor(supplied)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), supplied))
 	if _, exists := o.depGraph.outEdges[supplied]; exists {
 		t.Fatal("supplied applier entered event-driven producer graph")
 	}

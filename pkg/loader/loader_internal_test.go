@@ -688,7 +688,7 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 	sourceRoot := SourceView(st, parent.SourceID(), root).Path
 	_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)

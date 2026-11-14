@@ -277,7 +277,7 @@ spec:
 	l.Options.Changes = change.NewSet([]string{"work/cm.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, color := range []string{"red", "blue"} {
 		_, indexed := l.Index.Lookup(testutil.KustomizationID(color, "child-"+color))
 		assert.Equal(t, indexed, false)
@@ -425,7 +425,7 @@ func TestFinalizeIndex_MetadataKeepsScopes(t *testing.T) {
 	l.Options.Changes = change.NewSet([]string{"providers/provider.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.prepareIndexScopes(root, false)
+	assert.NoError(t, l.prepareIndexScopes(t.Context(), root, false))
 	before := l.construction
 	assert.NoError(t, l.resolveAuthored(t.Context(), root))
 	assert.Equal(t, l.construction, before)

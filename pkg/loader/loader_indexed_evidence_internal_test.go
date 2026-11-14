@@ -23,7 +23,7 @@ func TestLoader_PreferExistingIndexedObject(t *testing.T) {
 		_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	id := testutil.KustomizationID("apps", "child")
 	record, _ := l.Index.Lookup(id)
 	if record.Path != filepath.Join(root, "first", "ks.yaml") || len(l.Kustomizations()) != 1 ||
@@ -51,7 +51,7 @@ func TestLoader_ProjectedEvidence(t *testing.T) {
 	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, cached := range []bool{true, false} {
 		if !cached {
 			l.candidates = nil

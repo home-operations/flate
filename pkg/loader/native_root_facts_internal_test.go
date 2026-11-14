@@ -46,10 +46,10 @@ spec:
 	assert.FatalIf(t, len(claims) == 0, "missing physical owner claim")
 	assert.Equal(t, slices.Contains(before[0].Identities, testutil.HelmReleaseID("apps", "release")), true)
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &before[0]}).Construction, true)
-	l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 		Root: entry, Source: manifest.BootstrapSourceID,
 		Owner: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named(),
-	}), nil)
+	}), nil))
 	registered := l.SourceFacts(manifest.BootstrapSourceID, nil).Context.Roots
 	assert.Equal(t, registered[0].Built, true)
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &registered[0]}).Construction, false)
@@ -61,7 +61,7 @@ spec:
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &after[0]}).Construction, false)
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &before[0]}).Construction, true)
 	st.DeleteObject(owner.Named())
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	assert.Equal(t, len(l.SourceFacts(manifest.BootstrapSourceID, nil).Context.Roots[0].Claims), 0)
 	assert.Diff(t, before[0].Claims, claims)

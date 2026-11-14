@@ -300,7 +300,7 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 	}
 
 	{

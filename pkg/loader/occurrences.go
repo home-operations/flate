@@ -424,10 +424,15 @@ func (l *Loader) projectIdentity(
 	return id, nil
 }
 
-// EntryFailure assesses retained failures admitted as unowned native entry resources.
+// EntryFailure MUST defer admission until selection consumes its iterator.
+//
+//nolint:gocognit // Admission MUST stay inside the lazy failure iterator.
 func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
-	return l.Options.Session.EntryFailure(ctx, func(yield func(selection.EntryFailure) bool) {
-		l.Admit(repoRoot)
+	var admissionErr error
+	err := l.Options.Session.EntryFailure(ctx, func(yield func(selection.EntryFailure) bool) {
+		if admissionErr = l.Admit(ctx, repoRoot); admissionErr != nil {
+			return
+		}
 		relative, _ := filepath.Rel(repoRoot, l.entryPath)
 		var failures []selection.EntryFailure
 		visits := l.entryFailureVisits(repoRoot, filepath.ToSlash(relative))
@@ -467,6 +472,10 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 			}
 		}
 	})
+	if admissionErr != nil {
+		return admissionErr
+	}
+	return err
 }
 
 func (l *Loader) entryFailureVisits(repoRoot, relative string) []graphVisit {

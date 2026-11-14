@@ -121,7 +121,7 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	}
 	_, err := l.Load(t.Context(), filepath.Join(root, "plain"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		_, ok := l.Index.Lookup(testutil.KustomizationID("apps", "raw"))
 		assert.FatalIf(t, ok, "%v", "unreadable builder admitted raw resource")
@@ -205,7 +205,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			}})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "owner")
 			assert.FatalIf(
@@ -238,7 +238,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 		}})
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 		owners := l.Kustomizations()
 		assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" ||
 			owners[0].Obj.(*manifest.Kustomization).Path != "./"+version, "replacement kept stale owner: %+v", owners)

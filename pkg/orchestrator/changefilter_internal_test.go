@@ -176,7 +176,7 @@ func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
 	t.Cleanup(fresh.stop)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	fresh.cfg.Input = warm.cfg.Input
-	fresh.completeBootstrap()
+	assert.NoError(t, fresh.completeBootstrap(t.Context()))
 	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	work := fresh.freezeWork()
 	for _, name := range []string{"a", "b"} {

@@ -81,10 +81,10 @@ spec: {url: https://example.invalid/effective}
 	support.Init(st, parent.Named(), nil)
 	support.GetDeclaration(parent.Named())
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		BuiltInput{Root: packageRoot, Owner: parent.Named(), Source: manifest.BootstrapSourceID, Support: support},
 		children,
-	)
+	))
 	defer l.Retire()
 	id := children[0].Obj.Named()
 	assert.Equal(t, l.IndexedObject(id, l.Index.Records[id]).Obj, raw)

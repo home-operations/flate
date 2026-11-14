@@ -625,7 +625,7 @@ func TestParsedInputs_LoadInvalidatesOnlyNewScopeFacts(t *testing.T) {
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, l.scopes.complete, true)
 	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "nested"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -633,7 +633,7 @@ func TestParsedInputs_LoadInvalidatesOnlyNewScopeFacts(t *testing.T) {
 	_, err = l.Load(t.Context(), filepath.Join(root, "other"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, l.scopes.complete, false)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, l.scopes.complete, true)
 	_, known := l.Index.Lookup(
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "second"},

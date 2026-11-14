@@ -72,7 +72,7 @@ func testEmittedCycleSelection(t *testing.T, changedOnly, cycle bool) {
 	c.Configure(base.Options{Session: session, Loader: filterLoader, Index: index})
 	c.StartLifecycle()
 	o := &Orchestrator{store: st, depGraph: newDependencyGraph(), index: index, selection: session}
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	assert.Equal(t, index.IsFileIndexed(b.Named()), true)
 	assert.Equal(t, st.GetObject(b.Named()), nil)
 	assert.Equal(t, len(o.depGraph.Failures()), 0)
@@ -122,7 +122,7 @@ func testEmittedCycleSelection(t *testing.T, changedOnly, cycle bool) {
 		},
 	}
 	unsubCycles := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		o.updateDependencyGraphFor(id)
+		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), id))
 	}, false)
 	defer unsubCycles()
 	scheduler := schedule.New(tasks, dispatcher)

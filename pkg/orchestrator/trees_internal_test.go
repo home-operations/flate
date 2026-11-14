@@ -1,11 +1,16 @@
 package orchestrator
 
 import (
+	"context"
+	"errors"
 	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"testing/synctest"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
@@ -13,8 +18,71 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+//nolint:paralleltest // Orchestrator setup changes process-global source policy.
+func TestConstructTrees_CancellationDuringRound(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		roots := [2]string{t.TempDir(), t.TempDir()}
+		for _, root := range roots {
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml, ../peer]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"flux/owner.yaml",
+				testutil.KustomizationYAML("owner", "apps", "  path: ./peer\n"),
+			)
+			testutil.WriteFile(t, root, "peer/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "peer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n")
+		}
+		testutil.WriteFile(t, roots[0], "peer/kustomization.yaml", "resources: [child.yaml]\n")
+		testutil.WriteFile(
+			t,
+			roots[0],
+			"peer/child.yaml",
+			testutil.KustomizationYAML("child", "apps", "  path: ./work\n"),
+		)
+		testutil.WriteFile(t, roots[0], "work/kustomization.yaml", "resources: []\n")
+		peer := &admissionPeerFS{FS: os.DirFS(roots[1]), entered: make(chan struct{}), release: make(chan struct{})}
+		r := renderInvocation{cfg: &Config{Concurrency: 2}, byID: map[manifest.TreeID]int{}}
+		for side, root := range roots {
+			input := os.DirFS(root)
+			if side == 1 {
+				input = peer
+			}
+			id := manifest.TreeID{
+				Cluster: manifest.ClusterID([]string{"first", "second"}[side]),
+				Side:    manifest.TreeHead,
+			}
+			o, err := newTestOrchestrator(t, Tree{
+				ID: id, Path: filepath.Join(root, "flux"), RepoRoot: root,
+				Input:           &store.SourceArtifact{LocalPath: root, FS: input},
+				ExternalChanges: change.NewSet([]string{"peer/cm.yaml", "peer/child.yaml"}),
+			}, Config{Concurrency: 2, Selection: selection.Request{Changed: true}})
+			assert.NoError(t, err)
+			t.Cleanup(o.stop)
+			assert.NoError(t, o.discover(t.Context()))
+			r.byID[id] = side
+			r.results = append(r.results, Rendered{ID: id, Orchestrator: o})
+		}
+		peer.armed.Store(true)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- r.constructTrees(ctx) }()
+		<-peer.entered
+		synctest.Wait()
+		assert.Equal(t, r.results[0].Orchestrator != nil, true)
+		assert.Equal(t, r.results[0].Orchestrator.preparation == nil, true)
+		r.results[0].Orchestrator.cfg.ExternalChanges = nil
+		cancel()
+		close(peer.release)
+		assert.Equal(t, errors.Is(<-done, context.Canceled), true)
+		assert.Equal(t, r.results[0].Orchestrator != nil, true)
+	})
+}
 
 type discoveryWalkFS struct {
 	fs.FS

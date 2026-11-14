@@ -30,7 +30,7 @@ spec:
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	rs, ok := s.Get[*manifest.ResourceSet](
 		manifest.NamedResource{
 			Group:     manifest.FluxOperatorDomain,

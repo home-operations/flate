@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -13,18 +14,25 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Admit resolves scope evidence and publishes independently runnable discovery roots.
-func (l *Loader) Admit(repoRoot string) {
+// Admit MUST finish construction before its caller publishes admission.
+func (l *Loader) Admit(ctx context.Context, repoRoot string) error {
+	if err := ctx.Err(); err != nil {
+		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
 	l.mountSources()
-	l.admit(repoRoot, nil)
+	return l.admit(ctx, repoRoot, nil)
 }
 
-func (l *Loader) admit(repoRoot string, prediction map[string]nsResolution) {
+//nolint:gocognit // Admission MUST preserve round and publication order while returning cancellation.
+func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[string]nsResolution) error {
+	if err := ctx.Err(); err != nil {
+		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
 	l.projectTemplates()
 	l.ensureScopes()
 	kss := l.kustomizations()
 	if l.scopes.complete && l.scopesMatch(kss, repoRoot) {
-		return
+		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 
 	if prediction == nil {
@@ -35,10 +43,16 @@ func (l *Loader) admit(repoRoot string, prediction map[string]nsResolution) {
 	}
 	if repoRoot == "" {
 		l.refreshClaims(repoRoot, kss)
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		l.scopes.complete = true
-		return
+		return nil
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		l.refreshClaims(repoRoot, kss)
 		for file, visits := range l.scopes.visits {
 			clear(visits)
@@ -52,17 +66,31 @@ func (l *Loader) admit(repoRoot string, prediction map[string]nsResolution) {
 			l.visitKustomizationScope(repoRoot, ks, i)
 		}
 		l.visitRootScopes(repoRoot, kss)
-		for dir := range selection.ReduceStatic(staticScope{loader: l}) {
+		for dir, err := range selection.ReduceStatic(ctx, staticScope{loader: l}) {
+			if err != nil {
+				break
+			}
 			l.documents.read(dir)
 		}
-		if !l.projectAuthored(repoRoot, prediction) {
+		// ReduceStatic yields only context errors, which MUST persist after iteration.
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
+		changed := l.projectAuthored(repoRoot, prediction)
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
+		if !changed {
 			l.scopes.complete = true
-			return
+			return nil
 		}
 		kss = l.kustomizations()
 		if l.scopesMatch(kss, repoRoot) {
+			if err := ctx.Err(); err != nil {
+				return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			}
 			l.scopes.complete = true
-			return
+			return nil
 		}
 	}
 }
@@ -273,9 +301,9 @@ func (l *Loader) projectAuthoredVisits(
 		if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
 			continue
 		}
-		context := *visit
-		context.owner, context.source = contribution.owner, contribution.source
-		occurrence, err := l.projectOccurrence(structured, &context, version)
+		projectedVisit := *visit
+		projectedVisit.owner, projectedVisit.source = contribution.owner, contribution.source
+		occurrence, err := l.projectOccurrence(structured, &projectedVisit, version)
 		identity := occurrence.Identity
 		if err != nil {
 			// Production finalization reports invalid upstream identity projections.

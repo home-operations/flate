@@ -531,7 +531,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	support.Init(st, testutil.KustomizationID("apps", "entry"), nil)
 	support.GetDeclaration(testutil.KustomizationID("apps", "entry"))
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		loader.BuiltInput{
 			Support: &support,
 			Root:    filepath.Join(root, "entry"),
@@ -544,7 +544,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 			},
 		},
 		[]store.Child{{Obj: chart}},
-	)
+	))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	consumer := testutil.HelmReleaseID("apps", "demo")
 	want := []manifest.FileReader{

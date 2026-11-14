@@ -483,12 +483,13 @@ func TestEntryFailure_NamedSelectionDoesNotTraverse(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &contextualCancellationFS{FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: [input.yaml]\n")},
 		"input.yaml": {Data: []byte(
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
 		)},
-	}})
+	}}
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 	var work manifest.WorkRecorder
 	st.SetWorkTree(manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}, work.Scope())
 	l := New(st)
@@ -503,6 +504,15 @@ func TestEntryFailure_NamedSelectionDoesNotTraverse(t *testing.T) {
 	before := traversal.Counts
 	assert.NoError(t, l.EntryFailure(t.Context(), root))
 	assert.Equal(t, traversal.Counts, before)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	input.cancel, input.target = cancel, "round/kustomization.yaml"
+	input.FS.(fstest.MapFS)["round/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
+	st.AddObject(&manifest.Kustomization{Name: "round", Namespace: "apps", Path: "./round"})
+	configureSelection(t, l, selection.Request{})
+	assert.Equal(t, errors.Is(l.EntryFailure(ctx, root), context.Canceled), true)
+	assert.Equal(t, input.cancel == nil, true)
+	assert.Equal(t, l.scopes.complete, false)
 }
 
 func TestOccurrenceRoots_ProjectedSource(t *testing.T) {

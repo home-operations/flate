@@ -316,6 +316,7 @@ func newDiscoverer(config *Config) *Session {
 	return d
 }
 
+//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool) error {
 	l := d.loader
 	defer func() { l.PreferExisting = false }()
@@ -331,14 +332,21 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	var pending []sourceExpansion
 	rounds := 0
 	for prepared := true; prepared; {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		rounds++
-		l.Admit(repoRoot)
-		_, err := d.resolveEntrySources(ctx, false)
-		if err != nil {
+		if err := l.Admit(ctx, repoRoot); err != nil {
 			return err
 		}
+		_, sourceErr := d.resolveEntrySources(ctx, false)
+		if sourceErr != nil {
+			return sourceErr
+		}
 		if d.hasPins {
-			d.discardPinnedWorkingTreeFiles(repoRoot)
+			if err := d.discardPinnedWorkingTreeFiles(ctx, repoRoot); err != nil {
+				return err
+			}
 		}
 		kustomizations := d.loader.Kustomizations()
 		pending = d.enqueueExpansions(kustomizations, pending[:0])
@@ -350,7 +358,9 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		if added != 0 {
 			continue
 		}
-		l.Admit(repoRoot)
+		if err := l.Admit(ctx, repoRoot); err != nil {
+			return err
+		}
 		missing, err := d.resolveEntrySources(ctx, true)
 		if err != nil {
 			return err
@@ -395,7 +405,9 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
 	}
-	l.Admit(repoRoot)
+	if err := l.Admit(ctx, repoRoot); err != nil {
+		return false, err
+	}
 	if ks == nil {
 		return d.entryState.changed, nil
 	}
@@ -458,6 +470,7 @@ type Binding struct {
 	support               *store.ReadSet
 }
 
+//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomization, error) {
 	progressed := false
 	defer func() { d.entryState.changed = progressed }()
@@ -467,6 +480,9 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 		d.entryReceipt(ctx, admission, admission.input)
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		root, binding, err := admission.BindEntry(ctx, d.cfg.Store)
 		progressed = progressed || admission.qualification != nil && admission.qualification.changed
 		if err != nil {
@@ -683,14 +699,14 @@ func (d *Session) prepareProducer(
 	if err != nil {
 		return err
 	}
-	d.registerProducer(prepared)
-	return nil
+	return d.registerProducer(ctx, prepared)
 }
 
-func (d *Session) registerProducer(prepared *declarationPreparation) {
+func (d *Session) registerProducer(ctx context.Context, prepared *declarationPreparation) error {
 	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
-	d.loader.RegisterBuilt(
+	if err := d.loader.RegisterBuilt(
+		ctx,
 		loader.BuiltInput{
 			Root:    filepath.Join(prepared.source.LocalPath, manifest.NormalizeClaimBase(prepared.owner.Path)),
 			Owner:   owner,
@@ -699,12 +715,15 @@ func (d *Session) registerProducer(prepared *declarationPreparation) {
 			Support: &prepared.support,
 		},
 		prepared.children,
-	)
+	); err != nil {
+		return err
+	}
 	prepared.registered = true
 	d.prepared[owner] = prepared
 	if d.binding.Producer == owner {
 		d.binding.Failure = nil
 	}
+	return nil
 }
 
 func (d *Session) acceptPrepared(ctx context.Context) error {

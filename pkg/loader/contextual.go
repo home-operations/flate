@@ -123,11 +123,15 @@ func (l *Loader) projectOccurrence(
 	return projected, nil
 }
 
+//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 	inputs := map[manifest.NamedResource]bool{}
 	prediction := map[string]nsResolution{}
 	full := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		// Expanded applications MUST retain ordinary discovery of their producers.
 		for key := range l.scopes.contextual {
 			occurrence := l.scopes.contextual[key]
@@ -156,7 +160,9 @@ func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 		}
 		construction := l.construction
 		l.projectAuthored(repoRoot, prediction)
-		l.admit(repoRoot, prediction)
+		if err := l.admit(ctx, repoRoot, prediction); err != nil {
+			return err
+		}
 		if !needsInputs && l.construction == construction {
 			return nil
 		}

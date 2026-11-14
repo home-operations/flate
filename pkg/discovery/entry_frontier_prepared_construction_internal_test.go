@@ -273,7 +273,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 		}
 	}
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
-	d.loader.Admit(f.cfg.Input.LocalPath)
+	assert.NoError(t, d.loader.Admit(t.Context(), f.cfg.Input.LocalPath))
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
 	assert.NoError(t, d.acceptPrepared(t.Context()))
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)

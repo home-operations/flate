@@ -39,7 +39,7 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, name := range []string{"target", "missing", "configuration"} {
 		assert.FatalIf(
 			t,

@@ -78,7 +78,7 @@ func TestDiscovery_FixturePinnedConsumerReplacement(t *testing.T) {
 			l.SourceRoot = fixture.Repo
 			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "apps", "broken"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(fixture.Repo)
+			assert.NoError(t, l.Admit(t.Context(), fixture.Repo))
 			held := l.EntryFailure(t.Context(), fixture.Repo)
 			assert.FatalIf(t, !errors.Is(held, manifest.ErrInput), "expected held consumer decode error, got %v", held)
 			st := store.New()

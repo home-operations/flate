@@ -78,6 +78,7 @@ func BenchmarkOnArrival_Data(b *testing.B) {
 func BenchmarkComplete_Assessment(b *testing.B) {
 	for _, unresolved := range []bool{false, true} {
 		b.Run(fmt.Sprintf("Unresolved=%v", unresolved), func(b *testing.B) {
+			ctx := b.Context()
 			s := New(task.NewBounded(2), nil)
 			id := testutil.KustomizationID("ns", "consumer")
 			n := &node{id: id}
@@ -87,7 +88,7 @@ func BenchmarkComplete_Assessment(b *testing.B) {
 			for b.Loop() {
 				n.state = stateRunning
 				s.inFlight = 1
-				s.complete(n, Result{Assessment: a}, false)
+				s.complete(ctx, n, Result{Assessment: a}, false)
 			}
 		})
 	}

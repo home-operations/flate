@@ -284,6 +284,9 @@ func (r *renderInvocation) constructTrees(ctx context.Context) error {
 	constructionRound := 0
 	requalify := map[manifest.ClusterID]bool{}
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		if err := r.qualifyConstructionReaders(ctx, constructionRound, requalify); err != nil {
 			return err
 		}
@@ -581,8 +584,10 @@ func (r *renderInvocation) installAdmission(ctx context.Context) {
 			continue
 		}
 		r.wg.Go(func() {
-			o.completeBootstrap()
-			failure := o.prepareInvocation(ctx)
+			failure := o.completeBootstrap(ctx)
+			if failure == nil {
+				failure = o.prepareInvocation(ctx)
+			}
 			if failure == nil {
 				failure = o.finishInitialAdmission(ctx)
 			}
@@ -616,8 +621,11 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 		r.wg.Go(func() {
 			defer o.stop()
 			if o.selection.Snapshot().Output(manifest.NamedResource{}) {
-				o.completeBootstrap()
-				if failure := o.prepareInvocation(ctx); failure != nil {
+				failure := o.completeBootstrap(ctx)
+				if failure == nil {
+					failure = o.prepareInvocation(ctx)
+				}
+				if failure != nil {
 					r.results[i].Orchestrator = nil
 					r.results[i].Result = o.failureResult()
 					r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}

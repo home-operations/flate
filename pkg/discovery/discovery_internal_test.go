@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"maps"
@@ -26,6 +27,46 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
+
+func TestLoadManifests_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	var work manifest.WorkRecorder
+	d, err := Begin(t.Context(), Config{
+		Path: filepath.Join(root, "flux"), Store: st, Work: work.Scope(),
+		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			"flux/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
+				"  path: ./work\n  sourceRef: {kind: OCIRepository, name: missing}\n"))},
+			"work/kustomization.yaml": {Data: []byte("resources: []\n")},
+		}},
+	})
+	assert.NoError(t, err)
+	t.Cleanup(d.Close)
+	assert.NoError(t, constructTestSources(t.Context(), d))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	published := false
+	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Kind == manifest.KindOCIRepository && id.Name == "missing" {
+			assert.NoError(t, constructAdmissionTest(t.Context(), d.admission(), id))
+			published = true
+			cancel()
+		}
+	}, false)
+	defer unsubscribe()
+	err = d.loadManifests(ctx, root, false)
+	assert.Equal(t, published, true)
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+	assert.Equal(t, err, ctx.Err())
+	var attempts uint64
+	for _, record := range work.Scope().Snapshot(0) {
+		if record.Key.Source.Kind == manifest.KindOCIRepository && record.Key.Source.Name == "missing" {
+			attempts += record.Counts.Attempts
+		}
+	}
+	assert.Equal(t, attempts, uint64(0))
+}
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 	t.Parallel()
@@ -236,7 +277,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t *testing.
 		_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	d.discardPinnedWorkingTreeFiles(root)
+	assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), root))
 	owner := testutil.KustomizationID("control", "owner")
 	{
 		_, ok := d.loader.Index.Lookup(owner)
@@ -318,7 +359,18 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesCase(
 			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "pinned"},
 		)
 	}
-	d.discardPinnedWorkingTreeFiles(root)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	assert.Equal(t, d.discardPinnedWorkingTreeFiles(ctx, root), ctx.Err())
+	for _, obj := range []manifest.BaseManifest{repository, other, ks, cm} {
+		assert.Equal(t, st.GetObject(obj.Named()), obj)
+		record, indexed := d.loader.Index.Lookup(obj.Named())
+		assert.Equal(t, indexed, true)
+		assert.Equal(t, record.Path, filepath.Join(root, obj.Named().Name+".yaml"))
+		assert.Equal(t, record.File, obj.Named().Name+".yaml")
+	}
+
+	assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), root))
 	for _, repo := range []*manifest.GitRepository{repository, other} {
 		id := repo.Named()
 		status, ok := st.GetStatus(id)

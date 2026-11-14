@@ -223,6 +223,9 @@ func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
 		return false, o.entryFailure
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		inputs := o.admission.EntryProducers()
 		root, binding, err := o.admission.BindEntry(ctx, o.store)
 		if err != nil {

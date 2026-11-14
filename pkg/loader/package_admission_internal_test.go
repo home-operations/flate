@@ -235,7 +235,7 @@ func TestPackages_AdmissionRetiresWorkingTreeEvidence(t *testing.T) {
 			})
 			_, err = l.Load(t.Context(), filepath.Join(pin, "apps"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			packages, err = l.Packages(t.Context())
 			assert.NoError(t, err)
 			for _, pkg := range packages {
@@ -443,7 +443,7 @@ func TestEntryRoots_DeclarationCoordinates(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = l.Packages(t.Context())
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	roots := l.EntryRoots(nil, nil)
 	assert.FatalIf(t, len(roots) != 2, "entry roots=%+v", roots)
 	assert.Equal(t, roots[0].Identity, roots[1].Identity)

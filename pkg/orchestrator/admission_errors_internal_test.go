@@ -115,7 +115,7 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				// Exact hydration requires a frozen census without prepared entry payloads.
 				assert.NoError(t, o.discover(t.Context()))
 				assert.NoError(t, o.loader.FinalizeIndex(t.Context(), root, true))
-				o.completeBootstrap()
+				assert.NoError(t, o.completeBootstrap(t.Context()))
 				assert.NoError(t, o.prepareInvocation(t.Context()))
 				assert.NoError(t, o.installAdmission(t.Context()))
 				dependency := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: "input"}

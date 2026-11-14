@@ -124,25 +124,30 @@ type BuiltInput struct {
 	Support *store.ReadSet
 }
 
-// RegisterBuilt replaces package resource evidence with authoritative producer-bound documents.
-// Documents MUST be sanitized immutable build output.
+// RegisterBuilt requires sanitized immutable build output.
+//
+//nolint:funlen,gocognit // Support MUST retire in publication order even when admission is canceled.
 func (l *Loader) RegisterBuilt(
+	ctx context.Context,
 	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
 	docs []store.Child,
-) {
+) error {
 	retained := false
 	defer func() {
 		if !retained {
 			l.Store.Retire(input.Support)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
 	if l.frozen || input.Support == nil || !input.Support.Valid() {
-		return
+		return nil
 	}
 	root := input.Root
-	sourceRoot, admitted := l.admitBuiltRoot(root)
-	if !admitted {
-		return
+	sourceRoot, admitted, err := l.admitBuiltRoot(ctx, root)
+	if err != nil || !admitted {
+		return err
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	selected := map[string]bool{}
@@ -190,11 +195,12 @@ func (l *Loader) RegisterBuilt(
 	}
 	l.publishBuiltRecords(&input, docs, records, authored)
 	l.scopes.complete = false
-	l.admit(sourceRoot, nil)
+	err = l.admit(ctx, sourceRoot, nil)
 	retained = input.Support.Valid()
 	if previous != nil && previous.Support != input.Support {
 		l.Store.Retire(previous.Support)
 	}
+	return err
 }
 
 func (l *Loader) builtRecord(
@@ -584,18 +590,21 @@ func (l *Loader) publishBuiltRecords(
 	}
 }
 
-func (l *Loader) admitBuiltRoot(root string) (string, bool) {
+//nolint:gocritic // Results distinguish the source root, rejection, and cancellation error.
+func (l *Loader) admitBuiltRoot(ctx context.Context, root string) (string, bool, error) {
 	if l.documents.compact {
 		l.construction++
 	}
 	l.ensureScopes()
 	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
-	l.Admit(sourceRoot)
+	if err := l.Admit(ctx, sourceRoot); err != nil {
+		return "", false, err
+	}
 	packageFile := l.documents.read(root).file
 	if packageFile != "" && l.documents.cache[packageFile].eligible == selection.RootInactive {
-		return "", false
+		return "", false, nil
 	}
-	return sourceRoot, true
+	return sourceRoot, true, nil
 }
 
 func (l *Loader) canCompareBuiltInputs(same bool, raw *manifest.DiscoveryRecord) bool {

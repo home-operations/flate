@@ -438,7 +438,7 @@ func TestEntryRoots_NativeOperand(t *testing.T) {
 			configureSelection(t, l, selection.Request{Changed: true})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			id := manifest.NamedResource{
 				Group:     manifest.FluxOperatorDomain,
 				Kind:      manifest.KindResourceSet,

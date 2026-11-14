@@ -88,7 +88,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 		scope := l.scopeSource(new(state))
 		l.scopes.sources[scope].ready = true
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	projected := manifest.NamedResource{
 		Group:     "source.extensions.fluxcd.io",
 		Kind:      "ArtifactGenerator",

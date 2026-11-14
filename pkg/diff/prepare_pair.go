@@ -3,6 +3,7 @@ package diff
 import (
 	"cmp"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -77,6 +78,7 @@ func prepare(left, right []Doc, opts *Options) prepared {
 	for i, d := range normalizedRight {
 		add(SideCurrent, d, right[i], i)
 	}
+	pairGeneratorRenames(idx)
 	out := make([]pair, 0, len(idx))
 	for _, p := range idx {
 		out = append(out, *p)
@@ -96,3 +98,64 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		rightCopied: rightCopied,
 	}
 }
+
+// pairGeneratorRenames joins the two sides of an object a kustomize generator renamed:
+// its name carries a hash of its data, so a data change otherwise reports a removal and an addition.
+// An ambiguous base name stays unpaired.
+func pairGeneratorRenames(idx map[pairKey]*pair) {
+	type candidates struct{ removed, added []pairKey }
+	var bases map[pairKey]*candidates
+	for k, p := range idx {
+		if (p.Old == nil) == (p.New == nil) {
+			continue
+		}
+		name, ok := generatorBaseName(k.resource.Name)
+		if !ok {
+			continue
+		}
+		base := k
+		base.resource.Name = name
+		if bases == nil {
+			bases = make(map[pairKey]*candidates)
+		}
+		c := bases[base]
+		if c == nil {
+			c = &candidates{}
+			bases[base] = c
+		}
+		if p.New == nil {
+			c.removed = append(c.removed, k)
+		} else {
+			c.added = append(c.added, k)
+		}
+	}
+	for _, c := range bases {
+		if len(c.removed) != 1 || len(c.added) != 1 {
+			continue
+		}
+		removed, added := idx[c.removed[0]], idx[c.added[0]]
+		added.Old, added.OldChart, added.OldPos = removed.Old, removed.OldChart, removed.OldPos
+		added.Output[0] = removed.Output[0]
+		delete(idx, c.removed[0])
+	}
+}
+
+// generatorBaseName strips the suffix kustomize api v0.21.2 hasher.encode appends:
+// ten characters of a SHA-256 hex digest with 0, 1, 3, a and e remapped to g, h, k, m and t.
+func generatorBaseName(name string) (string, bool) {
+	cut := len(name) - generatorHashLength - 1
+	if cut < 1 || name[cut] != '-' {
+		return "", false
+	}
+	for _, r := range name[cut+1:] {
+		if !strings.ContainsRune(generatorHashAlphabet, r) {
+			return "", false
+		}
+	}
+	return name[:cut], true
+}
+
+const (
+	generatorHashLength   = 10
+	generatorHashAlphabet = "2456789bcdfghkmt"
+)

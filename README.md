@@ -87,6 +87,10 @@ A path uses dots between field names.
 The default list of `--strip-field` is empty.
 The first use of each flag replaces the default list of that flag.
 
+A Kustomize generator appends a hash of the data to a ConfigMap or Secret name.
+When only that hash differs, `diff` compares the object with its previous version instead of reporting a removal and an addition.
+The change shows the old and new names under `metadata.name` and uses the current name.
+
 `diff ks`, `diff hr`, and `diff all` accept `-o json`.
 If one cluster is present on both sides, they write one object with `changes` and `suppressed` arrays.
 The object uses an indent of 2 spaces.

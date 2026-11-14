@@ -147,3 +147,69 @@ func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
 	assert.Equal(t, entry.Old["data"].(map[string]any)["k"], any("before"))
 	assert.Equal(t, entry.New["data"].(map[string]any)["k"], any("after"))
 }
+
+func TestPair_GeneratorRenamePairsBothSides(t *testing.T) {
+	t.Parallel()
+	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "media"), Path: "./media"}
+	removed := manifest.NamedResource{Kind: "ConfigMap", Namespace: "media", Name: "plex-values-7c8m2d9f5b"}
+	added := manifest.NamedResource{Kind: "ConfigMap", Namespace: "media", Name: "plex-values-k4h2g6t8bm"}
+
+	pairs := prepare(
+		[]Doc{preparedCMDoc(&parent, removed, "before", "")},
+		[]Doc{preparedCMDoc(&parent, added, "after", "")},
+		&Options{},
+	).Pairs
+
+	assert.FatalIf(t, len(pairs) != 1, "expected one paired resource, got %d", len(pairs))
+	entry := pairs[0]
+	assert.Equal(t, entry.status(), "changed")
+	assert.Equal(t, entry.Resource, added)
+	assert.Equal(t, entry.Output, [2]manifest.NamedResource{removed, added})
+	assert.Equal(t, entry.Old["data"].(map[string]any)["k"], any("before"))
+	assert.Equal(t, entry.New["data"].(map[string]any)["k"], any("after"))
+}
+
+func TestPair_GeneratorRenameNeedsOneCandidatePerSide(t *testing.T) {
+	t.Parallel()
+	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "media"), Path: "./media"}
+	doc := func(kind, name string) Doc {
+		d := preparedCMDoc(&parent, manifest.NamedResource{Namespace: "media", Name: name}, name, "")
+		d.Manifest["kind"] = kind
+		return d
+	}
+	tests := []struct {
+		name        string
+		left, right []Doc
+		want        []string
+	}{
+		{
+			name:  "two removed candidates",
+			left:  []Doc{doc("ConfigMap", "plex-values-7c8m2d9f5b"), doc("ConfigMap", "plex-values-9d5f2c8b7m")},
+			right: []Doc{doc("ConfigMap", "plex-values-k4h2g6t8bm")},
+			want:  []string{"removed", "removed", "added"},
+		},
+		{
+			name:  "suffix outside the generator alphabet",
+			left:  []Doc{doc("ConfigMap", "release-2026110100")},
+			right: []Doc{doc("ConfigMap", "release-2026110200")},
+			want:  []string{"removed", "added"},
+		},
+		{
+			name:  "different kinds",
+			left:  []Doc{doc("ConfigMap", "plex-values-7c8m2d9f5b")},
+			right: []Doc{doc("Secret", "plex-values-k4h2g6t8bm")},
+			want:  []string{"removed", "added"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pairs := prepare(tt.left, tt.right, &Options{}).Pairs
+			got := make([]string, 0, len(pairs))
+			for i := range pairs {
+				got = append(got, pairs[i].status())
+			}
+			assert.Diff(t, got, tt.want)
+		})
+	}
+}

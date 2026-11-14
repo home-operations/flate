@@ -14,9 +14,7 @@ import (
 
 func TestPreviousRender_SourceBinding(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(
@@ -67,14 +65,18 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				observed := input
 				observed.Work = work.Scope().RenderWork()
 				_, complete := renderer.PreviousRender(t.Context(), hr, nil, observed)
-				assert.FatalIf(t, !complete, "%s", "matching source binding missed")
+				assert.Equal(t, complete, persistent)
 				var lookup manifest.WorkCounts
 				for _, row := range work.Scope().Snapshot(0) {
 					if row.Key.Phase == manifest.WorkCache {
 						lookup.Add(&row.Counts)
 					}
 				}
-				assert.Equal(t, lookup, manifest.WorkCounts{Attempts: 1, Completed: 1})
+				wantLookup := manifest.WorkCounts{}
+				if persistent {
+					wantLookup = manifest.WorkCounts{Attempts: 1, Completed: 1}
+				}
+				assert.Equal(t, lookup, wantLookup)
 			}
 			changed := hr.Clone()
 			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)

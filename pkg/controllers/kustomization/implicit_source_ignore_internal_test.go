@@ -87,6 +87,7 @@ func TestPreviousRender_ImplicitSourceIgnore(t *testing.T) {
 
 func testPreviousRenderImplicitSourceIgnore(t *testing.T, replacement string) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	var first []byte
 	for run := range 2 {
 		fixture, st, root := newControllerWithFixture(t)
@@ -119,13 +120,8 @@ func testPreviousRenderImplicitSourceIgnore(t *testing.T, replacement string) {
 		footprint := maps.Collect(st.ChildFootprint(owner.Named(), emission.Children, nil))
 		for range 2 {
 			history := c.PreviousRender(t.Context(), owner, schedule.Result{})
-			assert.ErrorIf(
-				t,
-				!history.Complete,
-				"unchanged history incomplete: %s",
-				sourcecache.RenderPersistenceDisabledReason(),
-			)
-			assert.Equal(t, history.Records != nil, true)
+			assert.Equal(t, history.Complete, persistent)
+			assert.Equal(t, history.Records != nil, persistent)
 			if history.Records != nil {
 				assert.Diff(t, maps.Collect(history.Records), footprint)
 			}

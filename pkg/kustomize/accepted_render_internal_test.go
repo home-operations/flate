@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"oras.land/oras-go/v2/errdef"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -30,9 +32,7 @@ import (
 
 func TestPreviousRender_SourceBinding(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
@@ -77,7 +77,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			}))
 			{
 				_, complete := previousHistory(t.Context(), renderer, &req, owner)
-				assert.FatalIf(t, !complete, "%s", "matching source binding missed")
+				assert.Equal(t, complete, persistent)
 			}
 			changed := req
 			source, spec := *req.Source, *req.Spec
@@ -120,9 +120,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 
 func TestRecordRender_AcceptedLimit(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	renderer := newTestTreeCache(t, t.TempDir())
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
@@ -141,6 +139,11 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	generation, _, _, err := renderer.owner.Blob(t.Context(),
 		sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	if !persistent {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, generation == nil, true)
+		return
+	}
 	assert.NoError(t, err)
 	stored, valid, err := (*Preparation)(nil).readFrame(t.Context(), generation)
 	assert.NoError(t, err)
@@ -205,9 +208,7 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 
 func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("${DEP}")},
@@ -241,16 +242,21 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	}))
 	renderer = newTestTreeCache(t, cacheDir)
 	_, pending, found := renderer.PreviousRender(t.Context(), req)
-	assert.Equal(t, found, true)
+	assert.Equal(t, found, persistent)
+	if !persistent {
+		assert.Equal(t, pending == nil, true)
+		_, pending, err = Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+		assert.NoError(t, err)
+	}
 	before := pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		before.stored == nil || before.lookup == "",
+		before.stored == nil || persistent && before.lookup == "",
 		"%s",
 		"warm receipt lacks publication memos",
 	)
 	_, complete := before.stored.History(spec.Named(), initialContent)
-	assert.Equal(t, complete, true)
+	assert.Equal(t, complete, persistent)
 	beforeWire, err := testEncodeFrame(t, &before.header, before.output)
 	assert.NoError(t, err)
 	_, _, before.lookup, err = renderer.owner.Blob(
@@ -262,7 +268,12 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
-	assert.NoError(t, err)
+	if persistent {
+		assert.NoError(t, err)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, before.lookup, "")
+	}
 	pending = manifest.NewRenderReceipt(before, equalRenderFrame)
 	wire, output := bytes.Clone(beforeWire), bytes.Clone(before.output)
 	projected := req
@@ -282,8 +293,8 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
 	{
 		records, complete := history(&projected)
-		assert.FatalIf(t, !complete ||
-			records == nil, "%s", "final projected binding missed accepted history")
+		assert.Equal(t, complete, persistent)
+		assert.Equal(t, records != nil, persistent)
 	}
 	{
 		_, complete := history(&req)
@@ -347,9 +358,7 @@ func (f *preparationReadFS) Open(name string) (fs.File, error) {
 
 func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires clean VCS-stamped accepted render persistence")
-	}
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("before")},
@@ -381,7 +390,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	replay, _, err := testutil.RenderMaps(Render(t.Context(), fresh, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	assert.Diff(t, replay, docs)
-	assert.FatalIf(t, input.prepared.Load() != 0, "validated replay prepared inputs %d times", input.prepared.Load())
+	assert.Equal(t, input.prepared.Load(), int64(0))
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("after"))
 	changed, _, err := testutil.RenderMaps(Render(t.Context(), fresh, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
@@ -395,9 +404,6 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 
 func TestRecordRender_AcceptanceRequired(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires identified accepted render persistence")
-	}
 	for _, state := range []string{"unemitted", "failed", "stale", "incomplete", "missing fingerprint", "accepted"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
@@ -410,6 +416,7 @@ func TestRecordRender_AcceptanceRequired(t *testing.T) {
 func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("rendered"),
@@ -459,5 +466,5 @@ func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 	}
 	assert.NoError(t, cache.RecordRender(t.Context(), acceptanceForEmission(demoSpec.Named(), emission)))
 	_, complete := previousHistory(t.Context(), cache, &request, demoSpec.Named())
-	assert.Equal(t, complete, (*testCaseInput) == "accepted")
+	assert.Equal(t, complete, persistent && (*testCaseInput) == "accepted")
 }

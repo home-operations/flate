@@ -381,9 +381,9 @@ func TestBlob_RevalidationFailures(t *testing.T) {
 
 func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	reason := RenderPersistenceDisabledReason()
+	persistent := reason == ""
+	t.Logf("render persistence reason=%q backing=disk", reason)
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, t.TempDir(), New)
 		key := BlobKey{Content: "render-metadata", Render: RenderAccepted}
@@ -394,6 +394,24 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 			producer([]byte("first"), &ocispec.Descriptor{Annotations: map[string]string{"generation": "first"}}),
 		)
 		assert.NoError(t, err)
+
+		if !persistent {
+			_, known := c.entries.Load(id)
+			assert.Equal(t, known, false)
+			assert.Equal(t, id, key.Content.(string))
+			var recording manifest.WorkRecorder
+			accounting := manifest.AcquisitionWork{Scope: recording.Scope()}
+			metadata, metadataErr := c.RenderMetadata(t.Context(), key.Content.(string), id, &accounting)
+			assert.NoError(t, metadataErr)
+			assert.Equal(t, metadata.Enabled, false)
+			assert.Equal(t, metadata.Identity, "")
+			assert.Equal(t, len(metadata.Descriptor.Annotations), 0)
+			assert.Equal(t, accounting.Lookup(id).Counts, manifest.WorkCounts{})
+			generation, _, _, lookupErr := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
+			assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
+			assert.Equal(t, generation == nil, true)
+			return
+		}
 
 		previous, _ := c.entries.Load(id)
 		e := previous.(*entry)
@@ -479,9 +497,6 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 
 func TestRenderMetadata_CurrentDirectory(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	for _, name := range []string{"removed payload", "nonregular payload", "removed parent", "replaced parent empty", "replaced parent present", "escaping parent", "canceled", "closed"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

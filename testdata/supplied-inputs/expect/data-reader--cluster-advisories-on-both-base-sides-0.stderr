@@ -1,4 +1,5 @@
 
-  ⚠ warnings (1)
-    [SuppliedPrecedence] repository data takes precedence over supplied data
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [SuppliedPrecedence] repository data takes precedence over supplied data
       ConfigMap/flux-system/settings: OVERRIDE (@@inputs@@/data-reader--cluster-advisories-on-both-base-sides/supply-0.yaml)

@@ -156,9 +156,6 @@ func (b *historyLogBuffer) Bytes() []byte {
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_AcceptedOrphanHelmChildRoot(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	var logs historyLogBuffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -187,6 +184,7 @@ func (f cancelProbeFS) Open(name string) (fs.File, error) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
 	o, err := newTestOrchestrator(
@@ -210,8 +208,8 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
 	assert.NoError(t, o.completeBootstrap(t.Context()))
-	// Clean builds exercise lookup cancellation; dirty builds must leave the probe unopened.
-	if !o.cache.CanPersistRenders() {
+	assert.Equal(t, o.cache.CanPersistRenders(), persistent)
+	if !persistent {
 		o.configureControllers()
 		reads := &store.ReadSet{}
 		reads.Init(o.store, owner, nil)
@@ -241,9 +239,6 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBuildChangeFilter_PreviousRenderNarrowing(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	for _, mode := range []string{"literal", "substitute_from", "helm_values_from"} {
 		t.Run(mode, func(t *testing.T) {
 			testBuildChangeFilterPreviousRenderNarrowingCase(
@@ -269,11 +264,9 @@ type testHistoryProspectiveReaderCaseInputs struct {
 
 func testHistoryProspectiveReaderCase(t *testing.T, testCaseInput testHistoryProspectiveReaderCaseInputs) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	if *testCaseInput.history {
-		if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-			t.Skip(reason)
-		}
 		reopened := cachetest.New(t, (*testCaseInput.cacheDir), sourcecache.New)
 		producer := manifest.NamedResource{
 			Group:     manifest.FluxOperatorDomain,
@@ -289,13 +282,7 @@ func testHistoryProspectiveReaderCase(t *testing.T, testCaseInput testHistoryPro
 		)
 		assert.NoError(t, err)
 		assert.NoError(t, reopened.Close())
-		assert.FatalIf(
-			t,
-			len(owners[producer]) == 0,
-			"reopened history owners = %v, want ResourceSet %s",
-			owners,
-			producer,
-		)
+		assert.Equal(t, len(owners[producer]) != 0, persistent)
 	}
 	var previous map[string]any
 	for range 2 {
@@ -318,11 +305,13 @@ type testBootstrapAcceptedOrphanHelmChildRootCaseInputs struct {
 	mode *string
 }
 
+//nolint:gocognit // Orphan recovery MUST retain declaration, selection, render, and probe-lifetime assertions in both modes.
 func testBootstrapAcceptedOrphanHelmChildRootCase(
 	t *testing.T,
 	testCaseInput testBootstrapAcceptedOrphanHelmChildRootCaseInputs,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -490,19 +479,14 @@ spec:
 	}
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.lookupHistory(t.Context()))
-	assert.Equal(t, len(fresh.historyOwners[owner]) != 0, true)
+	assert.Equal(t, len(fresh.historyOwners[owner]) != 0, persistent)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
-	assert.FatalIf(
-		t,
-		fresh.store.GetDeclaration(owner) == nil,
-		"normal admission omitted the declaration of %s",
-		owner,
-	)
+	assert.Equal(t, fresh.store.GetDeclaration(owner) != nil, persistent || (*testCaseInput.mode) == "substitute_from")
 	if (*testCaseInput.mode) == "substitute_from" {
 		declaration := fresh.store.GetDeclaration(owner).(*manifest.Kustomization)
 		assert.Equal(t, len(declaration.Patches), 1)
 		assert.Equal(t, len(declaration.PostBuild.SubstituteFrom), 1)
-	} else {
+	} else if persistent {
 		declaration := fresh.store.GetDeclaration(owner).(*manifest.HelmRelease)
 		assert.Equal(t, declaration.Values["marker"], any("keep"))
 		if (*testCaseInput.mode) == "values_from" {
@@ -511,14 +495,18 @@ spec:
 	}
 	if (*testCaseInput.mode) != "inline" {
 		supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
-		assert.Equal(t, fresh.store.GetObject(supplied) != nil, true)
+		assert.Equal(
+			t,
+			fresh.store.GetObject(supplied) != nil,
+			persistent || (*testCaseInput.mode) == "substitute_from",
+		)
 	}
 	assert.NoError(t, fresh.completeBootstrap(t.Context()))
 	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	assert.NoError(t, fresh.installAdmission(t.Context()))
 	assert.Equal(t, fresh.admissionPreparation == nil, true)
-	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
-	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), persistent)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), persistent)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
@@ -528,17 +516,27 @@ spec:
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]
-	assert.FatalIf(t, len(docs) != 1, "changed generated child output: %v", docs)
-	assert.Equal(t, docs[0]["data"].(map[string]any)["value"], "after")
+	wantDocuments := 0
+	if persistent {
+		wantDocuments = 1
+	}
+	assert.Equal(t, len(docs), wantDocuments)
+	if len(docs) != 0 {
+		assert.Equal(t, docs[0]["data"].(map[string]any)["value"], "after")
+	}
 	var renders [3]int
 	testBootstrapAcceptedOrphanHelmChildRootCaseSegment(t, &testCaseInput, &unrelated, &renders)
-	assert.Equal(t, renders, [3]int{0, 1, 0})
+	wantRenders := [3]int{}
+	if persistent {
+		wantRenders = [3]int{0, 1, 0}
+	}
+	assert.Equal(t, renders, wantRenders)
 	if (*testCaseInput.mode) == "substitute_from" {
 		declaration := fresh.store.GetObject(owner).(*manifest.Kustomization).Clone()
 		declaration.Path = "./missing-root"
 		fresh.store.AddObject(declaration)
 	} else {
-		declaration := fresh.store.GetObject(owner).(*manifest.HelmRelease).Clone()
+		declaration := warm.store.GetObject(owner).(*manifest.HelmRelease).Clone()
 		declaration.Chart.Name = "./missing-chart"
 		fresh.store.AddObject(declaration)
 	}
@@ -552,6 +550,7 @@ func testBuildChangeFilterPreviousRenderNarrowingCase(
 	testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml, consumer.yaml]\n")
@@ -730,13 +729,16 @@ spec:
 		defer preparedHistory700.Assessment.Close()
 	}
 	records, narrow = preparedHistory700.Records, preparedHistory700.Complete
-	assert.Equal(t, records != nil, true)
-	assert.Equal(t, narrow, true)
-	if (*testCaseInput) == "helm_values_from" {
+	assert.Equal(t, records != nil, persistent)
+	assert.Equal(t, narrow, persistent)
+	switch {
+	case !persistent:
+		assert.Equal(t, records == nil, true)
+	case (*testCaseInput) == "helm_values_from":
 		for range records {
 			t.Fatal("accepted empty history gained a child")
 		}
-	} else {
+	default:
 		record, found := maps.Collect(records)[manifest.NamedResource{
 			Kind: manifest.KindConfigMap, Name: "target", Namespace: "apps",
 		}]

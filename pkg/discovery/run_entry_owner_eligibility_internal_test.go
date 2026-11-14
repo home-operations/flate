@@ -38,6 +38,7 @@ func TestRun_EntryOwnerEligibility(t *testing.T) {
 
 func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	const root = "/virtual/transformed-entry-owner"
 	input := fstest.MapFS{
 		"app/kustomization.yaml": {
@@ -49,7 +50,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	}
 	st := store.New()
 	cacheDir := t.TempDir()
-	testReceiptTreesResult1 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult1 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	source := &store.SourceArtifact{LocalPath: root, FS: input}
 	cfg := Config{Input: source, Path: root + "/app", Store: st, Trees: trees}
@@ -74,11 +75,14 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 		Productions:  []manifest.Production{{Owner: producer.Named(), Source: result.Binding.Source}},
 		ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"app"}},
 	}}
-	assert.Diff(t, packageHistory(t, trees, &req, producer.Named()), want)
+	if !persistent {
+		want = nil
+	}
+	assert.Diff(t, packageHistory(t, trees, &req, persistent), want)
 	closeCache()
-	testReceiptTreesResult2 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult2 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache = testReceiptTreesResult2.trees, testReceiptTreesResult2.close
-	assert.Diff(t, packageHistory(t, trees, &req, producer.Named()), want)
+	assert.Diff(t, packageHistory(t, trees, &req, persistent), want)
 	assert.FatalIf(
 		t,
 		previousPackageHistory(t, trees, &req).Owner == owner,
@@ -90,6 +94,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 
 func TestPrepareEntry_BuildFailurePreservesRawErrors(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	for _, failure := range []string{"build", "document"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
@@ -182,7 +187,7 @@ spec:
 			)
 			closeCache()
 			assert.NoError(t, cacheOwner.Close())
-			testReceiptTreesResult3 := testReceiptTrees(t, cacheDir)
+			testReceiptTreesResult3 := testReceiptTrees(t, cacheDir, persistent)
 			trees, closeCache = testReceiptTreesResult3.trees, testReceiptTreesResult3.close
 			req := preparedRequest(t, &d.cfg, owner, source)
 			assert.FatalIf(
@@ -208,11 +213,15 @@ spec:
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
 			assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
 			assert.NoError(t, d.acceptPrepared(t.Context()))
-			assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 1)
+			wantRecords := 0
+			if persistent {
+				wantRecords = 1
+			}
+			assert.Equal(t, len(packageHistory(t, trees, &req, persistent)), wantRecords)
 			closeCache()
-			testReceiptTreesResult4 := testReceiptTrees(t, cacheDir)
+			testReceiptTreesResult4 := testReceiptTrees(t, cacheDir, persistent)
 			trees, closeCache = testReceiptTreesResult4.trees, testReceiptTreesResult4.close
-			assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 1)
+			assert.Equal(t, len(packageHistory(t, trees, &req, persistent)), wantRecords)
 			closeCache()
 		})
 	}
@@ -220,11 +229,12 @@ spec:
 
 func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: accepted}\n")
 	cacheDir := t.TempDir()
-	testReceiptTreesResult5 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult5 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache := testReceiptTreesResult5.trees, testReceiptTreesResult5.close
 	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
 	st := store.New()
@@ -239,11 +249,16 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	assert.NoError(t, os.RemoveAll(cacheDir))
 	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
 	err = d.acceptPrepared(t.Context())
-	assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) ||
-		!strings.Contains(
-			err.Error(),
-			`discovery entry "app" publish`,
-		), "publication failure lost classification, cause or entry context: %v", err)
+	if persistent {
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) ||
+			!strings.Contains(
+				err.Error(),
+				`discovery entry "app" publish`,
+			), "publication failure lost classification, cause or entry context: %v", err)
+	} else {
+		assert.NoError(t, err)
+	}
+
 	assert.FatalIf(
 		t,
 		len(d.loader.PromotionDocuments(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "accepted"})) != 1,
@@ -251,7 +266,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 		"publication fault preceded successful rendering and registration",
 	)
 	closeCache()
-	testReceiptTreesResult6 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult6 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache = testReceiptTreesResult6.trees, testReceiptTreesResult6.close
 	assert.FatalIf(
 		t,
@@ -344,10 +359,11 @@ func TestRun_BuiltPackages(t *testing.T) {
 
 func TestRun_EmptyEntryHistory(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	const root = "/virtual/empty-entry"
 	input := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
 	cacheDir := t.TempDir()
-	testReceiptTreesResult7 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult7 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache := testReceiptTreesResult7.trees, testReceiptTreesResult7.close
 	st := store.New()
 	source := &store.SourceArtifact{LocalPath: root, FS: input}
@@ -355,11 +371,11 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	assert.NoError(t, err)
 	owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
 	req := preparedRequest(t, &Config{}, owner, source)
-	assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 0)
+	assert.Equal(t, len(packageHistory(t, trees, &req, persistent)), 0)
 	closeCache()
-	testReceiptTreesResult8 := testReceiptTrees(t, cacheDir)
+	testReceiptTreesResult8 := testReceiptTrees(t, cacheDir, persistent)
 	trees, closeCache = testReceiptTreesResult8.trees, testReceiptTreesResult8.close
-	assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 0)
+	assert.Equal(t, len(packageHistory(t, trees, &req, persistent)), 0)
 	closeCache()
 }
 

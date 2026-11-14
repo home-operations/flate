@@ -10,8 +10,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testfixture"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
+
+//nolint:paralleltest // CLI invocations change process logging and environment.
+func TestCase_PersistenceExpectations(t *testing.T) {
+	t.Logf("render persistence: backing=disk disabled reason=%q", sourcecache.RenderPersistenceDisabledReason())
+	for _, tc := range []struct{ scenario, name string }{
+		{"entry-root", "invalid-log-level"},
+		{"entry-root", "literal-app-cached"},
+		{"dependency-readiness", "ready-expr--emitted-indexed-false"},
+		{"chart-inputs", "helm-source-root-values-files-changed-only-template-strict-delete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := Open(t, tc.scenario, tc.name)
+			want := fixture.Want(t)
+			for range 2 {
+				assert.Diff(t, fixture.Run(t), want)
+			}
+		})
+	}
+}
 
 func TestConcurrencyDefault_ExpectationToken(t *testing.T) {
 	t.Parallel()

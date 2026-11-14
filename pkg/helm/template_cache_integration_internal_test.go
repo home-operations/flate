@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"oras.land/oras-go/v2/errdef"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
 
@@ -190,9 +192,7 @@ func testTemplateCacheTemplateIntegrationCase(
 	}
 	t.Run("persisted replay", func(t *testing.T) {
 		t.Parallel()
-		if !renderPersistenceEligible(t) {
-			t.Skipf("requires identified test binary: %s", cache.RenderPersistenceDisabledReason())
-		}
+		persistent := cache.RenderPersistenceDisabledReason() == ""
 		loaded, err := loadDecodedChart(t.Context(), cli, newHR(), sources)
 		assert.NoError(t, err)
 		loaded.values, loaded.valuesErr = cli.observeValuesFiles(
@@ -219,15 +219,19 @@ func testTemplateCacheTemplateIntegrationCase(
 			assert.NoError(t, splitDocsErr)
 		}
 		r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-		assert.NoError(t, err)
-		var record renderRecord
-		assert.NoError(t, readTestRecord(t.Context(), r, &record))
-
-		raw, err := testutil.DecodeRender(record.Output)
-		assert.NoError(t, err)
-		wantRaw, err := testutil.SplitDocs([]byte(testCaseInput.input))
-		assert.NoError(t, err)
-		assert.Diff(t, raw, wantRaw)
+		wantRaw, splitErr := testutil.SplitDocs([]byte(testCaseInput.input))
+		assert.NoError(t, splitErr)
+		record := renderRecord{Output: encodedRender(t, wantRaw), Analysis: loaded.analyze()}
+		if persistent {
+			assert.NoError(t, err)
+			assert.NoError(t, readTestRecord(t.Context(), r, &record))
+			raw, decodeErr := testutil.DecodeRender(record.Output)
+			assert.NoError(t, decodeErr)
+			assert.Diff(t, raw, wantRaw)
+		} else {
+			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+			assert.Equal(t, r == nil, true)
+		}
 		values := map[string]any{"fail": true}
 		key.Content = computeTemplateKey(&loaded, values, Options{}, newHR())
 		_, _, _, err = owner.Blob(
@@ -249,7 +253,18 @@ func testTemplateCacheTemplateIntegrationCase(
 				RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 			),
 		)
-		if testCaseInput.invalid {
+		switch {
+		case !persistent:
+			assert.Equal(t, out == nil, true)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), false)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			assert.FatalIf(
+				t,
+				err == nil || !strings.Contains(err.Error(), "cache miss action"),
+				"disabled replay error: %v",
+				err,
+			)
+		case testCaseInput.invalid:
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || err.Error() != firstErr.Error() || out != nil,
@@ -258,7 +273,7 @@ func testTemplateCacheTemplateIntegrationCase(
 				err,
 				firstErr,
 			)
-		} else {
+		default:
 			assert.NoError(t, err)
 			assert.Diff(t, out, first)
 		}
@@ -393,6 +408,7 @@ func testTemplateCacheTemplateIntegrationCase2(
 
 func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	dir, root := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -419,7 +435,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs), 0)
-		if renderPersistenceEligible(t) {
+		{
 			loaded, err := cli.describeChart(t.Context(), newHR(), cliSources.chartInput(newHR()))
 			assert.NoError(t, err)
 			loaded.values, loaded.valuesErr = cli.observeValuesFiles(
@@ -432,6 +448,11 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 				Render:  cache.RenderAccepted,
 			}
 			r, _, _, err := cli.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
+			if !persistent {
+				assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+				assert.Equal(t, r == nil, true)
+				continue
+			}
 			assert.NoError(t, err)
 			var record renderRecord
 			assert.NoError(t, readTestRecord(t.Context(), r, &record))
@@ -448,6 +469,7 @@ func testTemplateCacheTemplateIntegrationCase3(
 	testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	root := ""
 	if (*testCaseInput) != "memory" {
@@ -655,7 +677,7 @@ extra: {sequence: [{value: original}]}
 		}
 	}
 
-	if root != "" && renderPersistenceEligible(t) {
+	if root != "" && persistent {
 		testTemplateCachePersistedIntegration(
 			t,
 			&templateCacheIntegrationInputs{

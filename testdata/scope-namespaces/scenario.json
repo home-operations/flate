@@ -224,7 +224,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-bare-test.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 1
             }
           }
@@ -263,7 +263,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-target-get.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -287,7 +287,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-target-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -309,7 +309,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-target-test.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -348,7 +348,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-get.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -372,7 +372,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -394,7 +394,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-test.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -433,7 +433,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove0-before.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -463,7 +463,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove0-withdraw-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -493,7 +493,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove0-version-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -532,7 +532,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove1-before.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -562,7 +562,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove1-withdraw-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -592,7 +592,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert01-remove1-version-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -631,7 +631,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove0-before.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -661,7 +661,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove0-withdraw-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -691,7 +691,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove0-version-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -730,7 +730,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove1-before.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -760,7 +760,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove1-withdraw-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -790,7 +790,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/child-authored-insert10-remove1-version-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -1319,7 +1319,7 @@
             "cache": {},
             "expect": {
               "stdout": "expect/bootstrap-sibling-projection-build.stdout",
-              "stderr": "expect/empty.stderr",
+              "stderr": "expect/empty-cached.stderr",
               "code": 0
             }
           }
@@ -2549,14 +2549,6 @@
     {
       "path": "expect/empty.stderr",
       "cases": [
-        "bootstrap-sibling-projection",
-        "child-authored",
-        "child-authored-insert01-remove0",
-        "child-authored-insert01-remove1",
-        "child-authored-insert10-remove0",
-        "child-authored-insert10-remove1",
-        "child-bare",
-        "child-target",
         "runtime-authored-namespace-forward",
         "runtime-authored-namespace-reverse",
         "runtime-chart-value-forward",
@@ -2565,6 +2557,20 @@
         "runtime-omitted"
       ],
       "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty-cached.stderr",
+      "cases": [
+        "bootstrap-sibling-projection",
+        "child-authored",
+        "child-authored-insert01-remove0",
+        "child-authored-insert01-remove1",
+        "child-authored-insert10-remove0",
+        "child-authored-insert10-remove1",
+        "child-bare",
+        "child-target"
+      ],
+      "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
     }
   ]
 }

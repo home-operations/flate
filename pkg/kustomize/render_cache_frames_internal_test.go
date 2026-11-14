@@ -15,7 +15,7 @@ import (
 
 func TestRender_CacheFrames(t *testing.T) {
 	t.Parallel()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("render persistence eligible=%v", eligible)
 	for _, tc := range []struct {
 		name      string
@@ -195,7 +195,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	cache = newTestTreeCache(t, cacheDir)
 	_, stored, hit := readTestRenderFrame(t, cache, key)
 	if hit != (*testCaseInput.eligible) || hit && !reflect.DeepEqual(stored, out) {
-		t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, renderPersistenceEligible(t))
+		t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, (*testCaseInput.eligible))
 	}
 	if testCaseInput.tc.corrupt {
 		again, receipt24, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))

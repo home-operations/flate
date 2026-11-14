@@ -64,9 +64,8 @@ func TestInputCache_SOPSWarningHydration(t *testing.T) {
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			if !owner.CanPersistRenders() {
-				t.Fatal("input cache witness requires a clean stamped test binary")
-			}
+			persistent := cache.RenderPersistenceDisabledReason() == ""
+			assert.Equal(t, owner.CanPersistRenders(), persistent)
 			files := fstest.MapFS{
 				"object.yaml": {Data: []byte(fmt.Sprintf(
 					"apiVersion: v1\nkind: %s\nmetadata: {name: input, namespace: apps}\ndata:\n  SECRET: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]\n  PLAIN: cGxhaW4=\n",
@@ -79,7 +78,7 @@ func TestInputCache_SOPSWarningHydration(t *testing.T) {
 				l := cachedFixtureLoader(t, root, files, owner)
 				saved := l.documents.cache[filepath.Join(root, "object.yaml")].objects
 				assert.Equal(t, len(saved), 1)
-				assert.FatalIf(t, saved[0].payload == nil, "%s: hydration requires a saved payload", regime)
+				assert.Equal(t, saved[0].payload != nil, persistent)
 				assert.Equal(t, len(saved[0].Warnings), 1)
 				assert.Equal(t, saved[0].Warnings[0].Category, manifest.WarnSOPSUnreadable)
 				assert.Diff(t, saved[0].Warnings[0].Detail, []string{"SECRET"})

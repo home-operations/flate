@@ -3,7 +3,8 @@
          path: ../inputs/patch
          `: failed to get the patch file from path(../inputs/patch): resolve inputs/patch: stat inputs: file does not exist
 
-  ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/owner: 1 object not rendered on the current side; diff suppressed (kustomize build ./apps: trouble configuring builtin PatchTransformer with config: ` path: ../inputs/patch `: failed to get the patch file from path(../inputs/patch): resolve inputs/patch: stat inputs: file does not exist)
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization flux-system/owner: 1 object not rendered on the current side; diff suppressed (kustomize build ./apps: trouble configuring builtin PatchTransformer with config: ` path: ../inputs/patch `: failed to get the patch file from path(../inputs/patch): resolve inputs/patch: stat inputs: file does not exist)
 
   ✗ 1 failed

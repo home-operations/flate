@@ -1,1 +1,5 @@
 flate error: entry pkgdir/bad.yaml: document 1: yaml: line 2: did not find expected node content (invalid YAML)
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>

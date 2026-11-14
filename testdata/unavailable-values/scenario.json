@@ -189,7 +189,7 @@
             ],
             "expect": {
               "stdout": "expect/strict-encryption.stdout",
-              "stderr": "expect/strict-encryption.stderr",
+              "stderr": "expect/strict-encryption-cached.stderr",
               "code": 1
             }
           }
@@ -505,7 +505,7 @@
             ],
             "expect": {
               "stdout": "expect/missing-key-supply.stdout",
-              "stderr": "expect/missing-key-supply.stderr",
+              "stderr": "expect/missing-key-supply-cached.stderr",
               "code": 0
             }
           }
@@ -665,7 +665,7 @@
     {
       "path": "expect/missing-key-supply.stderr",
       "cases": [
-        "missing-key-supply"
+        "requested-key-isolation"
       ],
       "purpose": "Independently specified complete command output for the named case."
     },
@@ -707,7 +707,7 @@
     {
       "path": "expect/strict-encryption.stderr",
       "cases": [
-        "strict-encryption"
+        "requested-key-isolation"
       ],
       "purpose": "Independently specified complete command output for the named case."
     },
@@ -1033,6 +1033,20 @@
         "requested-key-isolation"
       ],
       "purpose": "Authored encrypted requested-key isolation and strict or supplied outcomes."
+    },
+    {
+      "path": "expect/missing-key-supply-cached.stderr",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
+    },
+    {
+      "path": "expect/strict-encryption-cached.stderr",
+      "cases": [
+        "strict-encryption"
+      ],
+      "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
     }
   ]
 }

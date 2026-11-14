@@ -108,9 +108,7 @@ func TestProducersForPaths_FrameFormat(t *testing.T) {
 
 func TestProducersForPaths_SourcePaths(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	persistent := RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	cache := cachetest.New(t, root, New)
 	owner := manifest.NamedResource{
@@ -168,7 +166,7 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			var want []manifest.NamedResource
-			if tc.found {
+			if tc.found && persistent {
 				want = []manifest.NamedResource{owner}
 				assert.Diff(t, owners[owner], []manifest.SourceEvidence{{Source: tc.source, Path: tc.path}})
 			}
@@ -179,9 +177,7 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 
 func TestProducersForPaths_Unavailable(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+
 	for _, mode := range []string{"canceled", "missing", "foreign build", "malformed", "incomplete owner", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -193,9 +189,7 @@ func TestProducersForPaths_Unavailable(t *testing.T) {
 
 func TestProducersForPaths_Acceptance(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+
 	for _, mode := range []string{"accepted", "pending", "source", "rejected", "replacement"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -207,9 +201,7 @@ func TestProducersForPaths_Acceptance(t *testing.T) {
 
 func TestProducersForPaths_Publication(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+
 	for _, mode := range []string{"multiple owners", "publication failure", "empty replacement"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -225,9 +217,7 @@ func (p inventoryContent) WriteTo(output io.Writer) (int64, error) { return p(ou
 
 func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	persistent := RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
 	var writes atomic.Int64
@@ -255,21 +245,25 @@ func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 	for _, err := range failures {
 		assert.NoError(t, err)
 	}
-	assert.Equal(t, writes.Load(), int64(1))
+	wantWrites := int64(0)
+	if persistent {
+		wantWrites = 1
+	}
+	assert.Equal(t, writes.Load(), wantWrites)
 	assert.NoError(t, c.Close())
 	c = cachetest.New(t, root, New)
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
-	assert.Equal(t, writes.Load(), int64(1))
+	assert.Equal(t, writes.Load(), wantWrites)
 	owners, err := c.ProducersForPaths(
 		t.Context(),
 		[]manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared/cm.yaml"}},
 	)
 	assert.NoError(t, err)
-	assert.Diff(
-		t,
-		slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare),
-		[]manifest.NamedResource{inventory.History.Owner},
-	)
+	var want []manifest.NamedResource
+	if persistent {
+		want = []manifest.NamedResource{inventory.History.Owner}
+	}
+	assert.Diff(t, slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), want)
 }
 
 //nolint:paralleltest // Allocation measurements use process-wide test accounting.
@@ -298,9 +292,7 @@ func TestRecordInventory_WithoutPersistence(t *testing.T) {
 
 func TestRecordInventory_EquivalentHistoryOrder(t *testing.T) {
 	t.Parallel()
-	if reason := RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	persistent := RenderPersistenceDisabledReason() == ""
 	c := cachetest.New(t, t.TempDir(), New)
 	source := manifest.SourceIdentity{Root: "/input"}
 	first := manifest.SourceEvidence{Source: source, Path: "apps/a", Subtree: true}
@@ -322,12 +314,17 @@ func TestRecordInventory_EquivalentHistoryOrder(t *testing.T) {
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
 	inventory.History.Sources = []manifest.SourceEvidence{first, second, second}
 	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
-	assert.FatalIf(t, writes != 1, "equivalent canonical history published %d times, want 1", writes)
+	wantWrites := 0
+	if persistent {
+		wantWrites = 1
+	}
+	assert.Equal(t, writes, wantWrites)
 }
 
 func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 ) {
 	t.Helper()
+	persistent := RenderPersistenceDisabledReason() == ""
 
 	cache := cachetest.New(t, t.TempDir(), New)
 	source := manifest.SourceIdentity{Root: "/input"}
@@ -362,8 +359,12 @@ func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 	assert.NoError(t, err)
 	if (*mode) == "missing" {
 		descriptor, resolveErr := cache.store.Resolve(t.Context(), lookup)
-		assert.NoError(t, resolveErr)
-		assert.NoError(t, cache.root.Remove(blobPath(descriptor.Digest)))
+		if persistent {
+			assert.NoError(t, resolveErr)
+			assert.NoError(t, cache.root.Remove(blobPath(descriptor.Digest)))
+		} else {
+			assert.Equal(t, errors.Is(resolveErr, errdef.ErrNotFound), true)
+		}
 	}
 	if (*mode) == "disabled" {
 		cache.persistBlob = false
@@ -387,6 +388,7 @@ func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 ) {
 	t.Helper()
+	persistent := RenderPersistenceDisabledReason() == ""
 
 	cache := cachetest.New(t, t.TempDir(), New)
 	source := manifest.SourceIdentity{Root: "/input"}
@@ -436,7 +438,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 				}),
 			},
 		)
-		assert.Equal(t, err != nil, (*mode) == "rejected")
+		assert.Equal(t, err != nil, persistent && (*mode) == "rejected")
 	}
 	owners, err := cache.ProducersForPaths(
 		t.Context(),
@@ -444,7 +446,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 	)
 	assert.NoError(t, err)
 	var want []manifest.NamedResource
-	if (*mode) == "accepted" || (*mode) == "rejected" {
+	if persistent && ((*mode) == "accepted" || (*mode) == "rejected") {
 		want = []manifest.NamedResource{owner}
 	}
 	assert.Diff(t, slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), want)
@@ -453,6 +455,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 func testProducersForPathsPublicationCase(t *testing.T, mode *string,
 ) {
 	t.Helper()
+	persistent := RenderPersistenceDisabledReason() == ""
 
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
@@ -484,14 +487,12 @@ func testProducersForPathsPublicationCase(t *testing.T, mode *string,
 		index := filepath.Join(root, indexPath())
 		assert.NoError(t, os.Rename(index, index+".saved"))
 		assert.NoError(t, os.Mkdir(index, 0o750))
-		{
-			err := publish(owners[0], []manifest.SourceEvidence{})
-			assert.FatalIf(t, err == nil, "%s", "failed publication supplied accepted history")
-		}
-
+		err := publish(owners[0], []manifest.SourceEvidence{})
+		assert.Equal(t, err != nil, persistent)
 		assert.NoError(t, os.Remove(index))
 		assert.NoError(t, os.Rename(index+".saved", index))
 	}
+
 	assert.NoError(t, c.Close())
 	c = cachetest.New(t, root, New)
 	got, err := c.ProducersForPaths(
@@ -503,8 +504,11 @@ func testProducersForPathsPublicationCase(t *testing.T, mode *string,
 		},
 	)
 	assert.NoError(t, err)
-	want := owners
-	if (*mode) == "empty replacement" {
+	var want []manifest.NamedResource
+	if persistent {
+		want = owners
+	}
+	if (*mode) == "empty replacement" && persistent {
 		want = owners[1:]
 	}
 	assert.Diff(t, slices.SortedFunc(maps.Keys(got), manifest.NamedResource.Compare), want)

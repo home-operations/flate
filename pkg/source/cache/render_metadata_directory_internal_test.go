@@ -18,6 +18,7 @@ import (
 func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 ) {
 	t.Helper()
+	persistent := RenderPersistenceDisabledReason() == ""
 
 	c := cachetest.New(t, t.TempDir(), New)
 	key := BlobKey{Content: "current-directory", Render: RenderAccepted}
@@ -25,6 +26,27 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 	r, _, lookup, err := c.Blob(t.Context(), key, &Policy{}, producer(payload, &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 	identity := AcquisitionIdentity(r)
+	if !persistent {
+		_, known := c.entries.Load(lookup)
+		assert.Equal(t, known, false)
+		ctx := t.Context()
+		if *name == "canceled" {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			cancel()
+		}
+		if *name == "closed" {
+			assert.NoError(t, c.Close())
+		}
+		metadata, metadataErr := c.RenderMetadata(ctx, "current-directory", "", nil)
+		assert.Equal(t, metadata.Enabled, false)
+		assert.Equal(t, metadata.Identity, "")
+		assert.Equal(t, errors.Is(metadataErr, context.Canceled), *name == "canceled")
+		if *name != "canceled" {
+			assert.NoError(t, metadataErr)
+		}
+		return
+	}
 
 	stored, _ := c.entries.Load(lookup)
 	path := blobPath(stored.(*entry).stored.Digest)

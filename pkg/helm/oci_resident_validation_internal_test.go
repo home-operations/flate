@@ -17,9 +17,7 @@ import (
 
 func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	st, hr, directory := ociRenderFixture(t)
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	artifact := &store.SourceArtifact{
@@ -85,10 +83,10 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 		_, _, err := testutil.RenderMaps(
 			client.Template(t.Context(), hr, nil, input),
 		)
-		assert.FatalIf(t, !errors.Is(
-			err,
-			manifest.ErrInput,
-		), "replaced OCI generation escaped version validation: %v", err)
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), persistent)
+		if !persistent {
+			assert.NoError(t, err)
+		}
 	}
 	{
 		_, complete := client.PreviousRender(t.Context(), hr, nil, input)

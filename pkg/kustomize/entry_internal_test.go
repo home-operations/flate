@@ -21,9 +21,8 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 		"generator.yaml":     "original producer input",
 	})
 	cache := newTestTreeCache(t, t.TempDir())
-	if !cache.owner.CanPersistRenders() {
-		t.Skip("entry receipt requires a clean VCS-stamped build")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, cache.owner.CanPersistRenders(), persistent)
 	spec := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	var cell Preparation
 	t.Cleanup(cell.Retire)
@@ -83,14 +82,18 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("changed"))
 	accepted := cache.PreviousEntry(t.Context(), request)
-	assert.Diff(t, accepted.Application, application)
-	assert.Equal(t, accepted.Owner, evidence.Owner)
-	assert.Equal(t, accepted.Producer, evidence.Producer)
-	assert.Equal(t, accepted.Root, evidence.Root)
+	if persistent {
+		assert.Diff(t, accepted.Application, application)
+		assert.Equal(t, accepted.Owner, evidence.Owner)
+		assert.Equal(t, accepted.Producer, evidence.Producer)
+		assert.Equal(t, accepted.Root, evidence.Root)
+	} else {
+		assert.Diff(t, accepted, EntryEvidence{})
+	}
 	st := store.New()
 	st.SetArtifact(chart, artifact)
 	st.AddDeclaration(store.Declaration{Obj: data, Origin: manifest.SuppliedDeclaration})
-	assert.Equal(t, cache.EntryValid(t.Context(), accepted, st), true)
+	assert.Equal(t, cache.EntryValid(t.Context(), accepted, st), persistent)
 	for _, scenario := range []string{"unchanged", "changed", "removed", "repository precedence"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
@@ -115,7 +118,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 				cache.EntryValid(t.Context(),
 					accepted,
 					current),
-				scenario == "unchanged" || scenario == "repository precedence")
+				persistent && (scenario == "unchanged" || scenario == "repository precedence"))
 		})
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -144,19 +147,19 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 
 func TestEntryApplication_RequiresCompleteFrame(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	for _, application := range []entryApplication{{}, {Complete: true}} {
 		receipt := manifest.NewRenderReceipt(entrySnapshot{Application: application}, equalEntryApplication)
 		err := newTestTreeCache(t, t.TempDir()).RecordEntry(t.Context(), receipt, nil)
-		assert.Equal(t, err != nil, true)
+		assert.Equal(t, err != nil, persistent)
 	}
 }
 
 func TestRecordEntry_RequiresCurrentAcceptance(t *testing.T) {
 	t.Parallel()
 	cache := newTestTreeCache(t, t.TempDir())
-	if !cache.owner.CanPersistRenders() {
-		t.Skip("requires a clean VCS-stamped build")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, cache.owner.CanPersistRenders(), persistent)
 	root := testutil.WriteTree(t, map[string]string{"producer.yaml": "accepted"})
 	request := RenderRequest{Source: localSource(t, root), SubPath: "."}
 	owner := manifest.NamedResource{
@@ -186,7 +189,11 @@ func TestRecordEntry_RequiresCurrentAcceptance(t *testing.T) {
 	assert.Equal(t, cache.RecordEntry(ctx, evidence.Receipt, nil), context.Canceled)
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Receipt == nil, true)
 	assert.NoError(t, cache.RecordEntry(t.Context(), evidence.Receipt, nil))
-	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Producer, owner)
+	wantOwner := manifest.NamedResource{}
+	if persistent {
+		wantOwner = owner
+	}
+	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Producer, wantOwner)
 }
 
 func TestApplicationReceipt_FrameHistory(t *testing.T) {

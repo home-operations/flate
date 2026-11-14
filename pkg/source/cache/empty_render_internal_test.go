@@ -20,15 +20,43 @@ func TestBlob_EmptyRenderPreservesGeneration(t *testing.T) {
 	}{{"pending", RenderPending}, {"accepted", RenderAccepted}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
+			persistent := RenderPersistenceDisabledReason() == ""
 			c := cachetest.New(t, t.TempDir(), New)
-			if scenario.mode == RenderAccepted && !c.CanPersistRenders() {
-				t.Skip("requires a clean VCS-stamped build for positive persistence")
-			}
 			frame, err := NewFrame("test-render", "metadata", []byte("valid output"))
 			assert.NoError(t, err)
 			publication, err := frame.PreparePublication(t.Context(), FramePublicationInput{})
 			assert.NoError(t, err)
 			key := BlobKey{Content: "existing-render", Render: scenario.mode}
+			if scenario.mode == RenderAccepted && !persistent {
+				writes := 0
+				for range 2 {
+					generation, _, identity, blobErr := c.Blob(t.Context(), key, &Policy{},
+						func(_ context.Context, out ProducerInput) (ProducerResult, error) {
+							writes++
+							_, writeErr := publication.WriteTo(out)
+							return ProducerResult{}, writeErr
+						})
+					assert.NoError(t, blobErr)
+					assert.Equal(t, identity, key.Content.(string))
+					body, readErr := fs.ReadFile(generation, "content")
+					assert.NoError(t, readErr)
+					assert.Equal(t, len(body), 0)
+				}
+				assert.Equal(t, writes, 0)
+				generation, _, _, lookupErr := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
+				assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
+				assert.Equal(t, generation == nil, true)
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, _, _, canceledErr := c.Blob(ctx, key, &Policy{},
+					func(context.Context, ProducerInput) (ProducerResult, error) {
+						writes++
+						return ProducerResult{}, nil
+					})
+				assert.Equal(t, errors.Is(canceledErr, context.Canceled), true)
+				assert.Equal(t, writes, 0)
+				return
+			}
 			prior, _, _, err := c.Blob(
 				t.Context(),
 				key,

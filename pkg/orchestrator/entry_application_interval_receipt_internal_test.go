@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -119,13 +121,15 @@ spec:
 			"  interval: 2h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n",
 		),
 	)
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, prime.cache.CanPersistRenders(), persistent)
 	fixture := entryReceiptFixture{
 		root:     root,
 		tree:     tree,
 		cfg:      cfg,
 		before:   before,
 		after:    testDirectoryInput(t, root),
-		persists: prime.cache.CanPersistRenders(),
+		persists: persistent,
 	}
 	for _, mode := range []string{"cold", "warm"} {
 		t.Run(mode, func(t *testing.T) { testEntryReceiptInterval(t, &fixture, mode) })
@@ -135,16 +139,14 @@ spec:
 	complete, err := full.render(t.Context(), t)
 	assert.NoError(t, err)
 	assertEntryReceiptInterval(t, complete, "2h")
-	if fixture.persists {
-		evidence := full.ksc.Trees.PreviousEntry(t.Context(), kustomize.RenderRequest{
-			Source: full.cfg.Input, ApplyIgnore: true, SubPath: "entry",
-			Spec: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}),
-		})
-		if evidence.Application == nil || evidence.Receipt == nil {
-			t.Fatal("reopened cache lost the discovered application receipt")
-		}
-		assertEntryReceiptSuppliedInputs(t, full.ksc.Trees, &evidence, settings)
-	}
+	evidence := full.ksc.Trees.PreviousEntry(t.Context(), kustomize.RenderRequest{
+		Source: full.cfg.Input, ApplyIgnore: true, SubPath: "entry",
+		Spec: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}),
+	})
+	assert.Equal(t, evidence.Application != nil, fixture.persists)
+	assert.Equal(t, evidence.Receipt != nil, fixture.persists)
+	fixture.assertEntryReceiptSuppliedInputs(t, full.ksc.Trees, &evidence, settings)
+
 	t.Run("warm_workload", func(t *testing.T) { testEntryReceiptWorkload(t, &fixture) })
 	testEntryReceiptInvalidation(t, &fixture)
 }
@@ -177,9 +179,6 @@ func assertEntryReceiptInterval(t *testing.T, result *Result, want string) {
 func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode string) {
 	t.Helper()
 
-	if mode == "warm" && !fixture.persists {
-		t.Skip("warm receipt witness requires a clean VCS-stamped build")
-	}
 	var oracle [2][]byte
 	for run := range 2 {
 		var logs bytes.Buffer
@@ -229,13 +228,17 @@ func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode s
 		if mode == "warm" {
 			want = 0
 		}
-		if templates != int(want) || admissions[0].Load() != want || admissions[1].Load() != want {
+		wantAdmissions := int64(1)
+		if mode == "warm" && fixture.persists {
+			wantAdmissions = 0
+		}
+		if templates != int(want) || admissions[0].Load() != wantAdmissions || admissions[1].Load() != wantAdmissions {
 			t.Errorf(
-				"actual templates=%d admissions=%d/%d, want %d",
+				"actual templates=%d admissions=%d/%d, want templates=%d admissions=%d",
 				templates,
 				admissions[0].Load(),
 				admissions[1].Load(),
-				want,
+				want, wantAdmissions,
 			)
 		}
 		if len(results) != 2 {
@@ -248,9 +251,6 @@ func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode s
 func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 	t.Helper()
 
-	if !fixture.persists {
-		t.Skip("warm receipt witness requires a clean VCS-stamped build")
-	}
 	original := t.TempDir()
 	assert.NoError(t, os.CopyFS(original, os.DirFS(fixture.root)))
 	before := testDirectoryInput(t, original)
@@ -315,12 +315,16 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 		assert.Equal(t, literalBuilds, 0)
 		assert.Equal(t, siblingBuilds, 0)
 		assert.Equal(t, templates, 0)
-		assert.Equal(t, reused, 2)
+		wantReused := 0
+		if fixture.persists {
+			wantReused = 2
+		}
+		assert.Equal(t, reused, wantReused)
 		assert.Equal(t, len(results), 2)
 		for side := range results {
 			assert.Equal(t, admissions[side].Load(), int64(0))
 		}
-		assertEntryReceiptWorkload(t, results, &oracle, run)
+		fixture.assertEntryReceiptWorkload(t, results, &oracle, run)
 	}
 }
 
@@ -357,11 +361,11 @@ func assertEntryReceiptIntervals(t *testing.T, results []Rendered, oracle *[2][]
 	}
 }
 
-func assertEntryReceiptWorkload(t *testing.T, results []Rendered, oracle *[2][]byte, run int) {
+func (f *entryReceiptFixture) assertEntryReceiptWorkload(t *testing.T, results []Rendered, oracle *[2][]byte, run int) {
 	t.Helper()
 
 	for side, result := range results {
-		assert.Equal(t, result.entryBinding.Producer == (manifest.NamedResource{}), false)
+		assert.Equal(t, result.entryBinding.Producer == (manifest.NamedResource{}), !f.persists)
 		assert.Diff(t, configMapNames(result.Result), map[string]bool{"selected": true})
 		for _, batch := range result.Result.Manifests {
 			for _, doc := range batch.Documents {
@@ -380,7 +384,7 @@ func assertEntryReceiptWorkload(t *testing.T, results []Rendered, oracle *[2][]b
 	}
 }
 
-func assertEntryReceiptSuppliedInputs(
+func (f *entryReceiptFixture) assertEntryReceiptSuppliedInputs(
 	t *testing.T,
 	trees *kustomize.TreeCache,
 	evidence *kustomize.EntryEvidence,
@@ -400,7 +404,7 @@ func assertEntryReceiptSuppliedInputs(
 			if scenario == "repository precedence" {
 				current.AddObject(settings, testutil.ObjectDocument(settings))
 			}
-			want := scenario == "unchanged" || scenario == "repository precedence"
+			want := f.persists && (scenario == "unchanged" || scenario == "repository precedence")
 			if got := trees.EntryValid(t.Context(), *evidence, current); got != want {
 				t.Fatalf("discovered application receipt valid = %t, want %t", got, want)
 			}

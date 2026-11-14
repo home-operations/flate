@@ -17,9 +17,7 @@ import (
 
 func TestRecordRender_AcceptedLimit(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})

@@ -106,7 +106,15 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 ) {
 	t.Helper()
 	var warmCache string
-	var persistent bool
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	wantWarmRenders := 0
+	switch {
+	case persistent, (*(*tailCaseInput.testCaseInput)) == "generated":
+	case *tailCaseInput.tier1:
+		wantWarmRenders = 1
+	default:
+		wantWarmRenders = 3
+	}
 	render := func(label string, input []Tree) ([]Rendered, error) {
 		t.Helper()
 		var before [3]int64
@@ -122,19 +130,20 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 		owner, openErr := sourcecache.New(t.Context(), cacheDir)
 		assert.NoError(t, openErr)
 		defer func() { assert.NoError(t, owner.Close()) }()
-		persistent = owner.CanPersistRenders()
+		assert.Equal(t, owner.CanPersistRenders(), persistent)
 		runs, err := renderTreesForTest(t.Context(), t, input, Config{Concurrency: 2, CacheDir: cacheDir, Cache: owner})
 		counts := opaqueInputWork(t, &logs)
 		fetched := opaqueInputDownloadDelta(tailCaseInput.downloads, before)
 		t.Logf("%s work=%v chart_downloads=%v error=%v", label, counts, fetched, err)
 		if strings.HasPrefix(label, "cold_") {
 			tailCaseInput.assertOpaqueInputColdWork(t, counts, fetched)
-			if owner.CanPersistRenders() && (*(*tailCaseInput.testCaseInput)) != "generated" {
-				assertOpaqueInputInventory(t, runs, owner, label)
+			if (*(*tailCaseInput.testCaseInput)) != "generated" {
+				assertOpaqueInputInventory(t, runs, owner, persistent)
+				t.Logf("%s accepted opaque inventory restored on both sides", label)
 			}
 		}
 		if strings.HasPrefix(label, "warm_") {
-			assert.Equal(t, counts["helm: render"], 0)
+			assert.Equal(t, counts["helm: render"], wantWarmRenders)
 			assert.Equal(t, fetched, [3]int64{})
 		}
 		for side, run := range runs {
@@ -192,7 +201,7 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 		got, selectedErr := delta(runs, err)
 		assert.Equal(t, selectedErr == nil, fullErr == nil)
 		assert.Equal(t, string(got), string(want))
-		if run == 0 && persistent {
+		if run == 0 {
 			warm, warmErr := render("warm_0", (*tailCaseInput.trees))
 			warmDelta, selectedErr := delta(warm, warmErr)
 			assert.Equal(t, selectedErr == nil, fullErr == nil)
@@ -310,7 +319,12 @@ func testRenderTreesRequiredOpaqueInputCaseSegment(
 	}
 }
 
-func assertOpaqueInputInventory(t *testing.T, runs []Rendered, owner *sourcecache.Cache, label string) {
+func assertOpaqueInputInventory(
+	t *testing.T,
+	runs []Rendered,
+	owner *sourcecache.Cache,
+	persistent bool,
+) {
 	t.Helper()
 	for _, run := range runs {
 		id := testutil.HelmReleaseID("apps", "producer-0")
@@ -327,7 +341,7 @@ func assertOpaqueInputInventory(t *testing.T, runs []Rendered, owner *sourcecach
 			t.Cleanup(preparedHistory318.Assessment.Close)
 		}
 		records, complete := preparedHistory318.Records, preparedHistory318.Complete
-		assert.Equal(t, complete, true)
+		assert.Equal(t, complete, persistent)
 		found := false
 		if records != nil {
 			for child := range records {
@@ -336,9 +350,8 @@ func assertOpaqueInputInventory(t *testing.T, runs []Rendered, owner *sourcecach
 			}
 		}
 		reads.Retire()
-		assert.Equal(t, found, true)
+		assert.Equal(t, found, persistent)
 	}
-	t.Logf("%s accepted opaque inventory restored on both sides", label)
 }
 
 func opaqueInputCache(label, cacheDir string, warmCache *string) string {

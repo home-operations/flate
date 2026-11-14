@@ -135,9 +135,7 @@ spec:
 //nolint:paralleltest // This test changes process-global state.
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestHistory_RemovedPathSourceQualification(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	var logs historyLogBuffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -321,9 +319,7 @@ spec:
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root, cacheDir := t.TempDir(), t.TempDir()
 	testutil.WriteFile(
 		t,
@@ -400,9 +396,7 @@ func testBuildChangeFilterReclaimsProbesCase(
 ) {
 	t.Helper()
 
-	if (*testCaseInput) == "hit" && sourcecache.RenderPersistenceDisabledReason() != "" {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root, cacheDir := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml]\n")
 	testutil.WriteFile(
@@ -452,7 +446,7 @@ func testBuildChangeFilterReclaimsProbesCase(
 		done := make(chan struct{})
 		runtime.AddCleanup(declaration, func(done chan struct{}) { close(done) }, done)
 		err := current.prepareInvocation(ctx)
-		if (*testCaseInput) == "cancel" && current.cache.CanPersistRenders() {
+		if (*testCaseInput) == "cancel" && persistent {
 			assert.Equal(t, errors.Is(err, context.Canceled), true)
 			assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 			assert.Equal(t, len(selectionNamesForTest(current.selection, current.store, current.index)) == 0, true)
@@ -460,7 +454,7 @@ func testBuildChangeFilterReclaimsProbesCase(
 			assert.NoError(t, err)
 			assert.NoError(t, ctx.Err())
 		}
-		if !current.cache.CanPersistRenders() {
+		if !persistent {
 			reads := &store.ReadSet{}
 			reads.Init(current.store, owner, nil)
 			defer reads.Retire()

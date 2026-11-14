@@ -27,13 +27,12 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // Storage faults MUST retain normal-render and publication assertions in both persistence modes.
 func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skip("storage faults require an eligible build")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")},
@@ -63,14 +62,20 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			&sourcecache.Policy{MaxAge: sourcecache.Forever},
 			nil,
 		)
-		assert.NoError(t, err)
-		data, err := fs.ReadFile(reader, "content")
-		assert.NoError(t, err)
+		if !persistent {
+			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+			assert.Equal(t, reader == nil, true)
+		}
+		if persistent {
+			assert.NoError(t, err)
+			data, err := fs.ReadFile(reader, "content")
+			assert.NoError(t, err)
 
-		sum := digest.FromBytes(data)
-		blob := filepath.Join(cacheDir, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
-		assert.NoError(t, os.Remove(blob))
-		assert.NoError(t, os.Mkdir(blob, 0o750))
+			sum := digest.FromBytes(data)
+			blob := filepath.Join(cacheDir, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
+			assert.NoError(t, os.Remove(blob))
+			assert.NoError(t, os.Mkdir(blob, 0o750))
+		}
 	} else {
 		assert.NoError(t, os.RemoveAll(cacheDir))
 	}
@@ -80,6 +85,12 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			err = cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt27})
 		}
 
+		if !persistent {
+			assert.NoError(t, err)
+			assert.Equal(t, len(out), 1)
+			assert.Equal(t, hasRenderField(out, "name", "fresh"), true)
+			continue
+		}
 		if (*testCaseInput) == "read" {
 			{
 				pathErr, ok := errors.AsType[*fs.PathError](err)

@@ -1,7 +1,8 @@
 
   ✗  entry  path "pkgdir"  kustomize build pkgdir: accumulating resources: accumulation err='accumulating resources from 'bad.yaml': resolve pkgdir/bad.yaml: stat @@repo@@/pkgdir/bad.yaml: permission denied': must build at directory: not a valid directory: resolve pkgdir/bad.yaml: stat @@repo@@/pkgdir/bad.yaml: permission denied
 
-  ⚠ warnings (1)
-    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
 
   ✗ 1 failed

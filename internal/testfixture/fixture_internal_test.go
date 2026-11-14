@@ -17,7 +17,30 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
+
+func TestFixture_PersistenceExpectationTokens(t *testing.T) {
+	t.Parallel()
+	reason := sourcecache.RenderPersistenceDisabledReason()
+	t.Logf("render persistence: backing=disk disabled reason=%q", reason)
+	for _, tc := range []struct{ name, input, enabled, disabled string }{
+		{"count", "warnings (<PERSISTENCE:2|3>)", "warnings (2)", "warnings (3)"},
+		{"notice", "before<PERSISTENCE:|\nnotice: <PERSISTENCE_REASON>\n>after", "beforeafter", "before\nnotice: " + reason + "\nafter"},
+		{"enabled only", "<PERSISTENCE:cached\n|>", "cached\n", ""},
+		{"adjacent", "<PERSISTENCE:1|2><PERSISTENCE:3|4>", "13", "24"},
+		{"unknown", "<UNKNOWN>", "<UNKNOWN>", "<UNKNOWN>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := tc.enabled
+			if reason != "" {
+				want = tc.disabled
+			}
+			assert.Equal(t, new(Fixture).Resolve(t, tc.input, ""), want)
+		})
+	}
+}
 
 func fixtureSource(t *testing.T, repeat string) string {
 	t.Helper()

@@ -1,8 +1,9 @@
 
   ✗  HelmRelease  apps/demo  document 1: normalize helm list: unable to get type info from the object "*unstructured.Unstructured": Object 'Kind' is missing in 'object has no kind field '
 
-  ⚠ warnings (1)
-    [StaleValues] HelmRelease apps/demo: values not used by the chart
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [StaleValues] HelmRelease apps/demo: values not used by the chart
       greeting, replicas
 
   ✗ 1 failed

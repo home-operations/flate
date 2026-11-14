@@ -2,7 +2,8 @@
   ✗  current snapshot: ConfigMap  flux-system/vars  not found
          current snapshot: required by flux-system/consumer
 
-  ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/consumer: 1 object not rendered on the current side; diff suppressed (dependencies failed: ConfigMap/flux-system/vars: not found; supply it with --supply)
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization flux-system/consumer: 1 object not rendered on the current side; diff suppressed (dependencies failed: ConfigMap/flux-system/vars: not found; supply it with --supply)
 
   ✗ 1 failed · 1 blocked

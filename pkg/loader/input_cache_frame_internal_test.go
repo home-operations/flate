@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"weak"
 
+	"oras.land/oras-go/v2/errdef"
 	kustomizetypes "sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -153,20 +154,26 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	files := fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
 		"object.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\n")},
 	}
 	first := cachedFixtureLoader(t, root, files, owner)
 	assert.NoError(t, first.PersistInputs(t.Context()))
-	lookup := first.inputCaches[root].lookup
+	input := first.documents.artifacts[root]
+	lookup, _ := cache.InputFrameIdentity(input.OriginPath(root), input.URL, nil)
 	previous, previousDescriptor, _, err := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	previousBytes, err := fs.ReadFile(previous, cache.FileName(previous))
-	assert.NoError(t, err)
+	var previousBytes []byte
+	if persistent {
+		assert.NoError(t, err)
+		previousBytes, err = fs.ReadFile(previous, cache.FileName(previous))
+		assert.NoError(t, err)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, previous == nil, true)
+	}
 	first.Close()
 
 	files["kustomization.yaml"] = &fstest.MapFile{
@@ -178,17 +185,22 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	defer cold.Close()
 	assert.Diff(t, l.Index, cold.Index)
 	state := l.inputCaches[root]
-	priorFiles, priorLoads, priorWalks := maps.Clone(state.files), maps.Clone(state.loads), maps.Clone(state.walks)
-	frame, err := l.cacheSourceInputs(state)
-	assert.NoError(t, err)
-	assert.FatalIf(t, frame == nil, "changed builder supplied no authored facts")
-	content, err := frame.prepare(t.Context())
-	assert.NoError(t, err)
-	assert.Equal(t, content == nil, true)
-	assert.NoError(t, l.PersistInputs(t.Context()))
-	assert.Equal(t, maps.Equal(state.files, priorFiles), true)
-	assert.Equal(t, maps.Equal(state.loads, priorLoads), true)
-	assert.Equal(t, maps.Equal(state.walks, priorWalks), true)
+	if persistent {
+		priorFiles, priorLoads, priorWalks := maps.Clone(state.files), maps.Clone(state.loads), maps.Clone(state.walks)
+		frame, frameErr := l.cacheSourceInputs(state)
+		assert.NoError(t, frameErr)
+		assert.FatalIf(t, frame == nil, "changed builder supplied no authored facts")
+		content, prepareErr := frame.prepare(t.Context())
+		assert.NoError(t, prepareErr)
+		assert.Equal(t, content == nil, true)
+		assert.NoError(t, l.PersistInputs(t.Context()))
+		assert.Equal(t, maps.Equal(state.files, priorFiles), true)
+		assert.Equal(t, maps.Equal(state.loads, priorLoads), true)
+		assert.Equal(t, maps.Equal(state.walks, priorWalks), true)
+	} else {
+		assert.Equal(t, state == nil, true)
+		assert.NoError(t, l.PersistInputs(t.Context()))
+	}
 	assert.Diff(t, l.Index, cold.Index)
 	occurrence, known := l.Occurrence(manifest.NamedResource{Kind: "ConfigMap", Name: "object"})
 	assert.Equal(t, known, true)
@@ -199,11 +211,17 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	})
 
 	retained, retainedDescriptor, _, err := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	assert.Equal(t, retainedDescriptor.Digest, previousDescriptor.Digest)
-	retainedBytes, err := fs.ReadFile(retained, cache.FileName(retained))
-	assert.NoError(t, err)
-	assert.Equal(t, bytes.Equal(retainedBytes, previousBytes), true)
+	if persistent {
+		assert.NoError(t, err)
+		assert.Equal(t, retainedDescriptor.Digest, previousDescriptor.Digest)
+		retainedBytes, readErr := fs.ReadFile(retained, cache.FileName(retained))
+		assert.NoError(t, readErr)
+		assert.Equal(t, bytes.Equal(retainedBytes, previousBytes), true)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, retained == nil, true)
+		assert.Equal(t, retainedDescriptor.Digest, previousDescriptor.Digest)
+	}
 }
 
 func TestInputFrame_RejectsInvalidCoordinates(t *testing.T) {

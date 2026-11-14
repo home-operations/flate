@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -18,6 +20,7 @@ import (
 func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	const root = "/virtual/prepared-root"
 	input := fstest.MapFS{
@@ -71,7 +74,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		if lifetime == "uncached" || lifetime == "changed-uncached" {
 			dir = ""
 		}
-		testReceiptTreesResult1 := testReceiptTrees(t, dir)
+		testReceiptTreesResult1 := testReceiptTrees(t, dir, persistent)
 		trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 		st := store.New()
 		source := &store.SourceArtifact{LocalPath: root, FS: input}
@@ -102,7 +105,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 			)
 		}
 		if strings.HasPrefix(lifetime, "warm-") {
-			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), previousHistory)
+			assert.Diff(t, packageHistory(t, trees, &req, persistent), previousHistory)
 		}
 		assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 		assert.Equal(t, d.binding.Producer, owner.Named())
@@ -110,9 +113,11 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		docs, wantHistory := assertPreparedPackageOutputsResult2.documents, assertPreparedPackageOutputsResult2.history
 		assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
 		assert.NoError(t, d.acceptPrepared(t.Context()))
-		if dir != "" {
-			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), wantHistory)
+		expectedHistory := wantHistory
+		if !persistent || dir == "" {
+			expectedHistory = nil
 		}
+		assert.Diff(t, packageHistory(t, trees, &req, persistent && dir != ""), expectedHistory)
 		d.assertPreparedPackageReaders(t, testCaseInput)
 		if lifetime == "uncached" || lifetime == "changed" {
 			previousDocs, previousIndex, previousWarnings = docs, d.loader.Index, st.Warnings()
@@ -124,7 +129,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 			}
 			assert.Diff(t, st.Warnings(), previousWarnings)
 		}
-		previousHistory = wantHistory
+		previousHistory = expectedHistory
 		closeCache()
 	}
 }

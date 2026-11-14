@@ -24,6 +24,7 @@ func testTemplateCacheSubchartPersistenceCase(
 	testCaseInput *testTemplateCacheSubchartPersistenceCaseInputs,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 
 	files := fstest.MapFS{}
@@ -108,8 +109,12 @@ func testTemplateCacheSubchartPersistenceCase(
 		"edited child reused stale output or omitted its new content",
 	)
 
-	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), nextKey), out)
-	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), (*testCaseInput.key)), (*testCaseInput.marked))
+	wantStored, wantOriginal := out, *testCaseInput.marked
+	if !persistent {
+		wantStored, wantOriginal = nil, nil
+	}
+	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), nextKey), wantStored)
+	assert.Diff(t, (*testCaseInput.readBlob)(t, (*testCaseInput.owner), (*testCaseInput.key)), wantOriginal)
 	t.Log(
 		"reacquired child content invalidated the key and rendered fresh documents with fixed parent/release/OCI identity",
 	)

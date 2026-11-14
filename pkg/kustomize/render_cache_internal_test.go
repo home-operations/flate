@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -84,36 +83,6 @@ func testAcceptedFrame(
 	return wire.Bytes(), err
 }
 
-func renderPersistenceEligible(tb testing.TB) bool {
-	tb.Helper()
-	info, ok := debug.ReadBuildInfo()
-	eligible := false
-	if ok {
-		const module = "github.com/home-operations/flate"
-		eligible = info.Main.Path == module && info.Main.Version != "" && info.Main.Version != "(devel)"
-		for _, dep := range info.Deps {
-			if dep.Path == module && dep.Version != "" && dep.Version != "(devel)" {
-				eligible = true
-			}
-		}
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.revision" && setting.Value != "" {
-				eligible = true
-			}
-		}
-		renderPersistenceEligibleLoop(struct {
-			info     **debug.BuildInfo
-			eligible *bool
-		}{info: &info, eligible: &eligible})
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.modified" && setting.Value == "true" {
-				eligible = false
-			}
-		}
-	}
-	return eligible
-}
-
 func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSnapshot, []map[string]any, bool) {
 	tb.Helper()
 	var r fs.FS
@@ -154,7 +123,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 
 func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	tb.Helper()
-	if key.Render == sourcecache.RenderPending && renderPersistenceEligible(tb) {
+	if key.Render == sourcecache.RenderPending && owner.CanPersistRenders() {
 		key.Render = sourcecache.RenderAccepted
 	}
 	if frame, err := testDecodeFrame(tb, raw); err == nil {
@@ -195,7 +164,6 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		t.Parallel()
 		renderCacheHitMissInvalidateEmptyStream(t)
 	})
-	t.Logf("render persistence eligible=%v", renderPersistenceEligible(t))
 	root := testutil.WriteTree(t, map[string]string{
 		"selected/kustomization.yaml": "resources: [../child]\n",
 		"child/kustomization.yaml":    "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../cm.yaml\ngenerators: [../plugins]\npatches:\n  - path: ../patch.yaml\n",
@@ -266,7 +234,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 
 	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	assert.FatalIf(t, !ok, "%s", "owner did not retain completed render")
 	if eligible {
 		publishTestFrame(
@@ -695,18 +663,6 @@ func renderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 	t.Helper()
 
 	testRenderCacheHitMissInvalidateEmptyStream(t)
-}
-
-func renderPersistenceEligibleLoop(loopInputs struct {
-	info     **debug.BuildInfo
-	eligible *bool
-},
-) {
-	for _, dep := range (*loopInputs.info).Deps {
-		if dep.Replace != nil && dep.Replace.Version == "" {
-			(*loopInputs.eligible) = false
-		}
-	}
 }
 
 func renderCacheHitMissInvalidateLoop(loopInputs struct{ out1 *[]map[string]any }) {

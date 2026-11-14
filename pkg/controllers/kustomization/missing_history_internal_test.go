@@ -53,6 +53,7 @@ func (p *historyInputPromotion) Promote(
 
 func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	for _, tc := range []struct {
 		name     string
 		optional bool
@@ -101,7 +102,7 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			})
 			assert.Equal(t, warmInfo.Status, store.StatusReady)
 			warmHistory := warm.PreviousRender(t.Context(), owner, schedule.Result{})
-			assert.Equal(t, warmHistory.Complete, true)
+			assert.Equal(t, warmHistory.Complete, persistent)
 			assert.FatalIf(t, warmHistory.Assessment == nil, "missing warm assessment")
 			warmHistory.Assessment.Close()
 			st.AddObject(owner)
@@ -174,6 +175,7 @@ type unreadableSecretCase struct {
 
 func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	for _, tc := range []unreadableSecretCase{
 		{name: "absent", kind: manifest.KindSecret},
 		{
@@ -309,7 +311,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 				tc.assertWarnings(t, st.Warnings(), beforeWarnings, input)
 				replay := c.PreviousRender(t.Context(), owner, schedule.Result{})
 				assert.FatalIf(t, replay.Assessment == nil, "missing %s assessment", regime)
-				assert.Equal(t, replay.Complete, true)
+				assert.Equal(t, replay.Complete, persistent)
 				assert.Diff(t, replay.Assessment.Unreadable, normal.run.Unreadable)
 				assert.Diff(
 					t,
@@ -442,6 +444,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 
 func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	fixture, st, root := newControllerWithFixture(t)
 	trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
 	t.Cleanup(trees.Close)
@@ -485,7 +488,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	history := c.PreviousRender(t.Context(), owner, schedule.Result{})
 	assert.FatalIf(t, history.Assessment == nil, "missing assessment")
 	defer history.Assessment.Close()
-	assert.Equal(t, history.Complete, true)
+	assert.Equal(t, history.Complete, persistent)
 	assert.Equal(t, history.Assessment.Reads.Valid(), true)
 	beforeInput, beforeProducer := st.GetObject(input.Named()), st.GetDeclaration(producer.Named())
 	replacement := &store.SourceArtifact{Content: "after"}
@@ -496,7 +499,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	fresh := c.PreviousRender(t.Context(), owner, schedule.Result{})
 	assert.FatalIf(t, fresh.Assessment == nil, "missing fresh assessment")
 	defer fresh.Assessment.Close()
-	assert.Equal(t, fresh.Complete, true)
+	assert.Equal(t, fresh.Complete, persistent)
 	assert.Equal(t, fresh.Assessment.Reads.Valid(), true)
 	normal := c.newExecution(owner.Named())
 	defer normal.run.Close()

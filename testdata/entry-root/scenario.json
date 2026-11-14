@@ -74,6 +74,88 @@
           }
         }
       ]
+    },
+    {
+      "name": "invalid-log-level",
+      "description": "A cached invocation rejects an invalid log level before it creates a persistence notice.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "-n",
+              "default",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level=invalid"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/invalid-log-level.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-app-cached",
+      "description": "A cached render retains complete output and the mode-dependent persistence notice.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "-n",
+              "default",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir=@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/literal-app.stdout",
+              "stderr": "expect/literal-app-cached.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -87,44 +169,76 @@
     {
       "path": "expect/literal-app.stdout",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
     },
     {
       "path": "repo/kubernetes/apps/default/app/app/configmap.yaml",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "invalid-log-level",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
     },
     {
       "path": "repo/kubernetes/apps/default/app/app/kustomization.yaml",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "invalid-log-level",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
     },
     {
       "path": "repo/kubernetes/apps/default/app/ks.yaml",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "invalid-log-level",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
     },
     {
       "path": "repo/kubernetes/apps/flux-system/source.yaml",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "invalid-log-level",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
     },
     {
       "path": "repo/kubernetes/apps/kustomization.yaml",
       "cases": [
-        "literal-app"
+        "literal-app",
+        "invalid-log-level",
+        "literal-app-cached"
       ],
       "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "invalid-log-level"
+      ],
+      "purpose": "An invalid log level fails before persistence notice creation."
+    },
+    {
+      "path": "expect/invalid-log-level.stderr",
+      "cases": [
+        "invalid-log-level"
+      ],
+      "purpose": "An invalid log level fails before persistence notice creation."
+    },
+    {
+      "path": "expect/literal-app-cached.stderr",
+      "cases": [
+        "literal-app-cached"
+      ],
+      "purpose": "The complete persistence notice for a cached render in each process mode."
     }
   ]
 }

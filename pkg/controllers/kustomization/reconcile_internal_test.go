@@ -187,9 +187,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 
 func TestReconcile_ArtifactGeneratorPersistedDocument(t *testing.T) {
 	t.Parallel()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skipf("render persistence disabled: %s", reason)
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{
 		"apps/kustomization.yaml": "resources: [generator.yaml]\n",
 		"apps/generator.yaml": `apiVersion: source.extensions.fluxcd.io/v1beta1
@@ -262,6 +260,12 @@ spec:
 			t,
 			controllertest.Dispatch{Tasks: tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 		)
+		if persisted && !persistent {
+			assert.Equal(t, info.Status, store.StatusFailed)
+			assert.Equal(t, s.GetArtifact(ks.Named(), store.ArtifactContent) == nil, true)
+			assert.Equal(t, guard.opened.Load() > 0, true)
+			continue
+		}
 		assert.FatalIf(t, info.Status != store.StatusReady, "persisted=%t render status=%+v", persisted, info)
 		id := manifest.NamedResource{
 			Group:     "source.extensions.fluxcd.io",

@@ -5,7 +5,8 @@
   ✗  current snapshot: Kustomization  flux-system/${PREFIX:-}config  not found
          current snapshot: required by flux-system/consumer
 
-  ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found)
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization flux-system/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found)
 
   ✗ 2 failed · 2 blocked

@@ -33,17 +33,18 @@ func (f *historyCountingFS) Open(name string) (fs.File, error) {
 }
 
 type acceptedHistoryCase struct {
-	root     string
-	cacheDir string
-	cache    *TreeCache
-	req      RenderRequest
-	owner    manifest.NamedResource
-	receipt  *manifest.RenderReceipt
-	frame    renderFrame
-	raw      []map[string]any
-	key      sourcecache.BlobKey
-	child    manifest.NamedResource
-	records  map[manifest.NamedResource]manifest.DiscoveryRecord
+	persistent bool
+	root       string
+	cacheDir   string
+	cache      *TreeCache
+	req        RenderRequest
+	owner      manifest.NamedResource
+	receipt    *manifest.RenderReceipt
+	frame      renderFrame
+	raw        []map[string]any
+	key        sourcecache.BlobKey
+	child      manifest.NamedResource
+	records    map[manifest.NamedResource]manifest.DiscoveryRecord
 }
 
 func TestRenderFlux_AcceptedHistory(t *testing.T) {
@@ -105,7 +106,8 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 		ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/red"}},
 	}}
 	return &acceptedHistoryCase{
-		root: root, cacheDir: cacheDir, cache: cache, req: req, owner: owner,
+		persistent: sourcecache.RenderPersistenceDisabledReason() == "",
+		root:       root, cacheDir: cacheDir, cache: cache, req: req, owner: owner,
 		receipt: receipt, frame: frame, raw: raw, key: key, child: child, records: records,
 	}
 }
@@ -164,9 +166,6 @@ func (h *acceptedHistoryCase) unaccepted(t *testing.T) {
 func (h *acceptedHistoryCase) durable(t *testing.T) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
 	cache, cacheDir, req, owner := h.cache, h.cacheDir, h.req, h.owner
 	receipt, records := h.receipt, h.records
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
@@ -177,20 +176,25 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 	}))
 	fresh := newTestTreeCache(t, cacheDir)
 	previous, complete := previousHistory(t.Context(), fresh, &req, owner)
-	assert.Equal(t, complete, true)
-	got := maps.Collect(previous)
-	assert.Diff(t, got, records)
+	assert.Equal(t, complete, h.persistent)
+	assert.Equal(t, previous != nil, h.persistent)
+	if h.persistent {
+		assert.Diff(t, maps.Collect(previous), records)
+	}
 	equal := req
 	equal.SkipKinds = slices.Clone(equal.SkipKinds)
 	equalPrevious, equalComplete := previousHistory(t.Context(), fresh, &equal, owner)
-	assert.Equal(t, equalComplete, true)
-	assert.Diff(t, maps.Collect(equalPrevious), records)
+	assert.Equal(t, equalComplete, h.persistent)
+	assert.Equal(t, equalPrevious != nil, h.persistent)
+	if h.persistent {
+		assert.Diff(t, maps.Collect(equalPrevious), records)
+	}
 	changed := equal
 	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
 	_, changedComplete := previousHistory(t.Context(), fresh, &changed, owner)
 	assert.Equal(t, changedComplete, false)
 	_, acceptedReceipt, rawHit := fresh.PreviousRender(t.Context(), req)
-	assert.Equal(t, rawHit, true)
+	assert.Equal(t, rawHit, h.persistent)
 	{
 		_, complete := fresh.RenderHistory(owner, acceptedReceipt, "changed final inputs")
 		assert.FatalIf(t, complete, "%s", "raw hit supplied history for different final inputs")
@@ -231,10 +235,14 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	reader := newTestTreeCache(t, directory)
 	counted.opens.Store(0)
 	previous, complete := previousHistory(t.Context(), reader, &input, owner)
-	assert.Equal(t, complete && previous != nil, true)
-	assert.Diff(t, maps.Collect(previous), records)
-
-	assert.FatalIf(t, counted.opens.Load() == 0, "%s", "enabled history did not prepare source")
+	assert.Equal(t, complete, h.persistent)
+	assert.Equal(t, previous != nil, h.persistent)
+	if h.persistent {
+		assert.Diff(t, maps.Collect(previous), records)
+		assert.FatalIf(t, counted.opens.Load() == 0, "%s", "enabled history did not prepare source")
+	} else {
+		assert.Equal(t, counted.opens.Load(), int64(0))
+	}
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -302,7 +310,7 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 	}))
 	{
 		_, complete := previousHistory(t.Context(), isolated, &mutable, owner)
-		assert.FatalIf(t, !complete, "%s", "unchanged mutable history missed")
+		assert.Equal(t, complete, h.persistent)
 	}
 	before, err := isolated.prepareRender(t.Context(), &mutable)
 	assert.NoError(t, err)
@@ -338,7 +346,7 @@ func (h *acceptedHistoryCase) frozenPreparation(t *testing.T) {
 	before.SkipKinds = []string{"Skipped"}
 	{
 		_, complete := previousHistory(t.Context(), renderer, &before, owner)
-		assert.FatalIf(t, !complete, "%s", "caller mutation changed the prepared receipt")
+		assert.Equal(t, complete, h.persistent)
 	}
 	{
 		_, complete := previousHistory(t.Context(), renderer, &input, owner)
@@ -405,9 +413,11 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled acceptance: %v", err)
 	}
 	previous, complete := previousHistory(t.Context(), fresh, &req, owner)
-	assert.Equal(t, complete, true)
-	for id := range previous {
-		assert.Equal(t, id, child)
+	assert.Equal(t, complete, h.persistent)
+	if previous != nil {
+		for id := range previous {
+			assert.Equal(t, id, child)
+		}
 	}
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   owner,
@@ -416,9 +426,12 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 		Content: acceptedInput,
 	}))
 	previous, complete = previousHistory(t.Context(), fresh, &req, owner)
-	assert.Equal(t, complete && previous != nil, true)
-	for range previous {
-		t.Fatal("empty acceptance retained previous records")
+	assert.Equal(t, complete, h.persistent)
+	assert.Equal(t, previous != nil, h.persistent)
+	if previous != nil {
+		for range previous {
+			t.Fatal("empty acceptance retained previous records")
+		}
 	}
 }
 
@@ -449,7 +462,12 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 		assert.FatalIf(t, complete, "%s", "remote observations supplied history")
 	}
 	reader, _, _, err := cache.owner.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
-	assert.NoError(t, err)
-	_, err = fs.ReadFile(reader, "content")
-	assert.NoError(t, err)
+	if h.persistent {
+		assert.NoError(t, err)
+		_, err = fs.ReadFile(reader, "content")
+		assert.NoError(t, err)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, reader == nil, true)
+	}
 }

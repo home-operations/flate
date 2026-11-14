@@ -1,4 +1,7 @@
 
   ✗  Kustomization  flux-system/owner  kustomize build ./cluster/per-cluster: accumulating resources: accumulation err='accumulating resources from '../shared/demo': readfile cluster/shared/demo: invalid argument': recursed accumulation of path '@@repo@@/cluster/shared/demo': no resource matches strategic merge patch "ConfigMap.v1.[noGrp]/absent.[noNs]": no matches for Id ConfigMap.v1.[noGrp]/absent.[noNs]; failed to find unique target for patch ConfigMap.v1.[noGrp]/absent.[noNs]
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 1 failed

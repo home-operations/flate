@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -96,6 +98,66 @@ func testTemplateAcceptedHistoryDurablePublication(
 			},
 		),
 	)
+	persistent := cache.RenderPersistenceDisabledReason() == ""
+	if !persistent {
+		input := RenderOptions{Options: (*testCaseInput).input.Options, Sources: (*testCaseInput).input.Sources}
+		docs, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), *(*testCaseInput).hr, nil, input))
+		assert.NoError(t, err)
+		assert.Diff(t, docs, *(*testCaseInput).raw)
+		assert.NoError(t, renderer.cache.Close())
+		renderer = open()
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		foreign := accepting
+		foreign.Namespace = "foreign"
+		for _, state := range []struct {
+			canceled bool
+			owner    manifest.NamedResource
+			receipt  *manifest.RenderReceipt
+			records  map[manifest.NamedResource]manifest.DiscoveryRecord
+			want     error
+		}{
+			{false, accepting, receipt, records, nil},
+			{false, accepting, pending, nil, nil},
+			{false, foreign, pending, records, nil},
+			{false, accepting, receipt, records, nil},
+			{true, accepting, pending, records, context.Canceled},
+			{false, accepting, manifest.NewRenderReceipt("invalid", nil), records, manifest.ErrFlux},
+		} {
+			ctx := t.Context()
+			if state.canceled {
+				ctx = canceled
+			}
+			err := renderer.RecordRender(ctx, RenderAcceptance{
+				Owner:   state.owner,
+				Receipt: state.receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: maps.All(state.records),
+			})
+			assert.Equal(t, errors.Is(err, state.want), true)
+			reader, _, _, lookupErr := renderer.cache.Blob(
+				t.Context(),
+				*(*testCaseInput).key,
+				&cache.Policy{MaxAge: cache.Forever},
+				nil,
+			)
+			assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
+			assert.Equal(t, reader == nil, true)
+			previous, complete := renderer.PreviousRender(
+				t.Context(),
+				*(*testCaseInput).hr,
+				nil,
+				*(*testCaseInput).input,
+			)
+			assert.Equal(t, previous == nil, true)
+			assert.Equal(t, complete, false)
+		}
+		assert.NoError(t, renderer.cache.Close())
+		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+			Owner: accepting, Receipt: pending, Sources: []manifest.SourceEvidence{}, Records: emptyRenderInventory,
+		}))
+		return
+	}
 	initialKey := storedKey()
 	_, pending, (*(*testCaseInput).err) = testutil.RenderMaps(
 		renderer.Template(

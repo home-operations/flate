@@ -1,7 +1,8 @@
 
   ✗  current snapshot: Kustomization  apps/owner  kustomize build ./app: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve app/missing.yaml: stat app/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve app/missing.yaml: stat app/missing.yaml: file does not exist
 
-  ⚠ warnings (1)
-    [DiffSuppressed] Kustomization apps/owner: 1 object not rendered on the current side; diff suppressed (kustomize build ./app: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve app/missing.yaml: stat app/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve app/missing.yaml: stat app/missing.yaml: file does not exist)
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization apps/owner: 1 object not rendered on the current side; diff suppressed (kustomize build ./app: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve app/missing.yaml: stat app/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve app/missing.yaml: stat app/missing.yaml: file does not exist)
 
   ✗ 1 failed

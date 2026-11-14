@@ -168,9 +168,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 
 func TestReview_ByteIdentity(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires clean stamped persistence; item 2 must execute the output guard mutation")
-	}
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	root, st, hr := sourceValuesCacheFixture(t)
 	testutil.WriteFile(
 		t,
@@ -185,9 +183,7 @@ func TestReview_ByteIdentity(t *testing.T) {
 
 func TestReview_TemplateBytesIneligible(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires clean stamped persistence; item 2 must execute the analysis guard mutation")
-	}
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	for _, nested := range []bool{false, true} {
 		t.Run(map[bool]string{false: "root", true: "disabled nested chart"}[nested], func(t *testing.T) {
 			t.Parallel()
@@ -283,9 +279,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 
 //nolint:paralleltest // test changes process-wide logging.
 func TestReview_NestedWarnings(t *testing.T) {
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires clean stamped persistence; item 2 must execute recursive diagnostic mutations")
-	}
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	for _, name := range []string{"requirements.yaml", "requirements.lock"} {
 		t.Run(
 			name,
@@ -351,9 +345,7 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 ) {
 	t.Helper()
 
-	if (*testCaseInput) && !renderPersistenceEligible(t) {
-		t.Skip("requires clean stamped persistence; item 2 must execute this proof")
-	}
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	_, st, hr := sourceValuesCacheFixture(t)
 	root := ""
 	if *testCaseInput {

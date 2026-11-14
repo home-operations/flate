@@ -47,6 +47,7 @@ func TestRenderTrees_HelmStagePrecision(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	trees := make([]Tree, 2)
 	for side := range trees {
 		root := t.TempDir()
@@ -97,7 +98,11 @@ func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		stagePrecisionRunResult1 := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult1 := stagePrecisionRun(
+			t,
+			trees,
+			stageRun{directory: cacheDir, number: run, persistent: persistent},
+		)
 		runs, _, builds := stagePrecisionRunResult1.runs, stagePrecisionRunResult1.helm, stagePrecisionRunResult1.builds
 		t.Logf(
 			"STAGE_COUNT shape=angelnu field=NFS_MUSIC run=%d effective=%d unrelated=%d",
@@ -106,8 +111,9 @@ func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
 			builds["./unrelated"],
 		)
 		assert.Equal(t, builds["./unrelated"], 0)
-		if run == 0 {
+		if run == 0 || !persistent {
 			assert.Equal(t, builds["./music"], 2)
+			assert.Diff(t, builds, map[string]int{"./music": 2})
 		}
 		assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 	}
@@ -197,6 +203,7 @@ metadata: {name: payload, namespace: apps, annotations: {value: "\u0024{CHANGED}
 func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 	for _, tc := range generatedVariableCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 			trees := make([]Tree, 2)
 			for side := range trees {
 				root := t.TempDir()
@@ -242,10 +249,15 @@ func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 			assert.Equal(t, strings.Contains(string(want), "new"), true)
 			cacheDir := t.TempDir()
 			for run := range 2 {
-				stagePrecisionRunResult2 := stagePrecisionRun(t, trees, cacheDir, run)
+				stagePrecisionRunResult2 := stagePrecisionRun(
+					t,
+					trees,
+					stageRun{directory: cacheDir, number: run, persistent: persistent},
+				)
 				runs, _, builds := stagePrecisionRunResult2.runs, stagePrecisionRunResult2.helm, stagePrecisionRunResult2.builds
-				if run == 0 {
+				if run == 0 || !persistent {
 					assert.Equal(t, builds["./app"], 2)
+					assert.Diff(t, builds, map[string]int{"./app": 2})
 				}
 				assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 			}
@@ -255,6 +267,7 @@ func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_ChangedDeclarationPreparation(t *testing.T) {
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	trees := make([]Tree, 2)
 	for side := range trees {
 		root := t.TempDir()
@@ -289,10 +302,15 @@ func TestRenderTrees_ChangedDeclarationPreparation(t *testing.T) {
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		stagePrecisionRunResult3 := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult3 := stagePrecisionRun(
+			t,
+			trees,
+			stageRun{directory: cacheDir, number: run, persistent: persistent},
+		)
 		runs, _, builds := stagePrecisionRunResult3.runs, stagePrecisionRunResult3.helm, stagePrecisionRunResult3.builds
-		if run == 0 {
+		if run == 0 || !persistent {
 			assert.Equal(t, builds["./child"], 2)
+			assert.Diff(t, builds, map[string]int{"./before": 1, "./after": 1, "./child": 2})
 		}
 		assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 	}
@@ -304,8 +322,15 @@ type stageWork struct {
 	builds map[string]int
 }
 
-func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) stageWork {
+type stageRun struct {
+	directory  string
+	number     int
+	persistent bool
+}
+
+func stagePrecisionRun(t *testing.T, trees []Tree, input stageRun) stageWork {
 	t.Helper()
+	cacheDir, run, persistent := input.directory, input.number, input.persistent
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -338,12 +363,12 @@ func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) sta
 		},
 	)
 	return stagePrecisionRunTail(
-		t,
+		t, persistent,
 		&stagePrecisionRunTailInputs{sides: &sides, run: &run, builds: &builds, helm: &helm, runs: &runs},
 	)
 }
 
-func stagePrecisionRunTail(t *testing.T, tailCaseInput *stagePrecisionRunTailInputs) stageWork {
+func stagePrecisionRunTail(t *testing.T, persistent bool, tailCaseInput *stagePrecisionRunTailInputs) stageWork {
 	t.Helper()
 	for side, work := range *tailCaseInput.sides {
 		t.Logf(
@@ -355,7 +380,7 @@ func stagePrecisionRunTail(t *testing.T, tailCaseInput *stagePrecisionRunTailInp
 			work.helm,
 		)
 	}
-	if (*tailCaseInput.run) == 1 && sourcecache.RenderPersistenceDisabledReason() == "" {
+	if (*tailCaseInput.run) == 1 && persistent {
 		assert.Equal(t, len((*tailCaseInput.builds)), 0)
 		assert.Equal(t, (*tailCaseInput.helm), 0)
 	}
@@ -409,6 +434,7 @@ func stagePrecisionDiff(t *testing.T, runs []Rendered) []byte {
 func testRenderTreesStagePrecisionCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	trees := make([]Tree, 2)
 	for side := range trees {
@@ -456,9 +482,20 @@ func testRenderTreesStagePrecisionCase(t *testing.T, testCaseInput *string,
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		stagePrecisionRunResult4 := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult4 := stagePrecisionRun(
+			t,
+			trees,
+			stageRun{directory: cacheDir, number: run, persistent: persistent},
+		)
 		runs, _, builds := stagePrecisionRunResult4.runs, stagePrecisionRunResult4.helm, stagePrecisionRunResult4.builds
 		assert.Equal(t, builds["./child"], 0)
+		if run == 0 || !persistent {
+			wantBuilds := map[string]int{"./parent": 2}
+			if *testCaseInput == "path" {
+				wantBuilds = map[string]int{"./parent": 1, "./moved": 1}
+			}
+			assert.Diff(t, builds, wantBuilds)
+		}
 		assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 	}
 }
@@ -474,6 +511,7 @@ type testRenderTreesHelmStagePrecisionCaseInputs struct {
 
 func testRenderTreesHelmStagePrecisionCase(t *testing.T, testCaseInput testRenderTreesHelmStagePrecisionCaseInputs) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	trees := make([]Tree, 2)
 	for side := range trees {
@@ -526,7 +564,11 @@ func testRenderTreesHelmStagePrecisionCase(t *testing.T, testCaseInput testRende
 	want := stagePrecisionFull(t, trees)
 	cacheDir := t.TempDir()
 	for run := range 2 {
-		stagePrecisionRunResult5 := stagePrecisionRun(t, trees, cacheDir, run)
+		stagePrecisionRunResult5 := stagePrecisionRun(
+			t,
+			trees,
+			stageRun{directory: cacheDir, number: run, persistent: persistent},
+		)
 		runs, helm, builds := stagePrecisionRunResult5.runs, stagePrecisionRunResult5.helm, stagePrecisionRunResult5.builds
 		t.Logf(
 			"STAGE_COUNT shape=%s field=%s run=%d parent=%d helm=%d",
@@ -537,6 +579,9 @@ func testRenderTreesHelmStagePrecisionCase(t *testing.T, testCaseInput testRende
 			helm,
 		)
 		assert.Equal(t, helm, 0)
+		if run == 0 || !persistent {
+			assert.Diff(t, builds, map[string]int{"./" + testCaseInput.shape.path: 2})
+		}
 		assert.Diff(t, string(stagePrecisionDiff(t, runs)), string(want))
 	}
 }

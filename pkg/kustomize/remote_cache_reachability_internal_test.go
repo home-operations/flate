@@ -22,7 +22,7 @@ import (
 
 func TestRender_RemoteCacheReachability(t *testing.T) {
 	t.Parallel()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("persisted reachability assertions executed=%v; validator assertions always execute", eligible)
 	t.Run("empty-and-canceled", func(t *testing.T) {
 		t.Parallel()

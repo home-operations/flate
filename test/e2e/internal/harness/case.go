@@ -85,7 +85,7 @@ func (c *Case) Run(t *testing.T) []Result {
 	return results
 }
 
-// Want reads expectations without changing materialized state or caches.
+// Want must not reset caches or change the materialized case.
 func (c *Case) Want(t *testing.T) []Result {
 	t.Helper()
 	f := c.fixture
@@ -95,18 +95,17 @@ func (c *Case) Want(t *testing.T) []Result {
 			continue
 		}
 		inv := step.Invoke
-		// Want must not reset a cache or change the materialized case.
 		name := inv.Cache.Name
 		if name == "" {
 			name = "default"
 		}
-		cache := f.CachePath(name)
+		cachePath := f.CachePath(name)
 		want = append(
 			want,
 			Result{
 				Step:   step.ID,
-				Stdout: f.Read(t, inv.Expect.Stdout, cache),
-				Stderr: f.Read(t, inv.Expect.Stderr, cache),
+				Stdout: f.Read(t, inv.Expect.Stdout, cachePath),
+				Stderr: f.Read(t, inv.Expect.Stderr, cachePath),
 				Code:   *inv.Expect.Code,
 			},
 		)

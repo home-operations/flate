@@ -25,7 +25,7 @@ import (
 
 func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 	t.Parallel()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("persisted attribution assertions executed=%v; recorded snapshot assertions always execute", eligible)
 	for _, scenario := range []string{"after-git", "rewritten-plugin", "source-link"} {
 		t.Run(scenario, func(t *testing.T) {

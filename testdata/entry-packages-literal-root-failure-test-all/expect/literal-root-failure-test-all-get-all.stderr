@@ -2,5 +2,8 @@
   ✗  entry  path "."  kustomize build .: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve missing.yaml: stat missing.yaml: file does not exist': must build at directory: not a valid directory: resolve missing.yaml: stat missing.yaml: file does not exist
   ✗  ConfigMap  apps/unavailable-input  not found
          required by apps/child
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 2 failed · 1 blocked

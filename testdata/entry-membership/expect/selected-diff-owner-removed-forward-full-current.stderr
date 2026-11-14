@@ -1,3 +1,4 @@
 
-  ⚠ warnings (1)
-    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct

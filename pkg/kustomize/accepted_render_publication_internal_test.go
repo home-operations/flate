@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -44,6 +46,56 @@ func (h *acceptedHistoryCase) publication(t *testing.T) {
 		Records: maps.All(p.records),
 		Content: acceptedInput,
 	}))
+	if !h.persistent {
+		docs, receipt, err := testutil.RenderMaps(Render(t.Context(), p.renderer, p.req, sourcecache.RetryConfig{}))
+		assert.NoError(t, err)
+		assert.Diff(t, docs, h.raw)
+		closeTestTreeCache(t, p.renderer)
+		p.renderer = newTestTreeCache(t, directory)
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		foreign := p.owner
+		foreign.Namespace = "foreign"
+		for _, state := range []struct {
+			canceled bool
+			owner    manifest.NamedResource
+			receipt  *manifest.RenderReceipt
+			records  map[manifest.NamedResource]manifest.DiscoveryRecord
+			want     error
+		}{
+			{false, p.owner, receipt, p.records, nil},
+			{false, p.owner, p.pending, nil, nil},
+			{false, foreign, p.pending, p.records, nil},
+			{false, p.owner, receipt, p.records, nil},
+			{true, p.owner, p.pending, p.records, context.Canceled},
+			{false, p.owner, manifest.NewRenderReceipt("invalid", nil), p.records, manifest.ErrFlux},
+		} {
+			ctx := t.Context()
+			if state.canceled {
+				ctx = canceled
+			}
+			err := p.renderer.RecordRender(ctx, RenderAcceptance{
+				Owner: state.owner, Receipt: state.receipt, Content: acceptedInput, Records: maps.All(state.records),
+			})
+			assert.Equal(t, errors.Is(err, state.want), true)
+			reader, _, _, lookupErr := p.renderer.owner.Blob(
+				t.Context(),
+				p.key,
+				&sourcecache.Policy{MaxAge: sourcecache.Forever},
+				nil,
+			)
+			assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
+			assert.Equal(t, reader == nil, true)
+			previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+			assert.Equal(t, previous == nil, true)
+			assert.Equal(t, complete, false)
+		}
+		closeTestTreeCache(t, p.renderer)
+		assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
+			Owner: p.owner, Receipt: p.pending, Content: acceptedInput, Records: emptyRenderInventory,
+		}))
+		return
+	}
 	p.initialKey = p.storedKey(t)
 	p.warm(t)
 	p.change(t)

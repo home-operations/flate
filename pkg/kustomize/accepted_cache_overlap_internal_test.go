@@ -40,7 +40,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	testCaseInput *bool,
 ) {
 	t.Helper()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")},

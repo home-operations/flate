@@ -1,7 +1,8 @@
 
   ✗  Kustomization  flux-system/app  kustomize build ./payload: loading KV pairs: file sources: [missing.txt]: resolve payload/missing.txt: stat payload/missing.txt: file does not exist
 
-  ⚠ warnings (1)
-    [SourceCredentialsUnavailable] GitRepository flux-system/external: secret flux-system/unavailable-auth not found
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [SourceCredentialsUnavailable] GitRepository flux-system/external: secret flux-system/unavailable-auth not found
 
   ✗ 1 failed

@@ -137,7 +137,7 @@ type receiptTrees struct {
 	close func()
 }
 
-func testReceiptTrees(t *testing.T, cacheDir string) receiptTrees {
+func testReceiptTrees(t *testing.T, cacheDir string, persistent bool) receiptTrees {
 	t.Helper()
 	owner, err := cache.New(t.Context(), cacheDir)
 	assert.NoError(t, err)
@@ -148,26 +148,23 @@ func testReceiptTrees(t *testing.T, cacheDir string) receiptTrees {
 		assert.NoError(t, owner.Close())
 	}
 	t.Cleanup(closeCache)
-	if cacheDir != "" && !owner.CanPersistRenders() {
-		t.Skipf("persistent receipt proof requires an eligible build: %s", cache.RenderPersistenceDisabledReason())
-	}
+	assert.Equal(t, owner.CanPersistRenders(), cacheDir != "" && persistent)
 	return receiptTrees{trees: trees, close: closeCache}
 }
 
-func packageHistory(
-	t *testing.T,
-	trees *kustomize.TreeCache,
-	req *kustomize.RenderRequest,
-	owner manifest.NamedResource,
+func packageHistory(t *testing.T, trees *kustomize.TreeCache,
+	req *kustomize.RenderRequest, persistent bool,
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(owner, receipt, kustomize.PrepareShape(req, docs).Content())
-	assert.FatalIf(t, !available || !complete || records == nil, "package %q has no complete accepted history",
-		req.SubPath,
-	)
-	history := maps.Collect(records)
-	return history
+	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
+	assert.Equal(t, available, persistent)
+	assert.Equal(t, complete, persistent)
+	assert.Equal(t, records != nil, persistent)
+	if !persistent {
+		return nil
+	}
+	return maps.Collect(records)
 }
 
 func preparedRequest(
@@ -626,7 +623,8 @@ func testRunSelectedEntryAdmissionCase(t *testing.T, testCaseInput *string,
 
 func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunSelectedEntryAdmissionCaseTailInputs) {
 	t.Helper()
-	testReceiptTreesResult1 := testReceiptTrees(t, (*tailCaseInput.cacheDir))
+	persistent := cache.RenderPersistenceDisabledReason() == ""
+	testReceiptTreesResult1 := testReceiptTrees(t, (*tailCaseInput.cacheDir), persistent)
 	trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	cfg := Config{
 		Trees: trees,
@@ -705,11 +703,14 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 			assert.Equal(t, ownRecord.File, "app/owner.yaml")
 			assert.Equal(t, ownRecord.Declaration != nil, true)
 		}
-		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
+		if !persistent {
+			want = nil
+		}
+		assert.Diff(t, packageHistory(t, trees, &req, persistent), want)
 		closeCache()
-		testReceiptTreesResult2 := testReceiptTrees(t, (*tailCaseInput.cacheDir))
+		testReceiptTreesResult2 := testReceiptTrees(t, (*tailCaseInput.cacheDir), persistent)
 		trees, closeCache = testReceiptTreesResult2.trees, testReceiptTreesResult2.close
-		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
+		assert.Diff(t, packageHistory(t, trees, &req, persistent), want)
 	}
 	closeCache()
 }

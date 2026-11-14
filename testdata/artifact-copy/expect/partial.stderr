@@ -2,5 +2,8 @@
   ✗  ArtifactGenerator  apps/generator  evaluate generated-c: stat: stat c: file does not exist
   ✗  ExternalArtifact  apps/generated-c  not found
          required by apps/c
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 2 failed · 1 blocked

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
+
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 const (
@@ -165,9 +168,16 @@ func (f *Fixture) Cache(tb testing.TB, inv *Invocation) string {
 // Resolve rejects commit tokens that the scenario does not declare.
 func (f *Fixture) Resolve(tb testing.TB, value, cache string) string {
 	tb.Helper()
+	reason := sourcecache.RenderPersistenceDisabledReason()
 	value = strings.NewReplacer("@@repo@@", f.Repo, "@@baseline@@", filepath.Join(f.root, "baseline"), "@@inputs@@", f.Inputs, "@@cache@@", cache,
-		"<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*defaultConcurrencyPerCPU)).
+		"<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*defaultConcurrencyPerCPU),
+		"<PERSISTENCE_REASON>", reason).
 		Replace(value)
+	branch := "${1}"
+	if reason != "" {
+		branch = "${2}"
+	}
+	value = regexp.MustCompile(`(?s)<PERSISTENCE:([^|<>]*)\|([^|<>]*)>`).ReplaceAllString(value, branch)
 	for strings.Contains(value, "@@commit:") {
 		start := strings.Index(value, "@@commit:")
 		end := strings.Index(value[start+len("@@commit:"):], "@@")

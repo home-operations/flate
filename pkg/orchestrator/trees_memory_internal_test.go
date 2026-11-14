@@ -297,6 +297,7 @@ func TestRender_MemorySparseGit(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_MemoryContained(t *testing.T) {
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	previousGC := debug.SetGCPercent(100)
 	previousLimit := debug.SetMemoryLimit(math.MaxInt64)
 	defer debug.SetGCPercent(previousGC)
@@ -402,8 +403,12 @@ func TestRender_MemoryContained(t *testing.T) {
 			case "one_cold_operation":
 				run(payloadSize, 4)
 			case "two_warm_operations":
-				run(payloadSize, 0)
-				run(payloadSize, 0)
+				templates := uint64(0)
+				if !persistent {
+					templates = 4
+				}
+				run(payloadSize, templates)
+				run(payloadSize, templates)
 			}
 			after := heap()
 			assert.FatalIf(

@@ -2,5 +2,8 @@
   ✗  Kustomization  flux-system/owner  kustomize build ./monitoring: accumulating resources: accumulating resources from 'blackbox-exporter.yaml': MalformedYAMLError: yaml: line 6: did not find expected ',' or ']' in File: blackbox-exporter.yaml
          blocks flux-system/dependent
   ✗  Kustomization  flux-system/peer  kustomize build ./monitoring: accumulating resources: accumulating resources from 'blackbox-exporter.yaml': MalformedYAMLError: yaml: line 6: did not find expected ',' or ']' in File: blackbox-exporter.yaml
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 2 failed · 1 blocked

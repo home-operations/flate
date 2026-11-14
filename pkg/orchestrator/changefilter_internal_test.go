@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
@@ -144,6 +145,7 @@ data:
 
 func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	for _, name := range []string{"a", "b"} {
 		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "apps",
@@ -181,9 +183,12 @@ func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
 	work := fresh.freezeWork()
 	for _, name := range []string{"a", "b"} {
 		owner := testutil.KustomizationID("apps", name)
-		assert.Equal(t, fresh.history[owner].Complete, true)
-		assert.Equal(t, workCounts(work, owner, manifest.WorkCache),
-			manifest.WorkCounts{Attempts: 4, Completed: 4, CacheService: 3})
+		assert.Equal(t, fresh.history[owner].Complete, persistent)
+		wantCache := manifest.WorkCounts{Attempts: 4, Completed: 4, CacheService: 3}
+		if !persistent {
+			wantCache = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
+		}
+		assert.Equal(t, workCounts(work, owner, manifest.WorkCache), wantCache)
 		assert.Equal(t, workCounts(work, owner, manifest.WorkPreparation).OwnerPrepares, uint64(1))
 		for _, record := range work {
 			if record.Key.Owner == owner {

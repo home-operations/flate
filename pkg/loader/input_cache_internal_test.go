@@ -30,6 +30,9 @@ func TestInputCache_RestoresIndependentWalks(t *testing.T) {
 	for _, edit := range []string{"unchanged", "file", "builder", "precedence", "membership", "missing", "transformer"} {
 		t.Run(edit, func(t *testing.T) {
 			t.Parallel()
+			reason := cache.RenderPersistenceDisabledReason()
+			t.Logf("render persistence reason=%q backing=disk", reason)
+			persistent := reason == ""
 			root := t.TempDir()
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
@@ -89,8 +92,8 @@ func TestInputCache_RestoresIndependentWalks(t *testing.T) {
 			facts := restored.sourceFacts(root)
 			_, left := facts.walk(new(key("left")))
 			_, right := facts.walk(new(key("right")))
-			assert.Equal(t, left, edit == "unchanged")
-			assert.Equal(t, right, true)
+			assert.Equal(t, left, persistent && edit == "unchanged")
+			assert.Equal(t, right, persistent)
 			cold := cachedFixtureLoader(t, root, files, nil)
 			defer cold.Close()
 			restored.ensureScopes()
@@ -111,6 +114,7 @@ func TestInputCache_ParsesOnlyEditedFile(t *testing.T) {
 	for _, count := range []int{32, 128} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			t.Parallel()
+			persistent := cache.RenderPersistenceDisabledReason() == ""
 			root, backing := t.TempDir(), t.TempDir()
 			files := fstest.MapFS{}
 			reads := map[string]*atomic.Int64{}
@@ -128,12 +132,12 @@ func TestInputCache_ParsesOnlyEditedFile(t *testing.T) {
 			}
 			fixture := inputCacheFixture{root: root, backing: backing, files: files, reads: reads}
 
-			fixture.run(t, count)
-			fixture.run(t, 0)
+			fixture.run(t, count, persistent)
+			fixture.run(t, 0, persistent)
 			files["cm-000.yaml"] = &fstest.MapFile{
 				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm-000}\ndata: {value: blue}\n"),
 			}
-			fixture.run(t, 1)
+			fixture.run(t, 1, persistent)
 		})
 	}
 }
@@ -144,17 +148,20 @@ type inputCacheFixture struct {
 	reads         map[string]*atomic.Int64
 }
 
-func (f *inputCacheFixture) run(t *testing.T, want int) {
+//nolint:gocognit // The owner lifetime MUST cover restored inputs, source reads, projections, and publication in both modes.
+func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	t.Helper()
 	root, backing, files, reads := f.root, f.backing, f.files, f.reads
 	count := len(files)
 	warm := want != count
+	wantReads := want
+	if !persistent {
+		wantReads = count
+	}
 	owner, err := cache.New(t.Context(), backing)
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	view, _, err := gittree.New(
 		t.Context(),
 		nil,
@@ -172,7 +179,7 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 	l.documents.compact = true
 	l.mountSources()
 	assert.NoError(t, l.restoreCachedInputs(t.Context()))
-	if want == 0 {
+	if want == 0 && persistent {
 		for name := range files {
 			doc := l.documents.cache[filepath.Join(root, name)]
 			assert.Equal(t, doc.deferred != nil, true)
@@ -190,6 +197,15 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 		again, _ := source.load(key)
 		assert.Equal(t, &load.files[0] == &again.files[0], true)
 	}
+	if want == 0 && !persistent {
+		for name := range files {
+			_, known := l.documents.cache[filepath.Join(root, name)]
+			assert.Equal(t, known, false)
+		}
+		source := l.sourceFacts(root)
+		_, known, _ := source.loads.get(loadContext{path: root})
+		assert.Equal(t, known, false)
+	}
 	for _, read := range reads {
 		read.Store(0)
 	}
@@ -199,12 +215,12 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 	for name, read := range reads {
 		if read.Load() != 0 {
 			parsed++
-			if warm {
+			if warm && persistent {
 				assert.Equal(t, name, "cm-000.yaml")
 			}
 		}
 	}
-	assert.Equal(t, parsed, want)
+	assert.Equal(t, parsed, wantReads)
 	assert.Equal(t, len(l.Index.Records), count)
 	if warm {
 		occurrence, known := l.Occurrence(manifest.NamedResource{Kind: "ConfigMap", Name: "cm-000"})
@@ -234,7 +250,7 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 			projected++
 		}
 	}
-	assert.Equal(t, projected, want)
+	assert.Equal(t, projected, wantReads)
 	assert.NoError(t, l.PersistInputs(t.Context()))
 	if warm {
 		restored := l.documents.cache[filepath.Join(root, "cm-001.yaml")]
@@ -244,12 +260,11 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 
 func TestInputCache_RejectsChangedPublication(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	files := fstest.MapFS{"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")}}
 	view, _, err := gittree.New(
 		t.Context(),
@@ -269,8 +284,11 @@ func TestInputCache_RejectsChangedPublication(t *testing.T) {
 	assert.NoError(t, err)
 	files["object.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")}
 	err = l.PersistInputs(t.Context())
-	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), persistent)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), persistent)
+	if !persistent {
+		assert.NoError(t, err)
+	}
 }
 
 func cachedFixtureLoader(tb testing.TB, root string, files fstest.MapFS, owner *cache.Cache) *Loader {
@@ -294,13 +312,12 @@ func cachedFixtureLoader(tb testing.TB, root string, files fstest.MapFS, owner *
 
 func TestInputCache_SubstitutionNamesFollowContent(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	files := fstest.MapFS{}
 	for _, variable := range []string{"RED", "RED", "BLUE"} {
 		files["object.yaml"] = &fstest.MapFile{
@@ -324,13 +341,12 @@ func TestInputCache_SubstitutionExclusions(t *testing.T) {
 	for _, field := range []string{"enabled", "annotations", "labels"} {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()
+			persistent := cache.RenderPersistenceDisabledReason() == ""
 			root := t.TempDir()
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			if !owner.CanPersistRenders() {
-				t.Fatal("input cache witness requires a clean stamped test binary")
-			}
+			assert.Equal(t, owner.CanPersistRenders(), persistent)
 			metadata := "metadata:\n  name: '${BUCKET}'\n"
 			if field != "enabled" {
 				metadata += "  " + field + ": {kustomize.toolkit.fluxcd.io/substitute: disabled}\n"
@@ -355,13 +371,12 @@ func TestInputCache_SubstitutionExclusions(t *testing.T) {
 
 func TestInputCache_ParsedHandoffPublishesNewFacts(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	files := fstest.MapFS{
 		"object.yaml": {
 			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\ndata: {value: '${COLOR}'}\n"),
@@ -383,12 +398,22 @@ func TestInputCache_ParsedHandoffPublishesNewFacts(t *testing.T) {
 	_, err = l.projectionFile(t.Context(), input, "object.yaml", true)
 	assert.NoError(t, err)
 	assert.NoError(t, l.PersistInputs(t.Context()))
-	assert.Equal(t, prepared.sources[root].cache.files[inputCoordinate{name: "object.yaml"}].projection == nil, true)
+	if persistent {
+		assert.Equal(
+			t,
+			prepared.sources[root].cache.files[inputCoordinate{name: "object.yaml"}].projection == nil,
+			true,
+		)
+	} else {
+		assert.Equal(t, prepared.sources[root].cache == nil, true)
+	}
 	restored := cachedFixtureLoader(t, root, files, owner)
 	defer restored.Close()
 	facts := restored.documents.cache[filepath.Join(root, "object.yaml")].projection
-	assert.FatalIf(t, facts == nil, "new facts were not published after parsed handoff")
-	assert.Equal(t, facts.Names == nil, true)
+	assert.Equal(t, facts != nil, persistent)
+	if persistent {
+		assert.Equal(t, facts.Names == nil, true)
+	}
 	projection, err := restored.projectionFile(
 		t.Context(),
 		restored.documents.artifacts[root],
@@ -463,14 +488,13 @@ func TestInputCache_LoadEvidenceKeepsPathBoundaries(t *testing.T) {
 
 func TestInputCache_NestedMountOverridesParentFrame(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("clean stamped binary required")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	parentFiles := fstest.MapFS{
 		"nested/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: parent}\n")},
 	}
@@ -560,6 +584,7 @@ func TestInputCache_HelmCatalogMatchesCold(t *testing.T) {
 
 func TestInputCache_NestedMountInvalidatesTraversals(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
 	owner, err := cache.New(t.Context(), t.TempDir())
@@ -618,7 +643,7 @@ func TestInputCache_NestedMountInvalidatesTraversals(t *testing.T) {
 			_, restored := facts.walk(new(key("nested")))
 			assert.Equal(t, restored, false)
 			_, restored = facts.walk(new(key("right")))
-			assert.Equal(t, restored, true)
+			assert.Equal(t, restored, persistent)
 			_, restored = facts.load(loadContext{path: root})
 			assert.Equal(t, restored, false)
 			assert.Equal(t, l.documents.cache[nested].sourceRoot, "")
@@ -656,14 +681,13 @@ func TestInputCache_NewMountMatchesCold(t *testing.T) {
 
 func testInputCacheNewMountMatchesCold(t *testing.T, testCase mountedInputCase) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
-	if !owner.CanPersistRenders() {
-		t.Fatal("input cache witness requires a clean stamped test binary")
-	}
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	files := fstest.MapFS{
 		"kustomization.yaml":       {Data: []byte("resources: [" + testCase.resource + "]\n")},
 		"right/kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
@@ -721,7 +745,7 @@ func testInputCacheNewMountMatchesCold(t *testing.T, testCase mountedInputCase) 
 			_, restored := facts.walk(new(key(".")))
 			assert.Equal(t, restored, false)
 			_, restored = facts.walk(new(key("right")))
-			assert.Equal(t, restored, true)
+			assert.Equal(t, restored, persistent)
 			_, restored = facts.load(loadContext{path: root})
 			assert.Equal(t, restored, false)
 			assert.Equal(t, l.documents.cache[nested].sourceRoot, "")

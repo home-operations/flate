@@ -28,13 +28,12 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // Storage faults MUST retain normal-render and publication assertions in both persistence modes.
 func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
 
-	if (*testCaseInput) != "construction" && !renderPersistenceEligible(t) {
-		t.Skip("storage faults require an eligible build")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(
@@ -76,16 +75,21 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 				&cache.Policy{MaxAge: cache.Forever},
 				nil,
 			)
-			assert.NoError(t, err)
-			data, err := fs.ReadFile(r, "content")
-			assert.NoError(t, err)
+			if persistent {
+				assert.NoError(t, err)
+				data, readErr := fs.ReadFile(r, "content")
+				assert.NoError(t, readErr)
 
-			sum := digest.FromBytes(data)
-			blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
-			assert.NoError(t, os.Remove(blob))
-			assert.NoError(t, os.Mkdir(blob, 0o750))
-			cli = NewClient(owner)
-			cliSources = localChartResolver(t, "chart-repo", "flux-system", chartDir)
+				sum := digest.FromBytes(data)
+				blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
+				assert.NoError(t, os.Remove(blob))
+				assert.NoError(t, os.Mkdir(blob, 0o750))
+				cli = NewClient(owner)
+				cliSources = localChartResolver(t, "chart-repo", "flux-system", chartDir)
+			} else {
+				assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+				assert.Equal(t, r == nil, true)
+			}
 		}
 	}
 	if (*testCaseInput) != "read" {
@@ -114,6 +118,13 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 					Sources: []manifest.SourceEvidence{},
 				},
 			)
+		}
+
+		if !persistent && *testCaseInput != "construction" {
+			assert.NoError(t, err)
+			assert.Equal(t, len(out), 1)
+			assert.Equal(t, hasRenderField(out, "name", "fresh"), true)
+			continue
 		}
 
 		if (*testCaseInput) == "read" {

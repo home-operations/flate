@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 type selectionWitnessCase struct {
@@ -25,6 +26,7 @@ func (tc *selectionWitnessCase) run(
 	preparations map[string]map[manifest.WorkKey]manifest.WorkCounts,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	for _, regime := range []string{"cold", "hot"} {
 		t.Run(regime, func(t *testing.T) {
 			t.Parallel()
@@ -43,8 +45,12 @@ func (tc *selectionWitnessCase) run(
 				assert.Diff(t, visibleWitnessOutput(result), witnessOutput(full, tc.owners))
 				assert.Equal(t, len(result.Warnings), 0)
 				assertWitnessSources(t, runs[0])
-				tc.assertWork(t, result, regime, preparations[tc.name+"/"+regime])
-				tc.assertCache(t, result.Work, regime)
+				expectedRegime := regime
+				if !persistent {
+					expectedRegime = "cold"
+				}
+				tc.assertWork(t, result, expectedRegime, preparations[tc.name+"/"+expectedRegime])
+				tc.assertCache(t, result.Work, expectedRegime)
 				body, err := json.Marshal(result.Manifests)
 				assert.NoError(t, err)
 				if repeat == 0 {

@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 type editWitnessOutput struct {
@@ -18,11 +19,12 @@ type editWitnessOutput struct {
 }
 
 type editWitnessRun struct {
-	test   editWitnessCase
-	roots  [2]string
-	full   [2]*Result
-	files  [2]int
-	regime string
+	test       editWitnessCase
+	roots      [2]string
+	full       [2]*Result
+	files      [2]int
+	regime     string
+	persistent bool
 }
 
 func (r *editWitnessRun) assertRun(t *testing.T, run Rendered, side int) editWitnessOutput {
@@ -63,7 +65,6 @@ func (r *editWitnessRun) assertRun(t *testing.T, run Rendered, side int) editWit
 		assert.Equal(t, len(run.Result.Warnings), 0)
 	}
 	assertWitnessSources(t, run)
-	engines := r.engineWitnesses(side)
 	active := slices.Clone(tc.owners)
 	evaluates := slices.Contains(tc.owners, rs)
 	if regime == "hot" {
@@ -92,7 +93,6 @@ func (r *editWitnessRun) assertRun(t *testing.T, run Rendered, side int) editWit
 		admissions[manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: child}] = 1
 	}
 	assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkAdmission), admissions)
-	assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkKustomize), engines)
 	assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkEvaluation), evaluation)
 	assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkAcquisition), map[manifest.NamedResource]uint64{{}: 1})
 
@@ -129,15 +129,29 @@ func (r *editWitnessRun) render(t *testing.T) []byte {
 	assert.NoError(t, err)
 	outputs := make([]map[string][]map[string]any, 0, len(runs))
 	var templates uint64
+	var joint manifest.WorkSummary
 
 	for side, run := range runs {
 		assertRunResult := r.assertRun(t, run, side)
 		encoded, count := assertRunResult.encoded, assertRunResult.templates
 		outputs = append(outputs, encoded)
 		templates += count
+		joint = append(joint, run.Result.Work...)
+	}
+	if regime == "hot" && !r.persistent {
+		assert.Diff(t, witnessWork(joint, manifest.WorkKustomize), map[manifest.NamedResource]uint64{
+			{}: 1, testutil.KustomizationID("apps", "a"): 1, testutil.KustomizationID("apps", "b"): 1,
+		})
+		assert.Diff(t, witnessWork(joint, manifest.WorkHelm), map[manifest.NamedResource]uint64{
+			testutil.HelmReleaseID("apps", "release"): 1,
+		})
 	}
 	if r.test.name == "readme" {
-		assert.Equal(t, templates, uint64(0))
+		wantTemplates := uint64(0)
+		if regime == "hot" && !r.persistent {
+			wantTemplates = 1
+		}
+		assert.Equal(t, templates, wantTemplates)
 	}
 	body, err := json.Marshal(outputs)
 	assert.NoError(t, err)
@@ -162,10 +176,14 @@ func (r *editWitnessRun) assertCachedWork(
 
 	{
 		var attempts uint64
-		if regime != "hot" && (regime != "warm-after-edit" || side == 1) && slices.Contains(tc.owners, hr) {
+		rerenders := !r.persistent || regime != "hot" && (regime != "warm-after-edit" || side == 1)
+		if rerenders && slices.Contains(active, hr) {
 			attempts = 1
 		}
-		assert.Equal(t, helm, manifest.WorkCounts{Attempts: attempts, Completed: attempts})
+		if regime != "hot" || r.persistent {
+			assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkKustomize), r.engineWitnesses(side))
+			assert.Equal(t, helm, manifest.WorkCounts{Attempts: attempts, Completed: attempts})
+		}
 	}
 	r.assertCachedOwners(t, run, active, side)
 	entry := manifest.NamedResource{
@@ -187,6 +205,9 @@ func (r *editWitnessRun) assertCachedWork(
 	if regime == "hot" {
 		entryCache = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
 	}
+	if !r.persistent && entryCache != (manifest.WorkCounts{}) {
+		entryCache = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
+	}
 	assertWitnessCacheCounts(
 		t, new(workCounts(run.Result.Work, entry, manifest.WorkCache)), &entryCache,
 		witnessCacheLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
@@ -197,6 +218,7 @@ func (r *editWitnessRun) assertCachedWork(
 
 func (tc *editWitnessCase) run(t *testing.T) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	before := maps.Clone(workWitnessFiles())
 	maps.Copy(before, tc.prepare)
 	after := maps.Clone(before)
@@ -229,13 +251,14 @@ func (tc *editWitnessCase) run(t *testing.T) {
 
 	for _, regime := range []string{"cold", "source-warm", "hot", "warm-after-edit"} {
 		run := editWitnessRun{
-			test:   *tc,
-			roots:  roots,
-			full:   full,
-			files:  [2]int{len(before), len(after)},
-			regime: regime,
+			test:       *tc,
+			roots:      roots,
+			full:       full,
+			files:      [2]int{len(before), len(after)},
+			regime:     regime,
+			persistent: persistent,
 		}
-		if regime == "warm-after-edit" && tc.name == "unused" {
+		if persistent && regime == "warm-after-edit" && tc.name == "unused" {
 			run.test.owners = []manifest.NamedResource{testutil.KustomizationID("apps", "a")}
 		}
 		t.Run(regime, run.run)
@@ -257,7 +280,7 @@ func (r *editWitnessRun) run(t *testing.T) {
 
 func (r *editWitnessRun) engineWitnesses(side int) map[manifest.NamedResource]uint64 {
 	engines := map[manifest.NamedResource]uint64{}
-	if r.regime == "hot" || r.regime == "warm-after-edit" && side == 0 {
+	if r.regime == "hot" || r.persistent && r.regime == "warm-after-edit" && side == 0 {
 		return engines
 	}
 	if r.entryChanged() {
@@ -293,6 +316,9 @@ func (r *editWitnessRun) assertCachedOwners(
 			if regime == "hot" || regime == "warm-after-edit" && side == 0 {
 				want = manifest.WorkCounts{Attempts: 3, Completed: 3, CacheService: 2}
 			}
+			if !r.persistent {
+				want = manifest.WorkCounts{Attempts: 1, Completed: 1}
+			}
 		}
 		assertWitnessCacheCounts(
 			t, &cached, &want,
@@ -312,5 +338,6 @@ func (r *editWitnessRun) entryChanged() bool {
 }
 
 func (r *editWitnessRun) historicalEntry() bool {
-	return r.regime == "warm-after-edit" && strings.HasPrefix(r.test.file, "apps/a/") && !r.entryChanged()
+	return r.persistent && r.regime == "warm-after-edit" && strings.HasPrefix(r.test.file, "apps/a/") &&
+		!r.entryChanged()
 }

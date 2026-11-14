@@ -565,7 +565,14 @@ spec:
 	)
 	retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "retained"}
 	assert.FatalIf(t, o.Store().GetObject(retainedID) == nil, "%v", "persisted producer lost its retained child")
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason == "" {
+	reason := sourcecache.RenderPersistenceDisabledReason()
+	t.Logf(
+		"render persistence reason=%q backing=disk cold_reads=%d warm_reads=%d",
+		reason,
+		coldReads,
+		input.reads.Load(),
+	)
+	if reason == "" {
 		{
 			warmReads := input.reads.Load()
 			assert.FatalIf(
@@ -578,7 +585,8 @@ spec:
 		}
 		t.Logf("persisted producer skipped source reads: cold=%d warm=%d", coldReads, input.reads.Load())
 	} else {
-		t.Logf("persisted publication proof ineligible: %s", reason)
+		assert.Equal(t, coldReads, int32(9))
+		assert.Equal(t, input.reads.Load(), int32(5))
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -155,6 +156,7 @@ spec:
 
 func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	files := map[string]string{
 		"entry/app.yaml":                testutil.KustomizationYAML("app", "apps", "  interval: 1h\n  path: ./app\n"),
 		"app/kustomization.yaml":        "resources: [release.yaml]\n",
@@ -196,12 +198,14 @@ func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 				first[side] = string(body)
 			} else {
 				assert.Equal(t, string(body), first[side])
-				assert.Diff(
-					t,
-					witnessWork(run.Result.Work, manifest.WorkKustomize),
-					map[manifest.NamedResource]uint64{},
-				)
-				assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkHelm), map[manifest.NamedResource]uint64{})
+				wantKustomize := map[manifest.NamedResource]uint64{}
+				wantHelm := map[manifest.NamedResource]uint64{}
+				if !persistent {
+					wantKustomize[testutil.KustomizationID("apps", "app")] = 1
+					wantHelm[testutil.HelmReleaseID("apps", "app")] = 1
+				}
+				assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkKustomize), wantKustomize)
+				assert.Diff(t, witnessWork(run.Result.Work, manifest.WorkHelm), wantHelm)
 			}
 		}
 	}

@@ -1,4 +1,5 @@
 
-  ⚠ warnings (1)
-    [UnrelatedFailure] Kustomization flux-system/owner: flux kustomize generator: failed to decode Kubernetes YAML from @@repo@@/monitoring/blackbox-exporter.yaml: MalformedYAMLError: yaml: line 6: did not find expected ',' or ']'
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [UnrelatedFailure] Kustomization flux-system/owner: flux kustomize generator: failed to decode Kubernetes YAML from @@repo@@/monitoring/blackbox-exporter.yaml: MalformedYAMLError: yaml: line 6: did not find expected ',' or ']'
       Kustomization.kustomize.toolkit.fluxcd.io/flux-system/dependent

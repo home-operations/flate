@@ -24,9 +24,7 @@ import (
 
 func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(
@@ -75,8 +73,11 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		),
 	)
 	initial, found := renderer.PreviousRender(t.Context(), hr, nil, input)
-	assert.Equal(t, found, true)
-	assert.Diff(t, maps.Collect(initial), records)
+	assert.Equal(t, found, persistent)
+	assert.Equal(t, initial != nil, persistent)
+	if persistent {
+		assert.Diff(t, maps.Collect(initial), records)
+	}
 	frame := receipt.Value().(renderFrame)
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
@@ -220,9 +221,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 
 func TestTemplate_SelectedActionHistory(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(
@@ -254,8 +253,11 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 			),
 		)
 		initial, found := renderer.PreviousRender(t.Context(), hr, nil, input)
-		assert.Equal(t, found, true)
-		assert.Diff(t, maps.Collect(initial), records)
+		assert.Equal(t, found, persistent)
+		assert.Equal(t, initial != nil, persistent)
+		if persistent {
+			assert.Diff(t, maps.Collect(initial), records)
+		}
 		frame := receipt.Value().(renderFrame)
 		for _, tc := range []struct {
 			name                      string
@@ -300,9 +302,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 
 func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	st, hr, dir := ociRenderFixture(t)
 	hr.ChartRef = nil
 	hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{
@@ -347,7 +347,7 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	)
 	{
 		_, complete := renderer.PreviousRender(t.Context(), hr.Clone(), nil, input)
-		assert.FatalIf(t, !complete, "%s", "unchanged inline declaration lost accepted history")
+		assert.Equal(t, complete, persistent)
 	}
 	for _, tc := range []struct {
 		name   string
@@ -485,6 +485,7 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	testCaseInput *testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothingInputs,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	directory := t.TempDir()
 	renderer := NewClient(cachetest.New(t, directory, cache.New))
 	hr := *testCaseInput.hr
@@ -514,7 +515,7 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	acceptance.Receipt = next
 	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
 	_, complete = renderer.PreviousRender(t.Context(), changed, nil, input)
-	assert.Equal(t, complete, true)
+	assert.Equal(t, complete, persistent)
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)

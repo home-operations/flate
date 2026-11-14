@@ -44,9 +44,6 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	for _, declaration := range []string{"authored", "patched", "independent"} {
 		t.Run(declaration, func(t *testing.T) {
 			testBootstrapEntryReceiptDependencySubstitutionsCase(
@@ -61,9 +58,6 @@ func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 	t.Run("partial_application_history", testBuildChangeFilterPartialApplicationHistory)
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	for _, mode := range []string{"authored", "literal", "empty"} {
 		t.Run(mode, func(t *testing.T) {
 			testBootstrapEntryHistoryMatchesEmissionCase(
@@ -101,9 +95,7 @@ func (f *entryBuildFS) Open(name string) (fs.File, error) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root := t.TempDir()
 	cacheDir := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", `  path: ./producers
@@ -405,11 +397,13 @@ func testBootstrapEntryReceiptDependencySubstitutionsCase(
 	}
 }
 
+//nolint:gocognit // Entry history MUST retain emitted evidence, selection, and lifetime assertions in both modes.
 func testBootstrapEntryHistoryMatchesEmissionCase(
 	t *testing.T,
 	testCaseInput *string,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root := t.TempDir()
 	resources := "[child.yaml, bucket.yaml, generator.yaml, consumer.yaml]"
@@ -483,7 +477,11 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		}
 		records, complete := preparedHistory473.Records, preparedHistory473.Complete
 
-		assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
+		assert.Equal(t, complete, persistent)
+		assert.Equal(t, records != nil, persistent)
+		if !persistent {
+			return nil
+		}
 
 		return maps.Collect(records)
 	}
@@ -495,14 +493,14 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	}
 	owners, err := reopened.ProducersForPaths(t.Context(), query)
 	assert.NoError(t, err)
-	assert.Equal(t, len(owners[owner]) != 0, true)
+	assert.Equal(t, len(owners[owner]) != 0, persistent)
 
 	{
 		_, self := before[owner]
 		assert.FatalIf(t, self, "%v", "accepted entry history includes its own owner")
 	}
 
-	if (*testCaseInput) == "empty" {
+	if !persistent || (*testCaseInput) == "empty" {
 		assert.Equal(t, len(before), 0)
 	} else {
 		child := testutil.KustomizationID("apps", "child")
@@ -579,7 +577,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 				selection.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 					Complete bool
-				}{owner: {Records: maps.All(records), Complete: true}}, Invocation: true},
+				}{owner: {Records: maps.All(records), Complete: persistent}}, Invocation: true},
 			)
 			assert.NoError(t, failure)
 			admissiontest.Execute(t, admissionLoader, proposal)
@@ -609,7 +607,16 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
 	after := readHistory()
 	assert.Diff(t, after, before)
-	assert.Diff(t, selectRecords(after), selected)
+	if persistent {
+		assert.Diff(t, selectRecords(after), selected)
+	} else {
+		wantBefore := [][]bool{{true, false}, {true, false}, {false, false}}
+		if *testCaseInput == "empty" {
+			wantBefore[0][0] = false
+		}
+		assert.Diff(t, selected, wantBefore)
+		assert.Diff(t, selectRecords(after), [][]bool{{false, false}, {true, false}, {false, false}})
+	}
 }
 
 type testBootstrapEntryReceiptDependencySubstitutionsCaseCaseInputs struct {
@@ -625,6 +632,7 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	testCaseInput testBootstrapEntryReceiptDependencySubstitutionsCaseCaseInputs,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	(*testCaseInput.input).builds.Store(0)
 	o, err := newTestOrchestrator(
 		t,
@@ -664,7 +672,7 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 			"frozen",
 		)
 	}
-	assert.Equal(t, (*testCaseInput.input).builds.Load() == 0, (*testCaseInput.lifetime) == "warm")
+	assert.Equal(t, (*testCaseInput.input).builds.Load() == 0, persistent && (*testCaseInput.lifetime) == "warm")
 	owner := o.entryBinding.Producer
 	var reads store.ReadSet
 	reads.Init(o.store, owner, nil)
@@ -675,19 +683,17 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	}
 	records, narrow := preparedHistory649.Records, preparedHistory649.Complete
 
-	assert.FatalIf(
-		t,
-		records == nil || !narrow,
-		"%v",
-		"controller rejected the receipt discovery saved",
-	)
+	assert.Equal(t, records != nil, persistent)
+	assert.Equal(t, narrow, persistent)
 
 	found := false
-	for id := range records {
-		found = found || id == testutil.KustomizationID("apps", "child")
+	if records != nil {
+		for id := range records {
+			found = found || id == testutil.KustomizationID("apps", "child")
+		}
 	}
 
-	assert.FatalIf(t, !found, "%v", "entry receipt lost its child inventory")
+	assert.Equal(t, found, persistent)
 
 	o.ksc.Trees.Close()
 	reopened, err := sourcecache.New(t.Context(), (*testCaseInput.cacheDir))
@@ -705,29 +711,24 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		},
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, len(owners[owner]) != 0, true)
+	assert.Equal(t, len(owners[owner]) != 0, persistent)
 	preparedHistory682 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
 	if preparedHistory682.Assessment != nil {
 		defer preparedHistory682.Assessment.Close()
 	}
 	again, complete := preparedHistory682.Records, preparedHistory682.Complete
 
-	assert.FatalIf(
-		t,
-		again == nil || !complete,
-		"%v",
-		"controller rejected the receipt after reopening persistent cache",
-	)
-
-	assert.Diff(t, maps.Collect(again), maps.Collect(records))
+	assert.Equal(t, again != nil, persistent)
+	assert.Equal(t, complete, persistent)
+	if persistent {
+		assert.Diff(t, maps.Collect(again), maps.Collect(records))
+	}
 	assert.NoError(t, o.run(t.Context()))
 }
 
 func testBuildChangeFilterPartialApplicationHistory(t *testing.T) {
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	t.Helper()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/factory.yaml", testutil.KustomizationYAML("factory", "apps", `  path: ./producers
   postBuild: {substituteFrom: [{kind: ConfigMap, name: supplied}]}

@@ -17,9 +17,10 @@ import (
 func TestEntryReceipt_RecordsHistory(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, t.TempDir(), cache.New)
-	if !owner.CanPersistRenders() {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	reason := cache.RenderPersistenceDisabledReason()
+	persistent := reason == ""
+	t.Logf("render persistence reason=%q backing=disk", reason)
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": "resources: []\n"})
 	recorder := &manifest.WorkRecorder{Key: manifest.WorkKey{Source: manifest.BootstrapSourceID}}
 	scope := recorder.Scope()
@@ -40,6 +41,12 @@ func TestEntryReceipt_RecordsHistory(t *testing.T) {
 			service.Add(&record.Counts)
 		}
 	}
-	assert.Equal(t, preparation.OwnerPrepares, uint64(1))
-	assert.Equal(t, service, manifest.WorkCounts{Attempts: 1, Failures: 1})
+	wantPreparations := uint64(0)
+	wantService := manifest.WorkCounts{}
+	if persistent {
+		wantPreparations = 1
+		wantService = manifest.WorkCounts{Attempts: 1, Failures: 1}
+	}
+	assert.Equal(t, preparation.OwnerPrepares, wantPreparations)
+	assert.Equal(t, service, wantService)
 }

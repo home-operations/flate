@@ -1,4 +1,7 @@
 
   ✗  HelmRelease  other/unrelated  valuesFrom Secret other/external not found; supply it with --supply
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 1 failed

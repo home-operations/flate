@@ -137,9 +137,7 @@ type testTemplateAcceptedHistoryDurableInputs struct {
 func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplateAcceptedHistoryDurableInputs) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	child := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
 		Kind:      manifest.KindKustomization,
@@ -169,14 +167,19 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	}))
 	fresh := NewClient(cachetest.New(t, (*testCaseInput.root), cache.New))
 	previous, complete := fresh.PreviousRender(t.Context(), (*testCaseInput.hr), nil, (*testCaseInput.input))
-	assert.Equal(t, complete, true)
-	got := maps.Collect(previous)
-	assert.Diff(t, got, records)
+	assert.Equal(t, complete, persistent)
+	assert.Equal(t, previous != nil, persistent)
+	if persistent {
+		assert.Diff(t, maps.Collect(previous), records)
+	}
 	equal := *testCaseInput.input
 	equal.SkipKinds = slices.Clone(equal.SkipKinds)
 	equalPrevious, equalComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, equal)
-	assert.Equal(t, equalComplete, true)
-	assert.Diff(t, maps.Collect(equalPrevious), records)
+	assert.Equal(t, equalComplete, persistent)
+	assert.Equal(t, equalPrevious != nil, persistent)
+	if persistent {
+		assert.Diff(t, maps.Collect(equalPrevious), records)
+	}
 	changed := equal
 	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
 	_, changedComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, changed)
@@ -190,7 +193,12 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		calls++
 		assert.Equal(t, admission.Key, testCaseInput.frame.header.Key)
 		assert.Equal(t, admission.Receipt != nil, true)
-		assert.Equal(t, len(admission.Documents), 1)
+		wantDocuments := 0
+		if persistent {
+			wantDocuments = 1
+		}
+		assert.Equal(t, len(admission.Documents), wantDocuments)
+		assert.Equal(t, admission.Accepted, persistent)
 		return true, nil
 	}
 	_, _, admitErr := fresh.Template(t.Context(), *testCaseInput.hr, nil, observed)
@@ -247,7 +255,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		testCaseInput.input.Sources.chartInput((*testCaseInput.hr)),
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, described.chart == nil, true)
+	assert.Equal(t, described.chart == nil, persistent)
 	assert.Equal(t, described.analysis != nil && described.record != nil, true)
 	for _, tc := range []struct {
 		name   string
@@ -308,9 +316,11 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		), "canceled acceptance: %v", err)
 	}
 	previous, complete = fresh.PreviousRender(t.Context(), (*testCaseInput.hr), nil, (*testCaseInput.input))
-	assert.Equal(t, complete, true)
-	for id := range previous {
-		assert.Equal(t, id, child)
+	assert.Equal(t, complete, persistent)
+	if previous != nil {
+		for id := range previous {
+			assert.Equal(t, id, child)
+		}
 	}
 	assert.NoError(
 		t, (*testCaseInput.client).RecordRender(
@@ -324,9 +334,12 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		),
 	)
 	previous, complete = fresh.PreviousRender(t.Context(), (*testCaseInput.hr), nil, (*testCaseInput.input))
-	assert.Equal(t, complete && previous != nil, true)
-	for range previous {
-		t.Fatal("empty acceptance retained previous records")
+	assert.Equal(t, complete, persistent)
+	assert.Equal(t, previous != nil, persistent)
+	if previous != nil {
+		for range previous {
+			t.Fatal("empty acceptance retained previous records")
+		}
 	}
 }
 
@@ -365,6 +378,7 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	directory := t.TempDir()
 	source := manifest.SourceIdentity{Root: "/history-input"}
@@ -395,7 +409,10 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 			)
 			assert.NoError(t, producersForPathsErr)
 			want := map[manifest.NamedResource][]manifest.SourceEvidence{}
-			if candidate == selected {
+			if !persistent {
+				want = nil
+			}
+			if persistent && candidate == selected {
 				want[(*(*testCaseInput).hr).Named()] = []manifest.SourceEvidence{
 					{Source: source, Path: candidate + "/cm.yaml"},
 				}
@@ -412,6 +429,7 @@ func testTemplateAcceptedHistoryDurablePreparation(
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	artifact := *(*testCaseInput).input.Sources.LocalSourceArtifact((*(*testCaseInput).hr).ChartSource(), store.ArtifactContent)
 	counted := &historyCountingFS{FS: artifact.FS}
@@ -446,15 +464,20 @@ func testTemplateAcceptedHistoryDurablePreparation(
 		nil,
 		observed,
 	)
-	assert.Equal(t, previousRenderErr && previousRenderPrevious2 != nil, true)
-	assert.Diff(t, maps.Collect(previousRenderPrevious2), records)
-
-	assert.FatalIf(
-		t,
-		sources.calls.Load() == 0 || counted.opens.Load() == 0,
-		"%s",
-		"enabled history did not prepare chart",
-	)
+	assert.Equal(t, previousRenderErr, persistent)
+	assert.Equal(t, previousRenderPrevious2 != nil, persistent)
+	if persistent {
+		assert.Diff(t, maps.Collect(previousRenderPrevious2), records)
+		assert.FatalIf(
+			t,
+			sources.calls.Load() == 0 || counted.opens.Load() == 0,
+			"%s",
+			"enabled history did not prepare chart",
+		)
+	} else {
+		assert.Equal(t, sources.calls.Load(), 0)
+		assert.Equal(t, counted.opens.Load(), int64(0))
+	}
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -558,6 +581,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	assert.NoError(
@@ -587,7 +611,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	)
 	assert.NoError(t, prepareTemplateErr)
 
-	assert.FatalIf(t, remembered == nil, "%s", "matching request did not load a typed record")
+	assert.Equal(t, remembered != nil, persistent)
 
 	prepared.loaded.record = remembered
 	reader, _, _, prepareTemplateErr := isolated.cache.Blob(
@@ -596,9 +620,15 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
-	assert.NoError(t, prepareTemplateErr)
-	data, prepareTemplateErr := fs.ReadFile(reader, "content")
-	assert.NoError(t, prepareTemplateErr)
+	var data []byte
+	if persistent {
+		assert.NoError(t, prepareTemplateErr)
+		data, prepareTemplateErr = fs.ReadFile(reader, "content")
+		assert.NoError(t, prepareTemplateErr)
+	} else {
+		assert.Equal(t, errors.Is(prepareTemplateErr, errdef.ErrNotFound), true)
+		assert.Equal(t, reader == nil, true)
+	}
 	foreign := (*(*testCaseInput).key)
 	foreign.Content = "foreign"
 	reader, _, _, prepareTemplateErr = isolated.cache.Blob(
@@ -611,7 +641,11 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 		},
 	)
 	assert.NoError(t, prepareTemplateErr)
-	assert.Equal(t, cache.AcquisitionIdentity(reader), remembered.identity)
+	if persistent {
+		assert.Equal(t, cache.AcquisitionIdentity(reader), remembered.identity)
+	} else {
+		assert.Equal(t, cache.AcquisitionIdentity(reader), "")
+	}
 
 	found, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign", &RenderOptions{})
 	assert.NoError(t, prepareTemplateErr)
@@ -630,6 +664,7 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	current := (*(*testCaseInput).hr).Clone()
@@ -669,7 +704,7 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 			nil,
 			expected,
 		)
-		assert.FatalIf(t, !previousRenderComplete2, "%s", "caller mutation changed the prepared receipt")
+		assert.Equal(t, previousRenderComplete2, persistent)
 	}
 	{
 		_, previousRenderComplete3 := renderer.PreviousRender(
@@ -697,6 +732,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	original := RenderOptions{Sources: (*testCaseInput).input.Sources}
@@ -732,7 +768,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 			nil,
 			original,
 		)
-		assert.ErrorIf(t, !previousRenderComplete5, "%s", "unaccepted preparation displaced the durable frame")
+		assert.Equal(t, previousRenderComplete5, persistent)
 	}
 	{
 		_, previousRenderComplete6 := renderer.PreviousRender(

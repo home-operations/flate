@@ -308,9 +308,7 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 
 func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	t.Parallel()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	c, st := newTestController(t, nil)
 	var err error
 	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
@@ -398,7 +396,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		}
 		return records != nil
 	}
-	assert.Equal(t, probe(), true)
+	assert.Equal(t, probe(), persistent)
 	publishRawFixture(
 		t,
 		c,
@@ -489,9 +487,7 @@ func TestController_AllowMissingKindsAdmission(t *testing.T) {
 
 func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 	t.Parallel()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
@@ -578,7 +574,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 
 				assert.FatalIf(
 					t,
-					(records != nil) != selected,
+					(records != nil) != (selected && persistent),
 					"history admitted=%t selected=%t",
 					records != nil,
 					selected,

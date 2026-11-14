@@ -26,7 +26,8 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n",
 	)
 	owner := cachetest.New(t, t.TempDir(), cache.New)
-	assert.FatalIf(t, !owner.CanPersistRenders(), "%v", "history budget proof requires clean stamped compilation")
+	persistent := cache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, owner.CanPersistRenders(), persistent)
 	client := NewClient(owner)
 	hr := newHR()
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
@@ -82,7 +83,8 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		assert.NoError(t, <-joined)
 		tasks.BlockTillDone()
 		assert.Equal(t, before, uint64(0))
-		assert.Equal(t, work.Counts, manifest.WorkCounts{Attempts: 1, Completed: 1, PeakConcurrent: 1})
+		wantDecode := manifest.WorkCounts{Attempts: 1, Completed: 1, PeakConcurrent: 1}
+		assert.Equal(t, work.Counts, wantDecode)
 		assert.FatalIf(
 			t,
 			found == nil || !found.Analysis.RequiresLoader,
@@ -114,6 +116,6 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		assert.NoError(t, <-joined)
 		tasks.BlockTillDone()
 		assert.Equal(t, served, 1)
-		assert.Equal(t, work.Counts, manifest.WorkCounts{Attempts: 1, Completed: 1, PeakConcurrent: 1})
+		assert.Equal(t, work.Counts, wantDecode)
 	})
 }

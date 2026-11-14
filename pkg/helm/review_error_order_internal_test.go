@@ -50,9 +50,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 //nolint:paralleltest // test changes process-wide logging.
 func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 	t.Run("malformed raw frame misses", func(t *testing.T) {
-		if !renderPersistenceEligible(t) {
-			t.Skip("requires clean stamped persistence for storage-error precedence")
-		}
+		t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 		root, st, hr := sourceValuesCacheFixture(t)
 		testutil.WriteFile(t, root, "charts/demo/templates/fail.yaml", `{{ fail "action must wait for cache error" }}`)
 		testutil.WriteFile(t, root, "charts/demo/requirements.yaml", "dependencies: []\n")
@@ -199,9 +197,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skip("combined faults require clean stamped persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	st, original, dir := ociRenderFixture(t)
 	hr := original.Clone()
 	art := &store.SourceArtifact{
@@ -268,15 +264,17 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 		assert.NoError(t, os.RemoveAll(root))
 	}
 	r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-	if (*testCaseInput) == "chart lookup" {
-		{
-			_, ok := errors.AsType[*cache.CacheError](
-				err,
-			)
-			assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) ||
-				errors.Is(err, errdef.ErrNotFound), "fixture did not reach lookup fault: %v", err)
-		}
-	} else {
+	switch {
+	case !persistent:
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, r == nil, true)
+	case (*testCaseInput) == "chart lookup":
+		_, ok := errors.AsType[*cache.CacheError](
+			err,
+		)
+		assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) ||
+			errors.Is(err, errdef.ErrNotFound), "fixture did not reach lookup fault: %v", err)
+	default:
 		assert.NoError(t, err)
 		data, readFileErr := fs.ReadFile(r, "content")
 		assert.NoError(t, readFileErr)

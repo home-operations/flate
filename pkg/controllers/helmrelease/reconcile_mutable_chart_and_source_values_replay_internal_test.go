@@ -406,9 +406,8 @@ func testReconcileUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, t
 
 	t.Run("history", func(t *testing.T) {
 		t.Parallel()
-		if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-			t.Skip(reason)
-		}
+		reason := sourcecache.RenderPersistenceDisabledReason()
+		t.Logf("render persistence reason=%q backing=disk", reason)
 		fresh := helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
 		for _, inputs := range []map[string]any{original.Values, {"required": "invalid"}} {
 			if _, complete := fresh.PreviousRender(

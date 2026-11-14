@@ -1,3 +1,4 @@
 
-  ⚠ warnings (1)
-    [SourceCredentialsUnavailable] GitRepository flux-system/side-repo: secret flux-system/side-repo-deploy not found
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [SourceCredentialsUnavailable] GitRepository flux-system/side-repo: secret flux-system/side-repo-deploy not found

@@ -72,7 +72,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	}
 	testutil.WriteFile(b, src, "app/kustomization.yaml", existingKustomization(resources...))
 	cache := newTestTreeCache(b, b.TempDir())
-	if !renderPersistenceEligible(b) {
+	if sourcecache.RenderPersistenceDisabledReason() != "" {
 		b.Skip("warm render benchmark requires eligible build metadata")
 	}
 	req := RenderRequest{

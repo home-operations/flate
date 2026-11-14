@@ -1,6 +1,7 @@
 
-  ⚠ warnings (3)
-    [StaleValues] HelmRelease apps/demo: values not used by the chart
+  ⚠ warnings (<PERSISTENCE:3|4>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [StaleValues] HelmRelease apps/demo: values not used by the chart
       replicas
     [StaleValues] HelmRelease default/consumer: values not used by the chart
       nested

@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -151,7 +152,7 @@ func assertExcludedOrderingRecords(t *testing.T, side Rendered) {
 	}
 }
 
-func assertExcludedOrderingWork(t *testing.T, side Rendered, broken bool) {
+func assertExcludedOrderingWork(t *testing.T, side Rendered, broken, persistent bool) {
 	t.Helper()
 	sourceID := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -187,8 +188,18 @@ func assertExcludedOrderingWork(t *testing.T, side Rendered, broken bool) {
 		entry:      {Attempts: 4, Completed: 4, CacheService: 2},
 		selectedKS: {Attempts: 9, Completed: 6, Failures: 3, CacheService: 2},
 	}
+	if !persistent {
+		wantCache = map[manifest.NamedResource]manifest.WorkCounts{
+			{}:         {Attempts: 1, Completed: 1},
+			entry:      {Attempts: 1, Completed: 1, CacheService: 1},
+			selectedKS: {Attempts: 2, Completed: 2, CacheService: 1},
+		}
+	}
 	if !broken {
 		wantCache[selectedHR] = manifest.WorkCounts{Attempts: 4, Completed: 2, Failures: 2}
+		if !persistent {
+			wantCache[selectedHR] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		}
 	}
 	if broken {
 		wantCache[sourceID] = manifest.WorkCounts{
@@ -198,12 +209,15 @@ func assertExcludedOrderingWork(t *testing.T, side Rendered, broken bool) {
 		}
 	}
 	assert.Diff(t, witnessPhaseCounts(side.Result.Work, manifest.WorkCache), wantCache)
-	assertExcludedOrderingPreparation(t, side, broken)
+	assertExcludedOrderingPreparation(t, side, broken, persistent)
 	assertExcludedOrderingRecords(t, side)
 }
 
 func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 	t.Helper()
+	reason := sourcecache.RenderPersistenceDisabledReason()
+	persistent := reason == ""
+	t.Logf("render persistence: backing=disk disabled reason=%q", reason)
 	baseDir, headDir := excludedOrderingFixture(t, broken)
 	renderedTrees1, err := renderOrderingTreesForTest(t, baseDir, headDir)
 	base, head := renderedTrees1[0], renderedTrees1[1]
@@ -225,7 +239,7 @@ func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 		assert.Equal(t, served.CacheService <= 1, true)
 	}
 	for _, side := range []Rendered{base, head} {
-		assertExcludedOrderingWork(t, side, broken)
+		assertExcludedOrderingWork(t, side, broken, persistent)
 		assertExcludedOrderingState(t, side, broken)
 	}
 	if !broken {
@@ -361,20 +375,24 @@ func assertExcludedOrderingDocuments(t *testing.T, side Rendered, i int) {
 		values["greeting"] != want, "selected producer document order or values differ: %+v", batches[2].Documents)
 }
 
-func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool) {
+func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, persistent bool) {
 	t.Helper()
 	selectedHR := testutil.HelmReleaseID("flux-system", "selected")
 	chart := manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart",
 	}
-	prepares := excludedOrderingPreparations(side)
+	prepares := excludedOrderingPreparations(side, persistent)
 	if broken {
+		entryPreparation := manifest.WorkCounts{
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
+		}
+		if !persistent {
+			entryPreparation.RawKeyPrepares = 3
+		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: testutil.KustomizationID("\x00", "."),
 			Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{
-			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
-		}
+		}] = entryPreparation
 
 		source := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -402,9 +420,13 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 			OwnerPrepares: 1,
 			FileEntries:   2,
 		}
+		helmPreparation := manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
+		if !persistent {
+			helmPreparation.RawKeyPrepares = 3
+		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: chart, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
+		}] = helmPreparation
 	}
 	assertWitnessPreparations(
 		t, witnessPreparations(side.Result.Work), prepares,
@@ -475,7 +497,7 @@ func assertGeneratedValues(t *testing.T, o *Orchestrator, generatedName string) 
 	return generatedName
 }
 
-func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.WorkCounts {
+func excludedOrderingPreparations(side Rendered, persistent bool) map[manifest.WorkKey]manifest.WorkCounts {
 	entry := testutil.KustomizationID("\x00", ".")
 	selectedKS := testutil.KustomizationID("flux-system", "selected")
 	alias := manifest.NamedResource{
@@ -484,12 +506,16 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 		Namespace: "flux-system",
 		Name:      "shared",
 	}
+	bootstrapKeys, entryKeys, selectedKeys := uint64(7), uint64(6), uint64(13)
+	if !persistent {
+		bootstrapKeys, entryKeys, selectedKeys = 2, 3, 5
+	}
 	prepares := map[manifest.WorkKey]manifest.WorkCounts{
 		{Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
 			Attempts:       6,
 			Completed:      6,
 			OwnerPrepares:  6,
-			RawKeyPrepares: 7,
+			RawKeyPrepares: bootstrapKeys,
 			FileEntries:    246,
 			ReaderEdges:    46,
 		},
@@ -508,10 +534,10 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			ReaderEdges:   7,
 		},
 		{Tree: side.ID, Owner: entry, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: 6, FileEntries: 13,
+			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: entryKeys, FileEntries: 13,
 		},
 		{Tree: side.ID, Owner: selectedKS, Source: alias, Phase: manifest.WorkPreparation}: {
-			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 13, ReaderEdges: 0,
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: selectedKeys, ReaderEdges: 0,
 		},
 	}
 	if side.ID.Side == manifest.TreeBase {
@@ -521,7 +547,7 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			Attempts:       6,
 			Completed:      6,
 			OwnerPrepares:  6,
-			RawKeyPrepares: 7,
+			RawKeyPrepares: bootstrapKeys,
 			FileEntries:    428,
 			ReaderEdges:    54,
 		}

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -14,9 +16,7 @@ import (
 
 func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	renderer := newTestTreeCache(t, t.TempDir())
 	released := func() <-chan struct{} {
 		payload, err := testutil.EncodeRender(

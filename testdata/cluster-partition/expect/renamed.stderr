@@ -1,4 +1,7 @@
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   platform/blue: ✓ 0 failed
 
   platform/green: ✓ 0 failed

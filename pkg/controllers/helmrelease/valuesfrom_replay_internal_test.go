@@ -25,14 +25,15 @@ func TestPreviousRender_UnavailableValuesTransitions(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("mixed=%t", mixed), func(t *testing.T) {
 			t.Parallel()
+			persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 			for range 2 {
-				testPreviousRenderUnavailableValuesTransitions(t, mixed)
+				testPreviousRenderUnavailableValuesTransitions(t, mixed, persistent)
 			}
 		})
 	}
 }
 
-func testPreviousRenderUnavailableValuesTransitions(t *testing.T, mixed bool) {
+func testPreviousRenderUnavailableValuesTransitions(t *testing.T, mixed, persistent bool) {
 	t.Helper()
 	c, st := newTestControllerWithOptions(
 		t,
@@ -103,7 +104,7 @@ func testPreviousRenderUnavailableValuesTransitions(t *testing.T, mixed bool) {
 			assert.Equal(t, previous.Complete, false)
 			continue
 		}
-		previous = assertUnavailableValuesState(t, c, state, mixed)
+		previous = c.assertUnavailableValuesState(t, state, mixed, persistent)
 	}
 	if previous.Assessment != nil {
 		previous.Assessment.Close()
@@ -149,11 +150,11 @@ func publishUnavailableValuesState(t *testing.T, c *Controller, state string, mi
 	}
 }
 
-func assertUnavailableValuesState(
+func (c *Controller) assertUnavailableValuesState(
 	t *testing.T,
-	c *Controller,
 	state string,
 	mixed bool,
+	persistent bool,
 ) base.History {
 	t.Helper()
 	st := c.Store
@@ -201,6 +202,6 @@ func assertUnavailableValuesState(
 		}
 	}
 	previous := c.PreviousRender(t.Context(), hr, schedule.Result{})
-	assert.Equal(t, previous.Complete, true)
+	assert.Equal(t, previous.Complete, persistent)
 	return previous
 }

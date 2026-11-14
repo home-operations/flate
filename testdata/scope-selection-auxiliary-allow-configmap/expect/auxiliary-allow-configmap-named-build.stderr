@@ -1,3 +1,4 @@
 
-  ⚠ warnings (1)
-    [OmittedValues] HelmRelease apps/selected: required valuesFrom ConfigMap/apps/external omitted from offline render
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [OmittedValues] HelmRelease apps/selected: required valuesFrom ConfigMap/apps/external omitted from offline render

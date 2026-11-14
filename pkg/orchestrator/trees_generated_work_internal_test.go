@@ -159,14 +159,19 @@ type generatedChartFixture struct {
 	full  [2][]map[string]any
 }
 
-func assertGeneratedSourcePhases(t *testing.T, result *Result, kind string, sourceID manifest.NamedResource) {
+func assertGeneratedSourcePhases(
+	t *testing.T,
+	result *Result,
+	sourceID manifest.NamedResource,
+	persistent bool,
+) {
 	t.Helper()
 	engines, evaluations := map[manifest.NamedResource]uint64{}, map[manifest.NamedResource]uint64{}
 	acquisitions := map[manifest.NamedResource]manifest.WorkCounts{
 		{}: {Attempts: 1, Completed: 1, LocalAcquisitions: 1},
 	}
 	caches := map[manifest.NamedResource]manifest.WorkCounts{}
-	switch kind {
+	switch sourceID.Kind {
 	case manifest.KindHelmChart:
 		owner := testutil.KustomizationID("apps", "owner")
 		engines[owner] = 1
@@ -177,6 +182,9 @@ func assertGeneratedSourcePhases(t *testing.T, result *Result, kind string, sour
 			Name:      "selected",
 		}] = 1
 		caches[owner] = manifest.WorkCounts{Attempts: 4, Completed: 2, Failures: 2}
+		if !persistent {
+			caches[owner] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+		}
 	case manifest.KindExternalArtifact:
 		generator := manifest.NamedResource{
 			Group:     "source.extensions.fluxcd.io",
@@ -340,6 +348,7 @@ func TestRenderTrees_GeneratedSourceSelectionWork(t *testing.T) {
 	for _, kind := range []string{manifest.KindHelmChart, manifest.KindOCIRepository, manifest.KindExternalArtifact} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
+			persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 			tree, sourceID := generatedSourceWorkTree(t, kind)
 			var previous manifest.WorkSummary
 			for repeat := range 2 {
@@ -383,7 +392,7 @@ func TestRenderTrees_GeneratedSourceSelectionWork(t *testing.T) {
 					kind != manifest.KindHelmChart,
 				)
 				assert.Diff(t, witnessWork(result.Work, manifest.WorkHelm), map[manifest.NamedResource]uint64{})
-				assertGeneratedSourcePhases(t, result, kind, sourceID)
+				assertGeneratedSourcePhases(t, result, sourceID, persistent)
 				assertGeneratedSourcePreparation(t, runs[0], &tree, sourceID)
 				selected := generatedSourceSelectedWork(t, runs[0].Result, &tree, sourceID)
 				if repeat == 0 {

@@ -1,4 +1,5 @@
 
-  ⚠ warnings (2)
-    [PathConfig] orig snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [PathConfig] orig snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots
     [PathConfig] current snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots

@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func substitutionFixture(t *testing.T, postBuild, expression string) string {
@@ -220,6 +221,7 @@ func testRunExternalSubstitutionCase1(t *testing.T, tc *struct {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_ProducerBackedSubstitution(t *testing.T) {
+	reason := sourcecache.RenderPersistenceDisabledReason()
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, external.yaml]\n")
 	testutil.WriteFile(t, root, "external.yaml", `apiVersion: external-secrets.io/v1
@@ -237,10 +239,18 @@ spec: {target: {name: external}}
 			}
 			result := runCLI(t, args...)
 			assert.Equal(t, result.code, 0)
-			assert.Equal(t, result.stderr, `
+			wantStderr := `
   ⚠ warnings (1)
     [UnresolvedSubstitution] substituteFrom Secret "external" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
-`)
+`
+			if reason != "" {
+				wantStderr = "\n  ⚠ warnings (2)\n    [RenderPersistenceDisabled] render persistence is disabled: " + reason + "; source caching remains available\n" +
+					strings.TrimPrefix(
+						wantStderr,
+						"\n  ⚠ warnings (1)\n",
+					)
+			}
+			assert.Equal(t, result.stderr, wantStderr)
 			docs, err := testutil.SplitDocs([]byte(result.stdout))
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 3)

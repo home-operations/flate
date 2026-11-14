@@ -1,7 +1,8 @@
 
   ✗  Kustomization  apps/consumer  postBuild: variable not set (strict mode): "VALUE"
 
-  ⚠ warnings (1)
-    [UnresolvedSubstitution] substituteFrom Secret "apps/input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "VALUE" is SOPS-encrypted and unreadable; supply it with --supply
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [UnresolvedSubstitution] substituteFrom Secret "apps/input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "VALUE" is SOPS-encrypted and unreadable; supply it with --supply
 
   ✗ 1 failed

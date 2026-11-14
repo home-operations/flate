@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -28,36 +27,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func renderPersistenceEligible(tb testing.TB) bool {
-	tb.Helper()
-	info, ok := debug.ReadBuildInfo()
-	eligible := false
-	if ok {
-		const module = "github.com/home-operations/flate"
-		eligible = info.Main.Path == module && info.Main.Version != "" && info.Main.Version != "(devel)"
-		for _, dep := range info.Deps {
-			if dep.Path == module && dep.Version != "" && dep.Version != "(devel)" {
-				eligible = true
-			}
-		}
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.revision" && setting.Value != "" {
-				eligible = true
-			}
-		}
-		renderPersistenceEligibleLoop(struct {
-			info     **debug.BuildInfo
-			eligible *bool
-		}{info: &info, eligible: &eligible})
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.modified" && setting.Value == "true" {
-				eligible = false
-			}
-		}
-	}
-	return eligible
-}
 
 func TestTemplateCache_OCIIdentity(t *testing.T) {
 	t.Parallel()
@@ -98,10 +67,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 
 func TestTemplateCache_SubchartPersistence(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build to exercise persisted renders")
-	}
-	t.Log("persistence eligible: true")
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	st, hr, dir := ociRenderFixture(t)
 	testutil.WriteFile(t, dir, "Chart.yaml", `apiVersion: v2
 name: podinfo
@@ -204,6 +170,11 @@ data:
 	readBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey) []map[string]any {
 		t.Helper()
 		r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
+		if !persistent {
+			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+			assert.Equal(t, r == nil, true)
+			return nil
+		}
 		assert.NoError(t, err)
 		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
@@ -272,7 +243,11 @@ data:
 	for _, name := range []string{"child", "sibling"} {
 		assert.FatalIf(t, !hasRenderField(cold, "name", name), "cold render omitted enabled dependency %s", name)
 	}
-	assert.Diff(t, readBlob(t, owner, key), cold)
+	wantStored := cold
+	if !persistent {
+		wantStored = nil
+	}
+	assert.Diff(t, readBlob(t, owner, key), wantStored)
 	t.Log("direct cold publication: exact constructed documents")
 	second, receipt6, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
@@ -315,7 +290,11 @@ data:
 	}
 
 	assert.NoError(t, err)
-	assert.Diff(t, warm, marked)
+	wantWarm := cold
+	if persistent {
+		wantWarm = marked
+	}
+	assert.Diff(t, warm, wantWarm)
 	t.Log("same-client marked hit: verified")
 	assert.NoError(t, owner.Close())
 	owner = cachetest.New(t, root, cache.New)
@@ -344,7 +323,7 @@ data:
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,
-		!reflect.DeepEqual(reopened, marked),
+		!reflect.DeepEqual(reopened, wantWarm),
 		"fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v",
 		!hasRenderField(reopened, "witness", "persisted-subchart-hit"),
 		reflect.DeepEqual(reopened, cold),
@@ -371,7 +350,11 @@ data:
 	assert.NoError(t, err)
 	assert.Diff(t, restored, cold)
 	assert.Equal(t, reopenedKey.Content, key.Content)
-	assert.NoError(t, lookupErr)
+	if persistent {
+		assert.NoError(t, lookupErr)
+	} else {
+		assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
+	}
 	t.Log("verified persisted subchart publication, marked hit, reopen, and restored document equality")
 	writeBlob(t, owner, key, marked)
 	for _, field := range []string{"template", "defaults"} {
@@ -674,16 +657,4 @@ type testTemplateCacheSubchartPersistenceCaseInputs struct {
 	cold     *[]map[string]any
 	marked   *[]map[string]any
 	field    *string
-}
-
-func renderPersistenceEligibleLoop(loopInputs struct {
-	info     **debug.BuildInfo
-	eligible *bool
-},
-) {
-	for _, dep := range (*loopInputs.info).Deps {
-		if dep.Replace != nil && dep.Replace.Version == "" {
-			(*loopInputs.eligible) = false
-		}
-	}
 }

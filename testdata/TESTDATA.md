@@ -425,6 +425,21 @@ Actual help output remains unchanged.
 The resolver preserves unknown angle-bracket tokens.
 The harness tests this token beside the `<DUR>` grammar.
 
+The expectation resolver selects the authored alternatives in `<PERSISTENCE:enabled|disabled>` from `cache.RenderPersistenceDisabledReason()`.
+An empty reason selects `enabled`.
+A nonempty reason selects `disabled`.
+Each alternative can contain newlines or remain empty, but it cannot contain `|`, `<`, or `>`.
+
+The resolver replaces `<PERSISTENCE_REASON>` before it selects an alternative.
+This token contains the exact process reason from the cache owner.
+Persistence alternatives cannot nest.
+
+Expected stderr files state the complete notice, its position, and both warning counts.
+An invocation that fails before notice creation keeps its ordinary expectation without a notice token.
+Cases that share output but differ in notice eligibility use separate authored expectations.
+The resolver reads no command, flag, environment variable, or actual output to select notice placement.
+Actual stdout, stderr, and exit codes retain their complete comparisons.
+
 ### Isolation and transport
 
 The harness clears inherited `FLATE_*`, proxy, and credential variables.
@@ -445,6 +460,8 @@ No end-to-end fixture launches a helper or a subprocess.
 | Scenario / case | Behavior and commands | Cache regime |
 | --- | --- | --- |
 | `entry-root/literal-app` | `build ks app`: one complete ConfigMap with Flux ownership labels. | No disk persistence; reset on replay. |
+| `entry-root/literal-app-cached` | The same render with an inline cache directory and authored persistence notices. | Default cache; reset on replay. |
+| `entry-root/invalid-log-level` | A cached invocation rejects the log level before notice creation. | No render; reset on replay. |
 | `entry-applicator/entry-application-rendered-fluxinstance` | FluxInstance application: prime twice, workload diff twice, warm interval diff twice, isolated interval diff twice, then path invalidation. | Default cache within a sequence; named `interval-cold`; reset on replay. |
 | `entry-applicator/entry-application-rendered-kustomization` | Kustomization application: the same three edits and nine invocations. | Default cache within a sequence; named `interval-cold`; reset on replay. |
 

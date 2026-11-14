@@ -1,4 +1,5 @@
 
-  ⚠ warnings (2)
-    [OmittedValues] HelmRelease apps/demo: required valuesFrom ConfigMap/apps/absent omitted from offline render
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [OmittedValues] HelmRelease apps/demo: required valuesFrom ConfigMap/apps/absent omitted from offline render
     [OmittedValues] HelmRelease apps/demo: required valuesFrom ConfigMap/apps/input omitted from offline render: key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply

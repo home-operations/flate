@@ -1,6 +1,7 @@
 
-  ⚠ warnings (2)
-    [SOPSUnreadable] orig snapshot: Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [SOPSUnreadable] orig snapshot: Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
       VALUE
     [SOPSUnreadable] current snapshot: Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
       VALUE

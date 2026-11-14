@@ -1722,7 +1722,7 @@
             },
             "expect": {
               "stdout": "expect/sops-unreadable-diff-both-directions-metadata-0.stdout",
-              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
+              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-0-cached.stderr",
               "code": 0
             }
           }
@@ -2862,7 +2862,7 @@
     {
       "path": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
       "cases": [
-        "sops-unreadable-diff-both-directions-metadata"
+        "sops-output-diff"
       ],
       "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
     },
@@ -4543,6 +4543,13 @@
         "sops-output-explicit-namespace"
       ],
       "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-metadata-0-cached.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
     }
   ]
 }

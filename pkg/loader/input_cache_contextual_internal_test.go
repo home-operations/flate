@@ -20,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:gocognit // Accepted replay MUST retain authored facts and match fresh selection in both diff directions.
 func TestInputCache_ContextualSelectorReplay(t *testing.T) {
 	t.Parallel()
 	for _, direction := range []string{"forward", "reverse"} {
@@ -30,9 +29,8 @@ func TestInputCache_ContextualSelectorReplay(t *testing.T) {
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			if !owner.CanPersistRenders() {
-				t.Fatal("input cache witness requires a clean stamped test binary")
-			}
+			persistent := cache.RenderPersistenceDisabledReason() == ""
+			assert.Equal(t, owner.CanPersistRenders(), persistent)
 			before, after := contextualSelectorFiles(), contextualSelectorFiles()
 			before["providers/provider.yaml"] = &fstest.MapFile{Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
@@ -73,7 +71,8 @@ spec: {type: Static}
 				file := filepath.Join(root, "readers", "set.yaml")
 				if cached {
 					doc, known := l.documents.cache[file]
-					assert.FatalIf(t, !known || doc.deferred == nil, "reader cache frame was not accepted")
+					assert.Equal(t, known, persistent)
+					assert.Equal(t, doc.deferred != nil, persistent)
 					assert.Equal(t, len(doc.objects), 0)
 					objects, censusErr := l.documents.censusFile(t.Context(), file, manifest.ParseDocOptions{})
 					assert.NoError(t, censusErr)
@@ -130,9 +129,8 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 					owner, err := cache.New(t.Context(), cacheDir)
 					assert.NoError(t, err)
 					t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-					if !owner.CanPersistRenders() {
-						t.Fatal("input cache witness requires a clean stamped test binary")
-					}
+					persistent := cache.RenderPersistenceDisabledReason() == ""
+					assert.Equal(t, owner.CanPersistRenders(), persistent)
 					hr := testutil.HelmReleaseID("default", "demo")
 					parent := testutil.KustomizationID("flux-system", "parent")
 					files := externalFileHelmReleaseFiles(t)
@@ -153,7 +151,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						l.documents.compact = true
 						l.mountSources()
 						assert.NoError(t, l.restoreCachedInputs(t.Context()))
-						if accepted {
+						if accepted && persistent {
 							file := filepath.Join(root, "layer", "common", "child.yaml")
 							doc, known := l.documents.cache[file]
 							assert.FatalIf(
@@ -168,6 +166,10 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 							assert.Equal(t, objects[0].fact.Authored, testutil.KustomizationID("flux-system", "child"))
 							assert.Equal(t, objects[0].fact.facts.path, "./payload/one")
 							t.Log("accepted external declaration frame before authored resolution")
+						}
+						if accepted && !persistent {
+							_, known := l.documents.cache[filepath.Join(root, "layer", "common", "child.yaml")]
+							assert.Equal(t, known, false)
 						}
 						_, loadErr := l.Load(t.Context(), filepath.Join(root, "site-a"), manifest.NamedResource{}, nil)
 						assert.NoError(t, loadErr)
@@ -227,7 +229,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 					assert.NoError(t, owner.Close())
 					owner, err = cache.New(t.Context(), cacheDir)
 					assert.NoError(t, err)
-					assert.Equal(t, owner.CanPersistRenders(), true)
+					assert.Equal(t, owner.CanPersistRenders(), persistent)
 					restored := load(files, true, true)
 					assert.Diff(t, snapshot(restored, "child"), original)
 					before, after := externalFileHelmReleaseFiles(t), externalFileHelmReleaseFiles(t)

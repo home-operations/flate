@@ -30,9 +30,7 @@ func (r *changingChartReader) GetArtifact(manifest.NamedResource, store.Artifact
 
 func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Log("render persistence ineligible; running warm/fresh functional assertions without claiming disk hits")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	resolver := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
 	warm := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	warmSources := resolver
@@ -72,6 +70,8 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
+			_, complete := warm.PreviousRender(t.Context(), hr, nil, RenderOptions{Sources: warmSources})
+			assert.Equal(t, complete, persistent)
 			assert.Diff(t, templateResources(t, out), want)
 			fresh := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			freshSources := resolver

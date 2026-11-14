@@ -67,9 +67,7 @@ func TestTemplate_OversizedFrameMetadata(t *testing.T) {
 
 func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{
 		"mychart/Chart.yaml":        "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 		"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n",
@@ -89,22 +87,35 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	frame := receipt.Value().(renderFrame)
 	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
 	prior, descriptor, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	before, err := fs.ReadFile(prior, "content")
+	var before []byte
+	if persistent {
+		assert.NoError(t, err)
+		before, err = fs.ReadFile(prior, "content")
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, prior == nil, true)
+		err = nil
+	}
 	assert.NoError(t, err)
 	frame.stored = nil
 	frame.header.Analysis = &chartAnalysis{Version: "0.1.0", Templates: strings.Repeat("x", 16<<20)}
 	acceptance.Receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 	assert.NoError(t, client.RecordRender(t.Context(), acceptance))
 	current, next, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	after, err := fs.ReadFile(current, "content")
-	assert.NoError(t, err)
-	assert.Equal(t, next.Digest, descriptor.Digest)
-	assert.Diff(t, after, before)
+	if persistent {
+		assert.NoError(t, err)
+		after, readErr := fs.ReadFile(current, "content")
+		assert.NoError(t, readErr)
+		assert.Equal(t, next.Digest, descriptor.Digest)
+		assert.Diff(t, after, before)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, current == nil, true)
+		assert.Equal(t, next.Digest, descriptor.Digest)
+	}
 	decoded, err := testutil.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, docs)
 	_, complete := client.PreviousRender(t.Context(), hr, nil, input)
-	assert.Equal(t, complete, true)
+	assert.Equal(t, complete, persistent)
 }

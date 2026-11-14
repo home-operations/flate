@@ -3,12 +3,15 @@ package kustomize
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"sync/atomic"
 	"testing"
+
+	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -107,7 +110,7 @@ func testRenderRemoteSelectionTransitionCase(
 	frame := receipt.Value().(renderFrame)
 	snap := frame.header.Reads
 	key := frame.header.Key
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	var persisted readSetSnapshot
 	assertRemoteSelectionObservations(t, &remoteSelectionObservationInputs{
 		scenario: &testCaseInput, cache: &c, key: &key,
@@ -211,10 +214,22 @@ type remoteSelectionObservationInputs struct {
 func assertRemoteSelectionObservations(t *testing.T, inputs *remoteSelectionObservationInputs) {
 	t.Helper()
 
+	accepted, _, _, acceptedErr := (*inputs.cache).owner.Blob(
+		t.Context(),
+		sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderAccepted},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
+	assert.Equal(t, accepted != nil, *inputs.eligible)
+	if *inputs.eligible {
+		assert.NoError(t, acceptedErr)
+	} else {
+		assert.Equal(t, errors.Is(acceptedErr, errdef.ErrNotFound), true)
+	}
 	var saved []map[string]any
 	var hit bool
 	(*inputs.persisted), saved, hit = readTestRenderFrame(t, (*inputs.cache), (*inputs.key))
-	assert.FatalIf(t, hit != (*inputs.eligible) ||
+	assert.FatalIf(t, !hit ||
 		hit &&
 			(!reflect.DeepEqual((*inputs.persisted), (*inputs.snapshot)) || !bytes.Equal((*inputs.encoded), testRenderEncoding(t, saved))), "persisted=%t eligible=%t observations=%+v output=%s", hit, (*inputs.eligible), inputs.persisted.Remotes, saved)
 	t.Logf("persistence eligible=%t persisted hit=%t", (*inputs.eligible), hit)

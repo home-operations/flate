@@ -1,4 +1,7 @@
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   kubernetes/clusters/main: ✓ 0 failed
 
   kubernetes/clusters/test: ✓ 0 failed

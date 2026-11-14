@@ -1,11 +1,13 @@
 package loader
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"testing/fstest"
 
 	"github.com/google/go-cmp/cmp"
+	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -41,9 +43,8 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			if !owner.CanPersistRenders() {
-				t.Fatal("input cache witness requires a clean stamped test binary")
-			}
+			persistent := cache.RenderPersistenceDisabledReason() == ""
+			assert.Equal(t, owner.CanPersistRenders(), persistent)
 			first := cachedFixtureLoader(t, root, files, owner)
 			assert.NoError(t, first.PersistInputs(t.Context()))
 			first.Close()
@@ -116,6 +117,7 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 
 func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	t.Parallel()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	files := fstest.MapFS{
 		"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\n")},
@@ -139,16 +141,21 @@ func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	input := first.documents.artifacts[root]
 	lookup, _ := cache.InputFrameIdentity(input.OriginPath(root), input.URL, nil)
 	generation, _, _, readErr := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, readErr)
-	frame, readErr := readInputFrame(t.Context(), generation)
-	assert.NoError(t, readErr)
-	content, prepareErr := frame.prepare(t.Context())
-	assert.NoError(t, prepareErr)
-	publication, prepareErr := content.PreparePublication(t.Context(), cache.FramePublicationInput{})
-	assert.NoError(t, prepareErr)
-	assert.NoError(t, cache.RecordInventory(t.Context(), owner, cache.AcceptedInventory[*cache.FramePublication]{
-		Key: lookup.Content.(string), Acceptance: publication.Identity(), Content: publication,
-	}))
+	if persistent {
+		assert.NoError(t, readErr)
+		frame, frameErr := readInputFrame(t.Context(), generation)
+		assert.NoError(t, frameErr)
+		content, prepareErr := frame.prepare(t.Context())
+		assert.NoError(t, prepareErr)
+		publication, prepareErr := content.PreparePublication(t.Context(), cache.FramePublicationInput{})
+		assert.NoError(t, prepareErr)
+		assert.NoError(t, cache.RecordInventory(t.Context(), owner, cache.AcceptedInventory[*cache.FramePublication]{
+			Key: lookup.Content.(string), Acceptance: publication.Identity(), Content: publication,
+		}))
+	} else {
+		assert.Equal(t, errors.Is(readErr, errdef.ErrNotFound), true)
+		assert.Equal(t, generation == nil, true)
+	}
 	first.Close()
 	restored := cachedFixtureLoader(t, root, files, owner)
 	defer restored.Close()

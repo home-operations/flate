@@ -52,9 +52,6 @@ func effectiveHistoryCases() []struct {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBuildChangeFilter_EffectiveSubstitutionHistory(t *testing.T) {
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
 	for _, regime := range []string{"present", "missing", "stale", "shallow"} {
 		t.Run("dependency namespaces/"+regime, func(t *testing.T) {
 			testDependencyNamespaceHistory(t, regime)
@@ -146,6 +143,7 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	},
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root, cacheDir := t.TempDir(), t.TempDir()
 	writeSubstitutionHistoryCluster(t, root)
@@ -181,8 +179,8 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 		defer preparedHistory166.Assessment.Close()
 	}
 	history, complete := preparedHistory166.Records, preparedHistory166.Complete
-	assert.Equal(t, complete, testCaseInput.same)
-	assert.Equal(t, history != nil, testCaseInput.same)
+	assert.Equal(t, complete, persistent && testCaseInput.same)
+	assert.Equal(t, history != nil, persistent && testCaseInput.same)
 	reads.Close()
 	if testCaseInput.same {
 		assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), false)

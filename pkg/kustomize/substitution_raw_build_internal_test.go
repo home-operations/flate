@@ -48,6 +48,7 @@ func testRenderSubstitutionRetainsRawBuildCase(
 	},
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root := testutil.WriteTree(
 		t,
@@ -92,17 +93,11 @@ func testRenderSubstitutionRetainsRawBuildCase(
 		_, known := cache.RenderHistory(spec.Named(), pending, content(request, raw))
 		return known
 	}
-	if cache.owner.CanPersistRenders() {
-		known := history(req)
-		assert.Equal(t, known, true)
-	}
+	assert.Equal(t, history(req), persistent)
 	changed := req
 	changed.Spec = spec.Clone()
 	changed.Spec.PostBuild = testCaseInput.value
-	if cache.owner.CanPersistRenders() {
-		known := history(changed)
-		assert.Equal(t, known, false)
-	}
+	assert.Equal(t, history(changed), false)
 	again, next, err := Render(t.Context(), cache, changed, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	assert.Diff(t, again, docs)
@@ -126,10 +121,6 @@ func testRenderSubstitutionRetainsRawBuildCase(
 			},
 		),
 	)
-	if cache.owner.CanPersistRenders() {
-		known := history(changed)
-		assert.Equal(t, known, true)
-		known = history(req)
-		assert.Equal(t, known, false)
-	}
+	assert.Equal(t, history(changed), persistent)
+	assert.Equal(t, history(req), false)
 }

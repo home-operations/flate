@@ -1,3 +1,4 @@
 
-  ⚠ warnings (1)
-    [OmittedValues] HelmRelease apps/demo: required valuesFrom Secret/apps/input omitted from offline render: is produced in the cluster with unknown data; supply it with --supply
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [OmittedValues] HelmRelease apps/demo: required valuesFrom Secret/apps/input omitted from offline render: is produced in the cluster with unknown data; supply it with --supply

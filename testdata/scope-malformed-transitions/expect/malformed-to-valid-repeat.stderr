@@ -1,8 +1,9 @@
 
   ✗  orig snapshot: Kustomization  flux-system/owner  document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string
 
-  ⚠ warnings (2)
-    [DiffSuppressed] HelmRelease flux-system/child: 0 objects withheld; diff suppressed (orig: document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string; suspended on current)
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] HelmRelease flux-system/child: 0 objects withheld; diff suppressed (orig: document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string; suspended on current)
     [DiffSuppressed] Kustomization flux-system/owner: 1 object not rendered on the orig side; diff suppressed (document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string)
 
   ✗ 1 failed

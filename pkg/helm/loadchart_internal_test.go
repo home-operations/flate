@@ -527,14 +527,13 @@ type testLoadChartAcquiredGitWarmReuseCaseInputs struct {
 func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoadChartAcquiredGitWarmReuseCaseInputs) {
 	t.Helper()
 
-	if (*testCaseInput.persistent) && !renderPersistenceEligible(t) {
-		t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	outputRoot := ""
 	if *testCaseInput.persistent {
 		outputRoot = t.TempDir()
 	}
 	outputOwner := cachetest.New(t, outputRoot, cache.New)
+	assert.Equal(t, outputOwner.CanPersistRenders(), persistent && *testCaseInput.persistent)
 	renderer := NewClient(outputOwner)
 	backing := &chartBacking{Filesystem: (*testCaseInput.generation).Backing}
 	input, _, newErr := gittree.New(
@@ -614,7 +613,11 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 		),
 	)
 	assert.NoError(t, newErr)
-	assert.Diff(t, hit, []map[string]any{witness})
+	want := first
+	if persistent {
+		want = []map[string]any{witness}
+	}
+	assert.Diff(t, hit, want)
 	reads = backing.reads.Load()
 	assert.FatalIf(
 		t,
@@ -639,7 +642,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 		),
 	)
 	assert.NoError(t, newErr)
-	assert.Diff(t, hit, []map[string]any{witness})
+	assert.Diff(t, hit, want)
 	assert.Equal(t, backing.reads.Load(), reads)
 	t.Log("verified pinned persisted hits and observation-only reuse")
 }

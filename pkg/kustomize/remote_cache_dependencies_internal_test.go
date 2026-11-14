@@ -18,7 +18,7 @@ import (
 
 func TestRender_RemoteCacheDependencies(t *testing.T) {
 	t.Parallel()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("persisted sentinel assertions executed=%v", eligible)
 	for _, immutable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("immutable_%t", immutable), func(t *testing.T) {

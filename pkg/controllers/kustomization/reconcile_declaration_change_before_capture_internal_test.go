@@ -125,9 +125,8 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 
 func TestReconcile_RequiredPostBuildPermission(t *testing.T) {
 	t.Parallel()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
+	reason := sourcecache.RenderPersistenceDisabledReason()
+	t.Logf("render persistence reason=%q backing=disk", reason)
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		for _, allowed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {

@@ -1,3 +1,4 @@
 
-  ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/apps: 1 object not rendered on the orig side; diff suppressed (suspended on orig)
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization flux-system/apps: 1 object not rendered on the orig side; diff suppressed (suspended on orig)

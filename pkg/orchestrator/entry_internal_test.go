@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -190,6 +192,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 	tailCaseInput *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs,
 ) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
 	tree := Tree{
 		Path:            filepath.Join((*tailCaseInput.root), "entry"),
@@ -234,7 +237,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 				(*(*tailCaseInput.testCaseInput)) == "nested_chart" ||
 				(*(*tailCaseInput.testCaseInput)) ==
 					"incomplete_inputs" ||
-				!o.cache.CanPersistRenders() {
+				!persistent {
 				tailCaseInput.assertEntryApplicationRendered(t, fetcher, renders, run)
 				assert.Equal(t, o.selection.Snapshot().Reconcile(id), true)
 			} else {
@@ -252,7 +255,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		wantReuse := 0
 		if run == 1 &&
 			((*(*tailCaseInput.testCaseInput)) == "declaration" || (*(*tailCaseInput.testCaseInput)) == "templated_group" || (*(*tailCaseInput.testCaseInput)) == "nested_unchanged") &&
-			o.cache.CanPersistRenders() {
+			persistent {
 			wantReuse = 1
 		}
 		assert.Equal(t, reused, wantReuse)
@@ -262,7 +265,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 			fetcher.calls.Load(),
 			admitted[id].Load(),
 			reused,
-			o.cache.CanPersistRenders(),
+			persistent,
 		)
 		o.stop()
 		assert.NoError(t, o.cache.Close())

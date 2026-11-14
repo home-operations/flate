@@ -66,9 +66,8 @@ func TestRender_OversizedFrameMetadata(t *testing.T) {
 func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	t.Parallel()
 	renderer := newTestTreeCache(t, t.TempDir())
-	if !renderer.owner.CanPersistRenders() {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, renderer.owner.CanPersistRenders(), persistent)
 	root := testutil.WriteTree(
 		t,
 		map[string]string{
@@ -95,8 +94,15 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
-	assert.NoError(t, err)
-	before, err := fs.ReadFile(prior, "content")
+	var before []byte
+	if persistent {
+		assert.NoError(t, err)
+		before, err = fs.ReadFile(prior, "content")
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, prior == nil, true)
+		err = nil
+	}
 	assert.NoError(t, err)
 	frame.stored = nil
 	frame.header.Reads.Files = []localEntry{{Path: strings.Repeat("x", 16<<20)}}
@@ -108,14 +114,22 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
-	assert.NoError(t, err)
-	after, err := fs.ReadFile(current, "content")
-	assert.NoError(t, err)
-	assert.Equal(t, next.Digest, descriptor.Digest)
-	assert.Diff(t, after, before)
+	if persistent {
+		assert.NoError(t, err)
+		after, readErr := fs.ReadFile(current, "content")
+		assert.NoError(t, readErr)
+		assert.Equal(t, next.Digest, descriptor.Digest)
+		assert.Diff(t, after, before)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, current == nil, true)
+	}
 	decoded, err := testutil.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, docs)
+	if !persistent {
+		return
+	}
 	var header renderHeader
 	stored, err := sourcecache.OpenFrame(t.Context(), frameDomain, current, &header)
 	assert.NoError(t, err)
@@ -126,9 +140,8 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 func TestApplicationReceipt_OversizedFrameMetadata(t *testing.T) {
 	t.Parallel()
 	renderer := newTestTreeCache(t, t.TempDir())
-	if !renderer.owner.CanPersistRenders() {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	assert.Equal(t, renderer.owner.CanPersistRenders(), persistent)
 	root := testutil.WriteTree(t, map[string]string{"producer.yaml": "accepted"})
 	input := RenderRequest{Source: localSource(t, root), SubPath: "."}
 	owner := demoSpec.Named()
@@ -148,6 +161,10 @@ func TestApplicationReceipt_OversizedFrameMetadata(t *testing.T) {
 	assert.Equal(t, unavailable.Receipt == nil, true)
 	assert.NoError(t, renderer.RecordEntry(t.Context(), unavailable.Receipt, nil))
 	current := renderer.PreviousEntry(t.Context(), input)
-	assert.Equal(t, current.Receipt.Equal(prior.Receipt), true)
-	assert.Diff(t, current.Application, prior.Application)
+	if persistent {
+		assert.Equal(t, current.Receipt.Equal(prior.Receipt), true)
+		assert.Diff(t, current.Application, prior.Application)
+	} else {
+		assert.Diff(t, current, EntryEvidence{})
+	}
 }

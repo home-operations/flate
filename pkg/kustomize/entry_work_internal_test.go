@@ -11,10 +11,8 @@ import (
 
 func TestPreviousRender_RecordsHistory(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
 	h := newAcceptedHistoryCase(t)
+	persistent := h.persistent
 	assert.NoError(t, h.cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner: h.req.Spec.Named(), Receipt: h.receipt, Records: maps.All(h.records), Content: acceptedInput,
 	}))
@@ -28,7 +26,7 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 	h.req.Preparation = &cell
 	_, receipt, available := h.cache.PreviousRender(t.Context(), h.req)
 	_, complete := h.cache.RenderHistory(h.req.Spec.Named(), receipt, acceptedInput)
-	assert.Equal(t, available && complete, true)
+	assert.Equal(t, available && complete, persistent)
 	var preparation, service manifest.WorkCounts
 	for _, record := range scope.Snapshot(0) {
 		assert.Equal(t, record.Key.Owner, h.req.Spec.Named())
@@ -40,8 +38,14 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 			service.Add(&record.Counts)
 		}
 	}
-	assert.Equal(t, preparation.OwnerPrepares, uint64(1))
-	assert.Equal(t, service, manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1})
+	wantPreparation := uint64(0)
+	wantService := manifest.WorkCounts{}
+	if persistent {
+		wantPreparation = 1
+		wantService = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
+	}
+	assert.Equal(t, preparation.OwnerPrepares, wantPreparation)
+	assert.Equal(t, service, wantService)
 	later := &manifest.WorkRecorder{Key: recorder.Key}
 	h.req.Work = later.Scope().RenderWork()
 	h.cache.PreviousRender(t.Context(), h.req)
@@ -53,7 +57,11 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 			preparation.Add(&record.Counts)
 		}
 	}
-	assert.Equal(t, preparation.OwnerPrepares, uint64(0))
+	wantPreparation = 1
+	if persistent {
+		wantPreparation = 0
+	}
+	assert.Equal(t, preparation.OwnerPrepares, wantPreparation)
 	cell.Retire()
 	assert.Equal(t, cell.complete || cell.source != nil || cell.spec != nil || cell.lower != nil, false)
 }

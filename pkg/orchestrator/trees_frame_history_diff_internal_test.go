@@ -69,10 +69,11 @@ func testFrameHistoryDiffSides(t *testing.T, roots [2]string) {
 
 func assertFrameHistoryDiff(t *testing.T, trees []Tree, changed bool, status diff.ChangeStatus) []byte {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	cacheDirs := [2]string{t.TempDir(), t.TempDir()}
 	var cold frameHistoryDiffResult
 	for repeat, cacheDir := range cacheDirs {
-		got := observeFrameHistoryDiff(t, trees, cacheDir, changed, false)
+		got := observeFrameHistoryDiff(t, trees, cacheDir, changed, false, persistent)
 		if repeat == 0 {
 			cold = got
 		} else {
@@ -91,11 +92,8 @@ func assertFrameHistoryDiff(t *testing.T, trees []Tree, changed bool, status dif
 	}
 	t.Run("reused", func(t *testing.T) {
 		t.Parallel()
-		if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-			t.Skip(reason)
-		}
 		for _, cacheDir := range cacheDirs {
-			got := observeFrameHistoryDiff(t, trees, cacheDir, changed, true)
+			got := observeFrameHistoryDiff(t, trees, cacheDir, changed, true, persistent)
 			assert.Diff(t, got, cold)
 		}
 	})
@@ -173,7 +171,7 @@ func observeFrameHistoryDiff(
 	t *testing.T,
 	trees []Tree,
 	directory string,
-	changed, reused bool,
+	changed, reused, persistent bool,
 ) frameHistoryDiffResult {
 	t.Helper()
 	cache, err := sourcecache.New(t.Context(), directory)
@@ -186,12 +184,7 @@ func observeFrameHistoryDiff(
 				Source: manifest.SourceIdentity{Root: tree.RepoRoot}, Path: "apps/app-a/cm.yaml",
 			}})
 			assert.NoError(t, historyErr)
-			assert.FatalIf(
-				t,
-				len(owners[app]) == 0,
-				"reused cache has no accepted producer inventory for %s",
-				tree.RepoRoot,
-			)
+			assert.Equal(t, len(owners[app]) != 0, persistent)
 		}
 	}
 	cfg := Config{Cache: cache, Concurrency: 2, RecordWork: true, Selection: selection.Request{Changed: changed}}
@@ -215,12 +208,14 @@ func observeFrameHistoryDiff(
 			if history.Assessment != nil {
 				history.Assessment.Close()
 			}
-			assert.ErrorIf(t, !history.Complete, "reused app has no complete accepted history")
-			assert.FatalIf(t, history.Records == nil, "reused app has no accepted inventory")
-			_, accepted := maps.Collect(history.Records)[testutil.KustomizationID("flux-system", "consumer-a")]
-			assert.Equal(t, accepted, true)
+			assert.Equal(t, history.Complete, persistent)
+			assert.Equal(t, history.Records != nil, persistent)
+			if persistent {
+				_, accepted := maps.Collect(history.Records)[testutil.KustomizationID("flux-system", "consumer-a")]
+				assert.Equal(t, accepted, true)
+			}
 		}
-		observed.Sides = append(observed.Sides, observeFrameHistoryDiffSide(t, run, changed, reused))
+		observed.Sides = append(observed.Sides, observeFrameHistoryDiffSide(t, run, changed, reused && persistent))
 	}
 	selected, failures := Select(runs, err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 	observed.Selected, observed.Remaining = fmt.Sprint(failures.Selected), fmt.Sprint(failures.Remaining)

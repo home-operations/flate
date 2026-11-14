@@ -41,7 +41,7 @@ func BenchmarkTemplate_AppTemplateChart_Acquired(b *testing.B) {
 
 func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	b.Helper()
-	if acquired && !renderPersistenceEligible(b) {
+	if acquired && sourcecache.RenderPersistenceDisabledReason() != "" {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
@@ -209,7 +209,7 @@ func BenchmarkTemplate_CommonMetadataVariants_Acquired(b *testing.B) {
 
 func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	b.Helper()
-	if acquired && !renderPersistenceEligible(b) {
+	if acquired && sourcecache.RenderPersistenceDisabledReason() != "" {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
@@ -421,10 +421,11 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 ) {
 	b.Helper()
 
-	if tc.disk && !renderPersistenceEligible(b) {
+	reason := sourcecache.RenderPersistenceDisabledReason()
+	if tc.disk && reason != "" {
 		b.Fatalf(
 			"persisted benchmark requires a clean VCS-stamped build: %s",
-			sourcecache.RenderPersistenceDisabledReason(),
+			reason,
 		)
 	}
 	dir := stageBenchChartDir(b)

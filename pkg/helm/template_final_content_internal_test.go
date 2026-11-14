@@ -2,9 +2,12 @@ package helm
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"maps"
 	"testing"
+
+	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -113,14 +116,13 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // Content rebinding MUST retain pending, accepted, and reopened assertions in each backing regime.
 func TestTemplate_FinalContentRebinding(t *testing.T) {
 	t.Parallel()
 	for _, regime := range []string{"memory", "disk", "transferred preparation"} {
 		t.Run(regime, func(t *testing.T) {
 			t.Parallel()
-			if !renderPersistenceEligible(t) {
-				t.Skip("requires a clean VCS-stamped build for positive persistence")
-			}
+			persistent := cache.RenderPersistenceDisabledReason() == ""
 			root := testutil.WriteTree(t, map[string]string{
 				"mychart/Chart.yaml":        "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 				"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
@@ -144,7 +146,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 				Sources: []manifest.SourceEvidence{},
 			}))
 			_, complete := client.PreviousRender(t.Context(), hr, nil, input)
-			assert.Equal(t, complete, true)
+			assert.Equal(t, complete, persistent)
 			previous := receipt.Value().(renderFrame)
 			current := input
 			a := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "a"}
@@ -169,26 +171,31 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			assert.Diff(t, request.input.Omitted, []manifest.NamedResource{a, b})
 			current.Omitted = []manifest.NamedResource{a, b}
 			admission, record := request.contentRender(t.Context(), client)
-			assert.Equal(t, record != nil, true)
-			assert.Equal(t, admission.Accepted, false)
-			assert.Equal(t, admission.Receipt.Equal(receipt), false)
-			assert.Equal(t, bytes.Equal(record.Output, previous.output), true)
-			assert.Equal(t, manifest.ValueEqual(record.frame.content, request.content), true)
-			_, oldMatches := record.frame.stored.History(hr.Named(), previous.content)
-			_, currentMatches := record.frame.stored.History(hr.Named(), request.content)
-			assert.Equal(t, oldMatches, true)
-			assert.Equal(t, currentMatches, false)
-			_, complete = client.PreviousRender(t.Context(), hr, nil, current)
-			assert.Equal(t, complete, false)
+			assert.Equal(t, record != nil, persistent || regime != "disk")
 			var observed RenderAdmission
 			request.input.Admit = func(value RenderAdmission) (bool, error) {
 				observed = value
 				return false, nil
 			}
-			result := templateResult{record: record, receipt: admission.Receipt}
-			_, err = result.admit(t.Context(), client, &request)
-			assert.NoError(t, err)
-			assert.Equal(t, observed.Accepted, false)
+			if record != nil {
+				assert.Equal(t, admission.Accepted, false)
+				assert.Equal(t, admission.Receipt.Equal(receipt), false)
+				assert.Equal(t, bytes.Equal(record.Output, previous.output), true)
+				assert.Equal(t, manifest.ValueEqual(record.frame.content, request.content), true)
+				if persistent {
+					_, oldMatches := record.frame.stored.History(hr.Named(), previous.content)
+					_, currentMatches := record.frame.stored.History(hr.Named(), request.content)
+					assert.Equal(t, oldMatches, true)
+					assert.Equal(t, currentMatches, false)
+				} else {
+					assert.Equal(t, record.frame.stored == nil, true)
+				}
+				result := templateResult{record: record, receipt: admission.Receipt}
+				_, err = result.admit(t.Context(), client, &request)
+				assert.NoError(t, err)
+			}
+			_, complete = client.PreviousRender(t.Context(), hr, nil, current)
+			assert.Equal(t, complete, false)
 			var work manifest.WorkRecorder
 			work.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 			current.Work = work.Scope().RenderWork()
@@ -200,7 +207,11 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			assert.Equal(t, updated.Equal(receipt), false)
 			for _, row := range work.Scope().Snapshot(0) {
 				if row.Key.Phase == manifest.WorkHelm {
-					assert.Equal(t, row.Counts.Attempts, uint64(0))
+					wantAttempts := uint64(0)
+					if !persistent && regime == "disk" {
+						wantAttempts = 1
+					}
+					assert.Equal(t, row.Counts.Attempts, wantAttempts)
 				}
 			}
 			assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{
@@ -210,21 +221,19 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 				Sources: []manifest.SourceEvidence{},
 			}))
 			_, complete = client.PreviousRender(t.Context(), hr, nil, current)
-			assert.Equal(t, complete, true)
+			assert.Equal(t, complete, persistent)
 			_, complete = client.PreviousRender(t.Context(), hr, nil, input)
 			assert.Equal(t, complete, false)
 			_, _, err = client.Template(t.Context(), hr, nil, current)
 			assert.NoError(t, err)
-			assert.Equal(t, observed.Accepted, true)
+			assert.Equal(t, observed.Accepted, persistent)
 		})
 	}
 }
 
 func TestFramePublication_UnavailableContent(t *testing.T) {
 	t.Parallel()
-	if !renderPersistenceEligible(t) {
-		t.Skip("requires a clean VCS-stamped build for positive persistence")
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{
 		"mychart/Chart.yaml":        "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 		"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
@@ -240,8 +249,15 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	frame := receipt.Value().(renderFrame)
 	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
 	prior, descriptor, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	before, err := fs.ReadFile(prior, "content")
+	var before []byte
+	if persistent {
+		assert.NoError(t, err)
+		before, err = fs.ReadFile(prior, "content")
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, prior == nil, true)
+		err = nil
+	}
 	assert.NoError(t, err)
 	frame.content = make(chan struct{})
 	unsupported := manifest.NewRenderReceipt(frame, equalRenderFrame)
@@ -249,15 +265,24 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 		Owner: hr.Named(), Receipt: unsupported, Records: emptyRenderInventory, Sources: []manifest.SourceEvidence{},
 	}))
 	after, current, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
-	data, err := fs.ReadFile(after, "content")
-	assert.NoError(t, err)
-	assert.Equal(t, current.Digest, descriptor.Digest)
-	assert.Diff(t, data, before)
+	if persistent {
+		assert.NoError(t, err)
+		data, readErr := fs.ReadFile(after, "content")
+		assert.NoError(t, readErr)
+		assert.Equal(t, current.Digest, descriptor.Digest)
+		assert.Diff(t, data, before)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, after == nil, true)
+		assert.Equal(t, current.Digest, descriptor.Digest)
+	}
 	decoded, err := testutil.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, documents)
 	history, complete := client.PreviousRender(t.Context(), hr, nil, input)
-	assert.Equal(t, complete, true)
-	assert.Equal(t, len(maps.Collect(history)), 0)
+	assert.Equal(t, complete, persistent)
+	assert.Equal(t, history != nil, persistent)
+	if persistent {
+		assert.Equal(t, len(maps.Collect(history)), 0)
+	}
 }

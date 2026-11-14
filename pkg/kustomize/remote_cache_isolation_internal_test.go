@@ -26,7 +26,7 @@ type remoteIsolationResult struct {
 
 func TestRender_RemoteCacheIsolation(t *testing.T) {
 	t.Parallel()
-	eligible := renderPersistenceEligible(t)
+	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("persisted isolation assertions executed=%v; concurrent snapshot assertions always execute", eligible)
 	var shared, distinct atomic.Int32
 	entered := make(chan struct{}, 1)

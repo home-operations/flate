@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -160,9 +162,7 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	sourceValuesCacheFixtureRoot, st, hr := sourceValuesCacheFixture(t)
 	cacheRoot := t.TempDir()
 	owner := cachetest.New(t, cacheRoot, cache.New)
@@ -204,15 +204,21 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
-	assert.NoError(t, err)
-	data, err := fs.ReadFile(r, "content")
-	assert.NoError(t, err)
+	if persistent {
+		assert.NoError(t, err)
+		data, readErr := fs.ReadFile(r, "content")
+		assert.NoError(t, readErr)
 
-	var record renderRecord
-	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
-	decoded, err := testutil.DecodeRender(record.Output)
-	assert.NoError(t, err)
-	assert.Diff(t, decoded, first)
+		var record renderRecord
+		assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
+		decoded, decodeErr := testutil.DecodeRender(record.Output)
+		assert.NoError(t, decodeErr)
+		assert.Diff(t, decoded, first)
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, r == nil, true)
+	}
+
 	cached := append(slices.Clone(first), map[string]any{"witness": "persistent hit witness"})
 	_, _, _, err = owner.Blob(
 		t.Context(),
@@ -250,16 +256,18 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	}
 
 	assert.NoError(t, err)
-	assert.Diff(t, hit, cached)
+	want := first
+	if persistent {
+		want = cached
+	}
+	assert.Diff(t, hit, want)
 	fresh.assertSourceValuesChanges(t, hr, sourceValuesCacheFixtureRoot, freshSources)
 }
 
 func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceValues(t *testing.T) {
 	t.Helper()
 
-	if !renderPersistenceEligible(t) {
-		t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
-	}
+	persistent := cache.RenderPersistenceDisabledReason() == ""
 	sourceValuesCacheFixtureRoot2, st, hr := sourceValuesCacheFixture(t)
 	artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent).(*store.SourceArtifact)
 	testutil.WriteFile(t, sourceValuesCacheFixtureRoot2, "charts/demo/prod.yaml", "marker: packaged\n")
@@ -301,16 +309,22 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
-	assert.NoError(t, err)
-	data, err := fs.ReadFile(r, "content")
-	assert.NoError(t, err)
+	if persistent {
+		assert.NoError(t, err)
+		data, readErr := fs.ReadFile(r, "content")
+		assert.NoError(t, readErr)
 
-	var record renderRecord
-	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
-	decoded, err := testutil.DecodeRender(record.Output)
-	assert.NoError(t, err)
-	assert.Diff(t, decoded, first)
-	assert.FatalIf(t, record.Analysis == nil, "%s", "persisted record has no chart analysis")
+		var record renderRecord
+		assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
+		decoded, decodeErr := testutil.DecodeRender(record.Output)
+		assert.NoError(t, decodeErr)
+		assert.Diff(t, decoded, first)
+		assert.FatalIf(t, record.Analysis == nil, "%s", "persisted record has no chart analysis")
+	} else {
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.Equal(t, r == nil, true)
+	}
+
 	sourceHR := hr.Clone()
 	sourceHR.Chart.Source.Kind = manifest.KindGitRepository
 	st.SetArtifact(sourceHR.ChartSource(), artifact)

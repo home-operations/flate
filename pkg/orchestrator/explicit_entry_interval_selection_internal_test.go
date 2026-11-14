@@ -34,8 +34,10 @@ func TestRenderTrees_ExplicitEntryIntervalSelection(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // Each selection mode MUST retain both resource sides and the independent two-run byte comparison.
 func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 	t.Helper()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	name := "entry-application-rendered-" + kind
 	head := testfixture.Materialize(t, "entry-applicator", name)
 	var oracle [2][]byte
@@ -54,9 +56,7 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 			assert.NoError(t, primeErr)
 			_, primeErr = prime.render(t.Context(), t)
 			assert.NoError(t, primeErr)
-			if !cache.CanPersistRenders() {
-				t.Skip("explicit warm selection witness requires a clean VCS-stamped build")
-			}
+			assert.Equal(t, cache.CanPersistRenders(), persistent)
 		}
 		editExplicitEntry(t, head, mode)
 		inputs, err := baseline.AutoResolve(
@@ -111,13 +111,21 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 		for _, result := range results {
 			assert.Equal(t, admissions[result.ID.Side].Load(), wantAdmissions)
 		}
-		assertExplicitEntryResults(t, results, mode, &oracle)
-		assertExplicitEntryWork(t, mode, logs.String())
+		output := assertExplicitEntryResults(t, results, mode, persistent)
+		for side := range output {
+			if oracle[side] == nil {
+				oracle[side] = output[side]
+			} else {
+				assert.Equal(t, bytes.Equal(output[side], oracle[side]), true)
+			}
+		}
+		assertExplicitEntryWork(t, mode, persistent, logs.String())
 	}
 }
 
-func assertExplicitEntryResults(t *testing.T, results []Rendered, mode string, oracle *[2][]byte) {
+func assertExplicitEntryResults(t *testing.T, results []Rendered, mode string, persistent bool) [2][]byte {
 	t.Helper()
+	var outputs [2][]byte
 	entry := manifest.NewEntryKustomization(
 		manifest.BootstrapSourceID, "kubernetes/apps", manifest.NamedResource{},
 	).Named()
@@ -125,11 +133,7 @@ func assertExplicitEntryResults(t *testing.T, results []Rendered, mode string, o
 		side := int(result.ID.Side)
 		output, err := json.Marshal(result.Result.Manifests)
 		assert.NoError(t, err)
-		if oracle[side] == nil {
-			oracle[side] = output
-		} else {
-			assert.Equal(t, bytes.Equal(output, oracle[side]), true)
-		}
+		outputs[side] = output
 		names := configMapNames(result.Result)
 		assert.Equal(t, names["unapplied"], false)
 		if mode == "workload" || mode == "invalidated" {
@@ -141,12 +145,13 @@ func assertExplicitEntryResults(t *testing.T, results []Rendered, mode string, o
 		if mode == "workload" {
 			builds := witnessWork(result.Result.Work, manifest.WorkKustomize)[entry]
 			var wantBuilds uint64
-			if result.ID.Side == manifest.TreeBase {
+			if persistent && result.ID.Side == manifest.TreeBase {
 				wantBuilds = 1
 			}
 			assert.Equal(t, builds, wantBuilds)
 		}
 	}
+	return outputs
 }
 
 func editExplicitEntry(t *testing.T, head *testfixture.Fixture, mode string) {
@@ -172,7 +177,7 @@ func editExplicitEntry(t *testing.T, head *testfixture.Fixture, mode string) {
 	}
 }
 
-func assertExplicitEntryWork(t *testing.T, mode, logs string) {
+func assertExplicitEntryWork(t *testing.T, mode string, persistent bool, logs string) {
 	t.Helper()
 	if mode == "workload" {
 		assert.Equal(t, strings.Count(logs, `"msg":"discovery: entry application reused"`), 0)
@@ -192,6 +197,10 @@ func assertExplicitEntryWork(t *testing.T, mode, logs string) {
 		}
 	}
 	if mode == "workload" {
-		assert.Equal(t, entryBuilds, 1)
+		wantBuilds := 0
+		if persistent {
+			wantBuilds = 1
+		}
+		assert.Equal(t, entryBuilds, wantBuilds)
 	}
 }

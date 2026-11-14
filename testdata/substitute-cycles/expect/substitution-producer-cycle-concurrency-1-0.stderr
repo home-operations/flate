@@ -1,5 +1,8 @@
 
   ✗  Kustomization  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b
   ✗  Kustomization  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
-
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
   ✗ 2 failed

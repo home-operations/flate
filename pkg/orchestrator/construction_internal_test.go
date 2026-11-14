@@ -8,8 +8,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
@@ -235,10 +239,24 @@ func TestConstructDiscovery_UnrestrictedPendingSources(t *testing.T) {
 	assert.FatalIf(t, full == nil, "unrestricted request has no session")
 	l.Options.Session = full
 	root := t.TempDir()
+	owner := cachetest.New(t, "", cache.New)
+	including := &manifest.GitRepository{
+		Name: "including", Namespace: manifest.BootstrapSourceID.Namespace, URL: "https://self.invalid/repo",
+		Include: []sourcev1.GitRepositoryInclude{{
+			GitRepositoryRef: manifest.LocalObjectReference{Name: manifest.BootstrapSourceID.Name},
+			FromPath:         "input.txt", ToPath: "work/input.txt",
+		}},
+	}
+	st.AddObject(including)
+	st.AddObject(&manifest.Kustomization{
+		Name: "owner", Namespace: including.Namespace, Path: "./work",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: including.Name},
+	})
 	session, err := discovery.Begin(t.Context(), discovery.Config{
-		Store: st, Loader: l, Path: root,
+		Store: st, Cache: owner, Loader: l, Path: root, SelfURLs: []string{including.URL},
 		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: eager, namespace: apps}\n")},
+			"input.txt": {Data: []byte("included")},
+			"cm.yaml":   {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: eager, namespace: apps}\n")},
 		}},
 	})
 	assert.NoError(t, err)
@@ -246,7 +264,7 @@ func TestConstructDiscovery_UnrestrictedPendingSources(t *testing.T) {
 	assert.Diff(t, session.PendingSources(), []manifest.NamedResource{manifest.BootstrapSourceID})
 	assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), nil)
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(st, tasks, nil)
+	controller := sourcectrl.New(st, tasks, owner)
 	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cache.RetryConfig{})
 	o := &Orchestrator{store: st, loader: l, selection: full, session: session, src: controller, tasks: tasks}
 	result, err := o.constructDiscovery(t.Context())
@@ -255,6 +273,9 @@ func TestConstructDiscovery_UnrestrictedPendingSources(t *testing.T) {
 	assert.Equal(t, len(session.PendingSources()), 0)
 	assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil, true)
 	status, exists := st.GetStatus(manifest.BootstrapSourceID)
+	assert.Equal(t, exists, true)
+	assert.Equal(t, status.Status, store.StatusReady)
+	status, exists = st.GetStatus(including.Named())
 	assert.Equal(t, exists, true)
 	assert.Equal(t, status.Status, store.StatusReady)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "eager"}

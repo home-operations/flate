@@ -241,9 +241,11 @@ func TestDiscovery_ComposedSeedOwnership(t *testing.T) {
 				Trees:    trees,
 			}
 			if phase == "runtime" {
-				d := newDiscoverer(&cfg)
+				d, err := Begin(t.Context(), cfg)
+				assert.NoError(t, err)
 				defer d.Close()
-				_, err := d.resolveTestSources(t.Context(), false)
+				assert.NoError(t, constructTestSources(t.Context(), d))
+				_, err = d.resolveTestSources(t.Context(), false)
 				assert.NoError(t, err)
 				a := d.finishAdmission(t.Context())
 				st.AddObject(including)

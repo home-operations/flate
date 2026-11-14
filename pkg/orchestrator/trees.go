@@ -285,7 +285,7 @@ func (r *renderInvocation) constructTrees(ctx context.Context) error {
 	requalify := map[manifest.ClusterID]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		if err := r.qualifyConstructionReaders(ctx, constructionRound, requalify); err != nil {
 			return err

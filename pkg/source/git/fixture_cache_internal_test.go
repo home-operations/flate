@@ -29,7 +29,6 @@ type countedFixtureLoader struct {
 	calls   atomic.Int64
 }
 
-//nolint:ireturn // go-git's loader contract requires storer.Storer.
 func (l *countedFixtureLoader) Load(endpoint *url.URL) (storage.Storer, error) {
 	l.calls.Add(1)
 	return l.fixture.Load(endpoint)

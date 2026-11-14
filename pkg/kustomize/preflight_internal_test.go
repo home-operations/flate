@@ -375,9 +375,9 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
 			original := http.DefaultTransport
-			http.DefaultTransport = srv.Client().Transport //nolint:reassign // The serial fixture must trust its TLS server.
+			http.DefaultTransport = srv.Client().Transport
 			t.Cleanup(func() {
-				http.DefaultTransport = original //nolint:reassign // Restore the process transport after the fixture.
+				http.DefaultTransport = original
 			})
 			out, _, err := testutil.RenderMaps(
 				Render(

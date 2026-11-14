@@ -40,7 +40,6 @@ type capturePayload struct {
 	reference     *Declaration
 }
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	cell := sh.cells[id]
 	if !sh.derived && cell.binding == nil && (cell.static != nil || cell.reference == nil) {
@@ -50,7 +49,6 @@ func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	return obj
 }
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (sh *shard) captureLocked(
 	id manifest.NamedResource,
 	cellValue *objectCell,

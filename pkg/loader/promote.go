@@ -30,7 +30,7 @@ func Promote(
 	opts PromoteOptions, //nolint:gocritic // The public acquisition owns a value snapshot of its captured generation.
 ) ([]store.Child, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return nil, err
 	}
 	if st == nil || opts.Record.Path == "" && opts.Documents == nil {
 		return nil, nil
@@ -53,7 +53,7 @@ func Promote(
 	var acquired []store.Child
 	for i := range children {
 		if err := ctx.Err(); err != nil {
-			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return nil, err
 		}
 		child := children[i]
 		original := child.Obj.Named()
@@ -109,7 +109,7 @@ func promotionDocuments(ctx context.Context, st *store.Store, opts *PromoteOptio
 		return children, nil
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return nil, ctx.Err()
 	}
 	slog.Debug("loader: promote re-parse failed", "path", opts.Record.Path, "err", err)
 	return nil, nil
@@ -139,7 +139,7 @@ func (l *Loader) RegisterBuilt(
 		}
 	}()
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	if l.frozen || input.Support == nil || !input.Support.Valid() {
 		return nil

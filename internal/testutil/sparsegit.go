@@ -132,7 +132,7 @@ type CountingStorer struct {
 
 // EncodedObject wraps readers without changing their type, identity or bytes.
 //
-//nolint:ireturn,wrapcheck // The counting adapter preserves the upstream interface and sentinel identity.
+//nolint:wrapcheck // The counting adapter preserves the upstream interface and sentinel identity.
 func (s *CountingStorer) EncodedObject(kind plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
 	obj, err := s.Storer.EncodedObject(kind, hash)
 	if err != nil {

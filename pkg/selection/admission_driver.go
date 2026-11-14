@@ -113,7 +113,7 @@ func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (Admissio
 	}()
 	for {
 		if err := ctx.Err(); err != nil {
-			return AdmissionResult{}, false, err //nolint:wrapcheck // Cancellation preserves the caller's error identity.
+			return AdmissionResult{}, false, err
 		}
 		if !options.Authority.Valid() {
 			return AdmissionResult{}, false, nil

@@ -35,7 +35,7 @@ type contentFingerprint struct {
 // Immutable views retain their acquisition identity; mutable identities remain separate.
 func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return "", err
 	}
 	g, ok := input.(*FS)
 	if !ok {
@@ -61,7 +61,7 @@ func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
 			}
 		}
 		if err := ctx.Err(); err != nil {
-			return "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return "", err
 		}
 		return content.key, content.err
 	}
@@ -158,7 +158,7 @@ func (g *FS) PolicyEvidence() any {
 // SourcePolicy returns the admission's captured Flux policy without reshaping its files.
 func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, err
 	}
 	if g.policy != nil {
 		return g.policy, nil
@@ -256,7 +256,7 @@ func (i *fingerprintInventory) visit(ctx context.Context, name string, entry fs.
 		i.types[name] = entry.Type()
 	}
 	if err := ctx.Err(); err != nil || entry.IsDir() {
-		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return err
 	}
 	if entry.Name() == ".sourceignore" {
 		i.ignores = append(i.ignores, name)
@@ -306,7 +306,7 @@ type fileIdentity struct {
 
 func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbing.Hash, error) {
 	if err := ctx.Err(); err != nil {
-		return plumbing.ZeroHash, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return plumbing.ZeroHash, err
 	}
 	var identity plumbing.Hash
 	member := path.Join(s.origin, name)
@@ -406,7 +406,7 @@ func (g *FS) FreshInputs(
 		return InputObservations{
 			Files: files,
 			Types: observed,
-		}, ctx.Err() //nolint:wrapcheck // Preserve cancellation from this final observation.
+		}, ctx.Err()
 	}
 	if view, ok := g.view.(*gitView); ok && view.identity != "" {
 		if _, err := ContentFingerprint(ctx, g); err != nil {

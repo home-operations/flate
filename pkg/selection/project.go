@@ -435,7 +435,6 @@ func (b *batchSelection) declarationSelected(id manifest.NamedResource, compared
 	return b.selectedOutput(id)
 }
 
-//nolint:ireturn // Declarations retain their heterogeneous manifest types.
 func (s *selectionSide) unchangedDeclaration(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,

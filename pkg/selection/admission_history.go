@@ -17,7 +17,7 @@ func (s *Session) refreshHistory(
 	request PrepareRequest, //nolint:gocritic // The proposal retains the caller's immutable request snapshot.
 ) (*Admission, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation preserves the caller's error identity.
+		return nil, err
 	}
 	var preparation *Preparation
 	if request.Preparation != nil {
@@ -66,7 +66,7 @@ func (s *Session) refreshHistory(
 	for _, id := range proposal.Needed {
 		if err := ctx.Err(); err != nil {
 			proposal.Retire()
-			return nil, err //nolint:wrapcheck // Cancellation preserves the caller's error identity.
+			return nil, err
 		}
 		closure.requestHistory(id)
 	}

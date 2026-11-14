@@ -33,7 +33,6 @@ type historyCountingSources struct {
 	calls atomic.Int64
 }
 
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (s *historyCountingSources) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
 	s.calls.Add(1)
 	return s.sourceReader.GetArtifact(id, read)

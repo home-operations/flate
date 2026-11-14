@@ -188,7 +188,6 @@ func (l *Loader) packageProjectionKnown(location string, known bool) bool {
 	body := packageDoc.body
 	if packageDoc.file == location && body != nil {
 		hasVars := len(
-			//nolint:staticcheck // Kustomize still accepts deprecated variable inputs.
 			body.Vars,
 		) != 0
 		unproved := len(body.Replacements) != 0 || hasVars || body.NamePrefix != "" ||
@@ -236,7 +235,7 @@ func (l *Loader) projectionFile(
 	active bool,
 ) (projectionRead, error) {
 	if err := ctx.Err(); err != nil {
-		return projectionRead{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return projectionRead{}, err
 	}
 	location := filepath.Join(input.LocalPath, filepath.FromSlash(file))
 	known := l.packageProjectionKnown(location, true)
@@ -549,7 +548,7 @@ func (p *substitutionResolution) projectSubstitutions(
 
 	record := *recordValue
 	if !l.hydratePathReferences(ctx, child, &p.hydrated) {
-		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return ctx.Err()
 	}
 	if p.provider == nil {
 		p.provider = values.NewStoreProvider(l)
@@ -621,7 +620,7 @@ func (p *substitutionResolution) resolveInheritedPath(
 		path, known = p.resolveValue(ctx, owner, child.Path)
 	}
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	parent, found := l.pathCatalog(ctx, owner, &p.catalogs)
 	if !found {

@@ -343,9 +343,9 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 	trap := &configurationReadTrap{}
 	previousHTTP := http.DefaultTransport
-	http.DefaultTransport = trap //nolint:reassign // The trap proves discovery never uses the process-global transport.
+	http.DefaultTransport = trap
 	t.Cleanup(func() {
-		http.DefaultTransport = previousHTTP //nolint:reassign // Restore the process-global transport after the trap.
+		http.DefaultTransport = previousHTTP
 	})
 	for _, tc := range []struct {
 		name, config string

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"log" //nolint:depguard // Standard-log routing must capture or suppress dependency log output.
+	"log"
 	"log/slog"
 	"strings"
 	"testing"

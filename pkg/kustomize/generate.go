@@ -361,7 +361,6 @@ func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) err
 		return fmt.Errorf("unable to get patchesStrategicMerge: %w", err)
 	}
 	for _, p := range patchesSM {
-		//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
 		kus.PatchesStrategicMerge = append(kus.PatchesStrategicMerge, kustypes.PatchStrategicMerge(p.Raw))
 	}
 
@@ -378,7 +377,6 @@ func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) err
 				//nolint:wrapcheck // Flux forwards JSON6902 encoding failures unchanged.
 				return marshalErr
 			}
-			//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
 			kus.PatchesJson6902 = append(kus.PatchesJson6902, kustypes.Patch{
 				Patch:  string(raw),
 				Target: AdaptSelector(&p.Target),

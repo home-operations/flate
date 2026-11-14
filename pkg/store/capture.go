@@ -190,15 +190,11 @@ func (r *ReadSet) activateProducers() {
 }
 
 // GetObject captures a named object, including its absence and supplying producer.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	return r.Capture(r.input(id))
 }
 
 // GetDeclaration captures the effective input authorized by static or accepted support.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
 	input := r.input(id)
 	r.Capture(input)
@@ -207,8 +203,6 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 }
 
 // Capture records a caller-owned named input without reconstructing its identity index.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	r.attachInput(input)
 	id := input.Ref.NamedResource
@@ -272,16 +266,12 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 }
 
 // Get returns the captured object asserted to T.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) Get[T manifest.BaseManifest](id manifest.NamedResource) (T, bool) {
 	obj, ok := r.GetObject(id).(T)
 	return obj, ok
 }
 
 // Snapshot captures the declaration and requested readiness facts.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
 	input := r.input(id)
 	obj := r.Capture(input)
@@ -336,8 +326,6 @@ func (r *ReadSet) status(input *Input) (StatusInfo, bool) {
 }
 
 // GetArtifact captures fetched content or accepted output for a dependency.
-//
-//nolint:ireturn // The store contract supports multiple artifact implementations.
 func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Artifact {
 	input := r.input(id)
 	details := r.details(input)
@@ -537,8 +525,6 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 }
 
 // GetEmission binds candidate output to this execution's captured declaration and source.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
 	return r.store.getEmission(r, id)
 }

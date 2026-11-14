@@ -26,8 +26,6 @@ func New[K comparable]() *KeyMap[K] {
 // is done. Returns ctx.Err on cancellation (lock not held). On success
 // returns a release func — call it (typically deferred) to free the
 // lock.
-//
-//nolint:wrapcheck // Cancelled acquires return the context sentinel unchanged.
 func (m *KeyMap[K]) Acquire(ctx context.Context, key K) (func(), error) {
 	m.mu.Lock()
 	lock, ok := m.locks[key]

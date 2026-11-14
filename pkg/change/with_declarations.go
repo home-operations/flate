@@ -411,8 +411,6 @@ func (s *Set) OutputChanged(
 
 // OppositeDeclaration returns the opposite declaration while the local identity and declaration apply.
 // Source artifact applicability MUST be checked by the caller against ForSource first.
-//
-//nolint:ireturn // Declarations retain their heterogeneous manifest types.
 func (s *Set) OppositeDeclaration(
 	side manifest.TreeSide,
 	source, id manifest.NamedResource,

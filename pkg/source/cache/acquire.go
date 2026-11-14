@@ -609,7 +609,7 @@ func (c *Cache) producePayload(
 	key := &staged.key
 	var repairName string
 	if err := ctx.Err(); err != nil {
-		return nil, repairName, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, repairName, err
 	}
 	staged.attempted = true
 	key.policy.Work.Physical().Add(&manifest.WorkCounts{Attempts: 1})
@@ -624,11 +624,11 @@ func (c *Cache) producePayload(
 		return nil, repairName, err
 	}
 	if key.policy.Timeout != nil && ctx.Err() != nil {
-		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, repairName, ctx.Err()
 	}
 	// Missing optional frames MUST preserve local output and the previous generation.
 	if key.render && staged.written == 0 && !staged.unchanged {
-		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, repairName, ctx.Err()
 	}
 	e.resolved = time.Now().UTC()
 	var stored ocispec.Descriptor
@@ -641,7 +641,7 @@ func (c *Cache) producePayload(
 
 	valid, err := c.validCandidate(ctx, key.policy.Work, callbacks.validate, e)
 	if key.policy.Timeout != nil && ctx.Err() != nil {
-		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, repairName, ctx.Err()
 	}
 	if !valid {
 		e.resolved = time.Time{}

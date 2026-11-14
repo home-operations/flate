@@ -162,8 +162,6 @@ func (n NamedResource) CanBindLocal() bool {
 }
 
 // BindLocal constructs this source's actual local artifact binding.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (n NamedResource) BindLocal(root string) (BaseManifest, error) {
 	if !n.CanBindLocal() {
 		return nil, inputf("invalid local source identity %s", n)

@@ -51,7 +51,7 @@ func TestClockFuncs_ParsersUseUTC(t *testing.T) {
 	}
 	local := time.Local
 	t.Cleanup(func() {
-		time.Local = local //nolint:reassign // The fixture restores the process timezone after verifying UTC parsing.
+		time.Local = local
 	})
 	for _, tc := range []struct {
 		name   string
@@ -61,7 +61,6 @@ func TestClockFuncs_ParsersUseUTC(t *testing.T) {
 		{"UTC-6", -21600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			//nolint:reassign // Vary the process timezone to verify UTC parsing.
 			time.Local = time.FixedZone(tc.name, tc.offset)
 			assert.Equal(t, toDate("2006-01-02", "2020-01-01").Unix(), int64(1577836800))
 			parsed, err := mustToDate("2006-01-02", "2020-01-01")

@@ -199,7 +199,6 @@ type chartBacking struct {
 	reads atomic.Int32
 }
 
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (b *chartBacking) Open(name string) (billy.File, error) {
 	file, err := b.Filesystem.Open(name)
 	if err != nil {

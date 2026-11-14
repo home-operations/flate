@@ -7,7 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"log" //nolint:depguard // The fixture must capture standard-library logs emitted by Helm dependencies.
+	"log"
 	"os"
 	"strings"
 	"testing"

@@ -231,8 +231,6 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
-//
-//nolint:ireturn // The store contract supports multiple artifact implementations.
 func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -258,7 +256,6 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 	return artifact
 }
 
-//nolint:ireturn // The store contract supports multiple artifact implementations.
 func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, recordValue *artifactRecord) Artifact {
 	record := *recordValue
 	if sh.cells[id].hidden {

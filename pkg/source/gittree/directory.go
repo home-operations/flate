@@ -228,12 +228,10 @@ func (f *directoryFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	return selected, nil
 }
 
-//nolint:ireturn // The upstream filesystem contract requires billy.File.
 func (f *directoryFilesystem) Open(name string) (billy.File, error) {
 	return f.OpenFile(name, os.O_RDONLY, 0)
 }
 
-//nolint:ireturn // The upstream filesystem contract requires billy.File.
 func (f *directoryFilesystem) OpenFile(name string, flag int, mode fs.FileMode) (billy.File, error) {
 	if _, err := f.Lstat(name); err != nil {
 		return nil, err
@@ -248,7 +246,7 @@ func (f *directoryFilesystem) Readlink(name string) (string, error) {
 	return f.observed.Readlink(f.Join(f.prefix, directoryName(name)))
 }
 
-//nolint:ireturn,wrapcheck // Chroot implements the upstream filesystem interface and retains observation lifetime.
+//nolint:wrapcheck // Chroot implements the upstream filesystem interface and retains observation lifetime.
 func (f *directoryFilesystem) Chroot(name string) (billy.Filesystem, error) {
 	if _, err := f.Lstat(name); err != nil {
 		return nil, err

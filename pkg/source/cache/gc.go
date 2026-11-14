@@ -187,7 +187,7 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 func (s *sweepSelection) visit(ctx context.Context, descValue *ocispec.Descriptor, keep bool) error {
 	desc := *descValue
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return err
 	}
 	if id := desc.Annotations[prefix+"git-generation"]; id != "" {
 		parsed, err := uuid.Parse(id)
@@ -258,7 +258,7 @@ func (s *sweepSelection) selectGeneration(ctx context.Context, entry fs.DirEntry
 			return err
 		}
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return err
 		}
 		if !d.IsDir() {
 			info, err := d.Info()

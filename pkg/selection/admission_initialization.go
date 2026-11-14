@@ -69,7 +69,7 @@ func (c *admissionClosure) start(
 	for _, identity := range c.identities {
 		id := identity.id
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		scan(id)
 		restorations = c.recordInitialRestorations(id, restorations)
@@ -77,7 +77,7 @@ func (c *admissionClosure) start(
 	c.queue = slices.Grow(c.queue, len(c.states))
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		c.prepareInitialChanges(seeds, edges)
 		//nolint:intrange // Change propagation MUST extend the worklist during traversal.
@@ -648,7 +648,7 @@ func (c *admissionClosure) rescanInitialChanges(
 	}
 	for _, id := range c.queue {
 		if err := ctx.Err(); err != nil {
-			return false, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return false, err
 		}
 		scan(id)
 		state := c.states[id]
@@ -705,7 +705,6 @@ func (c *admissionClosure) linkInitialParent(
 	}
 }
 
-//nolint:ireturn // Identity preparation MUST preserve the polymorphic manifest contract.
 func (c *admissionClosure) prepareInitialIdentity(
 	id manifest.NamedResource,
 ) (manifest.BaseManifest, manifest.DiscoveryRecord, bool) {

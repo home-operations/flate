@@ -40,12 +40,10 @@ func resolvedEntryInput(ctx context.Context, observed *EntryInput) (EntryInput, 
 	resolved := EntryInput{Resource: input.Resource}
 	if input.Data != nil {
 		resolved.Content = manifest.Fingerprint(input.Data.Snapshot())
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return resolved, resolved.Content != "", ctx.Err()
 	}
 	artifact := input.Artifact
 	if artifact == nil || artifact.FS == nil || !artifact.Reads.Valid() {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return resolved, false, ctx.Err()
 	}
 	resolved.Binding = artifact.Input(store.ArtifactContent | store.ArtifactRevision)
@@ -55,11 +53,9 @@ func resolvedEntryInput(ctx context.Context, observed *EntryInput) (EntryInput, 
 		var err error
 		resolved.Content, err = artifact.ContentFingerprint(ctx, artifact.FS)
 		if err != nil {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return resolved, false, ctx.Err()
 		}
 	}
-	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return resolved, resolved.Content != "", ctx.Err()
 }
 
@@ -106,7 +102,6 @@ func (c *TreeCache) ApplicationReceipt(
 	reads := newReadSet(source.LocalPath)
 	for _, file := range slices.Sorted(slices.Values(files)) {
 		if cancelErr := ctx.Err(); cancelErr != nil {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return EntryEvidence{}, cancelErr
 		}
 		if !fs.ValidPath(file) {
@@ -230,11 +225,9 @@ func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (rende
 // RecordEntry MUST publish only complete evidence with current captured inputs.
 func (c *TreeCache) RecordEntry(ctx context.Context, receipt *manifest.RenderReceipt, reads *store.ReadSet) error {
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return err
 	}
 	if receipt == nil || !reads.Valid() || !c.owner.CanPersistRenders() {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	snapshot, ok := receipt.Value().(entrySnapshot)

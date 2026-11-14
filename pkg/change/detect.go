@@ -506,7 +506,7 @@ func declaresInputs(name string) bool {
 
 func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.NamedResource]string, error) {
 	if !declaresInputs(name) {
-		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
+		return nil, nil
 	}
 	f, err := input.Open(name)
 	if err != nil {
@@ -535,10 +535,10 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 		for _, doc := range docs {
 			manifest.ReleaseDoc(doc.Document)
 		}
-		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
+		return nil, nil
 	}
 	declared := inputDeclarations(docs)
-	return declared, ctx.Err() //nolint:wrapcheck // Preserve this final cancellation identity and diagnostic.
+	return declared, ctx.Err()
 }
 
 //nolint:gocritic // The reader callback writes the caller error state after this function returns.

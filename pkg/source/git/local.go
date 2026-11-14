@@ -28,7 +28,7 @@ func ResolveLocal(
 	options LocalOptions,
 ) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
-		return nil, nil //nolint:nilnil // An empty inventory has no locally resolved artifacts.
+		return nil, nil
 	}
 	r := localResolver{
 		location:     location,

@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (c *admissionClosure) object(id manifest.NamedResource) manifest.BaseManifest {
 	if c.incoming(id).Obj != nil {
 		return c.incoming(id).Obj

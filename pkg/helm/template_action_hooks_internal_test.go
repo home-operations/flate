@@ -21,7 +21,6 @@ type changingChartReader struct {
 	calls     int
 }
 
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (r *changingChartReader) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
 	artifact := r.artifacts[min(r.calls, len(r.artifacts)-1)]
 	r.calls++

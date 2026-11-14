@@ -30,7 +30,6 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-//nolint:gochecknoglobals // One immutable Helm environment is initialized once and reused across renders.
 var envSettings = sync.OnceValue(cli.New)
 
 const sourceHeader = "# Source: "

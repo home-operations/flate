@@ -333,7 +333,7 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	rounds := 0
 	for prepared := true; prepared; {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		rounds++
 		if err := l.Admit(ctx, repoRoot); err != nil {
@@ -421,7 +421,7 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	}
 	if err := d.prepareProducer(ctx, ks, sourceID, nil); err != nil {
 		if ctx.Err() != nil {
-			return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
+			return false, ctx.Err()
 		}
 		d.binding.Failure = err
 		slog.Debug("discovery: declaration preparation deferred", "err", err)
@@ -481,7 +481,7 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return nil, err
 		}
 		root, binding, err := admission.BindEntry(ctx, d.cfg.Store)
 		progressed = progressed || admission.qualification != nil && admission.qualification.changed

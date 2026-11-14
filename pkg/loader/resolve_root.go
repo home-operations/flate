@@ -24,14 +24,14 @@ func (l *Loader) ResolveRoot(
 	root string,
 ) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err //nolint:wrapcheck // Preserve the caller cancellation identity.
+		return "", false, err
 	}
 	if !reads.Valid() {
 		return "", false, nil
 	}
 	resolved, valid := resolveRoot(reads, source, root)
 	if err := ctx.Err(); err != nil {
-		return "", false, err //nolint:wrapcheck // Preserve the caller cancellation identity.
+		return "", false, err
 	}
 	if !reads.Valid() {
 		return "", false, nil

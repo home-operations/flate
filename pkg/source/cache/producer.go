@@ -155,7 +155,7 @@ func (s *payload) complete(ctx context.Context, c *Cache, resultValue *ProducerR
 		return e, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, err
 	}
 	if !s.verified {
 		if _, err := (ProducerInput{cache: c, payload: s}).Previous(ctx); err != nil {
@@ -211,7 +211,7 @@ func (p archiveProducer) produce(
 	var producerFailure, readerFailure error
 	g.Go(func() error {
 		if err := gctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return err
 		}
 		produced, err := write(
 			gctx,
@@ -241,7 +241,7 @@ func (p archiveProducer) produce(
 		if readerFailure != nil && !errors.Is(readerFailure, errErr) {
 			return nil, errors.Join(errErr, readerFailure)
 		}
-		return nil, errErr //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, errErr
 	}
 	if result.Unchanged && producerFailure == nil {
 		return staged.complete(ctx, c, &result)

@@ -26,7 +26,6 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 	}
 }
 
-//nolint:reassign // Serial fixtures must set and restore Helm's process-wide decompression limit.
 func testLoadFSChartFailureRecoveryCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()

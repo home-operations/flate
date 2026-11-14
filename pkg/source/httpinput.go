@@ -94,7 +94,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, requestValue *HTTPRequest) (fs
 	urlStr, retry, heldSlot := request.URL, request.Retry, request.HeldSlot
 
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, err
 	}
 	workers := h.remoteWorkers()
 	if workers == closedRemoteWorkers {
@@ -156,7 +156,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, requestValue *HTTPRequest) (fs
 		work.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
 		work.Finish(err)
 	}
-	return input, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+	return input, err
 }
 
 func (h *HTTPInputs) httpGetURL(

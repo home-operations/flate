@@ -34,8 +34,6 @@ func (c *ConfigMap) Named() NamedResource {
 func (c *ConfigMap) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 	out := *c
 	out.Namespace = namespace
@@ -123,8 +121,6 @@ func (s *Secret) Named() NamedResource {
 func (s *Secret) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Secret) WithNamespace(namespace string) BaseManifest {
 	out := *s
 	out.Namespace = namespace

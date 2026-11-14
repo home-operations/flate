@@ -272,7 +272,6 @@ func (f readOnlyFile) Stat() (fs.FileInfo, error) {
 
 func (f readOnlyFile) Write([]byte) (int, error) { return 0, fs.ErrPermission }
 
-//nolint:ireturn // The filesystem interface requires this result type.
 func (t *treeFS) Open(name string) (filesys.File, error) {
 	rel, err := t.resolve(name)
 	if err != nil {
@@ -373,7 +372,6 @@ func (t *treeFS) Mkdir(string) error     { return fs.ErrPermission }
 func (t *treeFS) MkdirAll(string) error  { return fs.ErrPermission }
 func (t *treeFS) RemoveAll(string) error { return fs.ErrPermission }
 
-//nolint:ireturn // The filesystem interface requires this result type.
 func (t *treeFS) Create(string) (filesys.File, error) {
 	return nil, fs.ErrPermission
 }

@@ -32,8 +32,6 @@ func (s *Store) EmissionOwner(id manifest.NamedResource) manifest.NamedResource 
 }
 
 // GetDeclaration returns the effective input authorized by static or accepted support.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -55,7 +53,6 @@ func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedRe
 		})
 }
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (cv *capture) declaration() manifest.BaseManifest {
 	c := *cv
 	if c.independent || c.accepted || c.classified || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
@@ -69,13 +66,10 @@ func (cv *capture) declaration() manifest.BaseManifest {
 // Render identity is available through Emission.Replay.
 // OutputReads preserves validity evidence for withdrawal without exposing invalid inventory.
 // Returned slices and their contents MUST be copied before mutation.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
 	return s.getEmission(nil, id)
 }
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) getEmission(
 	reads *ReadSet,
 	id manifest.NamedResource,

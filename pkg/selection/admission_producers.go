@@ -112,7 +112,7 @@ func (s *Session) RefreshProducers(
 	request PrepareRequest, //nolint:gocritic // The frontier borrows the driver's immutable acquisition snapshot.
 ) (*Admission, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return nil, err
 	}
 	var preparation *Preparation
 	if request.Preparation != nil {
@@ -140,7 +140,7 @@ func (s *Session) RefreshProducers(
 		obligation := &previous.producers[i]
 		if err := ctx.Err(); err != nil {
 			proposal.Retire()
-			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return nil, err
 		}
 		child, required := closure.producerWitness(obligation)
 		if !required {

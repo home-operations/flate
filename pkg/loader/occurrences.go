@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"sigs.k8s.io/kustomize/api/builtins" //nolint:staticcheck // Public builtins preserve upstream prefix/suffix kind exclusions.
+	"sigs.k8s.io/kustomize/api/builtins"
 	"sigs.k8s.io/kustomize/api/filters/namespace"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
@@ -255,7 +255,7 @@ func (l *Loader) appendIndexedPathObjects(objects []authoredOccurrence) []author
 // Packages snapshots resource graph inputs already traversed by Load.
 func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return nil, err
 	}
 	l.mountSources()
 	l.ensureScopes()
@@ -338,7 +338,7 @@ func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) (
 				continue
 			}
 			if err := ctx.Err(); err != nil {
-				return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+				return nil, err
 			}
 			if err := l.visitOccurrences(&v, func(o authoredOccurrence) {
 				occurrences = append(occurrences, o)
@@ -507,7 +507,7 @@ func (l *Loader) OccurrenceObject(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return store.Child{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return store.Child{}, err
 	}
 	if input != nil && input.LocalPath != occurrence.Declaration.Source {
 		return store.Child{}, nil
@@ -544,7 +544,7 @@ func (l *Loader) OccurrenceObject(
 		children, parseErr = l.readOccurrence(ctx, &reader, file, matching)
 	}
 	if err := ctx.Err(); err != nil {
-		return store.Child{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return store.Child{}, err
 	}
 	if parseErr != nil {
 		return store.Child{}, manifest.NewError(
@@ -638,8 +638,6 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 }
 
 // CatalogObject returns immutable reporting facts without hydrating or admitting the declaration.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	view := l.physicalView()
 	record, _ := l.Index.Lookup(id)

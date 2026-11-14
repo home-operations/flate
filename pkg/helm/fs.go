@@ -46,7 +46,6 @@ func (c capturedChart) load() (*chart.Chart, error) {
 // A missing requested location is distinct from a read failure within a chart.
 func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bool) (capturedChart, bool, error) {
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return capturedChart{}, false, err
 	}
 	info, err := fs.Stat(input, name)

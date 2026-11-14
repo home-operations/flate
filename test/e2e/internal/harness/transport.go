@@ -99,7 +99,7 @@ func serve(t *testing.T, f *testfixture.Fixture) *fixtureTransport {
 	// Loopback HTTP bypasses environment proxies and remains outside this guarantee.
 	t.Setenv("HTTP_PROXY", "http://plain-http.fixture.invalid:1")
 	resolver := net.DefaultResolver
-	net.DefaultResolver = &net.Resolver{ //nolint:reassign // CLI transports must resolve the proxy without opening a socket.
+	net.DefaultResolver = &net.Resolver{
 		PreferGo: true,
 		Dial: func(context.Context, string, string) (net.Conn, error) {
 			return nil, fmt.Errorf("fixture forbids plain HTTP and live endpoints")
@@ -142,7 +142,7 @@ func serve(t *testing.T, f *testfixture.Fixture) *fixtureTransport {
 		})
 		return client, nil
 	}
-	http.DefaultTransport = transport //nolint:reassign // CLI acquisition clones the concrete process transport.
+	http.DefaultTransport = transport
 	t.Cleanup(func() {
 		transport.CloseIdleConnections()
 		mu.Lock()
@@ -151,8 +151,8 @@ func serve(t *testing.T, f *testfixture.Fixture) *fixtureTransport {
 		}
 		mu.Unlock()
 		workers.Wait()
-		http.DefaultTransport = old    //nolint:reassign // Restore the process transport after joining fixture workers.
-		net.DefaultResolver = resolver //nolint:reassign // Restore the process resolver after joining fixture workers.
+		http.DefaultTransport = old
+		net.DefaultResolver = resolver
 	})
 	return fixture
 }

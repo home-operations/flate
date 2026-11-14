@@ -282,7 +282,6 @@ func (o *Orchestrator) diagnostic(id manifest.NamedResource) manifest.Diagnostic
 	return manifest.DiagnosticFor(id, obj)
 }
 
-//nolint:ireturn // Catalog witnesses MUST preserve their concrete manifest types.
 func (o *Orchestrator) catalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	if o.loader != nil {
 		return o.loader.CatalogObject(id)

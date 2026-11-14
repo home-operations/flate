@@ -137,7 +137,7 @@ func (o *Orchestrator) readProducerHistory(
 
 func (o *Orchestrator) lookupHistory(ctx context.Context) error {
 	if o.historyOwners != nil {
-		return ctx.Err() //nolint:wrapcheck // History-owner reuse returns the original cancellation error.
+		return ctx.Err()
 	}
 	var query []manifest.SourceEvidence
 	changes := o.cfg.ExternalChanges

@@ -40,8 +40,6 @@ func (p EmissionPolicy) SelectDocument(doc map[string]any, skipKinds []string) (
 
 // EmittedIdentity preserves internal namespaces without changing output documents.
 // The SDK scope resolver MUST be registered before namespace defaulting.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) EmittedIdentity(doc map[string]any) NamedResource {
 	id := DocIdentity(doc)
 	kind := KindInfo{Kind: id.Kind, apiVersion: DocAPIVersion(doc)}
@@ -161,16 +159,12 @@ func (*Secret) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
 func (*RawObject) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
 
 // MatchesNamespace reports whether the target can belong to the producer's namespace projection.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) MatchesNamespace(target NamedResource) bool {
 	return p.InternalNamespace || p.ExcludeChildren || p.Namespace == "" || HasEnvsubstReference(p.Namespace) ||
 		target.Namespace == "" || !target.KindInfo().Namespaced() || target.Namespace == p.Namespace
 }
 
 // Stamp applies producer overlays to caller-owned decoded documents before substitution.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 	if !p.Owner && len(p.Labels) == 0 && len(p.Annotations) == 0 {
 		return

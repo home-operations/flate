@@ -17,8 +17,6 @@ import (
 )
 
 // yaml.v4 reuses non-nil maps; only unretained documents may return here.
-//
-//nolint:gochecknoglobals // A process-wide pool reuses decoded document maps.
 var decodedMapPool = sync.Pool{
 	New: func() any {
 		return make(map[string]any, initialDocumentCapacity)

@@ -308,7 +308,6 @@ type contentReadBilly struct {
 	all   bool
 }
 
-//nolint:ireturn // The billy.Filesystem implementation must preserve its upstream billy.File return type.
 func (f *contentReadBilly) Open(name string) (billy.File, error) {
 	if f.all || strings.HasPrefix(filepath.ToSlash(name), "dir/") {
 		f.reads.Add(1)

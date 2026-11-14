@@ -21,7 +21,7 @@ func (c *admissionClosure) walk(
 	//nolint:intrange // add MUST extend the worklist during traversal.
 	for cursor := 0; cursor < len(c.queue); cursor++ {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Admission cancellation preserves the original context error identity.
+			return err
 		}
 		id := c.queue[cursor]
 		if c.decision.unrestricted && (c.incoming(id).Obj != nil || c.objects.GetDeclaration(id) != nil) {
@@ -40,7 +40,6 @@ type completeHydrateState struct {
 	obj    *manifest.BaseManifest
 }
 
-//nolint:ireturn // Hydration MUST retain each concrete manifest type behind the common contract.
 func (c *admissionClosure) completeHydrate(
 	scope *completeHydrateState,
 ) (manifest.BaseManifest, error) {
@@ -505,7 +504,6 @@ func (c *admissionClosure) selectProductionRoles(
 	})
 }
 
-//nolint:ireturn // Hydration MUST retain each concrete manifest type behind the common contract.
 func (c *admissionClosure) hydrateDeclaration(
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,

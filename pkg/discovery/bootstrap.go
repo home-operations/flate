@@ -263,7 +263,6 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 	return bootstrap, nil
 }
 
-//nolint:ireturn // Sources retain their heterogeneous manifest types.
 func (d *Session) entrySourceObject(
 	id manifest.NamedResource,
 	group *entrySourceGroup,

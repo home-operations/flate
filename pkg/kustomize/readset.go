@@ -238,55 +238,45 @@ func (rs readSetSnapshot) stillValid(
 //nolint:gocritic // Filesystem callbacks must observe the captured read-set value snapshot.
 func (rs readSetSnapshot) localsValid(ctx context.Context, lower fs.FS, immutable bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, err
 	}
 	if immutable {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err() == nil, ctx.Err()
 	}
 	for _, f := range rs.Files {
 		b, err := fs.ReadFile(lower, f.Path)
 		if (err != nil) != (f.Hash == "") {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return false, ctx.Err()
 		}
 		if err == nil && manifest.SHA256Hex(b) != f.Hash {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return false, ctx.Err()
 		}
 	}
 	for _, d := range rs.Dirs {
 		entries, err := fs.ReadDir(lower, d.Path)
 		if err != nil {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return false, ctx.Err()
 		}
 		if hashEntries(entryNames(entries)) != d.Hash {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return false, ctx.Err()
 		}
 	}
 	for _, n := range rs.Nodes {
 		info, err := fs.Stat(lower, n.Path)
 		if observedKind(err == nil, err == nil && info.IsDir()) != n.Kind {
-			//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 			return false, ctx.Err()
 		}
 	}
-	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return ctx.Err() == nil, ctx.Err()
 }
 
 //nolint:gocritic // Task callbacks must observe the captured read-set value snapshot.
 func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
 	if len(rs.Remotes) == 0 {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err() == nil, ctx.Err()
 	}
 	waves, graphValid := remoteValidationWaves(rs.Remotes)
 	if !graphValid {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, ctx.Err()
 	}
 	return rs.validateRemoteWaves(ctx, cache, input, waves)
@@ -330,7 +320,6 @@ func (rs readSetSnapshot) validateRemoteWaves(
 	} else {
 		input.slot.YieldSlot(validate)
 	}
-	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return valid && ctx.Err() == nil, ctx.Err()
 }
 

@@ -194,7 +194,6 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid helm receipt")
 	}
 	if !c.cache.CanPersistRenders() {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	if frame.header.Binding == "" {

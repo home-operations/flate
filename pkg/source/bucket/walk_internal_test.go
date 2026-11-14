@@ -395,10 +395,10 @@ func timeoutBucketFetcher(t *testing.T, respond func(*http.Request) (*http.Respo
 		})
 		return client, nil
 	}
-	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
+	http.DefaultTransport = transport
 	t.Cleanup(
 		func() {
-			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+			http.DefaultTransport = previous
 		},
 	)
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}

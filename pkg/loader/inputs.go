@@ -420,7 +420,7 @@ type factValue[V any] struct {
 	imported bool
 }
 
-//nolint:gocritic,ireturn // Generic values retain separate key-presence and imported-ownership flags.
+//nolint:gocritic // Generic values retain separate key-presence and imported-ownership flags.
 func (m *factMap[K, V]) get(key K) (V, bool, bool) {
 	imported := false
 	for layer := m; layer != nil; layer = layer.previous {

@@ -37,7 +37,6 @@ func MergeStringMap(md map[string]any, key string, in map[string]string) {
 	md[key] = out
 }
 
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func defaultNamespace(
 	obj BaseManifest,
 	doc map[string]any,

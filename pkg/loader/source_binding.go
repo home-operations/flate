@@ -212,7 +212,6 @@ func findSourceBinding(binding *sourceBinding, source manifest.NamedResource) *s
 	return nil
 }
 
-//nolint:gochecknoglobals // Immutable process seed distributes source identities across publication buckets.
 var sourceBindingSeed = maphash.MakeSeed()
 
 func (l *Loader) sourceBucket(

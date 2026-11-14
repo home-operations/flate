@@ -105,10 +105,10 @@ func testControllerBucketMachineFailuresCase(
 		return client, nil
 	}
 	transport.DialTLSContext = dial
-	http.DefaultTransport = transport //nolint:reassign // The test intercepts AWS credential traffic through the default transport.
+	http.DefaultTransport = transport
 	t.Cleanup(func() {
 		transport.CloseIdleConnections()
-		http.DefaultTransport = old //nolint:reassign // Restore the default transport after the test.
+		http.DefaultTransport = old
 	})
 	network := new(src.Network)
 	t.Cleanup(network.Close)

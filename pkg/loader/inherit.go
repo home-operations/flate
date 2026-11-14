@@ -17,7 +17,7 @@ import (
 // Admit MUST finish construction before its caller publishes admission.
 func (l *Loader) Admit(ctx context.Context, repoRoot string) error {
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	l.mountSources()
 	return l.admit(ctx, repoRoot, nil)
@@ -26,13 +26,13 @@ func (l *Loader) Admit(ctx context.Context, repoRoot string) error {
 //nolint:gocognit // Admission MUST preserve round and publication order while returning cancellation.
 func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[string]nsResolution) error {
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	l.projectTemplates()
 	l.ensureScopes()
 	kss := l.kustomizations()
 	if l.scopes.complete && l.scopesMatch(kss, repoRoot) {
-		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return ctx.Err()
 	}
 
 	if prediction == nil {
@@ -44,14 +44,14 @@ func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[stri
 	if repoRoot == "" {
 		l.refreshClaims(repoRoot, kss)
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		l.scopes.complete = true
 		return nil
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		l.refreshClaims(repoRoot, kss)
 		for file, visits := range l.scopes.visits {
@@ -74,11 +74,11 @@ func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[stri
 		}
 		// ReduceStatic yields only context errors, which MUST persist after iteration.
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		changed := l.projectAuthored(repoRoot, prediction)
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		if !changed {
 			l.scopes.complete = true
@@ -87,7 +87,7 @@ func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[stri
 		kss = l.kustomizations()
 		if l.scopesMatch(kss, repoRoot) {
 			if err := ctx.Err(); err != nil {
-				return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+				return err
 			}
 			l.scopes.complete = true
 			return nil

@@ -84,7 +84,7 @@ func (f *operation) fetchSource(
 ) (source.PreparedFetch, error) {
 	policy := *policyValue
 	if err := ctx.Err(); err != nil {
-		return source.PreparedFetch{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return source.PreparedFetch{}, err
 	}
 	f.work.Scope = f.reads.Work().Scope()
 	if policy.Work != nil {

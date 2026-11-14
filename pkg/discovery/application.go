@@ -487,7 +487,6 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 		}
 	}()
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return Binding{}, err
 	}
 	if binding.Reads == nil || !binding.Reads.Valid() {

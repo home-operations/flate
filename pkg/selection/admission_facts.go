@@ -93,7 +93,6 @@ func (c *admissionClosure) occurrence(id manifest.NamedResource) (OccurrenceFact
 	return facts, known && !facts.RequiresBuild && facts.Identity.Name == facts.Authored.Name
 }
 
-//nolint:ireturn // Immutable catalog witnesses MUST retain their concrete manifest type.
 func (c *admissionClosure) catalogWitness(id manifest.NamedResource) manifest.BaseManifest {
 	facts, _ := c.occurrenceFacts(id)
 	object := facts.Object
@@ -110,7 +109,6 @@ func (c *admissionClosure) catalogWitness(id manifest.NamedResource) manifest.Ba
 	return object
 }
 
-//nolint:ireturn // Catalog identity projection MUST retain each concrete manifest type.
 func (c *admissionClosure) catalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	if c.catalog != nil {
 		if entry, known := c.catalog.entries[id]; known {

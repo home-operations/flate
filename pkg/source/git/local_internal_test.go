@@ -413,7 +413,6 @@ type orderedTagStore struct {
 	refs []*plumbing.Reference
 }
 
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
 	return storer.NewReferenceSliceIter(s.refs), nil
 }
@@ -669,7 +668,6 @@ func (s *failingRefStore) Reference(plumbing.ReferenceName) (*plumbing.Reference
 	return nil, s.err
 }
 
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (s *failingRefStore) IterReferences() (storer.ReferenceIter, error) { return nil, s.err }
 
 func localSource(refValue *sourcev1.GitRepositoryRef) *manifest.GitRepository {

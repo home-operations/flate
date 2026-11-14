@@ -374,10 +374,10 @@ func TestAcquirePrepared_AnonymousDenial(t *testing.T) {
 func TestFetcher_SharedMachineFailure(t *testing.T) {
 	previous := http.DefaultTransport
 	transport := previous.(*http.Transport).Clone()
-	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
+	http.DefaultTransport = transport
 	t.Cleanup(
 		func() {
-			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after credential acquisition.
+			http.DefaultTransport = previous
 		},
 	)
 	synctest.Test(t, func(t *testing.T) {

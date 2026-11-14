@@ -13,6 +13,13 @@ func TestE2E_OutputCorpus(t *testing.T) {
 		name  string
 		cases []string
 	}{
+		{name: "duplicate-producers", cases: []string{
+			"mixed",
+			"files",
+			"changed-only",
+			"failed-current",
+			"failed-orig",
+		}},
 		{name: "output-formats", cases: []string{
 			"build-commands",
 			"get-commands",

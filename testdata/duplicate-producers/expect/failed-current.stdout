@@ -1,0 +1,17 @@
+{
+  "changes": [],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "app",
+        "path": "apps"
+      },
+      "side": "current",
+      "count": 3,
+      "reason": "kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from './one': readfile apps/one: invalid argument': recursed merging from path '@@repo@@/apps/one': may not add resource with an already registered id: ConfigMap.v1.[noGrp]/shared.default\n  duplicate resource(s) produced by multiple accumulated paths:\n    ConfigMap.v1.[noGrp]/shared.default\n      - ./apps/loose.yaml\n      - ./apps/one\n      - ./apps/two\nselect an individual overlay with -p"
+    }
+  ]
+}

@@ -1,0 +1,436 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "ec7b882ce2a2b2eaf7f9fd2156223cf33bdc58c9",
+    "paths": [
+      "pkg/kustomize/diagnose_internal_test.go",
+      "testdata/output-formats/scenario.json"
+    ],
+    "reductions": "Authored from the reported mixed and loose-file collisions. Retain synthesized aggregates, one local Flux consumer, a populated healthy base, and both diff directions."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base",
+        "refs/remotes/origin/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "failed",
+      "overlay": "mixed",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "base"
+      ],
+      "refs": [
+        "refs/heads/failed"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "mixed",
+      "directory": "overlays/mixed"
+    },
+    {
+      "name": "files",
+      "directory": "overlays/files"
+    }
+  ],
+  "cases": [
+    {
+      "name": "mixed",
+      "description": "Name both directories and the loose file in a synthesized aggregate.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "mixed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "mixed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/mixed.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "files",
+      "description": "Name both loose files in a synthesized aggregate.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "files"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "files",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/files.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only",
+      "description": "Keep complete mixed attribution when a changed-only build fails.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "mixed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/mixed.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-current",
+      "description": "Retain the duplicate report with three healthy original objects.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "mixed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "failed-current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/failed-current.stdout",
+              "stderr": "expect/failed-current.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-orig",
+      "description": "Retain the duplicate report with three healthy current objects.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "failed-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "failed",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/failed-orig.stdout",
+              "stderr": "expect/failed-orig.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/failed-current.stderr",
+      "cases": [
+        "failed-current"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/failed-current.stdout",
+      "cases": [
+        "failed-current"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/failed-orig.stderr",
+      "cases": [
+        "failed-orig"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/failed-orig.stdout",
+      "cases": [
+        "failed-orig"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/files.stderr",
+      "cases": [
+        "files"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/mixed.stderr",
+      "cases": [
+        "mixed",
+        "changed-only"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "overlays/files/repo/cluster/flux.yaml",
+      "cases": [
+        "files"
+      ],
+      "purpose": "Select and collide the two loose file producers."
+    },
+    {
+      "path": "overlays/files/repo/files/two.yaml",
+      "cases": [
+        "files"
+      ],
+      "purpose": "Select and collide the two loose file producers."
+    },
+    {
+      "path": "overlays/mixed/repo/apps/loose.yaml",
+      "cases": [
+        "mixed",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Committed or working-tree duplicate producers for the mixed aggregate."
+    },
+    {
+      "path": "overlays/mixed/repo/apps/two/cm.yaml",
+      "cases": [
+        "mixed",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Committed or working-tree duplicate producers for the mixed aggregate."
+    },
+    {
+      "path": "repo/apps/loose.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/apps/one/cm.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/apps/one/kustomization.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/apps/two/cm.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/apps/two/kustomization.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/cluster/flux.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/files/one.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    },
+    {
+      "path": "repo/files/two.yaml",
+      "cases": [
+        "mixed",
+        "files",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Local Flux declaration or healthy producer input."
+    }
+  ]
+}

@@ -1,0 +1,3958 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "d5f77eac528960264c8706e735a5e0cb90e8d46c",
+    "paths": [
+      "pkg/controllers/source/controller.go",
+      "testdata/artifact-composition"
+    ],
+    "reductions": "Authored include reduction with shared component paths and inert encrypted values."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://cluster.fixture.invalid/repo"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://cluster.fixture.invalid/repo"
+        }
+      ]
+    },
+    {
+      "name": "remote",
+      "directory": "remote",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://input.fixture.invalid/repo"
+        }
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "remote-after",
+      "directory": "overlays/remote-after"
+    },
+    {
+      "name": "input-after",
+      "directory": "overlays/input-after"
+    },
+    {
+      "name": "sops",
+      "directory": "overlays/sops"
+    },
+    {
+      "name": "no-include",
+      "directory": "overlays/no-include"
+    },
+    {
+      "name": "restore-include",
+      "directory": "overlays/restore-include"
+    },
+    {
+      "name": "baseline-noinclude",
+      "directory": "overlays/baseline-noinclude"
+    },
+    {
+      "name": "destination-before",
+      "directory": "overlays/destination-before"
+    },
+    {
+      "name": "baseline-destination-before",
+      "directory": "overlays/baseline-destination-before"
+    },
+    {
+      "name": "destination-after",
+      "directory": "overlays/destination-after"
+    },
+    {
+      "name": "order-before",
+      "directory": "overlays/order-before"
+    },
+    {
+      "name": "order-after",
+      "directory": "overlays/order-after"
+    },
+    {
+      "name": "baseline-order-before",
+      "directory": "overlays/baseline-order-before"
+    },
+    {
+      "name": "pin-before",
+      "directory": "overlays/pin-before"
+    },
+    {
+      "name": "pin-after",
+      "directory": "overlays/pin-after"
+    },
+    {
+      "name": "baseline-pin-before",
+      "directory": "overlays/baseline-pin-before"
+    },
+    {
+      "name": "nested-before",
+      "directory": "overlays/nested-before"
+    },
+    {
+      "name": "nested-after",
+      "directory": "overlays/nested-after"
+    },
+    {
+      "name": "baseline-nested-before",
+      "directory": "overlays/baseline-nested-before"
+    },
+    {
+      "name": "filtered-before",
+      "directory": "overlays/filtered-before"
+    },
+    {
+      "name": "filtered-after",
+      "directory": "overlays/filtered-after"
+    },
+    {
+      "name": "baseline-filtered-before",
+      "directory": "overlays/baseline-filtered-before"
+    },
+    {
+      "name": "branch",
+      "directory": "overlays/branch"
+    },
+    {
+      "name": "baseline-branch",
+      "directory": "overlays/baseline-branch"
+    },
+    {
+      "name": "missing-before",
+      "directory": "overlays/missing-before",
+      "operations": [
+        {
+          "delete": "repo/entry/input.yaml"
+        }
+      ]
+    },
+    {
+      "name": "baseline-missing-before",
+      "directory": "overlays/baseline-missing-before",
+      "operations": [
+        {
+          "delete": "baseline/entry/input.yaml"
+        }
+      ]
+    },
+    {
+      "name": "restore-input",
+      "directory": "overlays/restore-input"
+    },
+    {
+      "name": "cipher-after",
+      "directory": "overlays/cipher-after"
+    },
+    {
+      "name": "sops-pin-before",
+      "directory": "overlays/sops-pin-before"
+    },
+    {
+      "name": "sops-pin-after",
+      "directory": "overlays/sops-pin-after"
+    },
+    {
+      "name": "baseline-sops-pin-before",
+      "directory": "overlays/baseline-sops-pin-before"
+    },
+    {
+      "name": "required-secret",
+      "directory": "overlays/required-secret"
+    },
+    {
+      "name": "directory-conflict",
+      "directory": "overlays/directory-conflict"
+    },
+    {
+      "name": "sops-working-after",
+      "directory": "overlays/sops-working-after"
+    },
+    {
+      "name": "composed-entry",
+      "directory": "overlays/composed-entry"
+    },
+    {
+      "name": "remote-outside-only",
+      "directory": "overlays/remote-outside-only"
+    },
+    {
+      "name": "failure-component",
+      "directory": "overlays/failure-component"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "remote",
+      "name": "remote-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/v1"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "remote-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "remote-before"
+      ],
+      "refs": [
+        "refs/tags/v2"
+      ],
+      "overlay": "remote-after"
+    },
+    {
+      "repository": "remote",
+      "name": "remote-sops",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "remote-before"
+      ],
+      "refs": [
+        "refs/tags/v1"
+      ],
+      "overlay": "sops"
+    },
+    {
+      "repository": "repo",
+      "name": "current-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "current-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "refs": [],
+      "overlay": "input-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "current-noinclude",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "no-include"
+    },
+    {
+      "repository": "repo",
+      "name": "current-added",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-noinclude"
+      ],
+      "overlay": "restore-include"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-noinclude",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-noinclude"
+    },
+    {
+      "repository": "repo",
+      "name": "current-destination-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "destination-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-destination-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-destination-before"
+      ],
+      "overlay": "destination-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-destination-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-destination-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-order-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "order-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-order-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-order-before"
+      ],
+      "overlay": "order-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-order-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-order-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-pin-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "pin-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-pin-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-pin-before"
+      ],
+      "overlay": "pin-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-pin-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-pin-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-nested-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "nested-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-nested-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-nested-before"
+      ],
+      "overlay": "nested-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-nested-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-nested-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-filtered-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "filtered-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-filtered-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-filtered-before"
+      ],
+      "overlay": "filtered-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-filtered-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-filtered-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-branch-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "branch"
+    },
+    {
+      "repository": "repo",
+      "name": "current-branch-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-branch-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-branch",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-branch"
+    },
+    {
+      "repository": "repo",
+      "name": "current-missing-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "missing-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-missing-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-missing-before"
+      ],
+      "overlay": "restore-input"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-missing-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-missing-before"
+    },
+    {
+      "repository": "remote",
+      "name": "remote-cipher-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "remote-sops"
+      ],
+      "overlay": "cipher-after"
+    },
+    {
+      "repository": "repo",
+      "name": "current-sops-pin-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "sops-pin-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-sops-pin-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-sops-pin-before"
+      ],
+      "overlay": "sops-pin-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-sops-pin-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-before"
+      ],
+      "overlay": "baseline-sops-pin-before"
+    },
+    {
+      "repository": "repo",
+      "name": "current-required-secret",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "required-secret"
+    },
+    {
+      "repository": "repo",
+      "name": "current-directory-conflict",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-before"
+      ],
+      "overlay": "directory-conflict"
+    },
+    {
+      "repository": "remote",
+      "name": "remote-outside-only",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "remote-before"
+      ],
+      "overlay": "remote-outside-only"
+    }
+  ],
+  "cases": [
+    {
+      "name": "independent-diff",
+      "description": "Input refs resolve independently in each diff route, with an unrelated consumer.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-after"
+        },
+        {
+          "commit": "baseline-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops",
+      "description": "The included encrypted file reaches the component and existing warning policy.",
+      "setup": [
+        {
+          "commit": "remote-sops"
+        },
+        {
+          "commit": "current-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-sops"
+          }
+        },
+        {
+          "commit": "baseline-sops-pin-before"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/base",
+            "commit": "current-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/base",
+            "commit": "baseline-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v2",
+            "commit": "remote-cipher-after"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "allowed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops.stdout",
+              "stderr": "expect/sops.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "required",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops.stdout",
+              "stderr": "expect/sops.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "pin-and-change-input",
+          "edit": {
+            "overlay": "sops-working-after"
+          }
+        },
+        {
+          "id": "directory-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops.stdout",
+              "stderr": "expect/sops.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-sops-pin-before@@",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops.stdout",
+              "stderr": "expect/sops.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remove-include",
+          "edit": {
+            "overlay": "no-include"
+          }
+        },
+        {
+          "id": "no-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/no-include.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "include-added",
+      "description": "Independent include comparison through both diff routes: include-added.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-added"
+        },
+        {
+          "commit": "baseline-noinclude"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-noinclude@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "include-removed",
+      "description": "Independent include comparison through both diff routes: include-removed.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-noinclude"
+        },
+        {
+          "commit": "baseline-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/no-include.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/no-include.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "include-destination",
+      "description": "Independent include comparison through both diff routes: include-destination.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-destination-after"
+        },
+        {
+          "commit": "baseline-destination-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/destination.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-destination-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/destination.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "include-reordered",
+      "description": "Independent include comparison through both diff routes: include-reordered.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-order-after"
+        },
+        {
+          "commit": "baseline-order-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-order-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shallow-authored-pin",
+      "description": "Independent include comparison through both diff routes: shallow-authored-pin.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-pin-after"
+        },
+        {
+          "commit": "baseline-pin-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/base",
+            "commit": "current-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/base",
+            "commit": "baseline-before"
+          }
+        },
+        {
+          "shallow": "current-before"
+        },
+        {
+          "shallow": "baseline-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-pin-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "nested-includes",
+      "description": "Independent include comparison through both diff routes: nested-includes.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-nested-after"
+        },
+        {
+          "commit": "baseline-nested-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-nested-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "filtered-input-change",
+      "description": "Independent include comparison through both diff routes: filtered-input-change.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-filtered-after"
+        },
+        {
+          "commit": "baseline-filtered-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:current-filtered-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "remote-branch-history",
+      "description": "Independent include comparison through both diff routes: remote-branch-history.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-branch-after"
+        },
+        {
+          "commit": "baseline-branch"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/main",
+            "commit": "remote-after"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "current-branch",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "original-branch",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/branch.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:current-branch-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/branch.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-historical-input",
+      "description": "Independent include comparison through both diff routes: missing-historical-input.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-missing-after"
+        },
+        {
+          "commit": "baseline-missing-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "overlay": "failure-component"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-missing-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/missing.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-required-secret",
+      "description": "The existing missing Secret policy applies alongside the included encrypted file.",
+      "setup": [
+        {
+          "commit": "remote-sops"
+        },
+        {
+          "commit": "current-required-secret"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-sops"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "allowed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-allowed.stdout",
+              "stderr": "expect/required-allowed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "required",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops.stdout",
+              "stderr": "expect/required-secret.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "composed-entry",
+      "description": "The entry uses completed source content and the admitted working-tree coordinates.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-after"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "overlay": "composed-entry"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "render",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/kubernetes/apps/db",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--supply",
+              "@@repo@@/entry/cluster.yaml",
+              "--supply",
+              "@@repo@@/entry/input.yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/composed-entry.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "directory-conflict",
+      "description": "A directory include cannot replace the existing nonempty shared component directory.",
+      "setup": [
+        {
+          "commit": "remote-after"
+        },
+        {
+          "commit": "current-directory-conflict"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "overlay": "failure-component"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "render",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/directory-conflict.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "outside-copied-path",
+      "description": "Only unselected input bytes change. Acquisition identity changes while the completed tree and consumer output stay equal.",
+      "setup": [
+        {
+          "commit": "remote-outside-only"
+        },
+        {
+          "commit": "current-after"
+        },
+        {
+          "commit": "baseline-before"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v1",
+            "commit": "remote-before"
+          }
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/tags/v2",
+            "commit": "remote-outside-only"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,Secret",
+              "--skip-kinds=",
+              "-o",
+              "yaml",
+              "--base",
+              "@@commit:current-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/after.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/before.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/branch.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/composed-entry.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/destination.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/directory-conflict.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/full-after.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/missing.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/no-include.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/required-allowed.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/required-allowed.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/required-secret.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/sops.stderr",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "expect/sops.stdout",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-branch/baseline/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-destination-before/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-destination-before/baseline/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/baseline-filtered-before/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-filtered-before/baseline/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation.",
+      "package": "component",
+      "consumer": "baseline/kubernetes/apps/db"
+    },
+    {
+      "path": "overlays/baseline-missing-before/baseline/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-nested-before/baseline/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-nested-before/baseline/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-nested-before/baseline/entry/leaf.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-noinclude/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-noinclude/baseline/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation.",
+      "package": "component",
+      "consumer": "baseline/kubernetes/apps/db"
+    },
+    {
+      "path": "overlays/baseline-order-before/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-pin-before/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/baseline-sops-pin-before/baseline/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/branch/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/cipher-after/remote/kubernetes/components/cnpg-common/backup-values.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/composed-entry/repo/kubernetes/apps/db/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/composed-entry/repo/kubernetes/apps/db/owner.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/destination-after/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/destination-after/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/destination-before/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/destination-before/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/directory-conflict/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/filtered-after/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/filtered-before/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/filtered-before/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation.",
+      "package": "component",
+      "consumer": "repo/kubernetes/apps/db"
+    },
+    {
+      "path": "overlays/input-after/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/missing-before/repo/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/nested-after/repo/entry/leaf.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/nested-before/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/nested-before/repo/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/nested-before/repo/entry/leaf.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/no-include/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/no-include/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation.",
+      "package": "component",
+      "consumer": "repo/kubernetes/apps/db"
+    },
+    {
+      "path": "overlays/order-after/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/order-before/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/pin-after/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/pin-after/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/pin-before/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/remote-after/remote/kubernetes/components/cnpg-common/backup-values.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/remote-after/remote/unselected.txt",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-secret/repo/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-secret/repo/entry/required.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-secret/repo/requires/cm.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-secret/repo/requires/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/restore-include/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/restore-include/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/restore-input/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/restore-input/repo/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/sops/remote/kubernetes/components/cnpg-common/backup-values.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/sops-pin-after/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/sops-pin-before/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/sops-working-after/repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/sops-working-after/repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "remote/kubernetes/components/cnpg-common/alternative.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "remote/kubernetes/components/cnpg-common/backup-values.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "remote/unselected.txt",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/entry/cluster.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/entry/consumer.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/entry/input.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/entry/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/entry/unrelated.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/kubernetes/apps/db/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "repo/kubernetes/components/cnpg-common/db-default-values.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Raw source package requires include completion. CLI replays assert its completed content.",
+      "package": "excluded"
+    },
+    {
+      "path": "repo/unrelated/cm.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "repo/unrelated/kustomization.yaml",
+      "cases": [
+        "independent-diff",
+        "sops",
+        "include-added",
+        "include-removed",
+        "include-destination",
+        "include-reordered",
+        "shallow-authored-pin",
+        "nested-includes",
+        "filtered-input-change",
+        "remote-branch-history",
+        "missing-historical-input",
+        "sops-required-secret",
+        "composed-entry",
+        "directory-conflict",
+        "outside-copied-path"
+      ],
+      "purpose": "Authored source fixture or independent complete CLI expectation."
+    },
+    {
+      "path": "overlays/remote-outside-only/remote/unselected.txt",
+      "cases": [
+        "outside-copied-path"
+      ],
+      "purpose": "Authored outside-path edit and complete independent output expectation."
+    },
+    {
+      "path": "expect/full-before.stdout",
+      "cases": [
+        "outside-copied-path"
+      ],
+      "purpose": "Authored outside-path edit and complete independent output expectation."
+    },
+    {
+      "path": "overlays/failure-component/repo/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "missing-historical-input",
+        "directory-conflict"
+      ],
+      "purpose": "Independently buildable raw component for source failure cases.",
+      "package": "component",
+      "consumer": "repo/kubernetes/apps/db"
+    },
+    {
+      "path": "overlays/failure-component/baseline/kubernetes/components/cnpg-common/kustomization.yaml",
+      "cases": [
+        "missing-historical-input",
+        "directory-conflict"
+      ],
+      "purpose": "Independently buildable raw component for source failure cases.",
+      "package": "component",
+      "consumer": "baseline/kubernetes/apps/db"
+    }
+  ]
+}

@@ -77,18 +77,20 @@ spec: {}
 		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{}},
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
-	{
+	t.Run("index-only", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, idx.Index.Records[id].Declaration, manifest.BaseManifest(nil))
 		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: nil}, id)
 		assert.FatalIf(t, err != nil || !promoted || st.GetObject(id) == nil, "%v", "selected data must be admitted")
-	}
-	for _, excluded := range []manifest.NamedResource{
-		testutil.HelmReleaseID("apps", "raw-hr"),
-		testutil.KustomizationID("apps", "raw-ks"),
-		{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
-		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
-	} {
-		assert.ErrorIf(t, st.GetObject(excluded) != nil, "runtime promotion admitted %s", excluded)
-	}
+		for _, excluded := range []manifest.NamedResource{
+			testutil.HelmReleaseID("apps", "raw-hr"),
+			testutil.KustomizationID("apps", "raw-ks"),
+			{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
+			{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
+		} {
+			assert.ErrorIf(t, st.GetObject(excluded) != nil, "runtime promotion admitted %s", excluded)
+		}
+	})
 }
 
 func TestOrchestratorExistence_PromotionPreservesSelectedContent(t *testing.T) {
@@ -711,4 +713,37 @@ func TestOrchestratorExistence_BootstrapRoutes(t *testing.T) {
 			assert.Equal(t, st.GetArtifact(consumer.SourceID(), store.ArtifactContent) != nil, true)
 		})
 	}
+}
+
+func TestOrchestratorExistence_PromotionRejectsIndexedController(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := "kubernetes/components/cluster-settings/cluster-settings.yaml"
+	testutil.WriteFile(t, root, file, testutil.KustomizationYAML(
+		"materializer", "apps", "  path: ./payload\n",
+	)+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\ndata: {value: retained}\n")
+	input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
+	assert.NoError(t, err)
+	counted := &countedProducerFS{FS: input.FS}
+	input.FS = counted
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	declaration := &manifest.Kustomization{Name: "materializer", Namespace: "apps", Path: "./payload"}
+	id := declaration.Named()
+	index := indexForTest(map[manifest.NamedResource]string{id: file})
+	record := index.Records[id]
+	record.Declaration, record.Authored, record.Path = declaration, id, filepath.Join(root, filepath.FromSlash(file))
+	record.Productions = []manifest.Production{{Authored: id, Path: record.Path, Source: manifest.BootstrapSourceID}}
+	index.Records[id] = record
+	existence := orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{store: st, index: index}}
+	promoted, err := existence.Promote(t.Context(), selection.PrepareRequest{}, id)
+	assert.NoError(t, err)
+	assert.Equal(t, promoted, false)
+	assert.Equal(t, counted.reads.Load(), int32(0))
+	assert.Equal(t, st.GetObject(id), manifest.BaseManifest(nil))
+	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "sibling"}
+	assert.Equal(t, st.GetObject(sibling), manifest.BaseManifest(nil))
+	data, err := fs.ReadFile(input.FS, file)
+	assert.NoError(t, err)
+	assert.Equal(t, strings.Contains(string(data), "value: retained"), true)
 }

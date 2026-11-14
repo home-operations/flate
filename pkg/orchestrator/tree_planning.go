@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
@@ -114,8 +115,11 @@ func (r *renderInvocation) planTree(
 	request.Changed = request.Changed || tree.ExternalChanges != nil
 	st := store.New()
 	st.SetWorkTree(tree.work.Scope().Identity().Tree, tree.work.Scope())
+	declarations := loader.New(st)
+	defer declarations.Close()
+	declarations.Options.Missing = cfg.missing
 	session, err := discovery.Begin(ctx, discovery.Config{
-		Store: st, Cache: cfg.Cache,
+		Store: st, Cache: cfg.Cache, Loader: declarations,
 		Work: tree.work.Scope(), Projections: cfg.projections,
 		Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
 		Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
@@ -126,8 +130,19 @@ func (r *renderInvocation) planTree(
 		return nil, err
 	}
 	defer session.Close()
-	controller := sourcectrl.New(st, r.budget)
-	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cfg.SourceRetry)
+	controller := sourcectrl.New(st, r.budget, cfg.Cache)
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindBucket, manifest.KindOCIRepository, manifest.KindHelmChart} {
+		controller.Fetchers[kind] = nil
+	}
+	configureSourceFetchers(controller, cfg)
+	planning := Orchestrator{
+		store:     st,
+		loader:    declarations,
+		src:       controller,
+		admission: session.Admission(),
+		cfg:       treeConfig{Config: *cfg},
+	}
+	planning.configureSources(true)
 	for {
 		if err := reconcileConstruction(ctx, session.PendingSources(), controller, r.budget); err != nil {
 			return nil, err

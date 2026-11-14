@@ -268,18 +268,23 @@ func (in *Input) current() bool {
 	if !in.objectCurrent() || !in.production.Load().current() {
 		return false
 	}
-	if details := in.details.Load(); details != nil {
-		if details.inventory != nil {
-			for i := range details.inventory {
-				if !details.inventory[i].current() {
-					return false
-				}
-			}
-		}
-		for i := range details.cells {
-			if !details.cells[i].Load().current() {
+	details := in.details.Load()
+	if details == nil {
+		return true
+	}
+	if in.view.composed && details.artifactRead != 0 && !details.sourceGuard.Valid() {
+		return false
+	}
+	if details.inventory != nil {
+		for i := range details.inventory {
+			if !details.inventory[i].current() {
 				return false
 			}
+		}
+	}
+	for i := range details.cells {
+		if !details.cells[i].Load().current() {
+			return false
 		}
 	}
 	return true

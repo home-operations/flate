@@ -26,6 +26,7 @@ func (r *ReadSet) require(refValue *manifest.DependencyRef, materializer bool) {
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
 		input.Ref.Artifact, input.Ref.ArtifactOnly, input.Ref.ChartSource = ref.Artifact, ref.ArtifactOnly, ref.ChartSource
+		input.Ref.RequiresDeclaration = ref.RequiresDeclaration
 		input.materializer = materializer
 		return
 	}
@@ -34,24 +35,10 @@ func (r *ReadSet) require(refValue *manifest.DependencyRef, materializer bool) {
 	}
 	for gate := &r.details(input).gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{
-				expr:         ref.ReadyExpr,
-				artifact:     ref.Artifact,
-				artifactOnly: ref.ArtifactOnly,
-				chartSource:  ref.ChartSource,
-				materializer: materializer,
-			}
+			*gate = &readinessGate{ref: ref, materializer: materializer}
 			return
 		}
-		if sameReadinessGate(new(manifest.DependencyRef{
-			NamedResource: ref.NamedResource,
-			ReadyExpr:     (*gate).expr,
-			Artifact:      (*gate).artifact,
-			ArtifactOnly:  (*gate).artifactOnly,
-			ChartSource:   (*gate).chartSource,
-		}), new(ref),
-		) &&
-			(*gate).materializer == materializer {
+		if sameReadinessGate(&(*gate).ref, &ref) && (*gate).materializer == materializer {
 			return
 		}
 	}
@@ -72,16 +59,7 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 				continue
 			}
 			for gate := details.gates; gate != nil; gate = gate.next {
-				if !yield(
-					Gate{
-						NamedResource: input.Ref.NamedResource,
-						ReadyExpr:     gate.expr,
-						Artifact:      gate.artifact,
-						ArtifactOnly:  gate.artifactOnly,
-						ChartSource:   gate.chartSource,
-						Materializer:  gate.materializer,
-					},
-				) {
+				if !yield(Gate{DependencyRef: gate.ref, Materializer: gate.materializer}) {
 					return
 				}
 			}

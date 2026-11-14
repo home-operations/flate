@@ -34,7 +34,13 @@ func (c *Controller) construct(ctx context.Context, id manifest.NamedResource, c
 	if !ex.run.Reads.Valid() {
 		return nil
 	}
-	if err := ex.completeFetch(ctx, obj, selected, nil); err != nil {
+	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
+	// Composition gates MUST recapture the admitted declaration before reading input artifacts.
+	if len(facts.Composition().Includes) != 0 && ex.run.Reads.GetDeclaration(id) == nil {
+		ex.run.Reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+		return nil
+	}
+	if err := ex.completeFetch(ctx, obj, fetchCompletion{artifact: selected, level: manifest.DrainNone}); err != nil {
 		return err
 	}
 	if construction && ex.run.Reads.Valid() {

@@ -142,7 +142,7 @@ func (c *Controller) reconcileNodeForTest(
 	previous schedule.Result,
 ) *base.Execution {
 	if chart, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok && chart.ExistenceOnly() {
-		return sourcecontroller.New(c.Store, c.Tasks).ReconcileNode(ctx, id, level, previous)
+		return sourcecontroller.New(c.Store, c.Tasks, nil).ReconcileNode(ctx, id, level, previous)
 	}
 	return c.ReconcileNode(ctx, id, level, previous)
 }

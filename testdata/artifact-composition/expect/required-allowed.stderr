@@ -1,0 +1,5 @@
+
+  ⚠ warnings (2)
+    [SOPSUnreadable] Secret apps/backup-values: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      VALUE
+    [UnresolvedSubstitution] substituteFrom Secret "required" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values

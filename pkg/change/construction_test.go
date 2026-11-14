@@ -16,7 +16,7 @@ func runDiscovery(ctx context.Context, cfg discovery.Config) (*discovery.Result,
 		return nil, err
 	}
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(cfg.Store, tasks)
+	controller := sourcectrl.New(cfg.Store, tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cache.RetryConfig{})
 	for {
 		pending := session.PendingSources()

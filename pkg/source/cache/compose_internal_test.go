@@ -84,7 +84,7 @@ func TestCompose_IdentityIncludesAllInputs(t *testing.T) {
 				assert.Equal(t, key == previousKey, false)
 				previousKey = key
 				reused, reusedDescriptor, reusedKey, err := owner.Acquire(t.Context(),
-					ArchiveKey{Content: struct{ Generations []string }{generations}, Policy: "fixed"},
+					request.key(),
 					&Policy{MaxAge: Forever}, unexpectedComposition)
 				assert.NoError(t, err)
 				assert.Equal(t, reusedKey, key)

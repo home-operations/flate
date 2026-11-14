@@ -23,6 +23,8 @@ type entryPrerequisites struct {
 }
 
 func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []store.Child) bool {
+	e.source = owner.EffectiveSourceID()
+	e.reads.GetArtifact(e.source, store.ArtifactContent)
 	if len(owner.DependsOn) == 0 && (owner.PostBuild == nil || len(owner.PostBuild.SubstituteFrom) == 0) {
 		return true
 	}
@@ -35,7 +37,6 @@ func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []
 	}
 	e.seen = map[manifest.NamedResource]bool{}
 
-	e.source = owner.EffectiveSourceID()
 	return !e.prerequisites(owner)
 }
 

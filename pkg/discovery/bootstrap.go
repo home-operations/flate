@@ -263,141 +263,6 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 	return bootstrap, nil
 }
 
-func (d *Session) entrySourceGroups(
-	ctx context.Context,
-	allowMissing bool,
-) (map[manifest.NamedResource]*entrySourceGroup, error) {
-	// Sparse group maps MUST hold pointers to avoid reserving inline storage for empty slots.
-	groups := d.sourceGroups
-	if groups == nil {
-		groups = map[manifest.NamedResource]*entrySourceGroup{}
-		d.sourceGroups = groups
-	}
-	for _, group := range groups {
-		*group = entrySourceGroup{refs: group.refs[:0]}
-	}
-	addEntrySource(groups, manifest.BootstrapSourceID, manifest.NamedResource{}, nil)
-	for kind := range manifest.Kinds() {
-		if !kind.IsSource() {
-			continue
-		}
-		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-			if _, ok := obj.(entrySource); ok {
-				addEntrySource(groups, obj.Named(), manifest.NamedResource{}, nil)
-			}
-		}
-	}
-	if d.loader != nil {
-		for id := range d.loader.Index.Files() {
-			application, valid := manifest.ApplicationFor(d.loader.CatalogObject(id))
-			if valid && d.admission().appliesEntry(&application) {
-				entrySourceGroupFor(groups, application.Source).entry = true
-			}
-		}
-		if err := d.addLoadedSources(ctx, groups, allowMissing); err != nil {
-			return nil, err
-		}
-	}
-	if allowMissing {
-		d.addMissingSources(groups)
-	}
-	return groups, nil
-}
-
-func (d *Session) addLoadedSources(
-	ctx context.Context,
-	groups map[manifest.NamedResource]*entrySourceGroup,
-	allowMissing bool,
-) error {
-	restricted := !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
-	for child, err := range d.loader.Sources(ctx) {
-		if err != nil {
-			return err
-		}
-		id := child.Obj.Named()
-		evidence := d.loader.RootEvidence(id, nil, true)
-		if evidence.Occurrence.RequiresBuild && evidence.Record.Builder == "" {
-			continue
-		}
-		group := entrySourceGroupFor(groups, id)
-		group.object, group.document = child.Obj, child.Doc
-		root := selection.Root(evidence)
-		group.projected = !root.Admitted && evidence.Occurrence.Declaration == (selection.OccurrenceID{}) &&
-			evidence.Record.Builder == "" && d.cfg.Store.GetDeclaration(id) == nil
-		group.required = group.required || restricted && root.Admitted
-	}
-	{
-		childValues := d.loader.PathObjects()
-		for childIndex := range childValues {
-			child := childValues[childIndex]
-			if child.RequiresBuild {
-				continue
-			}
-
-			application, valid := manifest.ApplicationFor(partitionObject(&child))
-			if valid {
-				group := entrySourceGroupFor(groups, application.Source)
-				group.entry = group.entry || d.admission().appliesEntry(&application)
-			}
-			ref, _, _ := child.SourcePath()
-			group := groups[ref]
-			declared := group != nil && group.object != nil
-			switch {
-			case application.Declaration != nil:
-				group := entrySourceGroupFor(groups, application.Source)
-				group.project(application.Declaration)
-				group.required = group.required || group.entry
-			case allowMissing || declared || d.cfg.Store.GetObject(ref) != nil:
-				reference := sourceReference(partitionObject(&child), ref)
-				addEntrySource(groups, ref, child.Identity, &reference)
-			}
-		}
-	}
-	return nil
-}
-
-func (d *Session) addMissingSources(groups map[manifest.NamedResource]*entrySourceGroup) {
-	for kind := range manifest.Kinds() {
-		if !kind.Runnable {
-			continue
-		}
-		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				if ref.IsSource() && ref.NamedResource.KindInfo().IsSource() {
-					addEntrySource(groups, ref.NamedResource, obj.Named(), &ref)
-				}
-			}
-		}
-	}
-	d.addMissingIndexedSources(groups)
-}
-
-func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]*entrySourceGroup) {
-	if d.loader == nil {
-		return
-	}
-	for id := range d.loader.Index.Files() {
-		if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil ||
-			!slices.ContainsFunc(d.loader.Index.Records[id].Refs, func(ref manifest.NamedResource) bool {
-				return ref.KindInfo().IsSource()
-			}) {
-			continue
-		}
-		evidence := d.loader.RootEvidence(id, nil, true)
-		prepared := !evidence.Occurrence.RequiresBuild || evidence.Record.Builder != ""
-		eager := d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) &&
-			evidence.Scope.EntryKustomize && evidence.Scope.Eligibility != selection.RootInactive && prepared
-		if !selection.Root(evidence).Admitted && !eager {
-			continue
-		}
-		for ref := range d.loader.References(id) {
-			if ref.IsSource() && ref.NamedResource.KindInfo().IsSource() {
-				addEntrySource(groups, ref.NamedResource, id, &ref)
-			}
-		}
-	}
-}
-
 //nolint:ireturn // Sources retain their heterogeneous manifest types.
 func (d *Session) entrySourceObject(
 	id manifest.NamedResource,
@@ -486,6 +351,11 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 	id := candidate.object.Named()
 	current, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	sameMaterial := current.SameMaterial(candidate.artifact) && current.Reads.Valid()
+	if facts, ok := candidate.object.(interface {
+		Composition() manifest.ArtifactComposition
+	}); ok && len(facts.Composition().Includes) != 0 {
+		sameMaterial = d.sourceMaterial(id, candidate.artifact) != nil
+	}
 	previous := d.resolvedSources.snapshot()[id]
 	refresh := previous.artifact != nil && previous.input != candidate.input
 	object := d.cfg.Store.GetObject(id)
@@ -635,7 +505,10 @@ func (a *Admission) Publish(
 	}
 	reference := sourceReference(reads.GetDeclaration(reads.ID()), id)
 	resolved, err := a.resolve(ctx, id, &sourceRequest{reference: reference, reads: reads, work: reads.WorkScope()})
-	if err != nil || resolved.object == nil || resolved.artifact == nil {
+	if err != nil || resolved.object == nil {
+		return false, nil
+	}
+	if resolved.artifact == nil && !reference.RequiresDeclaration {
 		return false, nil
 	}
 	accepted, err := accept(store.Child{Obj: resolved.object})
@@ -749,8 +622,14 @@ func (a *Admission) entrySourceView(
 		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
+	mode := gittree.Source
+	if facts, ok := candidate.object.(interface {
+		Composition() manifest.ArtifactComposition
+	}); ok && len(facts.Composition().Includes) != 0 {
+		mode, ignore = gittree.Checkout, ""
+	}
 	label, viewKey := gittree.Label(
-		gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
+		gittree.LabelOptions{Root: repoRoot, Mode: mode, Source: candidate.object.Named(), Content: struct {
 			Root, Origin, Key, Content, Digest string
 			Ignore                             string
 			Sparse                             []string `json:",omitempty"`
@@ -769,7 +648,7 @@ func (a *Admission) entrySourceView(
 			nil,
 			plumbing.ZeroHash,
 			gittree.ViewOptions{
-				Mode:           gittree.Source,
+				Mode:           mode,
 				Current:        bootstrap.FS,
 				CurrentContent: bootstrap.Content,
 				Ignore:         ignore,

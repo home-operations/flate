@@ -206,32 +206,20 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 }
 
 func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe bool) (fingerprintInventory, error) {
-	var err error
-
-	files := map[string]string{}
-	var types map[string]fs.FileMode
+	inventory := fingerprintInventory{files: map[string]string{}}
 	if observe {
-		types = map[string]fs.FileMode{}
+		inventory.types = map[string]fs.FileMode{}
 	}
-	var ignores []string
+	contentParents := native && v.mode == Source
 	visit := func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if observe {
-			types[name] = entry.Type()
-		}
-		if err := ctx.Err(); err != nil || entry.IsDir() {
-			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
-		}
-		if entry.Name() == ".sourceignore" {
-			ignores = append(ignores, name)
-		}
-		files[name] = ""
-		return nil
+		return inventory.visit(ctx, name, entry, contentParents)
 	}
+	var err error
 	if native {
-		files = make(map[string]string, len(v.nodes))
+		inventory.files = make(map[string]string, len(v.nodes))
 		for name := range v.nodes {
 			if g.excludes(name) {
 				continue
@@ -243,8 +231,38 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe b
 	} else {
 		err = fs.WalkDir(g, ".", visit)
 	}
+	if !observe || !contentParents {
+		return inventory, err //nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	}
+	// File observations retain content parents independently of admitted empty directories.
+	inventory.types["."] = fs.ModeDir
+	for name := range inventory.files {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			inventory.types[parent] = fs.ModeDir
+		}
+	}
 	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
-	return fingerprintInventory{files: files, ignores: ignores, types: types}, err
+	return inventory, err
+}
+
+type fingerprintInventory struct {
+	types   map[string]fs.FileMode
+	files   map[string]string
+	ignores []string
+}
+
+func (i *fingerprintInventory) visit(ctx context.Context, name string, entry fs.DirEntry, contentParents bool) error {
+	if i.types != nil && (!contentParents || !entry.IsDir()) {
+		i.types[name] = entry.Type()
+	}
+	if err := ctx.Err(); err != nil || entry.IsDir() {
+		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+	}
+	if entry.Name() == ".sourceignore" {
+		i.ignores = append(i.ignores, name)
+	}
+	i.files[name] = ""
+	return nil
 }
 
 func selectedSourcePolicy(policy *sourceignore.Matcher, v *gitView, native bool, files map[string]string) bool {
@@ -356,12 +374,6 @@ func (r identityReader) Read(p []byte) (int, error) {
 		return n, cancelErr
 	}
 	return n, err
-}
-
-type fingerprintInventory struct {
-	types   map[string]fs.FileMode
-	files   map[string]string
-	ignores []string
 }
 
 // InputObservations borrows selected identities and node kinds from one admitted view.

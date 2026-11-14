@@ -1,0 +1,1 @@
+resources: [cluster.yaml, input.yaml, leaf.yaml, consumer.yaml, unrelated.yaml]

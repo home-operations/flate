@@ -106,9 +106,19 @@ func (s *Store) prepareChildren(children *[]Child, index *manifest.DiscoveryInde
 		child := (*children)[childIndex]
 		if child.Obj != nil {
 			child.policy = child.Policy(child.Obj.Named())
+			composed := false
+			if facts, ok := child.Obj.(interface {
+				Composition() manifest.ArtifactComposition
+			}); ok {
+				composed = len(facts.Composition().Includes) != 0
+			}
 			prepared = append(
 				prepared,
-				admission{child: child, independent: rawDeclarationAuthority(index, child.Obj.Named(), false)},
+				admission{
+					child:       child,
+					composed:    composed,
+					independent: rawDeclarationAuthority(index, child.Obj.Named(), false),
+				},
 			)
 		}
 	}

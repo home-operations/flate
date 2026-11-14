@@ -10,14 +10,15 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Composition MUST retain the caller identity unchanged through acquisition.
+// Composition MUST identify the complete base and ordered operations before cache reuse.
 type Composition struct {
-	// Content MUST include all input identities and authored facts that affect the output.
-	// The cache passes this opaque value directly into ArchiveKey.Content.
+	// Content retains contextual facts beyond the cache-derived filesystem and operation identity.
 	Content any
+	Base    CompositionInput
 	Inputs  []CompositionInput
 	Copies  []Copy
 	Policy  string
+	Ignore  string
 }
 
 // CompositionInput MUST identify immutable backing or force fresh production.
@@ -27,14 +28,14 @@ type CompositionInput struct {
 	Content string
 }
 
-// Copy paths MUST remain relative to their input and output filesystems.
+// Copy paths MUST use secure resolution for PlaceTree and relative archive paths otherwise.
 type Copy struct {
 	Input   int
 	From    string
 	To      string
 	Exclude []string
 	Mode    CopyMode
-	// ExtractContent MUST identify the selected archive and its destination.
+	// ExtractContent retains contextual identity facts for nested extraction acquisitions.
 	// It constructs opaque facts only, without filesystem access or publication.
 	ExtractContent func(path, destination string) any
 }
@@ -47,7 +48,37 @@ const (
 	CopyFiles CopyMode = iota
 	MergeYAML
 	ExtractArchive
+	PlaceTree
 )
+
+type copyIdentity struct {
+	Input    int
+	From, To string
+	Exclude  []string
+	Mode     CopyMode
+}
+
+func (r *Composition) key() ArchiveKey {
+	inputs := make([]string, len(r.Inputs))
+	for i := range r.Inputs {
+		inputs[i] = r.Inputs[i].Content
+	}
+	copies := make([]copyIdentity, len(r.Copies))
+	for i := range r.Copies {
+		op := &r.Copies[i]
+		copies[i] = copyIdentity{op.Input, op.From, op.To, op.Exclude, op.Mode}
+	}
+	return ArchiveKey{
+		Content: struct {
+			Context     any
+			BasePresent bool
+			Base        string
+			Inputs      []string
+			Copies      []copyIdentity
+		}{r.Content, r.Base.FS != nil, r.Base.Content, inputs, copies},
+		Policy: r.Policy, Ignore: r.Ignore,
+	}
+}
 
 type composition struct {
 	request Composition
@@ -65,6 +96,9 @@ func (c *Cache) Compose(
 	policyValue *Policy,
 ) (fs.FS, ocispec.Descriptor, string, error) {
 	policy := *policyValue
+	if request.Base.FS != nil && request.Base.Content == "" {
+		policy.MaxAge = 0
+	}
 	for _, input := range request.Inputs {
 		if input.Content == "" {
 			policy.MaxAge = 0
@@ -72,7 +106,7 @@ func (c *Cache) Compose(
 		}
 	}
 	maxAge := policy.MaxAge
-	return c.Acquire(ctx, ArchiveKey{Content: request.Content, Policy: request.Policy}, &policy,
+	return c.Acquire(ctx, request.key(), &policy,
 		func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
 			e := composition{
 				request: request, owner: c, maxAge: maxAge,

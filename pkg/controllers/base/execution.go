@@ -267,10 +267,7 @@ func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource
 	if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
 		e.kind = schedule.DependencyFailed
 	}
-	if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
-		(errors.Is(err, manifest.ErrSourceSkipped) || !artifact.Reads.Valid()) {
-		e.Store.SetArtifact(id, nil)
-	}
+	e.withdrawSource(errors.Is(err, manifest.ErrSourceSkipped))
 	_, _, next := e.Reads.GetEmission(id)
 	if e.Store.HasInventory(id) && len(next.Failures) == 0 {
 		next.Complete = !next.OutputReads.Valid()
@@ -611,6 +608,7 @@ func (e *Execution) closeAcquisition() {
 }
 
 func (e *Execution) withdrawInvalid(ctx context.Context) error {
+	e.withdrawSource(false)
 	_, _, next := e.Reads.GetEmission(e.Reads.ID())
 	defer next.Finish()
 	invalid := !next.OutputReads.Valid()
@@ -620,6 +618,14 @@ func (e *Execution) withdrawInvalid(ctx context.Context) error {
 		return e.publish(ctx, e.Reads.ID(), &next, nil)
 	}
 	return nil
+}
+
+func (e *Execution) withdrawSource(skipped bool) {
+	id := e.Reads.ID()
+	if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
+		(skipped || !artifact.Reads.Valid()) {
+		e.Store.SetArtifact(id, nil)
+	}
 }
 
 func (e *Execution) admitRender() error {

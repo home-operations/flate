@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: db-default-values, namespace: apps}
+data: {value: default}

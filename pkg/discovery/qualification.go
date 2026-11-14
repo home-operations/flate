@@ -178,6 +178,18 @@ func (a *Admission) readApplication(
 	}
 	evidence.application = application
 	resolved := a.applicationSource(st, reads, &application)
+	if facts, ok := resolved.object.(interface {
+		Composition() manifest.ArtifactComposition
+	}); ok && len(facts.Composition().Includes) != 0 && resolved.artifact == nil {
+		evidence.source = resolved
+		if a.applicationApplies(&application, &resolved) {
+			reads.RequireData(application.Source)
+			if q := a.qualification; q != nil {
+				q.pending, q.candidates = true, []manifest.NamedResource{application.Source}
+			}
+		}
+		return false, nil
+	}
 	if resolved.artifact == nil {
 		var err error
 		resolved, err = a.resolve(
@@ -198,7 +210,7 @@ func (a *Admission) readApplication(
 	}
 	evidence.source = resolved
 	return !evidence.object.Named().ReportHidden() &&
-		loader.AppliesToEntry(&resolved, &application, a.input, a.path), nil
+		a.applicationApplies(&application, &resolved), nil
 }
 
 func (q *entryQualification) published(st *store.Store, a *Admission) iter.Seq[manifest.BaseManifest] {

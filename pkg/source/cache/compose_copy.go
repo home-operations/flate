@@ -10,10 +10,12 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
@@ -56,6 +58,7 @@ type copyPlan struct {
 	maxAge                     time.Duration
 	op                         *Copy
 	input                      fs.FS
+	content                    string
 	pattern, destination, root string
 	glob                       bool
 	matches                    []string
@@ -71,6 +74,12 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 	}
 	switch op.Mode {
 	case CopyFiles, MergeYAML:
+	case PlaceTree:
+		name, err := resolvePlacement(input, cmp.Or(op.From, "."))
+		if err != nil {
+			return copyPlan{}, err
+		}
+		return copyPlan{op: op, input: input, root: name, matches: []string{name}}, nil
 	case ExtractArchive:
 		if op.ExtractContent == nil {
 			return copyPlan{}, fmt.Errorf("extraction requires content identity")
@@ -88,13 +97,11 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 	}
 	glob := strings.ContainsAny(pattern, "*?[]")
 	root := path.Clean(pattern)
-	if glob {
+	if wildcard := strings.IndexAny(root, "*?[]"); wildcard >= 0 {
+		prefix := root[:wildcard]
 		root = "."
-		for component := range strings.SplitSeq(path.Clean(pattern), "/") {
-			if strings.ContainsAny(component, "*?[]") {
-				break
-			}
-			root = path.Join(root, component)
+		if parent, _, found := strings.CutLast(prefix, "/"); found {
+			root = parent
 		}
 	}
 	matches := []string{path.Clean(pattern)}
@@ -110,7 +117,7 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 	}
 	return copyPlan{
 		owner: e.owner, work: e.work, maxAge: e.maxAge,
-		op: op, input: input, pattern: pattern, destination: destination,
+		op: op, input: input, content: e.request.Inputs[op.Input].Content, pattern: pattern, destination: destination,
 		root: root, glob: glob, matches: matches,
 	}, nil
 }
@@ -119,6 +126,9 @@ func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string
 	info, err := fs.Stat(p.input, name)
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
+	}
+	if p.op.Mode == PlaceTree {
+		return p.place(ctx, builder, name, info)
 	}
 	if p.op.Mode == ExtractArchive {
 		lower := strings.ToLower(name)
@@ -135,6 +145,53 @@ func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string
 		return p.copyDirectory(ctx, builder, &Copy{From: name, To: target})
 	}
 	return copyFile(ctx, p.input, builder, &Copy{From: name, To: target, Mode: p.op.Mode})
+}
+
+type placementView struct{ fs.FS }
+
+func (v placementView) Lstat(name string) (fs.FileInfo, error) {
+	//nolint:wrapcheck // SecureJoinVFS consumes filesystem errors directly.
+	return fs.Lstat(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+}
+
+func (v placementView) Readlink(name string) (string, error) {
+	//nolint:wrapcheck // SecureJoinVFS consumes filesystem errors directly.
+	return fs.ReadLink(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+}
+
+func resolvePlacement(input fs.FS, name string) (string, error) {
+	resolved, err := securejoin.SecureJoinVFS("/", name, placementView{input})
+	if err != nil {
+		return "", fmt.Errorf("resolve placement: %w", err)
+	}
+	return safepath.ArchiveName(cmp.Or(strings.TrimPrefix(filepath.ToSlash(resolved), "/"), "."))
+}
+
+func (p *copyPlan) place(ctx context.Context, builder *tree.Builder, name string, info fs.FileInfo) error {
+	destination, err := resolvePlacement(builder, cmp.Or(p.op.To, "."))
+	if err != nil {
+		return err
+	}
+	previous, err := fs.Stat(builder, destination)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("stat destination: %w", err)
+	}
+	if err == nil {
+		if previous.IsDir() {
+			return fmt.Errorf("destination %q: %w", destination, fs.ErrExist)
+		}
+		if info.IsDir() {
+			return tree.ErrConflict
+		}
+	}
+	if !info.IsDir() {
+		return copyFile(ctx, p.input, builder, &Copy{From: name, To: destination})
+	}
+	selected, err := fs.Sub(p.input, name)
+	if err != nil {
+		return fmt.Errorf("select directory: %w", err)
+	}
+	return builder.Mount(destination, selected)
 }
 
 func (p *copyPlan) copyDestination(builder *tree.Builder, name string, info fs.FileInfo) string {
@@ -273,7 +330,7 @@ func loadYAML(ctx context.Context, input fs.FS, name string) (map[string]any, er
 func (p *copyPlan) extract(ctx context.Context, builder *tree.Builder, name string) error {
 	input := p.input
 	work := p.work
-	key := ArchiveKey{Policy: extractPolicy, Content: p.op.ExtractContent(name, p.destination)}
+	key := p.extractionKey(name)
 	extracted, _, _, err := p.owner.Acquire(
 		ctx,
 		key,
@@ -327,8 +384,21 @@ func (p *copyPlan) extract(ctx context.Context, builder *tree.Builder, name stri
 	return nil
 }
 
+func (p *copyPlan) extractionKey(name string) ArchiveKey {
+	return ArchiveKey{Policy: extractPolicy, Content: struct {
+		Context           any
+		Input             string
+		Copy              copyIdentity
+		Path, Destination string
+	}{
+		p.op.ExtractContent(name, p.destination), p.content,
+		copyIdentity{p.op.Input, p.op.From, p.op.To, p.op.Exclude, p.op.Mode},
+		name, p.destination,
+	}}
+}
+
 func (e *composition) produce(ctx context.Context, target ProducerInput) error {
-	builder := tree.NewBuilder(nil)
+	builder := tree.NewBuilder(e.request.Base.FS)
 	for i := range e.request.Copies {
 		op := &e.request.Copies[i]
 		if err := ctx.Err(); err != nil {

@@ -139,7 +139,7 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 		t.Setenv("HELM_REGISTRY_CONFIG", (*tailCaseInput.config))
 	}
 	ts := task.NewBounded(2)
-	c := New(st, ts)
+	c := New(st, ts, nil)
 	c.Fetchers[manifest.KindOCIRepository] = src.Wrap(manifest.KindOCIRepository, f)
 	c.StartLifecycle()
 	t.Cleanup(func() {

@@ -13,6 +13,7 @@ func (c *objectCell) ordinaryDemand() bool {
 type capture struct {
 	capturePayload
 
+	composed    bool
 	excluded    bool
 	accepted    bool
 	independent bool
@@ -29,13 +30,14 @@ type capture struct {
 }
 
 type capturePayload struct {
-	child        capturedChild
-	record       *Emission
-	payload      *SourceArtifact
-	payloadInput *ArtifactInput
-	payloadOwner *producerSlot
-	source       sourceBinding
-	reference    *Declaration
+	child         capturedChild
+	record        *Emission
+	payload       *SourceArtifact
+	payloadInput  *ArtifactInput
+	payloadOwner  *producerSlot
+	payloadRecord *Emission
+	source        sourceBinding
+	reference     *Declaration
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
@@ -57,6 +59,7 @@ func (sh *shard) captureLocked(
 	cell := *cellValue
 	if view != nil {
 		*view = capture{
+			composed:    cell.composed,
 			classified:  cell.classified && !cell.retired && cell.bound(),
 			ordinary:    cell.ordinaryDemand(),
 			independent: cell.independent,
@@ -107,6 +110,7 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 				view.owner, view.record, view.revision, view.source = chosen.slot, record, record.publication(), record.entries[chosen.position].binding
 				view.generation = max(cell.generation, record.entries[chosen.position].objectGeneration)
 				view.position = chosen.position
+				view.composed = record.entries[chosen.position].composed
 			}
 			return *child
 		}
@@ -334,7 +338,7 @@ func (sh *shard) captureMembersLocked(id manifest.NamedResource, view *capture) 
 			record := m.slot.current.Load()
 			payload := record.entries[m.position].child.payload
 			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
-				view.payload, view.payloadOwner = payload, m.slot
+				view.payload, view.payloadOwner, view.payloadRecord = payload, m.slot, record
 				view.payloadInput = record.entries[m.position].input
 			}
 		}

@@ -43,7 +43,7 @@ func TestComposition_ExtractionWork(t *testing.T) {
 	assert.NoError(t, err)
 	err = plan.extract(t.Context(), tree.NewBuilder(nil), op.From)
 	assert.FatalIf(t, err != nil, "%v", err)
-	key := ArchiveKey{Policy: "extract", Content: content}
+	key := plan.extractionKey(op.From)
 	called := false
 	input, _, id, err := owner.Acquire(
 		t.Context(),

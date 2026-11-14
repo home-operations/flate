@@ -243,7 +243,7 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 		}, false)
 	}
 	trees := kustomize.NewTreeCache(cfg.Cache, &o.inputs, ts)
-	o.src = sourcectrl.New(st, ts)
+	o.src = sourcectrl.New(st, ts, cfg.Cache)
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindBucket, manifest.KindHelmRepository, manifest.KindOCIRepository, manifest.KindHelmChart} {
 		o.src.Fetchers[kind] = nil
 	}
@@ -276,11 +276,7 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 }
 
 func (o *Orchestrator) discover(ctx context.Context) error {
-	gitFetcher := &git.Fetcher{
-		Network: o.cfg.Network, GitTransports: o.cfg.GitTransports,
-		Cache: o.cache, Depth: o.cfg.GitDepth,
-		RestrictSchemes: o.cfg.RestrictEgress,
-	}
+	gitFetcher := configureSourceFetchers(o.src, &o.cfg.Config)
 	o.ksc.Trees.SetGitBaseFetcher(
 		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			artifact, err := gitFetcher.FetchRemoteBase(
@@ -304,9 +300,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 			return artifact, err
 		},
 	)
-	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
-		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
-	}
 	config := discovery.Config{
 		Cache:        o.cfg.Cache,
 		Work:         o.cfg.work.Scope(),
@@ -367,7 +360,7 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 		return err
 	}
 	o.admission = o.session.Admission()
-	o.src.Configure(sourcectrl.FetchOptions{Admission: o.admission}, o.cfg.SourceRetry)
+	o.configureSources(true)
 	for {
 		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
 			return phaseErr
@@ -398,16 +391,6 @@ func (o *Orchestrator) completeBootstrap() {
 	o.rsc.Inputs = ociFetcher
 	o.rsc.Retry = o.cfg.SourceRetry
 	o.rsc.AllowMissingSecrets = o.cfg.allowMissingSecrets
-	for kind, f := range map[string]source.Fetcher{
-		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network}),
-		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
-		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, o.cfg.chartFetcher),
-	} {
-		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
-			o.src.Fetchers[kind] = f
-		}
-	}
 }
 
 // replacePreflightFailures replaces the current preflight-failure map
@@ -427,4 +410,26 @@ func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResou
 	}
 	o.preflightFailures = maps.Clone(failures)
 	return cleared
+}
+
+func configureSourceFetchers(controller *sourcectrl.Controller, cfg *Config) *git.Fetcher {
+	gitFetcher := &git.Fetcher{
+		Network:         cfg.Network,
+		GitTransports:   cfg.GitTransports,
+		Cache:           cfg.Cache,
+		Depth:           cfg.GitDepth,
+		RestrictSchemes: cfg.RestrictEgress,
+	}
+	ociFetcher := &oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}
+	for kind, fetcher := range map[string]source.Fetcher{
+		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
+		manifest.KindBucket:        source.Wrap(manifest.KindBucket, &bucket.Fetcher{Cache: cfg.Cache, Network: cfg.Network}),
+		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
+		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, cfg.chartFetcher),
+	} {
+		if current, exists := controller.Fetchers[kind]; exists && current == nil {
+			controller.Fetchers[kind] = fetcher
+		}
+	}
+	return gitFetcher
 }

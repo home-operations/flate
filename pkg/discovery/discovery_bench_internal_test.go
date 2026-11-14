@@ -263,8 +263,8 @@ func benchmarkRunBuiltPackage(b *testing.B, existing *bool) {
 			children++
 		}
 	}
-	if children != count+1 {
-		b.Fatalf("prepared records=%d, want %d", children, count+1)
+	if children != count+2 {
+		b.Fatalf("prepared records=%d, want %d", children, count+2)
 	}
 	if (*existing) && cfg.Store.GetObject(secret.Named()) != secret {
 		b.Fatal("preexisting secret replaced")

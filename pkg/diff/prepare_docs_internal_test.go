@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -16,14 +17,17 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "hr", Namespace: "ns"}
 	single := &manifest.Kustomization{Name: "single", Namespace: "ns", Path: "./apps/a"}
 	manifests := []manifest.DocumentBatch{
-		{Parent: a, Documents: []map[string]any{
+		testutil.DocumentBatch(a, []map[string]any{
 			{"kind": "ConfigMap", "metadata": map[string]any{"name": "a1"}},
 			{"kind": "ConfigMap", "metadata": map[string]any{"name": "a2"}},
-		}},
-		{Parent: b, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "b1"}}}},
-		{Parent: hr, Documents: []map[string]any{{"kind": "Service"}}},
-		{Parent: single, Documents: []map[string]any{{"kind": "ConfigMap"}}},
-		{Documents: []map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}}},
+		}),
+		testutil.DocumentBatch(b, []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "b1"}}}),
+		testutil.DocumentBatch(hr, []map[string]any{{"kind": "Service"}}),
+		testutil.DocumentBatch(single, []map[string]any{{"kind": "ConfigMap"}}),
+		testutil.DocumentBatch(
+			nil,
+			[]map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}},
+		),
 	}
 	docs := documents(manifests)
 	assert.FatalIf(t, len(docs) != 6, "want 6 docs, got %d", len(docs))

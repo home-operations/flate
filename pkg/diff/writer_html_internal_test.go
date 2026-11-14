@@ -23,7 +23,7 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 			To:   "key: new\n",
 		},
 	}
-	names := PrepareNames([]string{""}, [][]manifest.NamedResource{lineSubjects(lines, FormatHTML)}, nil)
+	names := PrepareNames([]string{""}, [][]manifest.NamedResource{lineInventory(lines, FormatHTML).Subjects}, nil)
 	nameLines(lines, names.Groups[0])
 	var buf bytes.Buffer
 	assert.NoError(t, (encoder{Writer: &buf, Format: FormatHTML}).lines(lines))

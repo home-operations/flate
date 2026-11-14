@@ -193,6 +193,17 @@ data:
 		}
 		assert.FatalIf(t, len(omissions) != 1, "omissions=%+v", omissions)
 		assert.Equal(t, strings.Contains(omissions[0].Message, `key "values.yaml"`), true)
+		assert.Equal(
+			t,
+			omissions[0].Message,
+			`required valuesFrom Secret/default/app-values omitted from offline render: key "values.yaml" is SOPS-encrypted and unreadable; supply it with --supply`,
+		)
+		assert.Equal(t, len(omissions[0].Detail), 0)
+		assert.Diff(
+			t,
+			omissions[0].Related,
+			[]manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}},
+		)
 	}
 	for valueIndex := range st.Warnings() {
 		warning := st.Warnings()[valueIndex]

@@ -31,21 +31,36 @@ func TestClassify_SelectedEvidence(t *testing.T) {
 			if kind == manifest.KindSecret {
 				absentSubstitution = Unresolved
 			}
+			multiple := []manifest.Warning{
+				{
+					Resource: id,
+					Category: manifest.WarnSOPSUnreadable,
+					Detail:   []string{"zeta", "encrypted", "empty", "plain", "zeta"},
+				},
+				{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"encrypted"}},
+			}
 			warnings := []manifest.Warning{
 				{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"encrypted"}},
 			}
 			for _, tc := range []classificationCase{
 				{name: "absent whole object", state: Absent, cause: "not found", substitution: absentSubstitution, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
-				{name: "encrypted whole object", input: store.ReferenceFacts{Data: empty, Original: empty, Warnings: warnings}, state: Encrypted, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: Unresolved, permittedSubstitution: Unresolved, admission: [3]bool{true, true, true}},
+				{name: "encrypted whole object", input: store.ReferenceFacts{Data: empty, Original: empty, Warnings: warnings}, state: Encrypted, unreadable: []string{"encrypted"}, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: Unresolved, permittedSubstitution: Unresolved, admission: [3]bool{true, true, true}},
 				{name: "produced whole object", input: store.ReferenceFacts{Generated: true}, state: Produced, cause: "is produced in the cluster with unknown data; supply it with --supply", substitution: Unresolved, permittedSubstitution: Unresolved, admission: [3]bool{true, true, true}},
 				{name: "absent", key: "plain", state: Absent, cause: "not found", substitution: absentSubstitution, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
 				{name: "readable", key: "plain", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: warnings}, state: Readable, value: "repository", substitution: UseData, permittedSubstitution: UseData},
 				{name: "empty string wins", key: "empty", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: []manifest.Warning{{Category: manifest.WarnSOPSUnreadable, Detail: []string{"empty"}}}}, state: Readable, substitution: UseData, permittedSubstitution: UseData},
-				{name: "encrypted", key: "encrypted", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: warnings}, state: Encrypted, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "encrypted", key: "encrypted", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: warnings}, state: Encrypted, unreadable: []string{"encrypted"}, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
 				{name: "missing key", key: "missing", input: store.ReferenceFacts{Data: readable, Original: readable, Generated: true}, state: MissingKey, cause: `key "missing" not found`, substitution: UseData, permittedSubstitution: UseData},
 				{name: "empty object missing key", key: "missing", input: store.ReferenceFacts{Data: empty, Original: empty}, state: MissingKey, cause: `key "missing" not found`, substitution: Reject, permittedSubstitution: Reject},
 				{name: "empty whole object", input: store.ReferenceFacts{Data: empty, Original: empty}, state: Readable, substitution: UseData, permittedSubstitution: UseData},
-				{name: "mixed whole object", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: warnings}, state: Encrypted, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "mixed whole object", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: warnings}, state: Encrypted, unreadable: []string{"encrypted"}, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "multiple unavailable keys", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: multiple}, state: Encrypted, unreadable: []string{"encrypted", "zeta"}, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "requested key isolation", key: "zeta", input: store.ReferenceFacts{Data: readable, Original: readable, Warnings: multiple}, state: Encrypted, unreadable: []string{"zeta"}, cause: `key "zeta" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "supplied requested key", key: "plain", input: store.ReferenceFacts{Data: readable, Original: empty, Warnings: multiple}, state: Readable, value: "repository", substitution: UseData, permittedSubstitution: UseData},
+				{name: "supplied empty requested key", key: "empty", input: store.ReferenceFacts{Data: readable, Original: empty, Warnings: multiple}, state: Readable, substitution: UseData, permittedSubstitution: UseData},
+				{name: "partial supplied encrypted object", input: store.ReferenceFacts{Data: readable, Original: empty, Warnings: multiple}, state: Encrypted, unreadable: []string{"encrypted", "zeta"}, cause: `key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply`, substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
+				{name: "malformed captured key", input: store.ReferenceFacts{Data: malformed, Original: malformed, Warnings: []manifest.Warning{{Category: manifest.WarnSOPSUnreadable, Detail: []string{"broken"}}}}, wantError: true},
+				{name: "malformed unrequested warning key stays lazy", key: "missing", input: store.ReferenceFacts{Data: malformed, Original: malformed, Warnings: []manifest.Warning{{Category: manifest.WarnSOPSUnreadable, Detail: []string{"broken"}}}}, state: MissingKey, cause: `key "missing" not found`, substitution: UseData, permittedSubstitution: UseData},
 				{name: "produced", key: "missing", input: store.ReferenceFacts{Generated: true}, state: Produced, cause: "is produced in the cluster with unknown data; supply it with --supply", substitution: Unresolved, permittedSubstitution: Unresolved, admission: [3]bool{true, true, true}},
 				{name: "partial supplied offline input", key: "missing", input: store.ReferenceFacts{Data: readable, Offline: true}, state: Absent, cause: "not found", substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
 				{name: "partial mixed offline production", key: "missing", input: store.ReferenceFacts{Data: readable, Generated: true, Offline: true}, state: Produced, cause: "is produced in the cluster with unknown data; supply it with --supply", substitution: UseData, permittedSubstitution: Unresolved, admission: [3]bool{false, true, false}},
@@ -67,6 +82,7 @@ type classificationCase struct {
 	name, key, value, cause             string
 	input                               store.ReferenceFacts
 	state                               State
+	unreadable                          []string
 	wantError                           bool
 	substitution, permittedSubstitution Disposition
 	admission                           [3]bool
@@ -83,6 +99,7 @@ func testClassifySelectedEvidence(t *testing.T, kind string, tc *classificationC
 	assert.NoError(t, err)
 	assert.Equal(t, result.State(), tc.state)
 	assert.Equal(t, result.Value(), tc.value)
+	assert.Diff(t, result.UnreadableKeys(), tc.unreadable)
 	assert.Equal(t, result.Data(), tc.input.Data)
 	if tc.state != Readable {
 		assert.Equal(t, result.Cause(), tc.cause)
@@ -134,6 +151,7 @@ func testClassifySelectedEvidence(t *testing.T, kind string, tc *classificationC
 			if tc.state == Readable {
 				want = UseData
 			}
+			assert.Diff(t, optional.UnreadableKeys(), tc.unreadable)
 			assert.Equal(t, optional.Disposition(permission), want)
 			assert.Equal(t, optional.AdmitMissing(permission), tc.state != Readable)
 		})
@@ -175,6 +193,11 @@ func TestClassify_PrivateEncryptedAuthority(t *testing.T) {
 			result, err := Classify(&manifest.Reference{NamedResource: id, Use: "substituteFrom"}, &input)
 			assert.NoError(t, err)
 			assert.Equal(t, result.State(), tc.state)
+			var unreadable []string
+			if tc.state == Encrypted {
+				unreadable = []string{"encrypted"}
+			}
+			assert.Diff(t, result.UnreadableKeys(), unreadable)
 			st := store.New()
 			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			st.AddObject(owner)
@@ -188,8 +211,43 @@ func TestClassify_PrivateEncryptedAuthority(t *testing.T) {
 			reads.Accept(store.AssessmentReconciled)
 			assert.Equal(t, len(st.Warnings()), tc.warnings)
 			if tc.state == Absent {
+				assert.Equal(t, len(result.UnreadableKeys()), 0)
 				assert.Equal(t, result.Data() == nil, true)
 			}
 		})
 	}
+}
+
+func TestClassify_UnreadableKeysUseCapturedData(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
+	data := &capturedKeyData{Data: manifest.NewSecret(id, nil, nil)}
+	input := store.ReferenceFacts{
+		Data:     data,
+		Original: data,
+		Warnings: []manifest.Warning{
+			{Category: manifest.WarnSOPSUnreadable, Detail: []string{"zeta", "alpha", "zeta"}},
+		},
+	}
+	result, err := Classify(&manifest.Reference{NamedResource: id, Use: "substituteFrom"}, &input)
+	assert.NoError(t, err)
+	data.err = errors.New("data cannot be read after classification")
+	input.Warnings[0].Detail[0] = "changed"
+	assert.Diff(t, result.UnreadableKeys(), []string{"alpha", "zeta"})
+	assert.Equal(t, result.Cause(), `key "alpha" is SOPS-encrypted and unreadable; supply it with --supply`)
+	_, err = Classify(&manifest.Reference{NamedResource: id, Use: "substituteFrom"}, &input)
+	assert.Equal(t, errors.Is(err, data.err), true)
+}
+
+type capturedKeyData struct {
+	manifest.Data
+
+	err error
+}
+
+func (d *capturedKeyData) Value(key string) (manifest.DataValue, error) {
+	if d.err != nil {
+		return manifest.DataValue{}, d.err
+	}
+	return d.Data.Value(key)
 }

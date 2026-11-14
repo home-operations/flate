@@ -8,6 +8,19 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// DocumentBatch keeps fixture identities aligned with borrowed payloads.
+func DocumentBatch(parent manifest.BaseManifest, documents []map[string]any) manifest.DocumentBatch {
+	var policy manifest.EmissionPolicy
+	if parent != nil {
+		policy = parent.EmissionPolicy()
+	}
+	identities := make([]manifest.NamedResource, len(documents))
+	for i, doc := range documents {
+		identities[i] = policy.EmittedIdentity(doc)
+	}
+	return manifest.DocumentBatch{Parent: parent, Documents: documents, Identities: identities}
+}
+
 // DecodeDocs constructs mapping fixtures and rejects retained failures.
 func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 	docs, err := manifest.DecodeDocs(r, manifest.IncidentalDocuments)

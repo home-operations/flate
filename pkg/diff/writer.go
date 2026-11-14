@@ -67,6 +67,7 @@ func (e encoder) diffGroups(groups []diffGroup) error {
 
 type lineChange struct {
 	Resource, Parent Subject
+	Output           [2]manifest.NamedResource
 	ParentPath       string
 	From, To         string
 	Status, Label    string
@@ -93,23 +94,28 @@ func prepareLines(prepared prepared) ([]lineChange, error) {
 		}
 		out = append(out, lineChange{
 			Resource: Subject{ID: p.Resource}, Parent: Subject{ID: p.Parent.NamedResource},
+			Output:     p.Output,
 			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.status(),
 		})
 	}
 	return out, nil
 }
 
-// lineSubjects inventories only the resource and producer labels this format prints.
-func lineSubjects(changes []lineChange, format Format) []manifest.NamedResource {
-	ids := make([]manifest.NamedResource, 0, len(changes))
-	for cIndex := range changes {
-		c := changes[cIndex]
-		ids = append(ids, c.Resource.ID)
+func lineInventory(changes []lineChange, format Format) GroupResult {
+	inventory := GroupResult{Subjects: make([]manifest.NamedResource, 0, len(changes))}
+	for i := range changes {
+		c := &changes[i]
+		inventory.Subjects = append(inventory.Subjects, c.Resource.ID)
 		if format == FormatHTML {
-			ids = append(ids, c.Parent.ID)
+			inventory.Subjects = append(inventory.Subjects, c.Parent.ID)
+		}
+		for side, content := range [2]string{c.From, c.To} {
+			if content != "" {
+				inventory.Output[side] = append(inventory.Output[side], c.Output[side])
+			}
 		}
 	}
-	return ids
+	return inventory
 }
 
 func nameLines(changes []lineChange, names Names) {

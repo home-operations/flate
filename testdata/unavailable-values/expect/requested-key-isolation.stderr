@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [OmittedValues] HelmRelease apps/demo: required valuesFrom Secret/apps/input omitted from offline render: key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply

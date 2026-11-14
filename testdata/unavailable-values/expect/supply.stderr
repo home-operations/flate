@@ -1,6 +1,4 @@
 
-  ⚠ warnings (2)
+  ⚠ warnings (1)
     [SuppliedPrecedence] repository data takes precedence over supplied data
       Secret/apps/input: empty (@@repo@@/supplied.yaml), Secret/apps/input: plain (@@repo@@/supplied.yaml)
-    [SOPSUnreadable] Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      encrypted

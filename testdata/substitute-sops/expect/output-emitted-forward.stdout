@@ -1,0 +1,49 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "first-producer",
+        "path": "emitted/first"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "",
+      "name": "config",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "first",
+            "resourceset.fluxcd.controlplane.io/namespace": "apps"
+          },
+          "name": "config"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "first",
+            "resourceset.fluxcd.controlplane.io/namespace": "apps"
+          },
+          "name": "config"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

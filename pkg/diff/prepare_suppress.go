@@ -1,6 +1,8 @@
 package diff
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -153,14 +155,42 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 	return out
 }
 
-func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppression) {
+func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppression, error) {
+	var inputErr error
+	for side, batches := range [2][]manifest.DocumentBatch{orig.Manifests, current.Manifests} {
+		for i, batch := range batches {
+			if _, err := batch.IdentityAccessor(); err != nil {
+				inputErr = errors.Join(
+					inputErr,
+					fmt.Errorf("%s batch %d: %w", [2]Side{SideOrig, SideCurrent}[side], i, err),
+				)
+			}
+		}
+	}
 	retained := suppress(orig, current)
 	options := *opts
 	options.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
+	if inputErr != nil {
+		return prepared{Subjects: options.subjects}, retained.Suppressed, inputErr
+	}
 	options.producerKeys = [2]map[manifest.NamedResource]manifest.NamedResource{
 		orig.pairingKeys(current.Manifests), current.pairingKeys(orig.Manifests),
 	}
-	return prepare(documents(retained.Orig), documents(retained.Current), &options), retained.Suppressed
+	var identities [2][]manifest.NamedResource
+	for side, batches := range [2][]manifest.DocumentBatch{retained.Orig, retained.Current} {
+		for i, batch := range batches {
+			identity, err := batch.IdentityAccessor()
+			if err != nil {
+				return prepared{Subjects: options.subjects}, retained.Suppressed,
+					fmt.Errorf("%s batch %d: %w", [2]Side{SideOrig, SideCurrent}[side], i, err)
+			}
+			for j := range batch.Documents {
+				identities[side] = append(identities[side], identity(j))
+			}
+		}
+	}
+	options.identities = identities
+	return prepare(documents(retained.Orig), documents(retained.Current), &options), retained.Suppressed, nil
 }
 
 // A producer that also emits on the other side MUST pair under its own identity.

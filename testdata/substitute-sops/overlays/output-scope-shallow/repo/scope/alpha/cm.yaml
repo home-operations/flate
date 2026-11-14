@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: config, namespace: authored}
+data:
+  TOKEN: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+  value: shallow
+sops: {mac: encrypted}

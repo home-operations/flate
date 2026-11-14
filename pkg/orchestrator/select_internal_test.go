@@ -97,8 +97,11 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
 	ks.Labels = map[string]string{"env": ""}
-	run := selectedRun(t,
-		&Result{Manifests: []manifest.DocumentBatch{{Parent: ks, Documents: []map[string]any{{"kind": "ConfigMap"}}}}},
+	run := selectedRun(
+		t,
+		&Result{
+			Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(ks, []map[string]any{{"kind": "ConfigMap"}})},
+		},
 	)
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)

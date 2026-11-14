@@ -282,6 +282,53 @@
       "time": "2000-01-01T00:00:00Z",
       "parents": [],
       "overlay": "u2-generator-sops-document-hash"
+    },
+    {
+      "repository": "repo",
+      "name": "output-scope",
+      "overlay": "output-scope",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "output-scope-before",
+      "overlay": "output-scope-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "output-scope-shallow",
+      "overlay": "output-scope-shallow",
+      "parents": [
+        "output-scope"
+      ],
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:01Z"
+    },
+    {
+      "repository": "repo",
+      "name": "output-emitted",
+      "overlay": "output-emitted",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "output-emitted-before",
+      "overlay": "output-emitted-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
     }
   ],
   "overlays": [
@@ -545,6 +592,42 @@
           "delete": "repo/flux-system/values.yaml"
         }
       ]
+    },
+    {
+      "name": "output-scope",
+      "directory": "overlays/output-scope"
+    },
+    {
+      "name": "output-scope-before",
+      "directory": "overlays/output-scope-before"
+    },
+    {
+      "name": "output-mixed",
+      "directory": "overlays/output-mixed"
+    },
+    {
+      "name": "output-scope-shallow",
+      "directory": "overlays/output-scope-shallow"
+    },
+    {
+      "name": "output-scope-absent",
+      "directory": "overlays/output-scope-absent"
+    },
+    {
+      "name": "output-partial-failure",
+      "directory": "overlays/output-partial-failure"
+    },
+    {
+      "name": "output-emitted",
+      "directory": "overlays/output-emitted"
+    },
+    {
+      "name": "output-emitted-before",
+      "directory": "overlays/output-emitted-before"
+    },
+    {
+      "name": "output-emitted-explicit",
+      "directory": "overlays/output-emitted-explicit"
     }
   ],
   "inputs": "inputs",
@@ -1752,6 +1835,911 @@
           }
         }
       ]
+    },
+    {
+      "name": "sops-output-scope",
+      "description": "Final membership follows scope, transformed identity, and command view. Duplicate output identities retain existing producer conflict and key union warnings.",
+      "setup": [
+        {
+          "commit": "output-scope"
+        },
+        {
+          "commit": "output-scope-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "alpha-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-alpha.stdout",
+              "stderr": "expect/output-alpha.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "alpha-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path-orig",
+              "@@baseline@@/scope/entry",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-alpha.stdout",
+              "stderr": "expect/output-alpha-changed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "alpha-included",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--skip-kinds=CustomResourceDefinition",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-alpha-included.stdout",
+              "stderr": "expect/output-alpha-included.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "alpha-only-secret",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--only-kinds=Secret",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-alpha-secret.stdout",
+              "stderr": "expect/output-alpha-secret.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "alpha-excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--only-kinds=Deployment",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-conflict.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "beta-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "beta",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-beta.stdout",
+              "stderr": "expect/output-beta.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "other-namespace",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "other",
+              "-n",
+              "other",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-other.stdout",
+              "stderr": "expect/output-other.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "resources",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "-o",
+              "name",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-resources.stdout",
+              "stderr": "expect/output-conflict.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "images",
+          "invoke": {
+            "argv": [
+              "get",
+              "images",
+              "alpha",
+              "-n",
+              "apps",
+              "-o",
+              "name",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-conflict.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-roster.stdout",
+              "stderr": "expect/output-conflict.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-orphan",
+      "description": "Static orphan output retains its warning in full and changed-only views. Filters remove only presentation evidence.",
+      "setup": [
+        {
+          "commit": "output-scope"
+        },
+        {
+          "commit": "output-scope-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/orphan",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-orphan.stdout",
+              "stderr": "expect/output-orphan-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/orphan",
+              "--path-orig",
+              "@@baseline@@/orphan",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-orphan.stdout",
+              "stderr": "expect/output-orphan.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/orphan",
+              "--only-kinds=Deployment",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-empty-scan.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-mixed",
+      "description": "Required mixed data renders without permission. Readable siblings remain usable. Supplied empty data leaves unavailable-key details.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-active-readable-repo-base"
+        },
+        {
+          "overlay": "output-mixed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "required-mixed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/flux-system",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-mixed.stdout",
+              "stderr": "expect/output-mixed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "partial-supply",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/flux-system",
+              "--supply",
+              "@@inputs@@/output-partial.yaml",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-mixed.stdout",
+              "stderr": "expect/output-mixed-partial.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-diff",
+      "description": "Native changed pairs expose both side warnings. Reversed, normalized, and image-only views retain their own membership.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-diff-both-directions-metadata-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-metadata-repo-base"
+          }
+        },
+        {
+          "commit": "sops-unreadable-diff-both-directions-metadata-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-metadata-baseline-base"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-metadata-0.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/flux-system",
+              "--path-orig",
+              "@@repo@@/flux-system",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-metadata-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "normalization-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--strip-attr",
+              "revision"
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "images",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "brief",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--output",
+              "brief"
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/output-brief.stdout",
+              "stderr": "expect/output-empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-shallow",
+      "description": "A shallow head retains transformed output membership in full and changed-only builds.",
+      "setup": [
+        {
+          "commit": "output-scope-shallow"
+        },
+        {
+          "shallow": "output-scope-shallow"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-shallow.stdout",
+              "stderr": "expect/output-alpha.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "@@commit:output-scope@@"
+            ],
+            "expect": {
+              "stdout": "expect/output-shallow.stdout",
+              "stderr": "expect/output-alpha-changed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-absent-side",
+      "description": "Additions and removals retain warnings only on their present comparison side.",
+      "setup": [
+        {
+          "commit": "output-scope"
+        },
+        {
+          "commit": "output-scope-before"
+        },
+        {
+          "overlay": "output-scope-absent"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "added",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--output",
+              "json",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--path-orig",
+              "@@baseline@@/scope/entry"
+            ],
+            "expect": {
+              "stdout": "expect/output-added.stdout",
+              "stderr": "expect/output-added.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--output",
+              "json",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path",
+              "@@baseline@@/scope/entry",
+              "--path-orig",
+              "@@repo@@/scope/entry"
+            ],
+            "expect": {
+              "stdout": "expect/output-removed.stdout",
+              "stderr": "expect/output-removed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-partial-failure",
+      "description": "A failed producer retains strict errors and suppression evidence. Healthy output keeps only its represented encrypted identities.",
+      "setup": [
+        {
+          "commit": "output-scope"
+        },
+        {
+          "commit": "output-scope-before"
+        },
+        {
+          "overlay": "output-partial-failure"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "partial",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--path-orig",
+              "@@baseline@@/scope/entry",
+              "--strict-substitutions",
+              "--output",
+              "json",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-partial.stdout",
+              "stderr": "expect/output-partial.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-internal-namespace",
+      "description": "ResourceSet internal namespaces identify included raw children without altering output. Distinct producer namespaces and comparison sides remain separate.",
+      "setup": [
+        {
+          "commit": "output-emitted"
+        },
+        {
+          "commit": "output-emitted-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/emitted/entry",
+              "--only-kinds",
+              "ConfigMap",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-emitted.stdout",
+              "stderr": "expect/output-emitted.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "namespace",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/emitted/entry",
+              "--only-kinds",
+              "ConfigMap",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-n",
+              "apps"
+            ],
+            "expect": {
+              "stdout": "expect/output-emitted-apps.stdout",
+              "stderr": "expect/output-emitted-apps.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/emitted/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/output-empty.stdout",
+              "stderr": "expect/output-empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--output",
+              "json",
+              "--strip-field",
+              "spec.resources",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path",
+              "@@repo@@/emitted/entry",
+              "--path-orig",
+              "@@baseline@@/emitted/entry"
+            ],
+            "expect": {
+              "stdout": "expect/output-emitted-forward.stdout",
+              "stderr": "expect/output-emitted-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--output",
+              "json",
+              "--strip-field",
+              "spec.resources",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path",
+              "@@baseline@@/emitted/entry",
+              "--path-orig",
+              "@@repo@@/emitted/entry"
+            ],
+            "expect": {
+              "stdout": "expect/output-emitted-reverse.stdout",
+              "stderr": "expect/output-emitted-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-output-explicit-namespace",
+      "description": "An explicit child namespace takes precedence over the ResourceSet internal namespace.",
+      "setup": [
+        {
+          "commit": "output-emitted"
+        },
+        {
+          "overlay": "output-emitted-explicit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "explicit",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/emitted/entry",
+              "--only-kinds",
+              "ConfigMap",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/output-emitted-explicit.stdout",
+              "stderr": "expect/output-emitted-explicit.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -2817,6 +3805,744 @@
         "sops-unreadable-empty-variable-set-active-readable"
       ],
       "purpose": "Encrypted key warning and one unresolved warning while readable siblings remain available."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/entry/roots.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/alpha/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/alpha/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/alpha/secret.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/beta/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/beta/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/other/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/other/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/scope/indexed/input.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/orphan/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope/repo/orphan/input.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/entry/roots.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/alpha/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/alpha/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/alpha/secret.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/beta/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/beta/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/other/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/other/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/scope/indexed/input.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/orphan/kustomization.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-scope-before/baseline/orphan/input.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-empty.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-empty.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha-included.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha-secret.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha-included.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha-secret.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-beta.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-beta.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-other.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-other.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-roster.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-resources.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan",
+        "sops-output-scope"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-orphan.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-orphan.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed",
+        "sops-output-orphan"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-mixed/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "overlays/output-mixed/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "inputs/output-partial.yaml",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-mixed.stdout",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-mixed.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-mixed-partial.stderr",
+      "cases": [
+        "sops-output-diff",
+        "sops-output-mixed"
+      ],
+      "purpose": "Authored SOPS output membership and consumer evidence."
+    },
+    {
+      "path": "expect/output-alpha-changed.stderr",
+      "cases": [
+        "sops-output-scope",
+        "sops-output-orphan",
+        "sops-output-diff"
+      ],
+      "purpose": "Authored diagnostic ordering and output inventory evidence."
+    },
+    {
+      "path": "expect/output-brief.stdout",
+      "cases": [
+        "sops-output-scope",
+        "sops-output-orphan",
+        "sops-output-diff"
+      ],
+      "purpose": "Authored diagnostic ordering and output inventory evidence."
+    },
+    {
+      "path": "expect/output-conflict.stderr",
+      "cases": [
+        "sops-output-scope",
+        "sops-output-orphan",
+        "sops-output-diff"
+      ],
+      "purpose": "Authored diagnostic ordering and output inventory evidence."
+    },
+    {
+      "path": "expect/output-empty-scan.stderr",
+      "cases": [
+        "sops-output-scope",
+        "sops-output-orphan",
+        "sops-output-diff"
+      ],
+      "purpose": "Authored diagnostic ordering and output inventory evidence."
+    },
+    {
+      "path": "expect/output-orphan-full.stderr",
+      "cases": [
+        "sops-output-scope",
+        "sops-output-orphan",
+        "sops-output-diff"
+      ],
+      "purpose": "Authored diagnostic ordering and output inventory evidence."
+    },
+    {
+      "path": "overlays/output-scope-shallow/repo/scope/alpha/cm.yaml",
+      "cases": [
+        "sops-output-shallow"
+      ],
+      "purpose": "Authored history or side-membership control."
+    },
+    {
+      "path": "overlays/output-scope-absent/baseline/scope/alpha/kustomization.yaml",
+      "cases": [
+        "sops-output-absent-side"
+      ],
+      "purpose": "Authored history or side-membership control."
+    },
+    {
+      "path": "expect/output-shallow.stdout",
+      "cases": [
+        "sops-output-shallow"
+      ],
+      "purpose": "Authored history or absent-side output proof."
+    },
+    {
+      "path": "expect/output-added.stdout",
+      "cases": [
+        "sops-output-absent-side"
+      ],
+      "purpose": "Authored history or absent-side output proof."
+    },
+    {
+      "path": "expect/output-added.stderr",
+      "cases": [
+        "sops-output-absent-side"
+      ],
+      "purpose": "Authored history or absent-side output proof."
+    },
+    {
+      "path": "expect/output-removed.stdout",
+      "cases": [
+        "sops-output-absent-side"
+      ],
+      "purpose": "Authored history or absent-side output proof."
+    },
+    {
+      "path": "expect/output-removed.stderr",
+      "cases": [
+        "sops-output-absent-side"
+      ],
+      "purpose": "Authored history or absent-side output proof."
+    },
+    {
+      "path": "overlays/output-partial-failure/repo/scope/entry/roots.yaml",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "overlays/output-partial-failure/repo/scope/beta/cm.yaml",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "overlays/output-partial-failure/baseline/scope/entry/roots.yaml",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "overlays/output-partial-failure/baseline/scope/beta/cm.yaml",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "expect/output-partial.stdout",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "expect/output-partial.stderr",
+      "cases": [
+        "sops-output-partial-failure"
+      ],
+      "purpose": "Authored partial-failure diagnostics and output evidence."
+    },
+    {
+      "path": "overlays/output-emitted/repo/emitted/entry/flux.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "overlays/output-emitted-before/baseline/emitted/entry/flux.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted.stdout",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted.stderr",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-apps.stdout",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-apps.stderr",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-explicit.stdout",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-explicit.stderr",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-forward.stdout",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-forward.stderr",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-reverse.stdout",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "expect/output-emitted-reverse.stderr",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Authored internal namespace identity and unchanged raw output evidence."
+    },
+    {
+      "path": "overlays/output-emitted/repo/emitted/first/kustomization.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted/repo/emitted/first/set.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted/repo/emitted/second/kustomization.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted/repo/emitted/second/set.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-before/baseline/emitted/first/kustomization.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-before/baseline/emitted/first/set.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-before/baseline/emitted/second/kustomization.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-before/baseline/emitted/second/set.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-explicit/repo/emitted/first/set.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
+    },
+    {
+      "path": "overlays/output-emitted-explicit/repo/emitted/entry/flux.yaml",
+      "cases": [
+        "sops-output-internal-namespace",
+        "sops-output-explicit-namespace"
+      ],
+      "purpose": "Separate reporting producers retain actual ResourceSet identity while preserving comparison attribution."
     }
   ]
 }

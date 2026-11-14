@@ -1,0 +1,64 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "alpha",
+        "path": "scope/alpha"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "live-config",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "alpha",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "live-config",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "alpha",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "live-config",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "beta",
+        "path": ""
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "failed on both sides: orig: postBuild: variable not set (strict mode): \"MISSING\"; current: postBuild: variable not set (strict mode): \"MISSING\""
+    }
+  ]
+}

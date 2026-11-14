@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
@@ -61,6 +62,7 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 			assert.Equal(t, len(comparison.Groups), 2)
 			assert.Equal(t, len(payload.warnings), 2)
 			assert.Equal(t, len(payload.subjects), 2)
+			assert.Equal(t, len(payload.output), 2)
 			failed := inv.groups[0].sides[1].Manifests[0].Parent.Named()
 			subject := manifest.DiagnosticIdentity{ID: failed, Resource: failed, Path: "clusters/alpha"}
 			note := diff.Suppression{
@@ -76,6 +78,7 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 				assert.Diff(t, result.Suppressed, wantNotes[i])
 				assert.Diff(t, payload.warnings[i], diff.MergeWarnings(result.Warnings, result.Suppressed))
 				assert.Diff(t, payload.subjects[i], result.Subjects)
+				assert.Diff(t, payload.output[i], result.Output)
 			}
 			assert.Diff(t, payload.warnings[0], []manifest.Warning{{
 				Resource: failed, Subject: subject, Category: manifest.WarnDiffSuppressed,
@@ -146,24 +149,24 @@ func groupedComparisonFixture(selectedErr error) selectedInvocation {
 				{
 					Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{failedID: subject},
 					Manifests: []manifest.DocumentBatch{
-						{
-							Parent:    failed,
-							Documents: []map[string]any{groupedComparisonDocument("hidden", "withheld", "old")},
-						},
-						{
-							Parent:    healthy,
-							Documents: []map[string]any{groupedComparisonDocument("steady", "stable", "old")},
-						},
+						testutil.DocumentBatch(
+							failed,
+							[]map[string]any{groupedComparisonDocument("hidden", "withheld", "old")},
+						),
+						testutil.DocumentBatch(
+							healthy,
+							[]map[string]any{groupedComparisonDocument("steady", "stable", "old")},
+						),
 					},
 				},
 				{
 					Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{failedID: subject},
 					Manifests: []manifest.DocumentBatch{
 						{Parent: failed},
-						{
-							Parent:    healthy,
-							Documents: []map[string]any{groupedComparisonDocument("steady", "stable", "new")},
-						},
+						testutil.DocumentBatch(
+							healthy,
+							[]map[string]any{groupedComparisonDocument("steady", "stable", "new")},
+						),
 					},
 					Unavailable: map[manifest.NamedResource]store.StatusInfo{
 						failedID: {Status: store.StatusFailed, Message: "secret apps/auth not found"},
@@ -173,18 +176,18 @@ func groupedComparisonFixture(selectedErr error) selectedInvocation {
 			{cluster: "beta", sides: []*selection.Result{
 				{
 					Manifests: []manifest.DocumentBatch{
-						{
-							Parent:    healthy,
-							Documents: []map[string]any{groupedComparisonDocument("config", "old", "old")},
-						},
+						testutil.DocumentBatch(
+							healthy,
+							[]map[string]any{groupedComparisonDocument("config", "old", "old")},
+						),
 					},
 				},
 				{
 					Manifests: []manifest.DocumentBatch{
-						{
-							Parent:    healthy,
-							Documents: []map[string]any{groupedComparisonDocument("config", "new", "new")},
-						},
+						testutil.DocumentBatch(
+							healthy,
+							[]map[string]any{groupedComparisonDocument("config", "new", "new")},
+						),
 					},
 				},
 			}},

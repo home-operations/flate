@@ -50,7 +50,11 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			assert.FatalIf(t, len(sides) != 1 || selectedErr == nil, "completed run selection: %v", selectedErr)
 			var stdout, stderr bytes.Buffer
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
-			payload := selectedPayload{err: payloadErr}
+			_, _, collectionErr := collectRendered(&selection.Result{Manifests: []manifest.DocumentBatch{{
+				Identities: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "malformed"}},
+			}}}, &buildFlags{})
+			assert.Equal(t, errors.Is(collectionErr, manifest.ErrInput), true)
+			payload := selectedPayload{err: errors.Join(payloadErr, collectionErr)}
 			if test {
 				payload.rosters = []output.TestReport{
 					{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1},
@@ -70,10 +74,13 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 				"lost selected, cleanup or payload error: %v",
 				got,
 			)
+			assert.Equal(t, errors.Is(got, collectionErr), true)
+			assert.Equal(t, errors.Is(got, manifest.ErrInput), true)
+			assert.Equal(t, errors.Is(got, manifest.ErrFlux), true)
 			if _, reported := errors.AsType[reportedError](got); !reported {
 				assert.NoError(t, (output.Encoder{Writer: &stderr}).Errors(got))
 			}
-			for _, message := range []string{"selected render failed", closeErr.Error(), writeErr.Error(), context.Canceled.Error()} {
+			for _, message := range []string{"selected render failed", closeErr.Error(), writeErr.Error(), context.Canceled.Error(), collectionErr.Error()} {
 				assert.Equal(t, strings.Count(stderr.String(), message), 1)
 			}
 		})

@@ -162,10 +162,12 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 		err:      err,
 		warnings: make([][]manifest.Warning, len(groups)),
 		subjects: make([][]manifest.NamedResource, len(groups)),
+		output:   make([][2][]manifest.NamedResource, len(groups)),
 	}
 	for i, group := range comparison.Groups {
 		result.warnings[i] = diff.MergeWarnings(group.Warnings, group.Suppressed)
 		result.subjects[i] = group.Subjects
+		result.output[i] = group.Output
 	}
 	var preparedNames []diff.Names
 	result.prepare = func(names []diff.Names) { preparedNames = names }

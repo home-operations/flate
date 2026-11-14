@@ -1,0 +1,3 @@
+resources: [secret.yaml]
+namePrefix: live-
+namespace: apps

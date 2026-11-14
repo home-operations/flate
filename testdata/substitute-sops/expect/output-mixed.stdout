@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+data:
+  missing: fallback
+  value: repository
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: rendered
+  namespace: apps

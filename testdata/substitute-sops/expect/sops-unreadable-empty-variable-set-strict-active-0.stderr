@@ -1,9 +1,7 @@
 
   ✗  Kustomization  apps/consumer  postBuild: variable not set (strict mode): "VALUE"
 
-  ⚠ warnings (2)
-    [SOPSUnreadable] Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      VALUE
-    [UnresolvedSubstitution] substituteFrom Secret "input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "VALUE" is SOPS-encrypted and unreadable; supply it with --supply
+  ⚠ warnings (1)
+    [UnresolvedSubstitution] substituteFrom Secret "apps/input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "VALUE" is SOPS-encrypted and unreadable; supply it with --supply
 
   ✗ 1 failed

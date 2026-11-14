@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"cmp"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -17,7 +16,7 @@ func ParseChildren(
 	opts manifest.ParseDocOptions,
 	skipKinds []string,
 ) store.ChildDocuments {
-	var policy manifest.EmissionPolicy
+	policy := manifest.EmissionPolicy{Namespace: opts.DefaultNamespace}
 	if manifest.KindOf(parent).Parent {
 		policy = parent.EmissionPolicy()
 		if policy.InternalNamespace {
@@ -81,8 +80,8 @@ func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, 
 	if outcome.Err != nil || obj == nil {
 		return store.Child{}, outcome, changed
 	}
-	if p.policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
-		child.Obj = obj.WithNamespace(p.policy.Namespace)
+	if id := p.policy.EmittedIdentity(outcome.Document); obj.Named().Namespace != id.Namespace {
+		child.Obj = obj.WithNamespace(id.Namespace)
 	}
 	if child.Obj.Named() == p.parent.Named() {
 		return store.Child{}, outcome, changed
@@ -92,10 +91,7 @@ func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, 
 
 func (p *childDocumentParser) bindWarnings(outcome *manifest.DocOccurrence) {
 	if len(outcome.Warnings) != 0 {
-		resource := manifest.DocIdentity(outcome.Document)
-		if resource.Namespace == "" && resource.KindInfo().Namespaced() {
-			resource.Namespace = cmp.Or(p.opts.DefaultNamespace, p.policy.Namespace)
-		}
+		resource := p.policy.EmittedIdentity(outcome.Document)
 		for warningIndex := range outcome.Warnings {
 			warning := outcome.Warnings[warningIndex]
 			if warning.Resource != resource {

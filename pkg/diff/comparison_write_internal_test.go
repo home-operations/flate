@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -45,9 +46,7 @@ func testComparisonWriteTwice(t *testing.T, format Format, supplied bool) {
 				"metadata": map[string]any{"namespace": "apps", "name": "config"},
 				"data":     map[string]any{"key": value},
 			}
-			snapshots[side].Manifests = []manifest.DocumentBatch{{
-				Parent: parent, Documents: []map[string]any{doc},
-			}}
+			snapshots[side].Manifests = []manifest.DocumentBatch{testutil.DocumentBatch(parent, []map[string]any{doc})}
 			inputs = append(inputs, doc)
 			originals = append(originals, manifest.DeepCopyMap(doc))
 		}

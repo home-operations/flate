@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -34,21 +35,17 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 	}
 	left.Manifests = append(
 		left.Manifests,
-		manifest.DocumentBatch{
-			Documents: []map[string]any{
-				makeDoc("changed", "example.test/app:v1"),
-				makeDoc("removed", "example.test/removed:v1"),
-			},
-		},
+		testutil.DocumentBatch(nil, []map[string]any{
+			makeDoc("changed", "example.test/app:v1"),
+			makeDoc("removed", "example.test/removed:v1"),
+		}),
 	)
 	right.Manifests = append(
 		right.Manifests,
-		manifest.DocumentBatch{
-			Documents: []map[string]any{
-				makeDoc("changed", "example.test/app:v2"),
-				makeDoc("added", "example.test/added:v1"),
-			},
-		},
+		testutil.DocumentBatch(nil, []map[string]any{
+			makeDoc("changed", "example.test/app:v2"),
+			makeDoc("added", "example.test/added:v1"),
+		}),
 	)
 	comparison1, preparationErr1 := Compare(
 		[]Group{{Orig: left, Current: right, SelectedErr: nil}},

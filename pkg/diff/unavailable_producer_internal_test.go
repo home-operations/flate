@@ -325,6 +325,7 @@ func testCompareUnavailableProducerPolicyCase(
 		assert.NoError(t, unmarshalErr2)
 	}
 	if testCaseInput.tc.withheld {
+		assert.Diff(t, comparison1.Groups[0].Output, [2][]manifest.NamedResource{})
 		want := Suppression{
 			Parent: helmReleaseParent(),
 			Side:   testCaseInput.tc.side,

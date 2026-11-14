@@ -3,6 +3,7 @@ package kustomization
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -160,17 +161,20 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 	}
 }
 
+type unreadableSecretCase struct {
+	name     string
+	kind     string
+	object   manifest.BaseManifest
+	mixed    bool
+	optional bool
+	allowed  []string
+	value    string
+	warnings int
+}
+
 func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name     string
-		kind     string
-		object   manifest.BaseManifest
-		mixed    bool
-		allowed  []string
-		value    string
-		warnings int
-	}{
+	for _, tc := range []unreadableSecretCase{
 		{name: "absent", kind: manifest.KindSecret},
 		{
 			name: "empty", kind: manifest.KindSecret,
@@ -204,6 +208,38 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			},
 			mixed: true, allowed: []string{manifest.KindConfigMap}, value: "readable", warnings: 1,
 		},
+		{
+			name: "required_mixed_secret", kind: manifest.KindSecret,
+			object: &manifest.Secret{
+				Name: "unreadable", Namespace: "flux-system",
+				StringData: map[string]any{
+					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+					"OTHER": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+				},
+			},
+			mixed: true, value: "readable", warnings: 1,
+		},
+		{
+			name: "required_mixed_configmap", kind: manifest.KindConfigMap,
+			object: &manifest.ConfigMap{
+				Name: "unreadable", Namespace: "flux-system",
+				Data: map[string]any{
+					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+					"OTHER": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+				},
+			},
+			mixed: true, value: "readable", warnings: 1,
+		},
+		{
+			name: "optional_mixed_secret", kind: manifest.KindSecret,
+			object: &manifest.Secret{
+				Name: "unreadable", Namespace: "flux-system",
+				StringData: map[string]any{
+					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+				},
+			},
+			mixed: true, optional: true, value: "readable", warnings: 1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -223,7 +259,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			owner := &manifest.Kustomization{
 				Name: "apps", Namespace: "flux-system", Path: "./apps",
 				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-					{Kind: tc.kind, Name: "unreadable"},
+					{Kind: tc.kind, Name: "unreadable", Optional: tc.optional},
 				}, Substitute: map[string]string{"ACTIVE": "yes"}},
 			}
 			input := manifest.NamedResource{Kind: tc.kind, Name: "unreadable", Namespace: owner.Namespace}
@@ -246,7 +282,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			_, err := normal.run.DataInputs(t.Context(), owner, normal.data)
 			assert.NoError(t, err)
 			var unreadable []manifest.NamedResource
-			if tc.object == nil || tc.mixed {
+			if !tc.optional && (tc.object == nil || tc.mixed && len(tc.allowed) != 0) {
 				unreadable = []manifest.NamedResource{input}
 			}
 			assert.Diff(t, history.Assessment.Unreadable, unreadable)
@@ -255,7 +291,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			assert.Equal(t, len(st.Warnings()), tc.warnings)
 			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
 			history.Assessment.Close()
-			if len(tc.allowed) == 0 {
+			if len(tc.allowed) == 0 && !tc.mixed {
 				return
 			}
 			for _, regime := range []string{"cold", "reused"} {
@@ -270,14 +306,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					map[string]any{"value": tc.value, "missing": "default"},
 				)
 				assert.Diff(t, output.Unreadable, unreadable)
-				warnings := st.Warnings()
-				assert.Equal(t, len(warnings), len(beforeWarnings)+1)
-				unresolved := warnings[len(warnings)-1]
-				assert.Equal(t, unresolved.Category, manifest.WarnUnresolvedSubstitution)
-				assert.Equal(t, unresolved.Count, 1)
-				if tc.mixed {
-					assert.Diff(t, warnings[0], beforeWarnings[0])
-				}
+				tc.assertWarnings(t, st.Warnings(), beforeWarnings, input)
 				replay := c.PreviousRender(t.Context(), owner, schedule.Result{})
 				assert.FatalIf(t, replay.Assessment == nil, "missing %s assessment", regime)
 				assert.Equal(t, replay.Complete, true)
@@ -291,6 +320,37 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 				t.Logf("%s history: complete=%t, output and warning assertions evaluated", regime, replay.Complete)
 			}
 		})
+	}
+}
+
+func (tc *unreadableSecretCase) assertWarnings(
+	t *testing.T, warnings, beforeWarnings []manifest.Warning, input manifest.NamedResource,
+) {
+	t.Helper()
+	if tc.optional {
+		assert.Diff(t, warnings, beforeWarnings)
+	} else {
+		assert.Equal(t, len(warnings), len(beforeWarnings)+1)
+		unresolved := warnings[len(warnings)-1]
+		assert.Equal(t, unresolved.Category, manifest.WarnUnresolvedSubstitution)
+		assert.Equal(t, unresolved.Count, 1)
+		if tc.mixed {
+			key := "VALUE"
+			var detail []string
+			if len(tc.allowed) == 0 {
+				key, detail = "OTHER", []string{"VALUE"}
+			}
+			assert.Equal(t, unresolved.Message, fmt.Sprintf(
+				`substituteFrom %s "flux-system/unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key %q is SOPS-encrypted and unreadable; supply it with --supply`,
+				tc.kind,
+				key,
+			))
+			assert.Diff(t, unresolved.Detail, detail)
+			assert.Diff(t, unresolved.Related, []manifest.NamedResource{input})
+		}
+	}
+	if tc.mixed {
+		assert.Diff(t, warnings[0], beforeWarnings[0])
 	}
 }
 

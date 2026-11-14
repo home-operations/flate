@@ -39,6 +39,8 @@ type GroupResult struct {
 	Warnings   []manifest.Warning
 	Suppressed []Suppression
 	Subjects   []manifest.NamedResource
+	// Output preserves original/current side boundaries independently of display subjects.
+	Output [2][]manifest.NamedResource
 }
 
 // Comparison retains prepared output so repeated writes never normalize inputs again.
@@ -69,37 +71,49 @@ func Compare(groups []Group, opts Options) (*Comparison, error) {
 	var resultErr error
 	for i := range groups {
 		group := &groups[i]
-		p, notes := prepareSnapshots(group.Orig, group.Current, &opts)
+		p, notes, preparationErr := prepareSnapshots(group.Orig, group.Current, &opts)
 		c.Groups[i].Warnings = p.Warnings
 		c.Groups[i].Suppressed = append(slices.Clone(opts.Suppressed), notes...)
 		var err error
-		c.output[i], c.Groups[i].Subjects, err = prepareOutput(p, c.format)
+		var inventory GroupResult
+		c.output[i], inventory, err = prepareOutput(p, c.format)
+		c.Groups[i].Subjects, c.Groups[i].Output = inventory.Subjects, inventory.Output
 		c.output[i].cluster, c.output[i].added, c.output[i].removed = group.Cluster, group.Added, group.Removed
-		resultErr = errors.Join(resultErr, err, group.SelectedErr)
+		resultErr = errors.Join(resultErr, preparationErr, err, group.SelectedErr)
 	}
 	c.nativeInventory()
 	return c, resultErr
 }
 
-func prepareOutput(p prepared, format Format) (preparedGroup, []manifest.NamedResource, error) {
+func prepareOutput(p prepared, format Format) (preparedGroup, GroupResult, error) {
 	out := preparedGroup{subjects: p.Subjects}
-	var subjects []manifest.NamedResource
+	var inventory GroupResult
 	var err error
 	switch format {
 	case FormatDiff, FormatHTML:
 		out.lines, err = prepareLines(p)
-		subjects = lineSubjects(out.lines, format)
+		inventory = lineInventory(out.lines, format)
 	case FormatJSON:
 		out.changes = publicChanges(p)
+		for pair := range p.changes() {
+			for side, doc := range [2]map[string]any{pair.Old, pair.New} {
+				if doc != nil {
+					inventory.Output[side] = append(inventory.Output[side], pair.Output[side])
+				}
+			}
+		}
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
 		out.native, err = p.native()
 		if err == nil {
-			subjects = nativeDiffSubjects(&p, &out.native)
+			inventory = nativeDiffInventory(&p, &out.native)
+			if format == FormatBrief {
+				inventory.Output = [2][]manifest.NamedResource{}
+			}
 		}
 	default:
 		err = fmt.Errorf("unsupported diff format %q", format)
 	}
-	return out, subjects, err
+	return out, inventory, err
 }
 
 func (c *Comparison) nativeInventory() {
@@ -184,14 +198,21 @@ func (c *Comparison) names() []Names {
 
 func renderPrepared(p prepared, opts *Options) ([]byte, error) {
 	format := cmp.Or(opts.Format, FormatHuman)
-	out, subjects, err := prepareOutput(p, format)
+	out, inventory, err := prepareOutput(p, format)
 	if err != nil {
 		return nil, err
 	}
 	c := &Comparison{
 		format: format,
 		output: []preparedGroup{out},
-		Groups: []GroupResult{{Warnings: p.Warnings, Suppressed: slices.Clone(opts.Suppressed), Subjects: subjects}},
+		Groups: []GroupResult{
+			{
+				Warnings:   p.Warnings,
+				Suppressed: slices.Clone(opts.Suppressed),
+				Subjects:   inventory.Subjects,
+				Output:     inventory.Output,
+			},
+		},
 	}
 	c.nativeInventory()
 	var buf bytes.Buffer
@@ -264,19 +285,19 @@ func aggregateNative(groups []dyff.Report) *dyff.Report {
 	return report
 }
 
-func nativeDiffSubjects(prepared *prepared, report *dyff.Report) []manifest.NamedResource {
-	subjects := slices.Grow([]manifest.NamedResource(nil), len(report.Diffs))
-	ids := [2][]manifest.NamedResource{
-		make([]manifest.NamedResource, len(report.From.Documents)),
-		make([]manifest.NamedResource, len(report.To.Documents)),
+func nativeDiffInventory(prepared *prepared, report *dyff.Report) GroupResult {
+	inventory := GroupResult{Subjects: slices.Grow([]manifest.NamedResource(nil), len(report.Diffs))}
+	pairs := [2][]*pair{
+		make([]*pair, len(report.From.Documents)),
+		make([]*pair, len(report.To.Documents)),
 	}
 	for pairIndex := range prepared.Pairs {
-		pair := prepared.Pairs[pairIndex]
+		pair := &prepared.Pairs[pairIndex]
 		if pair.Old != nil {
-			ids[0][pair.OldPos] = pair.Resource
+			pairs[0][pair.OldPos] = pair
 		}
 		if pair.New != nil {
-			ids[1][pair.NewPos] = pair.Resource
+			pairs[1][pair.NewPos] = pair
 		}
 	}
 	for _, delta := range report.Diffs {
@@ -284,7 +305,13 @@ func nativeDiffSubjects(prepared *prepared, report *dyff.Report) []manifest.Name
 		if delta.Path.Root.Location == "to" {
 			side = 1
 		}
-		subjects = append(subjects, ids[side][delta.Path.DocumentIdx])
+		pair := pairs[side][delta.Path.DocumentIdx]
+		inventory.Subjects = append(inventory.Subjects, pair.Resource)
+		for side, doc := range [2]map[string]any{pair.Old, pair.New} {
+			if doc != nil && !slices.Contains(inventory.Output[side], pair.Output[side]) {
+				inventory.Output[side] = append(inventory.Output[side], pair.Output[side])
+			}
+		}
 	}
-	return subjects
+	return inventory
 }

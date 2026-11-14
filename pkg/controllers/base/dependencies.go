@@ -149,8 +149,12 @@ func (e *Execution) DataInputs(
 			return nil, err
 		}
 		result.ReportWarnings(&e.Reads)
-		if result.Disposition(e.Missing) == values.Unresolved {
+		disposition := result.Disposition(e.Missing)
+		if disposition == values.Unresolved {
 			e.Unreadable = append(e.Unreadable, ref.NamedResource)
+		}
+		if disposition == values.Unresolved ||
+			ref.Use == "substituteFrom" && result.State() == values.Encrypted && disposition == values.UseData {
 			e.unresolved = append(e.unresolved, depwait.DataDependency{Reference: ref, Input: input, Result: result})
 		}
 		inputs = append(
@@ -216,16 +220,26 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	for i := range e.unresolved {
 		ref := &e.unresolved[i]
 		cause := ""
+		name := ref.Name
+		var detail []string
+		var related []manifest.NamedResource
 		if ref.Result.State() != values.Absent {
 			cause = ": " + ref.Result.Cause()
+		}
+		if keys := ref.Result.UnreadableKeys(); len(keys) != 0 {
+			name = ref.NamespacedName()
+			detail = keys[1:]
+			related = []manifest.NamedResource{ref.NamedResource}
 		}
 		e.Reads.AddWarning(
 			manifest.Warning{
 				Category: manifest.WarnUnresolvedSubstitution,
+				Related:  related,
+				Detail:   detail,
 				Message: fmt.Sprintf(
 					"substituteFrom %s %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values",
 					ref.Kind,
-					ref.Name,
+					name,
 				) + cause,
 			},
 		)

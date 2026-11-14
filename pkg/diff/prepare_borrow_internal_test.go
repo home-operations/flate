@@ -6,6 +6,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -16,7 +17,7 @@ func TestDocuments_BorrowsPayload(t *testing.T) {
 		"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "large"},
 		"data": map[string]any{"payload": payload},
 	}
-	batches := []manifest.DocumentBatch{{Documents: []map[string]any{doc}}}
+	batches := []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{doc})}
 	projected := documents(batches)
 	if reflect.ValueOf(projected[0].Manifest).Pointer() != reflect.ValueOf(doc).Pointer() {
 		t.Fatal("projection copied the completed document")

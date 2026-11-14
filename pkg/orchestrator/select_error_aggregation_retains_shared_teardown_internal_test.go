@@ -499,13 +499,10 @@ func testSelectUnavailabilityUsesLocalCanonicalEvidenceCase(
 	orig := selectedRun(t,
 		&Result{
 			Manifests: []manifest.DocumentBatch{
-				{
-					Parent: &manifest.HelmRelease{
-						Name:      testCaseInput.child.Name,
-						Namespace: testCaseInput.child.Namespace,
-					},
-					Documents: []map[string]any{{"kind": "Deployment"}},
-				},
+				testutil.DocumentBatch(&manifest.HelmRelease{
+					Name:      testCaseInput.child.Name,
+					Namespace: testCaseInput.child.Namespace,
+				}, []map[string]any{{"kind": "Deployment"}}),
 			},
 		},
 	)

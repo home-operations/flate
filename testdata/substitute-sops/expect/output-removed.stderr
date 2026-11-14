@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [ConflictingProducers] orig snapshot: ConfigMap apps/live-config: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/apps/beta
+      Kustomization.kustomize.toolkit.fluxcd.io/apps/alpha, Kustomization.kustomize.toolkit.fluxcd.io/apps/beta
+    [SOPSUnreadable] orig snapshot: ConfigMap apps/live-config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      OTHER, TOKEN

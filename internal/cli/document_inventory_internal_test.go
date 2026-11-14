@@ -51,13 +51,17 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 	core := mkDoc("v1", "CM", "ns", "shared")
 	docs := []map[string]any{foreign, second, core, first}
 	for range 2 {
-		assert.Diff(t, emissionDocs(docs, &buildFlags{}), []map[string]any{core, second, first, foreign})
+		order := emissionOrder(docs, &buildFlags{})
+		ordered := make([]map[string]any, len(order))
+		for i, position := range order {
+			ordered[i] = docs[position]
+		}
+		assert.Diff(t, ordered, []map[string]any{core, second, first, foreign})
 		assert.Diff(t, docs, []map[string]any{foreign, second, core, first})
 	}
 }
 
-// TestEmissionDocs_OnlyKinds drops every non-CRD doc.
-func TestEmissionDocs_OnlyKinds(t *testing.T) {
+func TestEmissionOrder_OnlyKinds(t *testing.T) {
 	t.Parallel()
 	docs := []map[string]any{
 		{"kind": "ConfigMap"},
@@ -65,19 +69,19 @@ func TestEmissionDocs_OnlyKinds(t *testing.T) {
 		{"kind": "Secret"},
 		{"kind": "CustomResourceDefinition"},
 	}
-	out := emissionDocs(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}})
-	assert.ErrorIf(t, docs[2]["kind"] != "Secret", "emissionDocs mutated the input: %+v", docs)
+	out := emissionOrder(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}})
+	assert.ErrorIf(t, docs[2]["kind"] != "Secret", "emissionOrder mutated the input: %+v", docs)
 	assert.ErrorIf(t, len(out) != 2, "expected 2 CRDs, got %d: %+v", len(out), out)
 	for _, d := range out {
-		assert.ErrorIf(t, d["kind"] != "CustomResourceDefinition", "non-CRD slipped through: %v", d)
+		assert.ErrorIf(t, docs[d]["kind"] != "CustomResourceDefinition", "non-CRD slipped through: %v", d)
 	}
 }
 
-func TestEmissionDocs_EmptyOnNoCRDs(t *testing.T) {
+func TestEmissionOrder_EmptyOnNoCRDs(t *testing.T) {
 	t.Parallel()
 	docs := []map[string]any{{"kind": "ConfigMap"}, {"kind": "Secret"}}
 	{
-		out := emissionDocs(
+		out := emissionOrder(
 			docs,
 			&buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}},
 		)

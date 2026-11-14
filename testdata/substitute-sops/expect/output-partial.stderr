@@ -1,0 +1,13 @@
+
+  ✗  orig snapshot: Kustomization  apps/beta  postBuild: variable not set (strict mode): "MISSING"
+
+  ✗  current snapshot: Kustomization  apps/beta  postBuild: variable not set (strict mode): "MISSING"
+
+  ⚠ warnings (3)
+    [SOPSUnreadable] orig snapshot: ConfigMap apps/live-config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      TOKEN
+    [SOPSUnreadable] current snapshot: ConfigMap apps/live-config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      TOKEN
+    [DiffSuppressed] Kustomization apps/beta: 0 objects withheld; diff suppressed (failed on both sides: orig: postBuild: variable not set (strict mode): "MISSING"; current: postBuild: variable not set (strict mode): "MISSING")
+
+  ✗ 2 failed

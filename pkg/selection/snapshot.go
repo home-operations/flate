@@ -80,6 +80,7 @@ func (s *Snapshot) CollectEmissions() {
 				s.Manifests = append(s.Manifests, manifest.DocumentBatch{Parent: emission.Parent})
 			}
 			s.Manifests[position].Documents = append(s.Manifests[position].Documents, document.Document)
+			s.Manifests[position].Identities = append(s.Manifests[position].Identities, document.Identity)
 		}
 	}
 }

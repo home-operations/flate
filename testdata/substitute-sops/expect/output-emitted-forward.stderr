@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [SOPSUnreadable] orig snapshot: ConfigMap apps/config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      token
+    [SOPSUnreadable] current snapshot: ConfigMap apps/config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      token

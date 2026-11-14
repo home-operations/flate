@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -32,7 +33,7 @@ func TestResult_CloseAfterFinalProjection(t *testing.T) {
 			}
 			completed := &Result{
 				catalog:   catalog,
-				Manifests: []manifest.DocumentBatch{{Parent: owner, Documents: []map[string]any{document}}},
+				Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(owner, []map[string]any{document})},
 			}
 			defer completed.Close()
 			run := Rendered{Orchestrator: &Orchestrator{store: st, index: index}, Result: completed}

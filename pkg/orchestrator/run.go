@@ -272,8 +272,6 @@ func (o *Orchestrator) collectCompletedManifests() ([]manifest.DocumentBatch, []
 		}
 	}
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	out := make([]manifest.DocumentBatch, 0, len(objects))
-	positions := make(map[manifest.NamedResource]int, len(objects))
 	for _, obj := range objects {
 		id := obj.Named()
 		parentAttributed := !manifest.KindOf(obj).Render
@@ -286,33 +284,19 @@ func (o *Orchestrator) collectCompletedManifests() ([]manifest.DocumentBatch, []
 		if effective == nil {
 			continue
 		}
-		var emission selection.EmissionFacts
-		if o.selection != nil {
-			emission.Emitter, emission.Parent = obj, o.store.GetObject(parent)
-		}
+		emission := selection.EmissionFacts{Emitter: obj, Parent: o.store.GetObject(parent)}
+		policy := obj.EmissionPolicy()
 		documents := o.collectionDocuments(obj, parentAttributed, &attempt)
 		for doc := range documents {
-			identity := resourceset.DedupKey(doc)
-			if o.selection != nil {
-				emission.Documents = append(
-					emission.Documents,
-					selection.DocumentFact{Document: doc, Identity: identity},
-				)
-				continue
-			}
-			position, ok := positions[parent]
-			if !ok {
-				position = len(out)
-				positions[parent] = position
-				out = append(out, manifest.DocumentBatch{Parent: o.store.GetObject(parent)})
-			}
-			out[position].Documents = append(out[position].Documents, doc)
+			emission.Documents = append(emission.Documents, selection.DocumentFact{
+				Document: doc, Identity: policy.EmittedIdentity(doc),
+			})
 		}
 		if len(emission.Documents) != 0 {
 			emissions = append(emissions, emission)
 		}
 	}
-	snapshot := selection.Snapshot{Decision: o.selection.Snapshot(), Manifests: out, Emissions: emissions}
+	snapshot := selection.Snapshot{Decision: o.selection.Snapshot(), Emissions: emissions}
 	snapshot.CollectEmissions()
 	return snapshot.Manifests, emissions
 }

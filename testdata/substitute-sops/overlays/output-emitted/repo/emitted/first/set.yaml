@@ -1,0 +1,9 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: first, namespace: apps}
+spec:
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: config}
+      data: {token: "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]", value: after}

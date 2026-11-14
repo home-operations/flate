@@ -131,10 +131,12 @@ func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.En
 	payload := selectedPayload{
 		warnings: make([][]manifest.Warning, len(groups)),
 		subjects: make([][]manifest.NamedResource, len(groups)),
+		output:   make([][2][]manifest.NamedResource, len(groups)),
 	}
 	for i, result := range comparison.Groups {
 		payload.warnings[i] = diff.MergeWarnings(result.Warnings, result.Suppressed)
 		payload.subjects[i] = result.Subjects
+		payload.output[i] = result.Output
 	}
 	var names []diff.Names
 	payload.prepare = func(resolved []diff.Names) { names = resolved }
@@ -512,22 +514,73 @@ func (c *clusterInputCommand) payload(
 		}
 		payload = resourcePayload(inv, sections, encoder, c.kind == "all")
 	case "build":
+		payload.output = make([][2][]manifest.NamedResource, len(inv.groups))
 		groups := make([]output.DocumentGroup, len(inv.groups))
 		for i, group := range inv.groups {
-			groups[i] = output.DocumentGroup{
-				Cluster:   group.cluster,
-				Documents: collectRendered(group.sides[0], &buildFlags{}),
-			}
+			groups[i].Cluster = group.cluster
+			var err error
+			groups[i].Documents, payload.output[i][0], err = collectRendered(group.sides[0], &buildFlags{})
+			payload.err = errors.Join(payload.err, err)
 		}
 		payload.write = func() error { return encoder.DocumentGroups(groups) }
 	case "test":
-		for _, group := range inv.groups {
-			payload.rosters = append(payload.rosters, testrunner.Run(group.sides[0]))
+		payload.output = make([][2][]manifest.NamedResource, len(inv.groups))
+		for i, group := range inv.groups {
+			roster := testrunner.Run(group.sides[0])
+			payload.rosters = append(payload.rosters, roster)
+			for _, cases := range [2][]output.Case{roster.Cases, roster.Blocked} {
+				for _, test := range cases {
+					payload.output[i][0] = append(payload.output[i][0], test.ID)
+				}
+			}
 		}
 	case "diff":
 		payload = clusterDiffPayload(t, inv, encoder)
 	}
 	return payload
+}
+
+func TestClusterPayload_BatchIdentityErrors(t *testing.T) {
+	t.Parallel()
+	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "kept"}}
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "kept"}
+	valid := manifest.DocumentBatch{Documents: []map[string]any{doc}}
+	inv := &selectedInvocation{groups: []selectedGroup{
+		{cluster: "alpha", sides: []*selection.Result{{Manifests: []manifest.DocumentBatch{valid}}}},
+		{
+			cluster: "beta",
+			sides: []*selection.Result{
+				{Manifests: []manifest.DocumentBatch{valid, {Identities: []manifest.NamedResource{id}}}},
+			},
+		},
+		{cluster: "omega", sides: []*selection.Result{{Manifests: []manifest.DocumentBatch{valid}}}},
+	}}
+	var previous string
+	for iteration := range 2 {
+		var stdout, stderr bytes.Buffer
+		payload := (&clusterInputCommand{verb: "build"}).payload(
+			t,
+			inv,
+			output.Encoder{Writer: &stdout, Format: output.FormatJSON},
+		)
+		assert.Equal(t, errors.Is(payload.err, manifest.ErrInput), true)
+		assert.Diff(t, payload.output, [][2][]manifest.NamedResource{{{id}, nil}, {nil, nil}, {{id}, nil}})
+		err := finishSelected(&selectedRequest{stdout: &stdout, stderr: &stderr}, inv, &payload)
+		assert.Equal(t, errors.Is(err, payload.err), true)
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		var groups []output.DocumentGroup
+		assert.NoError(t, json.Unmarshal(stdout.Bytes(), &groups))
+		assert.Diff(t, groups, []output.DocumentGroup{
+			{Cluster: "alpha", Documents: []map[string]any{doc}},
+			{Cluster: "beta"},
+			{Cluster: "omega", Documents: []map[string]any{doc}},
+		})
+		assert.Equal(t, strings.Count(stderr.String(), payload.err.Error()), 1)
+		if iteration != 0 {
+			assert.Equal(t, stdout.String(), previous)
+		}
+		previous = stdout.String()
+	}
 }
 
 func (c *clusterInputCommand) imagePayload(inv *selectedInvocation, encoder output.Encoder) selectedPayload {

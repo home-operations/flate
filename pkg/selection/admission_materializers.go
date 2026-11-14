@@ -223,6 +223,12 @@ func (c *admissionClosure) collectIndexedMaterializers(
 		return
 	}
 	c.retainIndexedMaterializers(candidates)
+	type candidateKey struct {
+		declaration OccurrenceID
+		identity    manifest.NamedResource
+		witness     any
+	}
+	var seen map[candidateKey]struct{}
 	for id := range maps.Keys(c.facts.SelectionIndex().Records) {
 		occurrence, located := c.catalogOccurrence(id)
 		if !located {
@@ -233,12 +239,18 @@ func (c *admissionClosure) collectIndexedMaterializers(
 			facts.HasPath && facts.Policy != nil && len(facts.Roots) == 0 {
 			continue
 		}
-		if !slices.ContainsFunc(candidates[0], func(existing *OccurrenceFacts) bool {
-			return existing.Declaration == occurrence.Declaration && existing.Identity == occurrence.Identity &&
-				existing.Witness == occurrence.Witness
-		}) {
-			candidates[0] = append(candidates[0], &occurrence)
+		if seen == nil {
+			seen = make(map[candidateKey]struct{}, len(candidates[0]))
+			for _, existing := range candidates[0] {
+				seen[candidateKey{existing.Declaration, existing.Identity, existing.Witness}] = struct{}{}
+			}
 		}
+		key := candidateKey{occurrence.Declaration, occurrence.Identity, occurrence.Witness}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		candidates[0] = append(candidates[0], &occurrence)
+		seen[key] = struct{}{}
 	}
 	c.collectPreparedMaterializers(candidates, project)
 }
@@ -247,33 +259,44 @@ func (c *admissionClosure) collectPreparedMaterializers(
 	candidates *[2][]*OccurrenceFacts,
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
-	identities := maps.Keys(c.facts.SelectionIndex().Records)
-	if c.catalog != nil {
-		identities = slices.Values(c.catalog.materializers)
-	}
-	for id := range identities {
+	var seen map[manifest.BaseManifest]struct{}
+	collect := func(id manifest.NamedResource) {
 		child := c.facts.AdmissionCandidate(id)
 		if _, located := c.catalogOccurrence(
 			id,
 		); child.Obj == nil || located ||
 			c.facts.SelectionIndex().Records[id].Builder == "" {
-			continue
+			return
 		}
 		if !isMaterializerObject(child.Obj) {
-			continue
+			return
 		}
-		if slices.ContainsFunc(
-			candidates[0],
-			func(existing *OccurrenceFacts) bool { return existing.Object == child.Obj },
-		) {
-			continue
+		if seen == nil {
+			seen = make(map[manifest.BaseManifest]struct{}, len(candidates[0]))
+			for _, existing := range candidates[0] {
+				seen[existing.Object] = struct{}{}
+			}
+		}
+		if _, exists := seen[child.Obj]; exists {
+			return
 		}
 		occurrence := project(child.Obj)
 		if occurrence.HasPath && occurrence.Policy != nil && len(occurrence.Roots) == 0 {
-			continue
+			return
 		}
 		occurrence.Declaration.Source = c.declarationSource(id)
 		candidates[0] = append(candidates[0], &occurrence)
+		seen[occurrence.Object] = struct{}{}
+	}
+	// Direct input loops keep the collector closure and its captured variables on the stack.
+	if c.catalog != nil {
+		for _, id := range c.catalog.materializers {
+			collect(id)
+		}
+		return
+	}
+	for id := range c.facts.SelectionIndex().Records {
+		collect(id)
 	}
 }
 
@@ -309,25 +332,24 @@ func (c *admissionClosure) collectObjectMaterializers(
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
 	c.retainObjectMaterializers(candidates, objects, ordering)
+	var seen map[manifest.BaseManifest]struct{}
 	for _, object := range objects {
 		id := object.Named()
-		if c.skipIndexedMaterializer(id, ordering) {
-			continue
-		}
-		if _, _, pathBearing := object.SourcePath(); !pathBearing && !ordering {
+		_, _, pathBearing := object.SourcePath()
+		if c.skipIndexedMaterializer(id, ordering) || !pathBearing && !ordering {
 			continue
 		}
 		object = c.object(id)
-		if object == nil {
+		if object == nil || !isMaterializerObject(object) {
 			continue
 		}
-		if !isMaterializerObject(object) {
-			continue
+		if seen == nil {
+			seen = make(map[manifest.BaseManifest]struct{}, len(candidates[1]))
+			for _, existing := range candidates[1] {
+				seen[existing.Object] = struct{}{}
+			}
 		}
-		if slices.ContainsFunc(
-			candidates[1],
-			func(existing *OccurrenceFacts) bool { return existing.Object == object },
-		) {
+		if _, exists := seen[object]; exists {
 			continue
 		}
 		occurrence := project(object)
@@ -338,6 +360,7 @@ func (c *admissionClosure) collectObjectMaterializers(
 			occurrence.Declaration.Source = c.declarationSource(id)
 		}
 		candidates[1] = append(candidates[1], &occurrence)
+		seen[occurrence.Object] = struct{}{}
 	}
 }
 

@@ -107,7 +107,8 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 			err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, ".")
 			assert.FatalIf(
 				t,
-				err == nil || !strings.Contains(err.Error(), url) || !strings.Contains(err.Error(), "HTTP 404"),
+				err == nil || !strings.Contains(err.Error(), url) ||
+					!strings.Contains(err.Error(), "failed to fetch "+url+" : 404 Not Found"),
 				"404 diagnostics=%v",
 				err,
 			)

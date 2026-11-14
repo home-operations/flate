@@ -12,7 +12,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
-	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -206,22 +205,19 @@ func (f *operation) acquirePrepared(
 			}
 		}
 	}
-	if f.allowAnonymousDenied && access.SecretRef == nil && request.anonymous && err != nil &&
-		!errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) {
-		denied := errors.Is(err, auth.ErrBasicCredentialNotFound)
-		if response, ok := errors.AsType[*fetcherr.ResponseError](err); ok {
-			denied = denied || response.StatusCode == http.StatusUnauthorized ||
-				response.StatusCode == http.StatusForbidden
-		}
-		if denied {
-			return nil, &source.MissingSecretError{
-				Owner:           access.Owner.ID,
-				Subject:         access.Owner,
-				Detail:          "no registry credentials available",
-				AnonymousDenied: true,
-				Cause:           err,
-			}
+	if !f.allowAnonymousDenied || access.SecretRef != nil || !request.anonymous {
+		return artifact, err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return artifact, err
+	}
+	if cache.CredentialsUnavailable(err) {
+		return nil, &source.MissingSecretError{
+			Owner:           access.Owner.ID,
+			Subject:         access.Owner,
+			Detail:          "no registry credentials available",
+			AnonymousDenied: true,
+			Cause:           err,
 		}
 	}
 	return artifact, err

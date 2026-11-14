@@ -1,8 +1,10 @@
 package cache
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"testing"
@@ -33,13 +35,27 @@ func TestMachineCredentialErr_Unavailable(t *testing.T) {
 		{"Git authorization", transport.ErrAuthorizationFailed, true},
 		{"ORAS basic", auth.ErrBasicCredentialNotFound, true},
 		{"S3 denied", minio.ErrorResponse{Code: "AccessDenied"}, true},
+		{"registry denied code", errcode.Error{Code: errcode.ErrorCodeDenied}, true},
+		{"registry unauthorized codes", errcode.Errors{{Code: errcode.ErrorCodeNameUnknown}, {Code: errcode.ErrorCodeUnauthorized}}, true},
+		{"canceled denial", errors.Join(context.Canceled, auth.ErrBasicCredentialNotFound), true},
+		{"deadline denial", errors.Join(context.DeadlineExceeded, auth.ErrBasicCredentialNotFound), true},
+		{"canceled", context.Canceled, false},
+		{"deadline", context.DeadlineExceeded, false},
+		{"filesystem", &fs.PathError{Op: "open", Path: "credential-canary", Err: fs.ErrPermission}, false},
 		{"registry missing", errcode.Error{Code: errcode.ErrorCodeNameUnknown}, false},
 		{"S3 missing", minio.ErrorResponse{Code: "NoSuchBucket"}, false},
 		{"transient", &fetcherr.ResponseError{StatusCode: http.StatusServiceUnavailable}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := MachineCredentialErr(fmt.Errorf("credential-canary: %w", tc.cause))
+			cause := fmt.Errorf("credential-canary: %w", tc.cause)
+			if CredentialsUnavailable(tc.cause) != tc.unavailable || CredentialsUnavailable(cause) != tc.unavailable {
+				t.Fatalf("denial classification unavailable=%t: %v", tc.unavailable, cause)
+			}
+			err := MachineCredentialErr(cause)
+			if !errors.Is(err, cause) {
+				t.Fatalf("credential cause lost: %v", err)
+			}
 			if errors.Is(err, manifest.ErrMissingSecret) != tc.unavailable || strings.Contains(err.Error(), "canary") {
 				t.Fatalf("unavailable=%t: %v", tc.unavailable, err)
 			}

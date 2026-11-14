@@ -11,7 +11,7 @@ import (
 
 func TestMachineCredentialErr_Idempotent(t *testing.T) {
 	t.Parallel()
-	assert.FatalIf(t, MachineCredentialErr(nil) != nil, "%s", "nil became a failure")
+	assert.FatalIf(t, MachineCredentialErr(nil) != nil || CredentialsUnavailable(nil), "%s", "nil became a failure")
 
 	cause := &fs.PathError{Op: "open", Path: "credential-canary", Err: fs.ErrPermission}
 	machine := MachineCredentialErr(cause)

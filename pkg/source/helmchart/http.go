@@ -19,8 +19,6 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/fetcherr"
-	"github.com/home-operations/flate/internal/httpconditional"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -284,59 +282,33 @@ type httpDownload struct {
 	work     *manifest.AcquisitionWork
 }
 
-//nolint:nonamedreturns // Validation must record the returned outcome on every exit.
 func (r *httpRepository) get(
 	ctx context.Context,
 	target string,
 	download httpDownload,
-) (result cache.ProducerResult, resultErr error) {
+) (cache.ProducerResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return result, fmt.Errorf("create source HTTP request: %w", err)
+		return cache.ProducerResult{}, fmt.Errorf("create source HTTP request: %w", err)
 	}
 	base, err := url.Parse(r.URL)
 	if err != nil {
-		return result, fmt.Errorf("resolve chart URL: %w", err)
+		return cache.ProducerResult{}, fmt.Errorf("resolve chart URL: %w", err)
 	}
 	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && r.username != "" &&
 		r.password != "" {
 		req.SetBasicAuth(r.username, r.password)
 	}
-	if httpconditional.Apply(req, download.previous) {
-		work := download.work.Validate()
-		work.Add(&manifest.WorkCounts{Attempts: 1})
-		defer func() { work.Finish(resultErr) }()
-	}
-	response, err := r.client.Do(req)
-	if err != nil {
-		return result, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
-	}
-	defer func() { _ = response.Body.Close() }()
-	validStatus := response.StatusCode == http.StatusOK || response.StatusCode == http.StatusNotModified
-	if validStatus {
-		result.Descriptor, result.Unchanged, err = httpconditional.Metadata(req, response, download.previous)
-	}
-	if !validStatus || err != nil {
-		return result, &fetcherr.ResponseError{
-			StatusCode: response.StatusCode,
-			Op:         http.MethodGet,
-			Message: fmt.Sprintf(
-				"failed to fetch %s : %d %s",
-				target,
-				response.StatusCode,
-				http.StatusText(response.StatusCode),
-			),
-		}
-	}
-	if result.Unchanged {
-		return result, nil
-	}
-	download.work.Physical().Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	h := digest.SHA256.Digester()
-	size, err := io.Copy(io.MultiWriter(download.Writer, h.Hash()), response.Body)
-	if err != nil {
-		err = &url.Error{Op: "Get", URL: target, Err: err}
+	result, err := source.DownloadHTTP(req, source.HTTPDownload{
+		Client:   r.client,
+		Writer:   io.MultiWriter(download.Writer, h.Hash()),
+		Previous: download.previous,
+		Work:     download.work,
+		Policy:   source.HTTPHelmPolicy,
+	})
+	if err == nil && !result.Unchanged {
+		result.Digest = h.Digest()
 	}
-	result.Digest, result.Size, result.MediaType = h.Digest(), size, response.Header.Get("Content-Type")
 	return result, err
 }

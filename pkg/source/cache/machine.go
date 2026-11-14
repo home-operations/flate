@@ -18,7 +18,7 @@ type machineError struct{ cause error }
 func (e *machineError) Error() string { return "machine credential acquisition failed" }
 func (e *machineError) Unwrap() error { return e.cause }
 func (e *machineError) Is(target error) bool {
-	return target == manifest.ErrMissingSecret && credentialsUnavailable(e.cause)
+	return target == manifest.ErrMissingSecret && CredentialsUnavailable(e.cause)
 }
 
 // MachineCredentialErr masks machine diagnostics while preserving typed causes.
@@ -32,7 +32,8 @@ func MachineCredentialErr(cause error) error {
 	return &machineError{cause}
 }
 
-func credentialsUnavailable(err error) bool {
+// CredentialsUnavailable leaves cancellation precedence and retry decisions to the caller.
+func CredentialsUnavailable(err error) bool {
 	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) ||
 		errors.Is(err, auth.ErrBasicCredentialNotFound) {
 		return true

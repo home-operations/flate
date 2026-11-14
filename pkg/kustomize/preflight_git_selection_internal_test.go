@@ -164,7 +164,8 @@ func testPreflightGitBaseErrorPrecedenceCase(
 	assert.FatalIf(t, err == nil, "%s", "invalid input rendered")
 	switch {
 	case testCaseInput.status != http.StatusOK:
-		if calls.Load() != 0 || !strings.Contains(err.Error(), "HTTP 404") {
+		if calls.Load() != 0 ||
+			!strings.Contains(err.Error(), "failed to fetch "+srv.URL+testCaseInput.path+" : 404 Not Found") {
 			t.Fatalf("HTTP error precedence: calls=%d error=%v", calls.Load(), err)
 		}
 

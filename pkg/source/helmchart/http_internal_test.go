@@ -621,7 +621,7 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 
 func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 	t.Parallel()
-	for _, status := range []int{200, 201, 204, 299, 300, 400, 401, 403, 404, 429, 499, 500, 599, 600} {
+	for _, status := range []int{200, 201, 204, 206, 299, 300, 304, 400, 401, 403, 404, 429, 499, 500, 599, 600} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			t.Parallel()
 			r := &httpRepository{

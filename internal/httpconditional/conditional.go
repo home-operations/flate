@@ -30,7 +30,7 @@ func Apply(req *http.Request, previous *ocispec.Descriptor) bool {
 }
 
 // Metadata requires usable prior content and a conditional final request for HTTP 304.
-// Callers MUST enforce their own success-status policy for body responses.
+// The shared source executor MUST enforce its success-status policy for body responses.
 func Metadata(req *http.Request, resp *http.Response, previous *ocispec.Descriptor) (ocispec.Descriptor, bool, error) {
 	var desc ocispec.Descriptor
 	unchanged := resp.StatusCode == http.StatusNotModified

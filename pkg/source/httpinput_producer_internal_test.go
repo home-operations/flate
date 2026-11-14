@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -27,7 +28,11 @@ func TestHttpGetURL_AcceptsLargeBody(t *testing.T) {
 	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
 		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), size)
 		body := remoteBody{Reader: reader, close: func() error { closes++; return nil }}
-		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     http.Header{"Content-Type": {"application/yaml"}},
+		}, nil
 	})
 	desc, err := c.httpGetURL(
 		t.Context(),
@@ -37,6 +42,7 @@ func TestHttpGetURL_AcceptsLargeBody(t *testing.T) {
 	if err != nil || desc.Size != size || closes != 1 {
 		t.Fatalf("large body: size=%d closes=%d error=%v, want %d bytes and one close", desc.Size, closes, err, size)
 	}
+	assert.Equal(t, desc.MediaType, "")
 }
 
 func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
@@ -133,6 +139,16 @@ func testHTTPGetURLBodyCloseErrorsCase(t *testing.T, testCaseInput testHTTPGetUR
 			!ok || status.StatusCode != http.StatusNotFound || status.Op != http.MethodGet,
 			"response facts=%+v error=%v",
 			status,
+			err,
+		)
+	}
+	if (*testCaseInput.outcome) == "read" || (*testCaseInput.outcome) == "large-read" ||
+		(*testCaseInput.outcome) == "write" {
+		operation, ok := errors.AsType[*url.Error](err)
+		assert.FatalIf(
+			t,
+			!ok || operation.Op != "Get" || operation.URL != "https://example.invalid/body",
+			"copy operation: %v",
 			err,
 		)
 	}

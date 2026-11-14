@@ -65,7 +65,7 @@ func New(ctx context.Context, root string) (*Cache, error) {
 			owners.mu.Lock()
 			o.refs--
 			owners.mu.Unlock()
-			return nil, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return nil, ctx.Err()
 		case <-o.ready:
 			return o.cache, o.err
 		}

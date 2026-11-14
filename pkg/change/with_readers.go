@@ -528,7 +528,6 @@ type hashBuffer struct {
 	sum   [sha256.Size]byte
 }
 
-//nolint:gochecknoglobals // Process-wide reuse keeps file hashing allocation-free.
 var hashBuffers = sync.Pool{New: func() any {
 	return &hashBuffer{hash: sha256.New()}
 }}

@@ -115,7 +115,6 @@ type readerFinalizer struct {
 	unresolvedPaths map[manifest.NamedResource]bool
 }
 
-//nolint:ireturn // Indexed manifests retain their concrete polymorphic types.
 func (rf *readerFinalizer) object(id manifest.NamedResource) manifest.BaseManifest {
 	if record, ok := rf.loader.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
 		return record.Declaration
@@ -193,7 +192,6 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 	id, consumer manifest.NamedResource, materialize bool,
 ) error {
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // The caller preserves cancellation error identity.
 		return err
 	}
 	if _, seen := rf.visited[id]; seen {
@@ -558,7 +556,6 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // The caller preserves cancellation error identity.
 		return nil, err
 	}
 	rf.charts[location] = names

@@ -216,7 +216,7 @@ func (r *bucketAcquisition) machineCredential(
 	}
 	value, err := r.network.AWSCredentials(ctx, provider)
 	if ctx.Err() != nil {
-		return credentials.Value{}, false, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return credentials.Value{}, false, ctx.Err()
 	}
 	if err != nil {
 		if file {

@@ -52,8 +52,6 @@ func (c *Catalog) Close() {
 }
 
 // CatalogObject borrows the declaration with its effective identity.
-//
-//nolint:ireturn // Catalog declarations retain their original manifest types.
 func (c *Catalog) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	if c == nil {
 		return nil
@@ -82,7 +80,6 @@ func (l *Loader) physicalView() physicalView {
 	}
 }
 
-//nolint:ireturn // Catalog declarations retain their original manifest types.
 func (v *physicalView) object(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
@@ -119,7 +116,6 @@ func (v *physicalView) object(
 	return v.projectObject(id, object, projection, live)
 }
 
-//nolint:ireturn // Catalog projections retain their original manifest types.
 func (v *physicalView) projectObject(
 	id manifest.NamedResource,
 	object, projection manifest.BaseManifest,
@@ -147,7 +143,6 @@ func (v *physicalView) projectObject(
 	return catalogIdentity(object, id)
 }
 
-//nolint:ireturn // Effective catalog identity preserves the concrete manifest type.
 func catalogIdentity(object manifest.BaseManifest, id manifest.NamedResource) manifest.BaseManifest {
 	if object.Named() == id {
 		return object

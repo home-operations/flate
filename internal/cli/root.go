@@ -17,7 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log" //nolint:depguard // Standard-log routing must capture or suppress dependency log output.
+	"log"
 	"log/slog"
 	"maps"
 	"os"

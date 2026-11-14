@@ -252,8 +252,6 @@ func (f *Fixture) applyOverlay(tb testing.TB, name string) {
 type borrowedStorage struct{ storage.Storer }
 
 // Load MUST borrow fixture storage so connection cleanup cannot close it.
-//
-//nolint:ireturn // The upstream loader contract requires storage.Storer.
 func (f *Fixture) Load(endpoint *url.URL) (storage.Storer, error) {
 	for _, r := range f.schema.Repositories {
 		for _, remote := range r.Remotes {

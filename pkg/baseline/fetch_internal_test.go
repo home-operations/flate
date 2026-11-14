@@ -407,7 +407,6 @@ type markerReadError struct {
 	err error
 }
 
-//nolint:ireturn // The upstream interface requires this return type.
 func (f *markerReadError) Open(name string) (billy.File, error) {
 	if name == "packed-refs" {
 		return nil, f.err

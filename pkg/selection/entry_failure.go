@@ -32,7 +32,7 @@ func (s *Session) EntryFailure(ctx context.Context, failures iter.Seq[EntryFailu
 	}
 	for failure := range failures {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		if request.Changed && source.Comparison != nil &&
 			!source.Delta.FileChanged(change.FileContext{

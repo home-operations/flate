@@ -15,7 +15,6 @@ type admissionArtifactReads struct {
 	bySource    map[manifest.NamedResource]int
 }
 
-//nolint:ireturn // The reader contract returns heterogeneous artifact implementations.
 func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
 	r.calls++
 	if r.bySource != nil {

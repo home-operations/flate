@@ -91,7 +91,6 @@ func (c *Client) prepareTemplate(
 	if err := ctx.Err(); err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		//nolint:wrapcheck // Cancellation MUST preserve the caller-visible sentinel identity.
 		return templateRequest{}, err
 	}
 	source := input.Sources.chartInput(hr)

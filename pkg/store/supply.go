@@ -75,8 +75,6 @@ func (s *Store) AddDeclaration(child Declaration) {
 }
 
 // Lookup returns the coherent representative and its declaration roles.
-//
-//nolint:ireturn // The heterogeneous store MUST preserve each manifest's concrete type.
 func (s *Store) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -119,8 +117,6 @@ func (c Child) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
 }
 
 // Lookup MUST return the object and policy from one captured authority.
-//
-//nolint:ireturn // The heterogeneous store MUST preserve each manifest's concrete type.
 func (r *ReadSet) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
 	input := r.input(id)
 	obj := r.Capture(input)

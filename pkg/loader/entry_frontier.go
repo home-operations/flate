@@ -13,7 +13,7 @@ import (
 // EntryFrontier must conservatively retain packages whose applications cannot be ruled out.
 func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact, path string) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return true, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return true, err
 	}
 	if input == nil || input.FS == nil || !input.Reads.Valid() {
 		return true, nil
@@ -42,7 +42,7 @@ func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact,
 			return !possible
 		},
 	)
-	return possible, ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	return possible, ctx.Err()
 }
 
 func (r *documentReader) frontierVisit(ctx context.Context, visit *graphVisit) bool {

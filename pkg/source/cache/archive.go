@@ -400,7 +400,7 @@ func (t *tarFS) treeIdentity(ctx context.Context) (string, error) {
 	records := make([]record, 0, len(t.nodes))
 	for _, name := range slices.Sorted(maps.Keys(t.nodes)) {
 		if err := ctx.Err(); err != nil {
-			return "", err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return "", err
 		}
 		if name == "." {
 			continue

@@ -125,10 +125,8 @@ func (a *Admission) applicationSource(
 	return resolved
 }
 
-//nolint:ireturn // SourceView consumes the manifest interface.
 func (r *entryResolution) GetObject(manifest.NamedResource) manifest.BaseManifest { return r.object }
 
-//nolint:ireturn // SourceView consumes the artifact interface.
 func (r *entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
 	if r.artifact == nil {
 		return nil
@@ -475,7 +473,7 @@ func (w *qualificationWalk) continueRoute(ctx context.Context, evidence *applica
 	return w.follow(ctx, &batch, execution.Named())
 }
 
-//nolint:ireturn,nilnil // A raw application executes through an ordinary literal Kustomization.
+//nolint:nilnil // A raw application executes through an ordinary literal Kustomization.
 func (w *qualificationWalk) execution(
 	ctx context.Context,
 	evidence *applicationEvidence,

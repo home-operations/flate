@@ -16,7 +16,7 @@ import (
 //nolint:gocognit // Finalization MUST retain contextual resolution, input hydration, and freeze ordering.
 func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool) error {
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	l.configureDocuments()
 	if l.documents.compact && l.frozen {
@@ -334,7 +334,7 @@ func (l *Loader) prepareIndexScopes(ctx context.Context, repoRoot string, freeze
 		}
 		return l.admit(ctx, repoRoot, nil)
 	}
-	return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	return ctx.Err()
 }
 
 func (l *Loader) resetDerivedProductions() {

@@ -109,7 +109,7 @@ func newBarModel(color bool) barModel {
 //nolint:gocritic // Bubble Tea requires a value snapshot rather than a shared mutable model.
 func (m barModel) Init() tea.Cmd { return m.spinner.Tick }
 
-//nolint:gocritic,ireturn // Bubble Tea requires a value snapshot and its model interface return type.
+//nolint:gocritic // Bubble Tea requires a value snapshot and its model interface return type.
 func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:

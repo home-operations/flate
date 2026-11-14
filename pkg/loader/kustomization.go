@@ -400,7 +400,6 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) builderD
 }
 
 func normalizeKustomization(k *types.Kustomization) {
-	//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
 	fix := k.Kind == types.ComponentKind && k.APIVersion == "" ||
 		len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
 	{

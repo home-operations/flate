@@ -119,7 +119,6 @@ func (s *Snapshot) childrenByParent() map[manifest.NamedResource][]manifest.Name
 	return children
 }
 
-//nolint:ireturn // Catalog witnesses MUST preserve their concrete manifest types.
 func (s *selectionSide) catalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	var object manifest.BaseManifest
 	if s.run.Facts != nil {

@@ -130,7 +130,7 @@ func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 	full := false
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		// Expanded applications MUST retain ordinary discovery of their producers.
 		for key := range l.scopes.contextual {
@@ -199,7 +199,7 @@ func (p *substitutionResolution) resolveVisit(
 	visit *graphVisit,
 ) error {
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return err
 	}
 	key := visitContext{visit.owner, visit.source, visit.graphContext, visit.file}
 	if p.visited[key] {
@@ -352,7 +352,7 @@ func (p *substitutionResolution) resolveOccurrence(
 		changed = p.resolveScalars(ctx, visit.owner, &o)
 	}
 	if err := ctx.Err(); err != nil {
-		return o, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return o, err
 	}
 	if !changed && o.Identity == occurrence.Identity && facts.source == occurrence.facts.source &&
 		facts.uncertain == occurrence.facts.uncertain {

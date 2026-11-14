@@ -20,12 +20,11 @@ func StubDNS(t *testing.T, lookup func(context.Context, string) error) {
 		t.Setenv(name, "")
 	}
 	previous := net.DefaultResolver
-	//nolint:reassign // Fixture hostnames must resolve through the process-wide DNS resolver.
 	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return &dnsConn{lookup: func(name string) error { return lookup(ctx, name) }}, nil
 	}}
 	t.Cleanup(func() {
-		net.DefaultResolver = previous //nolint:reassign // Restore the original process-wide DNS resolver.
+		net.DefaultResolver = previous
 	})
 }
 

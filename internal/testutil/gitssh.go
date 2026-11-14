@@ -152,7 +152,7 @@ func (f *GitSSH) serveSession(
 		tb.Context(),
 		st,
 		io.NopCloser(channel),
-		gitio.WriteNopCloser(channel), //nolint:forbidigo // Go-git supplies this writer adapter; io has no equivalent.
+		gitio.WriteNopCloser(channel),
 		&transport.UploadPackRequest{SkipDeltaCompression: true},
 	)
 	// Test cancellation precedes cleanup, so a finishing server MUST ignore that cancellation.

@@ -363,7 +363,7 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 	o.configureSources(true)
 	for {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return contextErr
 		}
 		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
 			return phaseErr

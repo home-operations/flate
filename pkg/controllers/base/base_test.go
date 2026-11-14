@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log" //nolint:depguard // Restoring slog.SetDefault also requires restoring the standard logger.
+	"log"
 	"log/slog"
 	"strings"
 	"sync/atomic"

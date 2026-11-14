@@ -64,8 +64,6 @@ func EncodeCatalog(object BaseManifest) ([]byte, error) {
 }
 
 // DecodeCatalog grants no execution authority; callers must hydrate authored declarations.
-//
-//nolint:ireturn // Catalog restoration preserves the sealed manifest contract.
 func DecodeCatalog(data []byte) (BaseManifest, error) {
 	var s catalogSnapshot
 	if len(data) != 0 {
@@ -135,7 +133,6 @@ func DecodeCatalog(data []byte) (BaseManifest, error) {
 	return object.catalog(s.Identity), nil
 }
 
-//nolint:ireturn // Catalog restoration preserves the sealed manifest contract.
 func (s *catalogSnapshot) helmRelease() (BaseManifest, error) {
 	var release helmReleaseCatalog
 	if err := jsonv2.Unmarshal(s.Data, &release, json.DefaultOptionsV1()); err != nil {

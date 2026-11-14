@@ -48,7 +48,6 @@ func (c *admissionClosure) materializerMatcher(demand *materializerDemand) (mani
 	}
 }
 
-//nolint:ireturn // Retained applications MUST preserve their concrete manifest types.
 func parseApplication(application string) (manifest.BaseManifest, bool) {
 	var document map[string]any
 	if json.Unmarshal([]byte(application), &document) != nil {

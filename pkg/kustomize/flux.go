@@ -170,7 +170,6 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	if err := ctx.Err(); err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
@@ -287,7 +286,6 @@ func (c *TreeCache) sourceRootFor(
 	root string,
 ) (*sourceRoot, error) {
 	if err := ctx.Err(); err != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return nil, err
 	}
 	key := struct {
@@ -480,7 +478,6 @@ func (r *renderRequest) buildDocuments(
 ) ([]manifest.DocOccurrence, error) {
 	subPath := r.request.SubPath
 	if errErr := ctx.Err(); errErr != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return nil, errErr
 	}
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
@@ -525,7 +522,6 @@ func (r *renderRequest) buildDocuments(
 		}
 	}
 	if errErr2 := ctx.Err(); errErr2 != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return nil, errErr2
 	}
 

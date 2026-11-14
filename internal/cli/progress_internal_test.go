@@ -202,7 +202,7 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 	defer func() {
 		release()
 		cleanup()
-		os.Stderr = original //nolint:reassign // The fixture restores process stderr after testing dependency-log capture.
+		os.Stderr = original
 		_ = captured.Close()
 	}()
 	<-out.probe
@@ -280,9 +280,9 @@ func TestBarWriter_ProgramExitLogging(t *testing.T) {
 	original := os.Stderr
 	quiet, err := os.CreateTemp(t.TempDir(), "program-error")
 	assert.NoError(t, err)
-	os.Stderr = quiet //nolint:reassign // The fixture redirects process stderr to exercise program-exit logging.
+	os.Stderr = quiet
 	defer func() {
-		os.Stderr = original //nolint:reassign // The fixture restores process stderr after testing dependency-log capture.
+		os.Stderr = original
 		_ = quiet.Close()
 	}()
 	var out *progressOutput

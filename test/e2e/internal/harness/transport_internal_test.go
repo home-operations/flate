@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"log" //nolint:depguard // Restoring slog.SetDefault also requires restoring the standard logger writer.
+	"log"
 	"log/slog"
 	"net"
 	"net/http"

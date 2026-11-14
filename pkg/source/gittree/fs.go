@@ -352,7 +352,7 @@ func (g *gitView) walkCommit(
 	prefix string,
 ) ([]manifest.Warning, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return nil, err
 	}
 	t, err := object.GetTree(objectStore, hash)
 	if err != nil {
@@ -394,7 +394,7 @@ func (g *gitView) walkCommit(
 
 func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 	if err := ctx.Err(); err != nil {
-		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return err
 	}
 	if g.current != nil {
 		return g.walkCurrent(ctx, prefix)
@@ -811,7 +811,6 @@ func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
-			//nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 			return err
 		}
 		if entry.Name() == gitDirectory {

@@ -441,7 +441,6 @@ func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
 	}
 }
 
-//nolint:ireturn // Planning borrows the manifest catalog contract across kinds.
 func partitionObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifest {
 	object := occurrence.Object
 	if object == nil {
@@ -453,7 +452,6 @@ func partitionObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifes
 	return object
 }
 
-//nolint:ireturn // Scoped projections retain their manifest types.
 func (s *partitionScope) source(id manifest.NamedResource) (
 	*selection.OccurrenceFacts,
 	manifest.BaseManifest,

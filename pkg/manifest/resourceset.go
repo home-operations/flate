@@ -28,8 +28,6 @@ import (
 // Inputs, InputsFrom, Resources, ResourcesTemplate, InputStrategy,
 // DependsOn, ServiceAccountName, Wait to the top level for ergonomic
 // access.
-//
-//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ResourceSet struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -59,8 +57,6 @@ func (r *ResourceSet) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *ResourceSet) WithNamespace(namespace string) BaseManifest {
 	out := *r
 	out.Namespace = namespace
@@ -140,8 +136,6 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 //
 // Static inputs use defaultValues, and OCIArtifactTag inputs use registry tags.
 // Other dynamic types require pre-baked status.exportedInputs.
-//
-//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ResourceSetInputProvider struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -166,8 +160,6 @@ func (p *ResourceSetInputProvider) Named() NamedResource {
 func (p *ResourceSetInputProvider) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest {
 	out := *p
 	out.Namespace = namespace

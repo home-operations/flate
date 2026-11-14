@@ -129,14 +129,12 @@ func yieldList(yield func(Reference) bool, values []string, f field) bool {
 	return true
 }
 
-//nolint:staticcheck // Deprecated Kustomize bases still contribute read dependencies.
 func yieldResources(k *types.Kustomization, yield func(Reference) bool) bool {
 	return yieldList(yield, k.Resources, field{".resources.*", Resource, plain}) &&
 		yieldList(yield, k.Bases, field{".bases.*", Resource, plain}) &&
 		yieldList(yield, k.Components, field{".components.*", Component, plain})
 }
 
-//nolint:staticcheck // Deprecated Kustomize patch fields still contribute read dependencies.
 func yieldPatches(k *types.Kustomization, yield func(Reference) bool) bool {
 	for i := range k.Patches {
 		if !yieldReference(yield, k.Patches[i].Path, field{".patches.*.path", File, plain}, [2]int{i}) {
@@ -366,8 +364,6 @@ func Local(root, dir, raw string) (string, bool) {
 }
 
 // PreservesOperands proves the narrow metadata-only configuration wrapper case.
-//
-//nolint:staticcheck // Deprecated Kustomize transforms still affect operand uncertainty.
 func PreservesOperands(k *types.Kustomization) bool {
 	if len(k.Patches) != 0 || len(k.PatchesJson6902) != 0 || len(k.PatchesStrategicMerge) != 0 ||
 		len(k.Replacements) != 0 || len(k.Configurations) != 0 || len(k.Crds) != 0 ||

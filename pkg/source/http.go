@@ -45,7 +45,7 @@ func DownloadHTTP(req *http.Request, download HTTPDownload) (result cache.Produc
 	//nolint:gosec // The supplied transport owns egress restrictions for caller-selected source URLs.
 	response, err := download.Client.Do(req)
 	if err != nil {
-		return result, err //nolint:wrapcheck // The HTTP client already identifies the method, target and cancellation cause.
+		return result, err
 	}
 	defer func() {
 		closeErr := response.Body.Close()

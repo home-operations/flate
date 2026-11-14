@@ -204,7 +204,6 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	}
 	sources = collectRenderSources(&frame, acceptance.Source, sources)
 	if !c.owner.CanPersistRenders() {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
 	if frame.header.Binding == "" {

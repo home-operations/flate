@@ -15,7 +15,7 @@ func (o *Orchestrator) failDependsOnCycles(ctx context.Context) error {
 func (o *Orchestrator) updateDependencyGraphFor(ctx context.Context, id manifest.NamedResource) error {
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		obj, policy := o.store.Lookup(id)
 		var buf [8]manifest.NamedResource
@@ -39,7 +39,7 @@ func (o *Orchestrator) syncPreflightFailures(ctx context.Context) error {
 	var previous map[manifest.NamedResource]string
 	for {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		paths := o.depGraph.Failures()
 		var failures map[manifest.NamedResource]string

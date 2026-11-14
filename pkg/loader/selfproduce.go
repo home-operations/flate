@@ -366,7 +366,7 @@ func (b *selfProduceBuilder) finalizeTargets(ctx context.Context, l *Loader, gen
 			production.Declaration, production.Authored = manifest.NamedResource{}, manifest.NamedResource{}
 		}
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+			return err
 		}
 		if known {
 			b.recordTarget(&target, &production)

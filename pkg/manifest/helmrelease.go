@@ -48,14 +48,11 @@ func (h HelmChart) ChartLocation() (string, bool, error) {
 	}
 }
 
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) hasSourceChartPath() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket || h.Source.Kind == KindExternalArtifact
 }
 
 // UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) UsesSourceValuesFiles() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket
 }
@@ -93,8 +90,6 @@ func (h *HelmChart) sourceInputs(files []string) chartSourceInputs {
 }
 
 // RepoFullName returns the source name prefixed by its namespace when present.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) RepoFullName() string {
 	if h.Source.Namespace == "" {
 		return h.Source.Name
@@ -103,8 +98,6 @@ func (h HelmChart) RepoFullName() string {
 }
 
 // ChartName is "<repoFullName>/<chartName>" — used as the helm chart ref.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
@@ -136,8 +129,6 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 //   - DisableSchemaValidation projects install policy.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
 //     spec.chart.spec.valuesFiles OR the referenced HelmChart CRD.
-//
-//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmRelease struct {
 	Name      string `json:"name"      yaml:"name"`
 	Namespace string `json:"namespace" yaml:"namespace"`
@@ -192,8 +183,6 @@ func (h *HelmRelease) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace
@@ -310,8 +299,6 @@ func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
 }
 
 // Equal reports whether two frozen policies admit the same accepted history.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p HelmReleaseHistoryPolicy) Equal(other HelmReleaseHistoryPolicy) bool {
 	return p.DeclaredChart == other.DeclaredChart && equalChartTemplate(p.Template, other.Template) &&
 		p.Suspend == other.Suspend &&

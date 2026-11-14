@@ -271,7 +271,6 @@ type clientCloseTransport struct {
 	closed                  int
 }
 
-//nolint:ireturn // The upstream transport contract requires a session.
 func (f *clientCloseTransport) Handshake(context.Context, *transport.Request) (transport.Session, error) {
 	return &clientCloseSession{fixture: f}, nil
 }

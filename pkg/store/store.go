@@ -601,8 +601,6 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 }
 
 // GetObject returns the manifest for id, or nil if not present.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -619,8 +617,6 @@ type Observation struct {
 }
 
 // Snapshot reads an effective object and its requested readiness observation.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()

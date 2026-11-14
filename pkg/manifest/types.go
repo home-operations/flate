@@ -193,8 +193,6 @@ type Reference struct {
 }
 
 // Clone owns the mutable containers borrowed by a reference.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) Clone() Reference {
 	r.Files = slices.Clone(r.Files)
 	r.Selector = r.Selector.DeepCopy()
@@ -206,36 +204,26 @@ func (r Reference) Clone() Reference {
 }
 
 // ContentInput reports whether a reference carries affected or required input content.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) ContentInput() bool {
 	return r.Content || r.Use == substituteFromKey && r.Name != ""
 }
 
 // IsSource classifies relation use without implying a publication binding.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) IsSource() bool {
 	return r.Use == sourceKey || r.Use == chartKey || r.Use == "artifact"
 }
 
 // BindsSource excludes a producer's generated chart from its backing inputs.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) BindsSource() bool {
 	return r.bindsSource
 }
 
 // ReadsSourceTree permits bootstrap aliases for references that read files inside a source tree.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) ReadsSourceTree() bool {
 	return r.readsSourceTree
 }
 
 // AffectedInput includes source relations even when they carry no content edge.
-//
-//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) AffectedInput() bool {
 	return r.ContentInput() || r.IsSource() || r.Use == "valuesFrom" || r.Use == "inputsFrom"
 }
@@ -365,8 +353,6 @@ func (r *RawObject) ReconcileInput(doc map[string]any) ReconcileMetadata {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {
 	out := *r
 	out.Namespace = namespace

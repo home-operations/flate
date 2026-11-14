@@ -10,18 +10,12 @@ import (
 type MapLister map[manifest.NamedResource]manifest.BaseManifest
 
 // GetObject returns the manifest stored under id, or nil if absent.
-//
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (m MapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
 // GetDeclaration returns the statically admitted fixture manifest.
-//
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (m MapLister) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
 // Lookup returns the fixture object and its declaration roles.
-//
-//nolint:ireturn // The fixture MUST implement the heterogeneous store lookup contract.
 func (m MapLister) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
 	return m[id], (store.Child{Obj: m[id]}).Policy(id)
 }
@@ -59,8 +53,6 @@ func (m MapLister) Productions(id manifest.NamedResource, index *manifest.Discov
 }
 
 // GetArtifact returns no acquired artifact for map-only fixtures.
-//
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (m MapLister) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact { return nil }
 
 // GetStatus returns no assessment for map-only fixtures.
@@ -76,8 +68,6 @@ func (m MapLister) IncomingProductions(child store.Child, _ *manifest.DiscoveryI
 }
 
 // GetEmission returns no accepted fixture output.
-//
-//nolint:ireturn // The upstream interface contract requires this return type.
 func (m MapLister) GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission) {
 	return nil, nil, store.Emission{}
 }

@@ -19,7 +19,7 @@ func runSelectedProgressLifecycleName(t *testing.T, name *string) {
 	var raw *os.File
 	defer func() {
 		captured := os.Stderr
-		os.Stderr = original //nolint:reassign // The fixture restores process stderr after testing dependency-log capture.
+		os.Stderr = original
 		if captured != original && captured != raw {
 			_ = captured.Close()
 		}
@@ -57,7 +57,7 @@ func runSelectedProgressLifecycleName(t *testing.T, name *string) {
 		f, err := os.CreateTemp(t.TempDir(), "stderr")
 		assert.NoError(t, err)
 		raw = f
-		os.Stderr = raw //nolint:reassign // The fixture redirects process stderr to exercise dependency-log capture.
+		os.Stderr = raw
 		expected = raw
 	}
 	flags := commonFlags{path: path, concurrency: 2}

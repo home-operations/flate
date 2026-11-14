@@ -155,7 +155,6 @@ func physicalOccurrence(view *selection.OccurrenceFacts) authoredOccurrence {
 	}
 }
 
-//nolint:gochecknoglobals // Immutable process seed distributes producer identities across the existing cache buckets.
 var producerFactSeed = maphash.MakeSeed()
 
 func producerBucket(object manifest.BaseManifest) uint64 {

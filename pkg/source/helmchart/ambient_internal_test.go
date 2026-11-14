@@ -123,11 +123,11 @@ func helmPipe(t *testing.T, handle func(*http.Request) (*http.Response, error)) 
 		})
 		return conn, nil
 	}
-	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
+	http.DefaultTransport = transport
 	t.Cleanup(
 		func() {
 			transport.CloseIdleConnections()
-			http.DefaultTransport = old //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+			http.DefaultTransport = old
 		},
 	)
 }

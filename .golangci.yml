@@ -116,8 +116,12 @@ linters:
             - pkg: math/rand$
               desc: Use math/rand/v2 instead, see https://go.dev/blog/randv2
         non-main files:
+          # Tests and logging owners route or restore dependency logging.
           files:
             - "!**/main.go"
+            - "!$test"
+            - "!**/internal/cli/root.go"
+            - "!**/test/e2e/internal/harness/case.go"
           deny:
             - pkg: log$
               desc: Use log/slog instead, see https://go.dev/blog/slog
@@ -375,11 +379,10 @@ linters:
         - prometheus.LinearBuckets
     nakedret:
       max-func-lines: 0
+    # Nil maps represent empty readable collections.
+    nilnil:
+      checked-types: [ptr, func, iface, chan, uintptr, unsafeptr]
     nolintlint:
-      allow-no-explanation:
-        - funlen
-        - gocognit
-        - golines
       require-explanation: true
       require-specific: true
       allow-unused: false
@@ -408,8 +411,10 @@ linters:
       forbid:
         - pattern: ^context\.Background$
           msg: context.Background belongs to internal/cli, or to documented shared work such as the remote fetch workers
+        # The go-git writer adapter is not the deprecated standard package.
         - pattern: ^ioutil\.
           msg: use the io and os packages
+          pkg: ^io/ioutil$
         - pattern: ^fmt\.Print(f|ln)?$
           msg: output goes through the CLI writer, logs through slog
         - pattern: ^log\.(Print|Fatal|Panic)
@@ -425,6 +430,11 @@ linters:
         - error
         - empty
         - stdlib
+        # A type parameter preserves the caller's concrete type.
+        - generic
+        # Manifest and artifact owners return heterogeneous implementations.
+        - ^github\.com/home-operations/flate/pkg/manifest\.BaseManifest$
+        - ^github\.com/home-operations/flate/pkg/store\.Artifact$
         - ^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$
         - ^github\.com/home-operations/flate/pkg/values\.Provider$
         - ^github\.com/home-operations/flate/pkg/source/git\.Connection$
@@ -474,6 +484,11 @@ linters:
     goconst:
       ignore-tests: true
     wrapcheck:
+      extra-ignore-sigs:
+        # Cancellation already identifies its cause.
+        - (context.Context).Err()
+        # Client URL errors already identify the method and target.
+        - (*net/http.Client).Do(
       ignore-package-globs:
         - github.com/home-operations/flate/*
   exclusions:
@@ -482,6 +497,69 @@ linters:
       - std-error-handling
       - common-false-positives
     rules:
+      # Reusable declarations provide process reuse or a stable bucket seed.
+      - linters:
+          - gochecknoglobals
+        source: ^\s*var\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(sync\.(Pool\s*\{|OnceValue\s*\()|maphash\.MakeSeed\s*\()
+      # Inline Flux specs preserve serialized field order.
+      - linters:
+          - embeddedstructfieldcheck
+        path: ^pkg/manifest/
+        text: ^embedded fields should be listed before regular fields$
+        source: ^\s*(sourcev1\.(BucketSpec|HelmChartSpec|HelmRepositorySpec|GitRepositorySpec|OCIRepositorySpec|ExternalArtifactSpec)|helmv2\.HelmReleaseSpec|kustomizev1\.KustomizationSpec|fluxopv1\.(ResourceSetSpec|ResourceSetInputProviderSpec))\s
+      # Serial fixtures temporarily control these upstream globals.
+      - linters:
+          - reassign
+        path: (_test\.go$|^internal/testutil/dns\.go$|^test/e2e/internal/harness/transport\.go$)
+        text:
+          ^reassigning variable (DefaultTransport in other package http|DefaultResolver in other package net|Stderr in other
+          package os|Local in other package time|MaxDecompressedChartSize in other package archive)$
+      # Flux still consumes these deprecated Kustomize inputs.
+      - linters:
+          - staticcheck
+        path: ^(internal/kustomizeinput/input|pkg/kustomize/generate|pkg/loader/(kustomization|occurrences|paths))\.go$
+        text: SA1019:.*(Bases|PatchesJson6902|PatchesStrategicMerge|ImageTags|HelmChartInflationGenerator|Vars|/api/builtins).*deprecated
+      # Adapter methods must implement the paired upstream signatures.
+      - path: ^(internal/(cli|testfixture|testutil)|pkg/(baseline|helm|kustomize|orchestrator|source/(git|gittree)))/
+        linters:
+          - ireturn
+        source: ^func \(
+        text:
+          ^(Update returns interface \(charm\.land/bubbletea/v2\.Model\)|Load returns interface \(github\.com/go-git/go-git/v6/storage\.Storer\)|EncodedObject
+          returns interface \(github\.com/go-git/go-git/v6/plumbing\.EncodedObject\)|Handshake returns interface \(github\.com/go-git/go-git/v6/plumbing/transport\.Session\)|IterReferences
+          returns interface \(github\.com/go-git/go-git/v6/plumbing/storer\.ReferenceIter\)|(Open|OpenFile) returns interface \(github\.com/go-git/go-billy/v6\.File\)|Chroot
+          returns interface \(github\.com/go-git/go-billy/v6\.Filesystem\)|(Open|Create) returns interface \(sigs\.k8s\.io/kustomize/kyaml/filesys\.File\))$
+      # Immutable manifest families retain value method sets.
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \(d (DiagnosticIdentity)\)
+        text: '^hugeParam: d is heavy \('
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \(r (DiagnosticReason|DiscoveryRecord|Reference)\)
+        text: '^hugeParam: r is heavy \('
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \(p (Production|EmissionPolicy|HelmReleaseHistoryPolicy)\)
+        text: '^hugeParam: p is heavy \('
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \(h (HelmChart)\)
+        text: '^hugeParam: h is heavy \('
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \(m (ReferenceMatcher)\)
+        text: '^hugeParam: m is heavy \('
+      - path: ^pkg/manifest/
+        linters:
+          - gocritic
+        source: ^func \((r|p) (DiagnosticReason|DiscoveryRecord|HelmReleaseHistoryPolicy)\) [[:alnum:]_]+\(other (DiagnosticReason|DiscoveryRecord|HelmReleaseHistoryPolicy)\)
+        text: '^hugeParam: other is heavy \('
       - path: _test\.go
         linters:
           - bodyclose

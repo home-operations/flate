@@ -36,7 +36,6 @@ type includeRepository struct {
 	fail       bool
 }
 
-//nolint:ireturn // The go-git transport requires the storage.Storer interface.
 func (f *includeRepository) Load(_ *url.URL) (storage.Storer, error) {
 	f.calls.Add(1)
 	if f.fail {

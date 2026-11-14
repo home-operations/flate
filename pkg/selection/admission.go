@@ -89,7 +89,7 @@ func (l *Session) Prepare(
 	request PrepareRequest, //nolint:gocritic // Admission retains an independent snapshot of the caller request.
 ) (*Admission, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return nil, err
 	}
 	entry := l.entry.Load()
 	currentSource := l.facts.SourceFacts(manifest.BootstrapSourceID, nil)
@@ -262,7 +262,7 @@ func (c *admissionClosure) refreshPrerequisites(
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+			return err
 		}
 		if !state.initialKnown && !state.productionsKnown {
 			state.captured = false
@@ -368,7 +368,7 @@ func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if err := ctx.Err(); err != nil {
-			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+			return err
 		}
 		if !state.initialKnown && !state.productionsKnown {
 			continue
@@ -712,7 +712,7 @@ func (c *admissionClosure) finishAdmission(
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
 		c.acquire(Demand{Identity: owner, Source: manifest.BootstrapSourceID, Root: root})
 	}
-	return c.proposal, ctx.Err() //nolint:wrapcheck // Admission cancellation preserves the original context error identity.
+	return c.proposal, ctx.Err()
 }
 
 func (c *admissionClosure) captureGeneration(request *PrepareRequest) {

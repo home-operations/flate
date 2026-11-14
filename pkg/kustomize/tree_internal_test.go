@@ -79,9 +79,9 @@ func stubHTTPTransport(tb testing.TB, transport http.RoundTripper) {
 		}()
 		return client, nil
 	}
-	http.DefaultTransport = tr //nolint:reassign // Serial remote fixtures must install their dependency transport.
+	http.DefaultTransport = tr
 	tb.Cleanup(func() {
-		http.DefaultTransport = original //nolint:reassign // Restore the process transport after the fixture.
+		http.DefaultTransport = original
 		tr.CloseIdleConnections()
 	})
 }

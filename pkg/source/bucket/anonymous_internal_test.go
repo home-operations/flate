@@ -150,11 +150,11 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	previous := http.DefaultTransport
 	transport := previous.(*http.Transport).Clone()
 	transport.TLSClientConfig = metadata.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
-	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
+	http.DefaultTransport = transport
 	t.Cleanup(
 		func() {
 			transport.CloseIdleConnections()
-			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+			http.DefaultTransport = previous
 		},
 	)
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)

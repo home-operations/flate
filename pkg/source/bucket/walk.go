@@ -183,7 +183,7 @@ func (c *bucketChunk) fetch(ctx context.Context, client *minio.Client, bucket st
 		case <-c.done:
 			return nil
 		case <-ctx.Done():
-			return ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return ctx.Err()
 		}
 	}
 	data := make([]byte, c.size)
@@ -284,7 +284,7 @@ func writeBucketChunks(ctx context.Context, tw *tar.Writer, chunks []*bucketChun
 		select {
 		case body = <-c.ready:
 		case <-ctx.Done():
-			return ctx.Err() //nolint:wrapcheck // Chunk cancellation must preserve the caller context error identity.
+			return ctx.Err()
 		}
 		if err := c.emit(tw, body); err != nil {
 			return err

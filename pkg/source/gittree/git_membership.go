@@ -147,12 +147,11 @@ func (f *membershipFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	return entries, err
 }
 
-//nolint:ireturn // The billy filesystem contract requires billy.File.
 func (f *membershipFilesystem) Open(name string) (billy.File, error) {
 	return f.OpenFile(name, os.O_RDONLY, 0)
 }
 
-//nolint:ireturn,wrapcheck // The billy filesystem contract requires billy.File and preserves filesystem error identities.
+//nolint:wrapcheck // The billy filesystem contract requires billy.File and preserves filesystem error identities.
 func (f *membershipFilesystem) OpenFile(name string, flag int, mode fs.FileMode) (billy.File, error) {
 	if err := f.err(); err != nil {
 		return nil, err
@@ -224,7 +223,6 @@ func (f *membershipRoot) ReadDir(name string) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
-//nolint:wrapcheck // Borrowed views preserve cancellation error identities.
 func (f *membershipFilesystem) err() error {
 	if f.closed {
 		return os.ErrClosed

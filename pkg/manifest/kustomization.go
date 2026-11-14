@@ -19,8 +19,6 @@ import (
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
 // (HelmReleases, HelmRepositories, ConfigMaps, ...).
-//
-//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type Kustomization struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -78,8 +76,6 @@ func (k *Kustomization) Named() NamedResource {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 	out := *k
 	out.Namespace = namespace
@@ -277,7 +273,6 @@ type kustomizationEncoder struct {
 	object  kustomizev1.Kustomization
 }
 
-//nolint:gochecknoglobals // A process-wide pool reuses render encoders.
 var kustomizationEncoders = sync.Pool{New: func() any {
 	state := new(kustomizationEncoder)
 	state.encoder = jsontext.NewEncoder(&state.buffer)

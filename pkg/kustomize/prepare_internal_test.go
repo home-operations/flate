@@ -111,10 +111,8 @@ type sourceInputFixture struct {
 	lookup   manifest.NamedResource
 }
 
-//nolint:ireturn // The source reader contract returns manifest implementations.
 func (*sourceInputFixture) GetObject(manifest.NamedResource) manifest.BaseManifest { return nil }
 
-//nolint:ireturn // The source reader contract returns heterogeneous artifacts.
 func (f *sourceInputFixture) GetArtifact(id manifest.NamedResource, _ store.ArtifactRead) store.Artifact {
 	f.lookup = id
 	return f.artifact

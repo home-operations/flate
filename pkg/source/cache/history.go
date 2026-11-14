@@ -53,7 +53,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 			identity = history.identity
 		}
 		if metadata.Descriptor.Annotations[historyIdentityAnnotation] == identity {
-			return ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+			return ctx.Err()
 		}
 	}
 	history = new(inventory.History).record(inventory.Acceptance)
@@ -133,7 +133,7 @@ type historyRecord struct {
 
 func (r *historyRecord) metadata() (map[string]string, error) {
 	if r == nil {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -244,7 +244,7 @@ func (c *Cache) ProducersForPaths(
 		return nil, &CacheError{err}
 	}
 	if !c.CanPersistRenders() || len(query) == 0 {
-		return nil, nil //nolint:nilnil // Disabled persistence or an empty query supplies no history evidence.
+		return nil, nil
 	}
 	changes := changedHistoryPaths(query)
 

@@ -19,7 +19,6 @@ func init() {
 	slug.EnableSmartTruncate = true //nolint:reassign // Flux configures the upstream slug implementation globally.
 }
 
-//nolint:gochecknoglobals // The pool reuses template buffers across executions.
 var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 // Template holds one sequential template execution context.

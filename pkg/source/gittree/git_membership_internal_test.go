@@ -391,12 +391,10 @@ func (f *membershipCountingFS) Lstat(name string) (fs.FileInfo, error) {
 	return f.Filesystem.Lstat(name)
 }
 
-//nolint:ireturn // The billy filesystem contract requires billy.File.
 func (f *membershipCountingFS) Open(name string) (billy.File, error) {
 	return f.OpenFile(name, os.O_RDONLY, 0)
 }
 
-//nolint:ireturn // The billy filesystem contract requires billy.File.
 func (f *membershipCountingFS) OpenFile(name string, flag int, mode fs.FileMode) (billy.File, error) {
 	f.opens++
 	base := filepath.Base(name)

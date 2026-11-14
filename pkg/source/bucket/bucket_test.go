@@ -190,7 +190,7 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 	previous := http.DefaultTransport
 	transport := previous.(*http.Transport).Clone()
 	t.Cleanup(func() {
-		http.DefaultTransport = previous //nolint:reassign // The process transport must be restored after all fixture workers finish.
+		http.DefaultTransport = previous
 	})
 	t.Setenv("NO_PROXY", "*")
 	t.Setenv("no_proxy", "*")
@@ -228,7 +228,7 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 		})
 		return client, nil
 	}
-	http.DefaultTransport = transport //nolint:reassign // Acquisition must use the in-memory connection within this synctest bubble.
+	http.DefaultTransport = transport
 	root := t.TempDir()
 	c, err := cache.New(t.Context(), root)
 	assert.NoError(t, err)

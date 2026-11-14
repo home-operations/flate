@@ -3,7 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
-	"log" //nolint:depguard // Restoring slog.SetDefault also requires restoring the standard logger writer.
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"

@@ -12,8 +12,6 @@ import (
 // kind that emits a chart artifact a HelmRelease can reference via
 // spec.chartRef. Distinct from the inline HelmChart projection that
 // lives next to HelmRelease.
-//
-//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmChartSource struct {
 	diagnosticOwner NamedResource
 	diagnosticPath  string
@@ -79,8 +77,6 @@ func (h *HelmChartSource) Content() any {
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
 func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace

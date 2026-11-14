@@ -405,7 +405,7 @@ func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) erro
 	if !e.generationKnown {
 		objects, err := manifest.GeneratedObjects(obj)
 		if ctx.Err() != nil {
-			return ctx.Err() //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+			return ctx.Err()
 		}
 		e.generationKnown, e.generationObject, e.generationErr = true, obj, err
 		if err != nil || len(objects) != 0 {

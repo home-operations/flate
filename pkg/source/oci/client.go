@@ -37,7 +37,7 @@ func (f *operation) acquire(
 	policy.Work = &f.work
 
 	if err := ctx.Err(); err != nil {
-		return source.PreparedFetch{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return source.PreparedFetch{}, err
 	}
 	if f.secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{access.SecretRef, access.CertSecretRef, access.ProxySecretRef} {

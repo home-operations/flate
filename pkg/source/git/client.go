@@ -98,7 +98,6 @@ func (c *Client) Fetch(ctx context.Context, st storage.Storer, remoteURL string,
 
 type streamTransport struct{ connect Transport }
 
-//nolint:ireturn // The upstream transport contract requires transport.Session.
 func (t streamTransport) Handshake(ctx context.Context, req *transport.Request) (transport.Session, error) {
 	conn, err := t.connect(ctx, TransportRequest{URL: req.URL, Command: req.Command, Protocol: int(req.Protocol)})
 	if err != nil {

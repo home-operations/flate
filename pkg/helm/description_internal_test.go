@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"log" //nolint:depguard // The fixture must capture standard-library logs emitted by Helm dependencies.
+	"log"
 	"os"
 	"strings"
 	"sync"

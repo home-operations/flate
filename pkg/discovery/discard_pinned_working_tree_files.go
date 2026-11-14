@@ -303,7 +303,7 @@ func (d *Session) prepareDemandedProducers(ctx context.Context, demands []select
 		prepared, err := d.preparePendingProducer(ctx, ks, guard)
 		if err != nil {
 			if ctx.Err() != nil {
-				return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
+				return false, ctx.Err()
 			}
 			if d.binding.Producer == ks.Named() {
 				d.binding.Failure = err

@@ -485,13 +485,9 @@ The application entry lists `source.yaml`, `generator.yaml`, `workload.yaml`, an
 Path invalidation preserves these declarations and the literal layer.
 `TestRenderTrees_ExplicitEntryIntervalSelection` uses this disk fixture for complete output, work counts, and two-run determinism.
 
-The FluxInstance end-to-end sequence remains not-run because its alternate application path renders no ConfigMap at the new path.
-Discovery owns that defect.
-Its alternate ConfigMap expectation remains present.
-The implicit Kustomization receipt case remains not-run because warm admissions lose the application receipt.
-Orchestrator receipts own that defect.
+The FluxInstance end-to-end sequence is active and compares complete output, including the alternate ConfigMap after application path invalidation.
+The implicit Kustomization receipt case is active and covers warm application receipt reuse.
 The explicit Kustomization warm selection case stays active with zero templates and one generator admission per side.
-All held bodies and expectations remain present.
 Every other assertion stays active, including every U2 witness.
 `TestRender_EntryDeclarationQualifiesOpaqueApplier` retains qualification and receipt validity proofs.
 Warm receipt evidence requires a clean VCS-stamped test build.
@@ -1522,7 +1518,7 @@ The source layout follows `wrmilling/k3s-gitops` at `dca29749e04b073f6463fdda490
 
 The declared `submodule` operation adds a gitlink at a root path in a named commit. The operation changes that commit token. A following `ref` operation selects the changed commit without changing the worktree.
 
-The Git package retains HEAD, index, status, and file-byte observations. Low-level transport, authentication, helper processes, and cache identity remain package-level proofs. The identical-spec source-store case stays skipped because changed-only selection ignores divergent revisions with identical authored files.
+The Git package retains HEAD, index, status, and file-byte observations. Low-level transport, authentication, helper processes, and cache identity remain package-level proofs. The identical-spec source-store case is active and compares both builds and their diff through separate object stores.
 
 | Case | Behavior | Cache policy |
 | --- | --- | --- |
@@ -1678,7 +1674,7 @@ The metadata-only and unused-variable differences have empty expected output.
 
 | Case | Behavior | Consumer |
 | --- | --- | --- |
-| `reach-precision/consumed-variable` | The declared music path changes in the complete workload output. | `TestE2E_ReachPrecision/consumed-variable` |
+| `reach-precision/consumed-variable` | Both builds retain complete workload output. The unfiltered diff shows the changed settings and Plex value while excluding the unrelated sibling. | `TestE2E_ReachPrecision/consumed-variable` |
 | `reach-precision/unused-variable` | An unused variable produces an empty workload diff. | `TestE2E_ReachPrecision/unused-variable` |
 | `reach-precision/metadata-only` | A reconciliation interval produces an empty workload diff. | `TestE2E_ReachPrecision/metadata-only` |
 

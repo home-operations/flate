@@ -1,0 +1,10 @@
+
+  ✗  Kustomization  apps/app  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from './one': readfile apps/one: invalid argument': recursed merging from path '@@repo@@/apps/one': may not add resource with an already registered id: ConfigMap.v1.[noGrp]/shared.default
+         duplicate resource(s) produced by multiple accumulated paths:
+         ConfigMap.v1.[noGrp]/shared.default
+         - ./apps/loose.yaml
+         - ./apps/one
+         - ./apps/two
+         select an individual overlay with -p
+
+  ✗ 1 failed

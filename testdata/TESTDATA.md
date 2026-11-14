@@ -16,6 +16,22 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`duplicate-producers/` covers complete duplicate attribution through `cli.Run`.
+Each aggregate lacks a parent `kustomization.yaml`, so rendering discovers its resources.
+The healthy base emits three ConfigMaps from two directories and one loose file.
+The failing revision makes all three producers define `ConfigMap default/shared`.
+Every case requires exit code 1 and retains the original duplicate error.
+Two serial replays compare complete streams with fresh caches and two workers.
+The expected streams follow the authored inputs and output contract independently of command output.
+
+| Case | Behavior |
+| --- | --- |
+| `duplicate-producers/mixed` | Name both directories and the loose file. |
+| `duplicate-producers/files` | Name both loose files. |
+| `duplicate-producers/changed-only` | Retain complete attribution when only changed resources render. |
+| `duplicate-producers/failed-current` | Retain attribution and suppress the diff against three healthy original objects. |
+| `duplicate-producers/failed-orig` | Retain attribution and suppress the diff against three healthy current objects. |
+
 `substitution-selection/` preserves the three supplied reproductions for issue #1531.
 The fixture harness creates both committed snapshots and both comparison directions.
 Each case compares complete stdout, stderr, and exits twice with concurrency `2`.

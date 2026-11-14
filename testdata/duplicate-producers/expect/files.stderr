@@ -1,0 +1,9 @@
+
+  ✗  Kustomization  apps/app  kustomize build ./files: accumulating resources: accumulation err='merging resources from './two.yaml': may not add resource with an already registered id: ConfigMap.v1.[noGrp]/shared.default': must build at directory: '@@repo@@/files/two.yaml': file is not directory
+         duplicate resource(s) produced by multiple accumulated paths:
+         ConfigMap.v1.[noGrp]/shared.default
+         - ./files/one.yaml
+         - ./files/two.yaml
+         select an individual overlay with -p
+
+  ✗ 1 failed

@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
@@ -423,5 +424,64 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 			warning := warningValues[warningIndex]
 			assert.Equal(t, warning.Detail[0], "side: "+string(warningSide))
 		}
+	}
+}
+
+//nolint:paralleltest // Native diff writers change process-global color settings.
+func TestRenderDocs_GeneratorFormats(t *testing.T) {
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
+		t.Run(kind, func(t *testing.T) {
+			old, current := ncm("values", "k", "before"), ncm("values", "k", "after")
+			old.Manifest["kind"], current.Manifest["kind"] = kind, kind
+			old, current = withGeneratorHash(t, new(old)), withGeneratorHash(t, new(current))
+			left, right := []Doc{old, ncm("unchanged", "k", "same")}, []Doc{current, ncm("unchanged", "k", "same")}
+			for _, format := range Formats() {
+				t.Run(string(format), func(t *testing.T) {
+					testRenderDocsGeneratorFormat(t, left, right, format)
+				})
+			}
+		})
+	}
+}
+
+func testRenderDocsGeneratorFormat(t *testing.T, left, right []Doc, format Format) {
+	t.Helper()
+	p := prepare(left, right, &Options{})
+	count := 0
+	for pair, status := range p.changes() {
+		count++
+		assert.Equal(t, status, "changed")
+		assert.Equal(t, pair.Resource, manifest.DocIdentity(right[0].Manifest))
+	}
+	assert.Equal(t, count, 1)
+	first, warnings, err := RenderDocs(left, right, Options{Format: format})
+	assert.NoError(t, err)
+	assert.Equal(t, len(warnings), 0)
+	second, _, err := RenderDocs(left, right, Options{Format: format})
+	assert.NoError(t, err)
+	assert.Diff(t, second, first)
+	if format == FormatBrief {
+		assert.Equal(t, strings.Contains(string(first), "detected"), true)
+		return
+	}
+	visible := string(first)
+	if format == FormatHTML {
+		visible = html.UnescapeString(regexp.MustCompile(`<[^>]*>`).ReplaceAllString(visible, ""))
+	}
+	for _, want := range []string{manifest.DocIdentity(left[0].Manifest).Name, manifest.DocIdentity(right[0].Manifest).Name, "before", "after"} {
+		assert.ErrorIf(t, !strings.Contains(visible, want), "%s lacks %q", format, want)
+	}
+	for _, absent := range []string{"one document added", "one document removed"} {
+		assert.ErrorIf(t, strings.Contains(string(first), absent), "%s contains %q", format, absent)
+	}
+	if format == FormatHTML {
+		assert.Equal(t, strings.Contains(string(first), "1 changed"), true)
+		assert.Equal(t, strings.Contains(string(first), "0 added"), true)
+		assert.Equal(t, strings.Contains(string(first), "0 removed"), true)
+	}
+	if format == FormatJSON {
+		changes := jsonChanges(t, left, right, &Options{})
+		assert.Equal(t, len(changes), 1)
+		assert.Equal(t, changes[0].Status, StatusChanged)
 	}
 }

@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: default
+resources: [sibling.yaml, helmrelease.yaml]
+configurations: [references.yaml]
+configMapGenerator:
+  - name: app-values
+    files: [values.yaml]
+secretGenerator:
+  - name: app-secret
+    files: [values.yaml=secret-values.yaml]

@@ -1,0 +1,65 @@
+--- ConfigMap default/demo-output
++++ ConfigMap default/demo-output
+@@ -1,8 +1,8 @@
+ apiVersion: v1
+ data:
+-  greeting: synthetic-1
++  greeting: synthetic-2
+   image: example/app:1.0.0
+-  replicas: "1"
++  replicas: "2"
+ kind: ConfigMap
+ metadata:
+   labels:
+
+--- ConfigMap default/app-values-6ct9mmbc44 (apps)
++++ ConfigMap default/app-values-6ct9mmbc44 (apps)
+@@ -1,13 +1,13 @@
+ apiVersion: v1
+ data:
+   values.yaml: |
+-    replicas: 1
++    replicas: 2
+     image: example/app:1.0.0
+ kind: ConfigMap
+ metadata:
+   labels:
+     kustomize.toolkit.fluxcd.io/name: apps
+     kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: app-values-dhk64mm4t5
++  name: app-values-6ct9mmbc44
+   namespace: default
+ 
+
+--- HelmRelease default/demo (apps)
++++ HelmRelease default/demo (apps)
+@@ -17,9 +17,9 @@
+   interval: 10m
+   valuesFrom:
+   - kind: ConfigMap
+-    name: app-values-dhk64mm4t5
++    name: app-values-6ct9mmbc44
+     valuesKey: values.yaml
+   - kind: Secret
+-    name: app-secret-c86t7k6898
++    name: app-secret-m8t749m87t
+     valuesKey: values.yaml
+ 
+
+--- Secret default/app-secret-m8t749m87t (apps)
++++ Secret default/app-secret-m8t749m87t (apps)
+@@ -1,12 +1,12 @@
+ apiVersion: v1
+ data:
+-  values.yaml: Z3JlZXRpbmc6IHN5bnRoZXRpYy0xCmltYWdlOiBleGFtcGxlL2FwcDoxLjAuMAo=
++  values.yaml: Z3JlZXRpbmc6IHN5bnRoZXRpYy0yCmltYWdlOiBleGFtcGxlL2FwcDoxLjAuMAo=
+ kind: Secret
+ metadata:
+   labels:
+     kustomize.toolkit.fluxcd.io/name: apps
+     kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: app-secret-c86t7k6898
++  name: app-secret-m8t749m87t
+   namespace: default
+ type: Opaque
+ 

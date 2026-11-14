@@ -260,6 +260,61 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		},
 		)
 	}
+	for _, side := range []Side{SideOrig, SideCurrent} {
+		t.Run("generated "+string(side), func(t *testing.T) {
+			t.Parallel()
+			parent, sibling := helmReleaseParent(), kustomizationParent()
+			old := withGeneratorHash(t, new(cmDoc(&parent, manifest.NamedResource{Name: "values"}, "before", "")))
+			current := withGeneratorHash(t, new(cmDoc(&parent, manifest.NamedResource{Name: "values"}, "after", "")))
+			extra := withGeneratorHash(t, new(cmDoc(&parent, manifest.NamedResource{Name: "extra"}, "extra", "")))
+			healthyOld := withGeneratorHash(
+				t,
+				new(cmDoc(&sibling, manifest.NamedResource{Name: "healthy"}, "before", "")),
+			)
+			healthyNew := withGeneratorHash(
+				t,
+				new(cmDoc(&sibling, manifest.NamedResource{Name: "healthy"}, "after", "")),
+			)
+			left := selectedSnapshot(&parent, []Doc{old, extra}, store.StatusInfo{})
+			right := selectedSnapshot(&parent, []Doc{current}, failedCurrent)
+			if side == SideOrig {
+				left = selectedSnapshot(&parent, []Doc{old}, failedOrig)
+				right = selectedSnapshot(&parent, []Doc{current, extra}, store.StatusInfo{})
+			}
+			left.Manifests = append(
+				left.Manifests,
+				selectedSnapshot(&sibling, []Doc{healthyOld}, store.StatusInfo{}).Manifests...)
+			right.Manifests = append(
+				right.Manifests,
+				selectedSnapshot(&sibling, []Doc{healthyNew}, store.StatusInfo{}).Manifests...)
+			comparison, err := Compare(
+				[]Group{{Orig: left, Current: right, SelectedErr: selectedErr}},
+				Options{Format: FormatJSON},
+			)
+			assert.Equal(t, errors.Is(err, selectedErr), true)
+			assert.Equal(t, len(comparison.Groups[0].Warnings), 0)
+			assert.Equal(t, len(comparison.Groups[0].Suppressed), 1)
+			note := comparison.Groups[0].Suppressed[0]
+			assert.Equal(t, note.Side, side)
+			assert.Equal(t, note.Count, 2)
+			assert.Equal(t, len(comparison.output[0].changes), 1)
+			change := comparison.output[0].changes[0]
+			assert.Equal(t, change.Status, StatusChanged)
+			assert.Equal(t, change.Name, manifest.DocIdentity(healthyNew.Manifest).Name)
+			assert.Diff(
+				t,
+				comparison.Groups[0].Output,
+				[2][]manifest.NamedResource{
+					{manifest.DocIdentity(healthyOld.Manifest)},
+					{manifest.DocIdentity(healthyNew.Manifest)},
+				},
+			)
+			var first, second bytes.Buffer
+			assert.NoError(t, comparison.Write(&first, nil))
+			assert.NoError(t, comparison.Write(&second, nil))
+			assert.Diff(t, second.Bytes(), first.Bytes())
+		})
+	}
 }
 
 type testCompareUnavailableProducerPolicyCaseInputs struct {

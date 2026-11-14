@@ -8,6 +8,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -206,6 +207,53 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 				"%v",
 				"display projection changed raw snapshot parents",
 			)
+		})
+	}
+}
+
+func TestCompare_GeneratorProducerKeys(t *testing.T) {
+	t.Parallel()
+	oldParent := Parent{NamedResource: testutil.KustomizationID("apps", "old"), Path: "before"}
+	currentParent := Parent{NamedResource: testutil.KustomizationID("apps", "current"), Path: "after"}
+	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
+	id := manifest.NamedResource{Name: "values"}
+	old := withGeneratorHash(t, new(cmDoc(&oldParent, id, "before", "")))
+	current := withGeneratorHash(t, new(cmDoc(&currentParent, id, "after", "")))
+	for _, opposite := range []bool{false, true} {
+		t.Run(strconv.FormatBool(opposite), func(t *testing.T) {
+			t.Parallel()
+			left := selectedSnapshot(&oldParent, []Doc{old}, store.StatusInfo{})
+			right := selectedSnapshot(&currentParent, []Doc{current}, store.StatusInfo{})
+			left.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{oldParent.NamedResource: key}
+			right.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{currentParent.NamedResource: key}
+			if opposite {
+				stillOwned := current
+				stillOwned.Parent = oldParent
+				right.Manifests = append(
+					right.Manifests,
+					selectedSnapshot(&oldParent, []Doc{stillOwned}, store.StatusInfo{}).Manifests...)
+			}
+			comparison, err := Compare([]Group{{Orig: left, Current: right}}, Options{Format: FormatJSON})
+			assert.NoError(t, err)
+			changes := comparison.output[0].changes
+			want := 1
+			if opposite {
+				want = 2
+			}
+			assert.Equal(t, len(changes), want)
+			for _, change := range changes {
+				if change.Status != StatusChanged {
+					assert.Equal(t, opposite, true)
+					assert.Equal(t, change.Status, StatusAdded)
+					continue
+				}
+				parent := currentParent
+				if opposite {
+					parent = oldParent
+				}
+				assert.Equal(t, change.Parent, parent)
+				assert.Equal(t, change.Name, manifest.DocIdentity(current.Manifest).Name)
+			}
 		})
 	}
 }

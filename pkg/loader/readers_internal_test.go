@@ -34,6 +34,7 @@ func TestReaderFinalizer_ConfinedSubtrees(t *testing.T) {
 		{name: "symlink missing suffix", input: "link/absent/deep", want: "inputs/absent/deep"},
 		{name: "dangling confined symlink", input: "dangling/deep", want: "inputs/absent/deep"},
 		{name: "escaped path", input: "../outside"},
+		{name: "mapped escape"},
 		{name: "absolute path", input: "/inputs"},
 		{name: "remote path", input: "https://fixture.invalid/inputs"},
 		{name: "escaped symlink", input: "escape/file"},
@@ -68,7 +69,17 @@ func TestReaderFinalizer_ConfinedSubtrees(t *testing.T) {
 			l.Index.Readers = map[string][]manifest.FileReader{}
 			rf := readerFinalizer{loader: l, repoRoot: root, sources: map[manifest.NamedResource]graphVisit{}}
 			consumer := testutil.KustomizationID("apps", "reader")
-			ref := manifest.Reference{NamedResource: source, Files: []string{tc.input}, Subtree: true}
+			path := tc.input
+			if tc.name == "mapped escape" {
+				artifact := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+				indexed, known := artifact.IndexPath(root, "../outside")
+				assert.Equal(t, indexed, "outside")
+				assert.Equal(t, known, true)
+				path, known = artifact.SourcePath(root, indexed)
+				assert.Equal(t, path, "../outside")
+				assert.Equal(t, known, true)
+			}
+			ref := manifest.Reference{NamedResource: source, Files: []string{path}, Subtree: true}
 			assert.NoError(t, rf.observe(t.Context(), &ref, consumer, true))
 			want := map[string][]manifest.FileReader{}
 			if tc.want != "" {

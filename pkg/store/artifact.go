@@ -394,6 +394,37 @@ func (a *SourceArtifact) OriginPath(file string) string {
 	return file
 }
 
+// IndexPath maps source coordinates without granting filesystem access.
+func (a *SourceArtifact) IndexPath(root, sourcePath string) (string, bool) {
+	return a.coordinatePath(root, sourcePath, true)
+}
+
+// SourcePath maps discovery coordinates without granting source membership.
+func (a *SourceArtifact) SourcePath(root, indexPath string) (string, bool) {
+	return a.coordinatePath(root, indexPath, false)
+}
+
+func (a *SourceArtifact) coordinatePath(root, path string, toIndex bool) (string, bool) {
+	if a == nil || a.LocalPath == "" || root == "" {
+		return filepath.ToSlash(filepath.Clean(path)), true
+	}
+	from, to := a.OriginPath(a.LocalPath), root
+	if from == to {
+		return filepath.ToSlash(filepath.Clean(path)), true
+	}
+	if !toIndex {
+		from, to = to, from
+	}
+	if path != "." && path != "" {
+		from = filepath.Join(from, filepath.FromSlash(path))
+	}
+	relative, err := filepath.Rel(to, from)
+	if err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(relative), true
+}
+
 // HistoryIdentity identifies a qualified source family across changed filesystem generations.
 func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest.SourceIdentity {
 	if a == nil || a.FS == nil || !a.Reads.Valid() {

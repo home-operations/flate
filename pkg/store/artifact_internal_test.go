@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"io/fs"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 
@@ -13,6 +14,45 @@ import (
 type hookFS struct{ open func(string) (fs.File, error) }
 
 func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
+
+func TestSourceArtifact_Coordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, root, source, index string
+		input                     *SourceArtifact
+		known                     bool
+	}{
+		{name: "equal", root: "/work", input: &SourceArtifact{LocalPath: "/work"}, source: "file", index: "file", known: true},
+		{name: "normalized", root: "/work", input: &SourceArtifact{LocalPath: "/work"}, source: "dir/../file", index: "file", known: true},
+		{name: "nested", root: "/work/nested", input: &SourceArtifact{LocalPath: "/work"}, source: "nested/file", index: "file", known: true},
+		{name: "source directory", root: "/work", input: &SourceArtifact{LocalPath: "/work/nested"}, source: ".", index: "nested", known: true},
+		{name: "index directory", root: "/work/nested", input: &SourceArtifact{LocalPath: "/work"}, source: "nested", index: ".", known: true},
+		{name: "empty source directory", root: "/work", input: &SourceArtifact{LocalPath: "/work/nested"}, index: "nested", known: true},
+		{name: "alias", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", InputAlias: true, Content: "pinned"}, source: "nested/file", index: "file", known: true},
+		{name: "mutable", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work"}, source: "nested/file", index: "file", known: true},
+		{name: "pinned", root: "/work", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", Content: "pinned"}, source: "file", index: "../cache/file", known: true},
+		{name: "external", root: "/work/nested", input: &SourceArtifact{LocalPath: "/other"}, source: "file", index: "../../other/file", known: true},
+		{name: "absent discovery root", input: &SourceArtifact{LocalPath: "/work"}, source: "dir/../file", index: "file", known: true},
+		{name: "absent source root", root: "/work", input: &SourceArtifact{}, source: "dir/../file", index: "file", known: true},
+		{name: "nil artifact", root: "/work", source: "dir/../file", index: "file", known: true},
+		{name: "incompatible source root", root: "/work", input: &SourceArtifact{LocalPath: "relative"}, source: "file"},
+		{name: "incompatible discovery root", root: "relative", input: &SourceArtifact{LocalPath: "/work"}, source: "file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			indexed, known := tc.input.IndexPath(tc.root, tc.source)
+			assert.Equal(t, indexed, tc.index)
+			assert.Equal(t, known, tc.known)
+			source, known := tc.input.SourcePath(tc.root, tc.index)
+			want := ""
+			if tc.known {
+				want = filepath.ToSlash(filepath.Clean(tc.source))
+			}
+			assert.Equal(t, source, want)
+			assert.Equal(t, known, tc.known)
+		})
+	}
+}
 
 func TestArtifactValueEqual_SourceFacts(t *testing.T) {
 	t.Parallel()

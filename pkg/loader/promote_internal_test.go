@@ -3,6 +3,7 @@ package loader
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	internalkustomize "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -355,6 +357,55 @@ spec:
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.File, tc.file)
 			assert.Diff(t, record.Inputs, tc.inputs)
+		})
+	}
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mapping_failed=%t", failed), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			generator := `apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: apps}
+spec:
+  artifacts: [{name: app}]
+`
+			st := store.New()
+			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+				"generator.yaml": {Data: []byte(generator)},
+				"value.txt":      {Data: []byte("unchanged")},
+			}}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			l := New(st)
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			current := *input
+			if failed {
+				current.InputAlias, current.LocalRoot = true, "relative"
+			}
+			l.Options.Changes, err = change.Detect(t.Context(), input, &current, change.DetectConfig{})
+			assert.NoError(t, err)
+			st.SetArtifact(manifest.BootstrapSourceID, &current)
+			l.documents.compact = true
+			assert.Equal(t, l.SourceFacts(manifest.BootstrapSourceID, nil).Paired, true)
+			docs := builtObjectsForTest(t, strings.Replace(generator, "name: app", "name: other", 1))
+			record, _ := l.builtRecord(
+				&BuiltInput{Root: root, Source: manifest.BootstrapSourceID},
+				docs[0].Obj,
+				&builtInputs{
+					inputs: []string{"generator.yaml", "value.txt"},
+					shared: []string{"value.txt"},
+				},
+				"kustomization.yaml",
+			)
+			want := "generator.yaml"
+			if failed {
+				want = "kustomization.yaml"
+			}
+			assert.Equal(t, record.File, want)
+			if !failed {
+				assert.Diff(t, record.Inputs, []string{"value.txt"})
+			}
 		})
 	}
 }

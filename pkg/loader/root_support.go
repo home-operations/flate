@@ -37,13 +37,13 @@ func rootSupport(
 	if evidence.Scope.Application {
 		location := SourceView(objects, evidence.Scope.ApplicationSource, sourceRoot)
 		evidence.Scope.LocalApplication = !location.Pinned && !location.External
-		target := filepath.Join(location.Path, evidence.Scope.ApplicationPath)
 		input, _ := objects.GetArtifact(evidence.Scope.ApplicationSource, store.ArtifactContent).(*store.SourceArtifact)
-		if input != nil {
-			target = input.OriginPath(target)
+		evidence.Scope.Claim = ""
+		if coordinate, known := input.IndexPath(sourceRoot, evidence.Scope.ApplicationPath); known {
+			evidence.Scope.Claim = coordinate + "/"
+		} else {
+			evidence.Scope.LocalApplication = false
 		}
-		coordinate, _ := filepath.Rel(sourceRoot, target)
-		evidence.Scope.Claim = filepath.ToSlash(coordinate) + "/"
 	}
 	captureRootSources(evidence, objects)
 }

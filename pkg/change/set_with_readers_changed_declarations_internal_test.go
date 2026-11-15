@@ -116,7 +116,23 @@ func TestSet_InputVisibilityAvailability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			set := NewSet([]string{".krmignore"})
+			set, err := Detect(
+				t.Context(),
+				&store.SourceArtifact{
+					LocalPath:  "/before/selected",
+					LocalRoot:  "/before",
+					InputAlias: true,
+					FS:         fstest.MapFS{".krmignore": {Data: []byte("before")}},
+				},
+				&store.SourceArtifact{
+					LocalPath:  "/after/selected",
+					LocalRoot:  "/after",
+					InputAlias: true,
+					FS:         fstest.MapFS{".krmignore": {Data: []byte("after")}},
+				},
+				DetectConfig{},
+			)
+			assert.NoError(t, err)
 			indexes := [2]*manifest.DiscoveryIndex{{Visibility: tc.before}, {Visibility: tc.after}}
 			resolved, err := set.WithReaders(
 				t.Context(), [2]*manifest.DiscoveryIndex{
@@ -133,6 +149,18 @@ func TestSet_InputVisibilityAvailability(t *testing.T) {
 			assert.Diff(t, maps.Collect(resolved.Inputs(manifest.NamedResource{})), want)
 			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 			assert.Diff(t, resolved.Paths(), []string{".krmignore"})
+			for _, index := range indexes {
+				index.Readers = map[string][]manifest.FileReader{
+					"../a.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}},
+				}
+			}
+			bound, err := set.WithReaders(t.Context(), indexes,
+				[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
+			assert.NoError(t, err)
+			if tc.want {
+				want[id] = InputChange{File: "a.yaml"}
+			}
+			assert.Diff(t, maps.Collect(bound.Inputs(manifest.NamedResource{})), want)
 		})
 	}
 }
@@ -397,8 +425,8 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 	}
 	set, err := Detect(
 		t.Context(),
-		&store.SourceArtifact{FS: before},
-		&store.SourceArtifact{FS: after},
+		&store.SourceArtifact{LocalPath: "/before/selected", LocalRoot: "/before", InputAlias: true, FS: before},
+		&store.SourceArtifact{LocalPath: "/after/selected", LocalRoot: "/after", InputAlias: true, FS: after},
 		DetectConfig{},
 	)
 	assert.NoError(t, err)
@@ -417,4 +445,19 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 		want[(*testCaseInput.id)] = InputChange{File: "a/input.yaml", Unbound: true}
 	}
 	assert.Diff(t, maps.Collect(resolved.Inputs(manifest.NamedResource{})), want)
+	reader := testutil.KustomizationID("apps", "reader")
+	indexes := [2]*manifest.DiscoveryIndex{{Visibility: left}, {Visibility: right}}
+	for _, index := range indexes {
+		index.Readers = map[string][]manifest.FileReader{
+			"../a/input.yaml": {{Reader: reader, Source: manifest.BootstrapSourceID}},
+		}
+	}
+	bound, err := set.WithReaders(t.Context(), indexes,
+		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
+	assert.NoError(t, err)
+	want[reader] = InputChange{File: "a/input.yaml"}
+	if *testCaseInput.last {
+		want[*testCaseInput.id] = InputChange{File: "a/input.yaml"}
+	}
+	assert.Diff(t, maps.Collect(bound.Inputs(manifest.NamedResource{})), want)
 }

@@ -287,4 +287,28 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 		data,
 		err,
 	)
+	for _, tc := range []struct {
+		name, origin, content, want string
+		alias                       bool
+	}{
+		{name: "mutable", origin: root, want: ".."},
+		{name: "alias", origin: root, content: "complete", want: "..", alias: true},
+		{name: "copied_content", origin: root, content: "complete", want: "."},
+		{name: "completed_source", origin: filepath.Join(root, "copied"), content: "complete", want: "../copied"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			artifact := &store.SourceArtifact{
+				LocalPath: filepath.Join(root, "copied"), LocalRoot: tc.origin,
+				Content: tc.content, InputAlias: tc.alias, FS: input.FS,
+			}
+			copied := documentReader{}
+			copied.setSources(map[string]*store.SourceArtifact{artifact.LocalPath: artifact})
+			assert.Equal(t, copied.localBase(artifact.LocalPath, filepath.Join(root, "selected")), tc.want)
+			probe := new(copied).input(filepath.Join(artifact.LocalPath, "probe"))
+			data, err := fs.ReadFile(probe.fs, probe.name)
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "shared")
+		})
+	}
 }

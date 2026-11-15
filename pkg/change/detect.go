@@ -285,28 +285,6 @@ type DetectConfig struct {
 	Candidates map[string]bool
 }
 
-// FileContext supplies source coordinates without granting execution membership.
-type FileContext struct {
-	Root, Origin, ToIndex string
-	Input                 *store.SourceArtifact
-	Paired                bool
-}
-
-// FileChanged preserves absent comparison evidence as unchanged.
-func (s *Set) FileChanged(location FileContext, file string) bool {
-	if s == nil {
-		return false
-	}
-	if location.Paired && location.Input != nil {
-		if location.ToIndex == "." {
-			return s.Contains(filepath.ToSlash(filepath.Clean(file)))
-		}
-		relative, err := filepath.Rel(location.Origin, filepath.Join(location.Root, filepath.FromSlash(file)))
-		return err == nil && s.Contains(filepath.ToSlash(relative))
-	}
-	return s.Contains(file)
-}
-
 // Detect compares admitted filesystems under each side's Flux ignore policy.
 func Detect(ctx context.Context, before, after *store.SourceArtifact, config DetectConfig) (*Set, error) {
 	return detect(ctx, [2]*store.SourceArtifact{before, after}, config, false)

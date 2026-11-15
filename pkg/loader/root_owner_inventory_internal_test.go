@@ -23,6 +23,10 @@ func TestRootOwners_RelativeSourceBoundary(t *testing.T) {
 		owner.Named(): {Productions: []manifest.Production{{Owner: factory}}},
 	}}
 	owners := rootCoveringFacts(st, index)
+	input := &store.SourceArtifact{LocalPath: "."}
+	mapped, known := input.IndexPath("nested", "input.yaml")
+	assert.Equal(t, mapped, "../input.yaml")
+	assert.Equal(t, known, true)
 	for _, tc := range []struct {
 		name    string
 		file    string
@@ -31,6 +35,7 @@ func TestRootOwners_RelativeSourceBoundary(t *testing.T) {
 		{name: "descendant", file: "nested/input.yaml", covered: true},
 		{name: "source itself", file: ".", covered: true},
 		{name: "parent", file: "../input.yaml"},
+		{name: "mapped parent", file: mapped},
 		{name: "absolute", file: filepath.Join(t.TempDir(), "input.yaml")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -3,7 +3,6 @@ package selection
 import (
 	"context"
 	"path"
-	"path/filepath"
 	"testing"
 
 	_ "github.com/home-operations/flate/internal/kustomize"
@@ -167,7 +166,7 @@ func (f *solverFacts) SourceFacts(id manifest.NamedResource, reads *store.ReadSe
 	facts.Context, facts.Source = f.context, id
 	facts.Changes, facts.Snapshots, facts.Declarations = f.changes.ForSource(id)
 	facts.Delta, facts.Files = facts.Changes, sourceFilesForTest(facts.Changes.Paths())
-	facts.Origin, facts.ToIndex = f.context.Root, "."
+	facts.Origin = f.context.Root
 	var objects interface {
 		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 		GetObject(manifest.NamedResource) manifest.BaseManifest
@@ -189,7 +188,6 @@ func (f *solverFacts) SourceFacts(id manifest.NamedResource, reads *store.ReadSe
 	}
 	if facts.Input != nil {
 		facts.Origin = facts.Input.OriginPath(facts.Input.LocalPath)
-		facts.ToIndex, _ = filepath.Rel(f.context.Root, facts.Origin)
 	}
 	if reads != nil {
 		previous, known := f.inputs[id]

@@ -55,7 +55,12 @@ func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
 		facts.Scope.ApplicationSource, facts.Scope.ApplicationPath = application.Source, application.Path
 		location := c.boundSource(application.Source)
 		facts.Scope.LocalApplication = !location.Pinned && !location.External
-		facts.Scope.Claim = c.fileCoordinate(filepath.Join(location.Origin, application.Path)) + "/"
+		facts.Scope.Claim = ""
+		if coordinate, known := location.Input.IndexPath(c.context.Root, application.Path); known {
+			facts.Scope.Claim = coordinate + "/"
+		} else {
+			facts.Scope.LocalApplication = false
+		}
 	}
 	if Root(facts).NeedsOwnerSupport {
 		c.captureRootOwners(&facts)

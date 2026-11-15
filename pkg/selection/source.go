@@ -2,7 +2,6 @@ package selection
 
 import (
 	"context"
-	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -42,7 +41,6 @@ type SourceFacts struct {
 	ConfiguredInput      *store.SourceArtifact
 	Origin               string
 	Path                 string
-	ToIndex              string
 	Files                []SourceFile
 	Paired, InitialKnown bool
 	Pinned, External     bool
@@ -67,33 +65,4 @@ type census interface {
 	RootEvidence(manifest.NamedResource, *store.ReadSet, bool) RootEvidence
 	ProducerFacts(manifest.BaseManifest) ProducerFacts
 	SourceFacts(manifest.NamedResource, *store.ReadSet) SourceFacts
-}
-
-// Coordinates projects an absolute path through the captured source origin.
-//
-//nolint:gocritic // Both coordinate spaces MUST remain explicit in the public result.
-func (f *SourceFacts) Coordinates(root, path string) (string, string) {
-	art := f.Input
-	sourceRoot := root
-	if art != nil {
-		sourceRoot = art.LocalPath
-	}
-	rel, err := filepath.Rel(sourceRoot, path)
-	if err != nil {
-		return "", ""
-	}
-	relative := filepath.ToSlash(rel)
-	indexed := relative
-	if f.ToIndex != "." {
-		physical := path
-		if art != nil && f.Origin != art.LocalPath {
-			physical = filepath.Join(f.Origin, rel)
-		}
-		rel, err = filepath.Rel(root, physical)
-		if err != nil {
-			return "", ""
-		}
-		indexed = filepath.ToSlash(rel)
-	}
-	return relative, indexed
 }

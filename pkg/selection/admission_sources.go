@@ -39,6 +39,9 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 		}
 		for _, file := range evidence.Files {
 			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
+			if file.Indexed == "" {
+				continue
+			}
 			if !yield(file.Indexed) {
 				return
 			}
@@ -87,7 +90,6 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 		&completeChangedClaimState{
 			reader:         &reader,
 			file:           &file,
-			evidence:       evidence,
 			delta:          &delta,
 			input:          &input,
 			contentChanged: &contentChanged,
@@ -112,7 +114,16 @@ func (c *admissionClosure) coordinates(pValue *manifest.Production) productionCo
 
 	if filepath.IsAbs(p.Path) {
 		evidence := c.boundSource(p.Source)
-		relative, indexed := evidence.Coordinates(c.context.Root, p.Path)
+		root := c.context.Root
+		if evidence.Input != nil {
+			root = evidence.Input.LocalPath
+		}
+		relative, err := filepath.Rel(root, p.Path)
+		if err != nil {
+			return productionCoordinates{}
+		}
+		relative = filepath.ToSlash(relative)
+		indexed, _ := evidence.Input.IndexPath(c.context.Root, relative)
 		return productionCoordinates{relative: relative, indexed: indexed}
 	}
 	return productionCoordinates{relative: p.File, indexed: p.File}
@@ -133,6 +144,9 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 		return false
 	}
 	coordinates3 := c.coordinates(new(p))
+	if coordinates3.indexed == "" {
+		return false
+	}
 	if paired {
 		return delta.Contains(coordinates3.relative)
 	}
@@ -181,7 +195,6 @@ func (c *admissionClosure) reverse(
 type completeChangedClaimState struct {
 	reader         *manifest.FileReader
 	file           *string
-	evidence       *SourceFacts
 	delta          **change.Set
 	input          **store.SourceArtifact
 	contentChanged *func(reader manifest.FileReader) bool
@@ -208,14 +221,11 @@ func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState
 	record := c.contentRecord(scope.reader.Reader)
 	if roots, known := record.ContentRoots[scope.reader.Source]; known {
 		if (*scope.input) != nil {
-			relative, err := filepath.Rel(
-				scope.evidence.Origin,
-				filepath.Join(c.context.Root, filepath.FromSlash((*scope.file))),
-			)
-			if err != nil {
+			relative, known := (*scope.input).SourcePath(c.context.Root, *scope.file)
+			if !known {
 				return false
 			}
-			(*scope.file) = filepath.ToSlash(relative)
+			(*scope.file) = relative
 		}
 		return slices.ContainsFunc(roots, func(root string) bool {
 			return root == "." || root == "" || manifest.HasEnvsubstReference(root) || (*scope.file) == root ||
@@ -288,28 +298,20 @@ func (c *admissionClosure) fileOwnersUnchanged(indexed string, source manifest.N
 	})
 }
 
-func (c *admissionClosure) comparisonIndexedFile(
-	file string,
-	source manifest.NamedResource,
-	input *store.SourceArtifact,
-	paired bool,
-) string {
-	indexed := file
+func (c *admissionClosure) comparisonIndexedFile(file string, input *store.SourceArtifact, paired bool) string {
 	if paired && input != nil {
-		indexed = c.coordinates(
-			new(manifest.Production{
-				Source: source,
-				File:   file,
-				Path:   filepath.Join(input.LocalPath, filepath.FromSlash(file)),
-			}),
-		).indexed
+		indexed, _ := input.IndexPath(c.context.Root, file)
+		return indexed
 	}
-	return indexed
+	return file
 }
 
 func (c *admissionClosure) comparisonInputLocal(evidence *SourceFacts, delta *change.Set, file string) bool {
-	base := filepath.ToSlash(evidence.ToIndex)
-	if base == "" || base != "." && file != base && !strings.HasPrefix(file, base+"/") {
+	base, known := evidence.Input.IndexPath(c.context.Root, ".")
+	if !known {
+		return false
+	}
+	if base != "." && file != base && !strings.HasPrefix(file, base+"/") {
 		return false
 	}
 	_, origins, _ := delta.ForSource(manifest.BootstrapSourceID)
@@ -367,24 +369,21 @@ func (c *admissionClosure) comparisonRecordChanged(
 		scope.dependency,
 	); changed.Unbound &&
 		(located || len(c.facts.SelectionIndex().Claims) != 0 || len(c.facts.SelectionIndex().Readers) != 0) {
-		indexed := c.comparisonIndexedFile(file, scope.source, scope.input, scope.paired)
-		if located {
-			if indexed != c.fileCoordinate(
-				filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)),
-			) {
-				return false
-			}
-		} else if c.fileOwnersUnchanged(indexed, scope.source) {
+		indexed := c.comparisonIndexedFile(file, scope.input, scope.paired)
+		if indexed == "" {
+			return false
+		}
+		if located && indexed != c.fileCoordinate(
+			filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)),
+		) {
+			return false
+		}
+		if !located && c.fileOwnersUnchanged(indexed, scope.source) {
 			return false
 		}
 	}
-	if !scope.paired {
-		if scope.input == nil {
-			return false
-		}
-		if !c.comparisonInputLocal(scope.evidence, scope.delta, file) {
-			return false
-		}
+	if !scope.paired && (scope.input == nil || !c.comparisonInputLocal(scope.evidence, scope.delta, file)) {
+		return false
 	}
 	return c.inputSourceMatches(id, scope.consumer, scope.source)
 }

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -91,6 +93,7 @@ type testRenderCacheFramesCaseInputs struct {
 
 func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFramesCaseInputs) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"),
@@ -106,7 +109,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		source.Key, source.Content = "immutable-pin", "immutable-generation"
 		source.Revision, source.Digest = "revision", "digest"
 	}
-	req := RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: source, Label: root, SubPath: ".", Spec: spec}
 	var fresh []map[string]any
 	var freshErr error
 	if testCaseInput.tc.corrupt {
@@ -137,7 +140,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		{
 			recordErr := cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt22},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt22},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -163,7 +166,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 			{
 				recordErr := cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt23},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt23},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -203,7 +206,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 			{
 				recordErr := cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt24},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt24},
 				)
 				assert.NoError(t, recordErr)
 			}

@@ -58,6 +58,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 	testCaseInput *string,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "remote data")
 	}))
@@ -117,7 +118,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		if linked != nil {
 			artifact.FS = linked
 		}
-		return RenderRequest{Source: artifact, Label: root, SubPath: ".", Spec: demoSpec}
+		return RenderRequest{Source: artifact, Label: root, SubPath: ".", Spec: spec}
 	}
 	c := newCache()
 	rec := newReadSet(root)
@@ -174,7 +175,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		{
 			recordErr := c.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt30},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt30},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -220,7 +221,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		{
 			recordErr := c.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt31},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt31},
 			)
 			assert.NoError(t, recordErr)
 		}

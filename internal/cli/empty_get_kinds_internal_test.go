@@ -9,7 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetAll_EmptyKinds(t *testing.T) {
 	for _, kinds := range []string{"ks", "hr", "empty"} {
 		t.Run(kinds, func(t *testing.T) { runGetAllEmptyKindsKinds(t, &kinds) })

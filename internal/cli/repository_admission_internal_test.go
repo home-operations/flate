@@ -15,7 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_FormatZeroRepositoryRoot(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	for _, tc := range []struct {
@@ -96,7 +96,7 @@ metadata:
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SelectedAncestorOpenFailure(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	for _, mode := range []string{"ordinary", "baseline", "before directory", "current directory"} {

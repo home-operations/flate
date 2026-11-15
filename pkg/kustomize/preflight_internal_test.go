@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -354,8 +356,9 @@ namespace: my-app
 // cap must succeed. Guards against off-by-one in the LimitReader+overflow
 // pattern.
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest // Each scheme case replaces http.DefaultTransport with the test server transport.
 func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	for _, scheme := range []string{"HTTP", "HtTp", "HTTPS", "hTtPs"} {
 		t.Run(scheme, func(t *testing.T) {
 			var hits atomic.Int64
@@ -370,8 +373,8 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 				srv = httptest.NewServer(handler)
 			}
 			t.Cleanup(srv.Close)
-			//nolint:gocritic // The replacement scheme must retain the URL colon.
-			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
+			_, address, _ := strings.Cut(srv.URL, ":")
+			url := scheme + ":" + address + "/cm.yaml"
 			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
 			original := http.DefaultTransport
@@ -383,7 +386,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 				Render(
 					t.Context(),
 					cache,
-					RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec},
+					RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec},
 					sourcecache.RetryConfig{},
 				),
 			)

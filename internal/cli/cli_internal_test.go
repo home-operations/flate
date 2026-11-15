@@ -95,7 +95,7 @@ data:
 	return k8s
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GroupDefaultsToAll(t *testing.T) {
 	elapsed := regexp.MustCompile(` {3}\d+\.\d+s\n$`)
 	for _, group := range []string{"build", "diff", "get", "test"} {
@@ -150,7 +150,7 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 // `--log-level dbug` (a common typo) ran at info and the user
 // thought debug output was simply quiet.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
 	runCLIResult6 := runCLI(t, "build", "all", "--log-level", "bogus", "--path", ".")
 	stderr, code := runCLIResult6.stderr, runCLIResult6.code
@@ -167,7 +167,7 @@ func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
 // when --path is empty (the verb code defaults --path to "." so we
 // can't easily make it empty, but a non-existent dir reliably fails).
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_MissingPathErrors(t *testing.T) {
 	runCLIResult7 := runCLI(t, "build", "all", "--path", "/nonexistent/path/here")
 	stderr, code := runCLIResult7.stderr, runCLIResult7.code
@@ -175,7 +175,7 @@ func TestRun_MissingPathErrors(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(stderr, "flate error"), "error message missing prefix: %q", stderr)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BuildAll(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult8 := runCLI(t, "build", "all", "--path", path)
@@ -186,7 +186,7 @@ func TestRun_BuildAll(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
 	runCLIResult9 := runCLI(t, "build", "all", "--path", path, "-o", "json")
@@ -212,7 +212,7 @@ func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 // TestRun_BuildKS_RejectsBadOutput exercises the -o enum on the build
 // subcommand: build accepts yaml + json, not name.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BuildKS_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult10 := runCLI(t, "build", "ks", "--path", path, "-o", "name")
@@ -308,7 +308,7 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult14 := runCLI(
@@ -327,7 +327,7 @@ func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	assert.ErrorIf(t, strings.TrimSpace(stdout) != "[]", "empty JSON render = %q, want []", stdout)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetKS(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, wantPath string
@@ -342,7 +342,7 @@ func TestRun_GetKS(t *testing.T) {
 
 // TestRun_GetKS_NameFilter exercises the positional arg filter.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetKS_NameFilter(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult15 := runCLI(t, "get", "ks", "apps", "--path", path)
@@ -351,7 +351,7 @@ func TestRun_GetKS_NameFilter(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(stdout, "apps"), "name filter dropped the matching object:\n%s", stdout)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult16 := runCLI(t, "get", "ks", "apps", "--path", path, "-l", "app.kubernetes.io/name=other")
@@ -366,7 +366,7 @@ func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
 	assert.ErrorIf(t, strings.Contains(stdout, "apps"), "label mismatch should filter out apps:\n%s", stdout)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult17 := runCLI(t, "get", "ks", "apps", "--path", path, "-n", "other")
@@ -377,7 +377,7 @@ func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 
 // TestRun_GetKS_YAML exercises -o yaml on a list verb.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetKS_YAML(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(
@@ -411,7 +411,7 @@ func TestRun_GetKS_YAML(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult20 := runCLI(t, "get", "all", "--path", path, "-o", "diff")
@@ -420,7 +420,7 @@ func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(stderr, "must be one of"), "expected validation error, got %q", stderr)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetAll_Yaml(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult21 := runCLI(t, "get", "all", "--path", path, "-o", "yaml")
@@ -430,7 +430,7 @@ func TestRun_GetAll_Yaml(t *testing.T) {
 		strings.Contains(stdout, "kustomizations:"), "object listing missing Kustomization:\n%s", stdout)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
 	runCLIResult22 := runCLI(t, "get", "all", "--path", path, "-o", "json", "-n", "alpha")
@@ -452,7 +452,7 @@ func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 
 // TestRun_GetImages_RejectsBadOutput verifies the -o diff rejection.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult23 := runCLI(t, "get", "images", "--path", path, "-o", "diff")
@@ -497,7 +497,7 @@ data:
 	return k8s
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_AdvisoryDestinations(t *testing.T) {
 	k8s := writeUnreadableSecretFixture(t)
 
@@ -516,7 +516,7 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(
@@ -532,7 +532,7 @@ func TestRun_TestAll(t *testing.T) {
 	assert.Equal(t, strings.Contains(stdout, "failed") && strings.Contains(stdout, "hidden"), true)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	path := writeMultiNamespaceFixture(t)
 	for _, tc := range []struct {
@@ -575,7 +575,7 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
 	path := writeUnreadableSecretFixture(t)
 	want := errors.New("stdout closed")
@@ -597,7 +597,7 @@ func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	path := writeFixture(t)
 	assert.NoError(t, os.Remove(filepath.Join(path, "apps", "cm.yaml")))
@@ -628,7 +628,7 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 // TestRun_DiffKS_NoOrigErrors covers the diff-without-path-orig path:
 // diff must reject when no baseline is supplied.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
 	path := writeFixture(t)
 	runCLIResult28 := runCLI(t, "diff", "ks", "--path", path)
@@ -637,7 +637,7 @@ func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(stderr, "path-orig"), "error should mention --path-orig: %q", stderr)
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	current := writeFixture(t)
@@ -674,7 +674,7 @@ func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 	current := writeMultiNamespaceFixture(t)
 	orig := t.TempDir()
@@ -787,7 +787,7 @@ func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 // style plus the plain unified diff routes to its renderer when selected
 // via -o, end-to-end.
 //
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestDiff_OutputStyles(t *testing.T) {
 	current := writeFixture(t)
 	orig := t.TempDir()

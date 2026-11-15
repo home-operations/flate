@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_HelmOptions(t *testing.T) {
 	root := writeHelmOptionsFixture(
 		t,

@@ -96,6 +96,7 @@ func testRenderRemoteCacheReachabilityCancellationDuringLocalMismatch(t *testing
 func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	var version, hits atomic.Int32
 	var unavailable, blocked atomic.Bool
 	entered := make(chan struct{}, 1)
@@ -140,7 +141,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		return c
 	}
 	request := func() RenderRequest {
-		return RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
+		return RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
 	}
 	version.Store(1)
 	c := newCache()
@@ -149,7 +150,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		{
 			recordErr := c.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt28},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt28},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -225,7 +226,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		{
 			recordErr := c.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt29},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt29},
 			)
 			assert.NoError(t, recordErr)
 		}

@@ -123,7 +123,7 @@ metadata: {name: after}
 	assert.Equal(t, docs[3].Document["retained"], any(true))
 }
 
-//nolint:paralleltest // allocation measurements require serial execution.
+//nolint:paralleltest // testing.AllocsPerRun changes process-global state.
 func TestNormalizeLists_NoItems(t *testing.T) {
 	docs := testutil.DocumentOccurrences(
 		[]map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}},

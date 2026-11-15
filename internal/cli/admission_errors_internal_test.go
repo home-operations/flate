@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_OptionalAdmissionFailure(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	before, current := t.TempDir(), t.TempDir()

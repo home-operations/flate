@@ -55,10 +55,11 @@ func (c *TreeCache) recordTestRender(
 
 func TestRender_CacheMissesOnDirectoryMembership(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	cache := newTestTreeCache(t, t.TempDir())
-	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoSpec}
+	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: spec}
 	first, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.FatalIf(t, err != nil || !hasRenderField(first, "name", "a"), "first = %q, %v", first, err)
 	cache.recordTestRender(t, &req, receipt, persistent)
@@ -123,11 +124,12 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 
 func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	artifact := localSource(t, root)
 	cache := newTestTreeCache(t, t.TempDir())
-	req := RenderRequest{Source: artifact, SubPath: "app", Spec: demoSpec}
+	req := RenderRequest{Source: artifact, SubPath: "app", Spec: spec}
 	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	cache.recordTestRender(t, &req, receipt, persistent)
@@ -188,6 +190,7 @@ func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 
 func TestRender_ArtifactWithoutPayloadRejected(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	label := testutil.WriteTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	for _, key := range []string{"", "pin"} {
 		t.Run("key="+key, func(t *testing.T) {
@@ -197,7 +200,7 @@ func TestRender_ArtifactWithoutPayloadRejected(t *testing.T) {
 				Render(
 					t.Context(),
 					newTestTreeCache(t, ""),
-					RenderRequest{Source: sourceID, SubPath: ".", Spec: demoSpec},
+					RenderRequest{Source: sourceID, SubPath: ".", Spec: spec},
 					sourcecache.RetryConfig{},
 				),
 			)

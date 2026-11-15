@@ -13,13 +13,14 @@ import (
 
 func TestRender_CacheIdentityIsolated(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"),
 		"cm.yaml":            cmYAML("fresh"),
 	})
 	cache := newTestTreeCache(t, t.TempDir())
-	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
-	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil)
+	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "."}, root, nil)
 	publishTestFrame(
 		t,
 		cache.owner,
@@ -33,7 +34,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt20},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt20},
 			)
 			assert.NoError(t, recordErr)
 		}

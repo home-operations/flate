@@ -37,7 +37,8 @@ data:
 	input := localSource(b, src)
 	ctx := context.Background()
 	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
-	accepted := acceptBenchmarkRender(b, cache, &req)
+	content := PrepareShape(&req, nil).Content()
+	accepted := acceptBenchmarkRender(b, cache, &req, content)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -46,7 +47,7 @@ data:
 		if err == nil {
 			if recordErr := cache.RecordRender(
 				ctx,
-				acceptanceForEmission(req.Spec.Named(), accepted),
+				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -87,16 +88,17 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 		}),
 	}
 	ctx := b.Context()
-	accepted := acceptBenchmarkRender(b, cache, &req)
+	content := PrepareShape(&req, nil).Content()
+	accepted := acceptBenchmarkRender(b, cache, &req, content)
 	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 	if err == nil {
 		if recordErr := cache.RecordRender(
 			ctx,
 			RenderAcceptance{
-				Owner:   demoSpec.Named(),
+				Owner:   req.Spec.Named(),
 				Receipt: receipt2,
 				Records: emptyRenderInventory,
-				Content: acceptedInput,
+				Content: content,
 			},
 		); recordErr !=
 			nil {
@@ -112,7 +114,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 		if err == nil {
 			if recordErr := cache.RecordRender(
 				ctx,
-				acceptanceForEmission(req.Spec.Named(), accepted),
+				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -176,7 +178,8 @@ data:
 	input := localSource(b, src)
 	ctx := context.Background()
 	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
-	accepted := acceptBenchmarkRender(b, cache, &req)
+	content := PrepareShape(&req, nil).Content()
+	accepted := acceptBenchmarkRender(b, cache, &req, content)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -185,7 +188,7 @@ data:
 		if err == nil {
 			if recordErr := cache.RecordRender(
 				ctx,
-				acceptanceForEmission(req.Spec.Named(), accepted),
+				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -223,11 +226,12 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 		"spec":       map[string]any{},
 	})
 
+	content := PrepareShape(&RenderRequest{Source: input, Spec: rawSpec}, nil).Content()
 	requests := make([]RenderRequest, apps)
 	accepted := make([]*store.Emission, apps)
 	for i := range apps {
 		requests[i] = RenderRequest{Source: input, Label: src, SubPath: fmt.Sprintf("apps/app-%d", i), Spec: rawSpec}
-		accepted[i] = acceptBenchmarkRender(b, cache, &requests[i])
+		accepted[i] = acceptBenchmarkRender(b, cache, &requests[i], content)
 	}
 
 	b.ReportAllocs()
@@ -240,7 +244,7 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 			if err == nil {
 				if recordErr := cache.RecordRender(
 					ctx,
-					acceptanceForEmission(rawSpec.Named(), accepted[i]),
+					acceptanceForEmission(rawSpec.Named(), accepted[i], content),
 				); recordErr != nil {
 					b.Fatal(recordErr)
 				}
@@ -260,17 +264,17 @@ func BenchmarkRender_CacheHitConstructed(b *testing.B) {
 	BenchmarkRender_CacheHit(b)
 }
 
-func acceptBenchmarkRender(b *testing.B, cache *TreeCache, incoming *RenderRequest) *store.Emission {
+func acceptBenchmarkRender(b *testing.B, cache *TreeCache, incoming *RenderRequest, content any) *store.Emission {
 	b.Helper()
 	request := *incoming
 	_, receipt, err := Render(b.Context(), cache, request, sourcecache.RetryConfig{})
 	if err != nil {
 		b.Fatal(err)
 	}
-	emission := acceptedEmission(b, request.Spec.Named(), receipt, nil)
+	emission := acceptedEmission(b, request.Spec.Named(), receipt, content)
 	if recordRenderErr := cache.RecordRender(
 		b.Context(),
-		acceptanceForEmission(request.Spec.Named(), emission),
+		acceptanceForEmission(request.Spec.Named(), emission, content),
 	); recordRenderErr != nil {
 		b.Fatal(recordRenderErr)
 	}
@@ -278,5 +282,5 @@ func acceptBenchmarkRender(b *testing.B, cache *TreeCache, incoming *RenderReque
 	if err != nil {
 		b.Fatal(err)
 	}
-	return acceptedEmission(b, request.Spec.Named(), receipt, nil)
+	return acceptedEmission(b, request.Spec.Named(), receipt, content)
 }

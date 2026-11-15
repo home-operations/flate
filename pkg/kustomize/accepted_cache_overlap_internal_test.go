@@ -40,6 +40,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	testCaseInput *bool,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
 		t,
@@ -48,7 +49,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 	cache := newTestTreeCache(t, t.TempDir())
 	key := sourcecache.BlobKey{
 		Content: renderKey(
-			&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."},
+			&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "."},
 			root,
 			nil,
 		),
@@ -85,7 +86,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 					Source:  &store.SourceArtifact{FS: lower},
 					Label:   root,
 					SubPath: ".",
-					Spec:    demoSpec,
+					Spec:    spec,
 				},
 				sourcecache.RetryConfig{},
 			),
@@ -94,7 +95,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 			{
 				recordErr := cache.RecordRender(
 					ctx,
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt25},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt25},
 				)
 				assert.NoError(t, recordErr)
 			}

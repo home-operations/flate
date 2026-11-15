@@ -182,10 +182,9 @@ func newInstallAction(
 	inst.EnableDNS = opts.EnableDNS
 	inst.Replace = policy.Replace
 	inst.DisableOpenAPIValidation = policy.DisableOpenAPIValidation
-	// spec.postRenderers — pipe rendered output through one or more
-	// kustomize patch+image transforms. helm-controller does this via
-	// the same postrenderer.PostRenderer hook.
-	inst.PostRenderer = newPostRenderer(hr.PostRenderers)
+	if renderer := newPostRenderer(hr.PostRenderers); renderer != nil {
+		inst.PostRenderer = renderer
+	}
 	// action.Install consults its own KubeVersion field for chart
 	// compatibility checks and ignores cfg.Capabilities for that purpose.
 	inst.KubeVersion = &caps.KubeVersion

@@ -47,7 +47,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // log.SetOutput captures Helm diagnostics in the malformed-frame case.
 func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 	t.Run("malformed raw frame misses", func(t *testing.T) {
 		t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())

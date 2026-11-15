@@ -13,7 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 	root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
 	testutil.WriteFile(
@@ -52,7 +52,7 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 		), "selected warning scope differs: %s", stderr)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 	root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
 	appendScopeSpec(t, root, "cluster/hr.yaml", "  dependsOn: [{name: missing}]\n")
@@ -82,7 +82,7 @@ func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -97,7 +97,7 @@ func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_NamedScope_DiffDeletedReleaseSiblingFails(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -193,7 +193,7 @@ spec:
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_DiffCounterpartSelection(t *testing.T) {
 	for _, tc := range []struct{ name, releaseName, namespace string }{
 		{"name", "other-release", "apps"},

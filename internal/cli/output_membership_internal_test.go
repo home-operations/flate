@@ -185,7 +185,7 @@ func TestCollectRendered_IdentityAlignment(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-global logging and egress policy.
+//nolint:paralleltest // Run calls setLogLevel and updates the process egress policy.
 func TestRun_OutputMembership(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)

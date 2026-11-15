@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GeneratedValuesDirectDependentAndKS(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteGeneratedValuesCluster(t, dir)
@@ -32,7 +32,7 @@ func TestRun_GeneratedValuesDirectDependentAndKS(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 	for _, kind := range []string{"hr", "ks"} {
 		for _, broken := range []bool{false, true} {
@@ -48,7 +48,7 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	for _, root := range []string{before, after} {

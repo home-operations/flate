@@ -50,6 +50,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	testCaseInput **testRenderRemoteCacheDependenciesCaseInputs,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	var version atomic.Int64
 	var trace remoteHTTPTrace
@@ -96,7 +97,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		{
 			recordErr := cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt16},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt16},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -175,7 +176,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		{
 			recordErr := cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt19},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt19},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -253,6 +254,7 @@ type remoteDependencyReplayInputs struct {
 
 func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remoteDependencyReplayInputs) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	fresh := (*inputs.newCache)("")
 	var want []map[string]any
@@ -264,7 +266,7 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		{
 			recordErr := fresh.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt17},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt17},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -309,7 +311,7 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		{
 			recordErr := (*inputs.cache).RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt18},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt18},
 			)
 			assert.NoError(t, recordErr)
 		}

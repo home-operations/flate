@@ -3,6 +3,8 @@ package kustomize
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -10,6 +12,7 @@ import (
 
 func TestRender_UnidentifiedContent(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	root := testutil.WriteTree(
 		t,
 		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("first")},
@@ -18,7 +21,7 @@ func TestRender_UnidentifiedContent(t *testing.T) {
 	request := func() RenderRequest {
 		source := localSource(t, root)
 		source.Key, source.Revision, source.Digest = "family", "revision", "digest"
-		return RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoSpec}
+		return RenderRequest{Source: source, Label: root, SubPath: ".", Spec: spec}
 	}
 	first, _, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 	assert.NoError(t, err)

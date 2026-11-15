@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // setLogLevel replaces slog.Default and log output for each level.
 func TestSetLogLevel_StdlibLogRouting(t *testing.T) {
 	saved, writer := slog.Default(), log.Writer()
 	t.Cleanup(func() { slog.SetDefault(saved); log.SetOutput(writer) })
@@ -27,7 +27,7 @@ func TestSetLogLevel_StdlibLogRouting(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // setLogLevel replaces slog.Default and log output for each level.
 func TestSetLogLevel_ExplicitLevelStreamsLive(t *testing.T) {
 	saved, writer := slog.Default(), log.Writer()
 	t.Cleanup(func() { slog.SetDefault(saved); log.SetOutput(writer) })

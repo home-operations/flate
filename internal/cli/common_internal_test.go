@@ -46,7 +46,7 @@ func TestBindCommon_CacheDirFlag(t *testing.T) {
 	assert.ErrorIf(t, f.cacheDir != "/tmp/explicit", "cacheDir = %q, want /tmp/explicit", f.cacheDir)
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // t.Setenv changes FLATE_CACHE_DIR before runCLI selects the cache root.
 func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -283,7 +283,7 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // slog.SetDefault captures the process logger for resolveBaseline diagnostics.
 func TestResolveBaseline_DebugRevision(t *testing.T) {
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
@@ -471,7 +471,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test replaces process-wide stderr.
+//nolint:paralleltest // runSelectedProgressLifecycleName replaces barSink, slog.Default, and os.Stderr.
 func TestRunSelected_ProgressLifecycle(t *testing.T) {
 	for _, name := range []string{"success", "render-warning", "partial-render", "fatal-bootstrap", "fatal-construction"} {
 		t.Run(name, func(t *testing.T) { runSelectedProgressLifecycleName(t, &name) })

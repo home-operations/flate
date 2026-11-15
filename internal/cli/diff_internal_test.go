@@ -19,7 +19,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -42,7 +42,7 @@ func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_OneSidedSkipSuppressed_Kustomization(t *testing.T) {
 	orig, current, failed := writeFixture(t), writeFixture(t), writeFixture(t)
 	for _, path := range []string{orig, current, failed} {
@@ -250,7 +250,7 @@ data:
 	})
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffJSON(t *testing.T) {
 	orig, current := writeFixture(t), writeFixture(t)
 	for _, root := range []string{orig, current} {
@@ -333,7 +333,7 @@ func TestRun_DiffJSON(t *testing.T) {
 	assert.Diff(t, slices.Sorted(maps.Keys(got.Suppressed[0])), []string{"count", "parent", "reason", "side"})
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_DiffJSON_Empty(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -354,7 +354,7 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_OmittedValues(t *testing.T) {
 	for _, tc := range []struct {
 		name                  string
@@ -436,7 +436,7 @@ data: {greeting: hi}
 	return diffFixture{current: current, orig: orig}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_DiffKS_PathOrigCustomSource(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -492,7 +492,7 @@ data: {greeting: hola}
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_DiffKS_ExternalSourceDisclosure(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -535,7 +535,7 @@ data: {greeting: hola}
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffKS_PathOrigRepositoryIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -552,7 +552,7 @@ func TestRun_DiffKS_PathOrigRepositoryIdentity(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 	const currentURL = "ssh://git@github.com/example/home-ops.git"
 	for _, tc := range []struct {

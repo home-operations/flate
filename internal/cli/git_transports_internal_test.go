@@ -31,7 +31,7 @@ import (
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GitTransportSchemes(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	for _, scheme := range []string{"ssh", "git", "http", "https", "file"} {
@@ -42,7 +42,7 @@ func TestRun_GitTransportSchemes(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GitBaselineTransportSchemes(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	for _, scheme := range []string{"ssh", "git", "http", "https", "file"} {

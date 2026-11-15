@@ -387,7 +387,6 @@ func TestQualification_EmptyRootHistory(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Cold, reused, and replaced proposals MUST compare acquisition, acceptance, and attribution.
 func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -505,9 +504,10 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			index := slices.IndexFunc(accepted.Objects, func(child store.Child) bool { return child.Obj.Named() == id })
-			if tc.replacement {
+			switch tc.replacement {
+			case true:
 				assert.Equal(t, index, -1)
-			} else {
+			case false:
 				assert.FatalIf(t, index < 0, "accepted indexed child is missing")
 				assert.Diff(t, accepted.Objects[index].Warnings, want)
 				assert.Equal(t, accepted.Objects[index].SourceSupport, manifest.BootstrapSourceID)
@@ -515,9 +515,10 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			assert.Equal(t, len(st.Warnings()), 0)
 			_, err = d.advanceTest(t.Context(), &accepted)
 			assert.NoError(t, err)
-			if tc.replacement {
+			switch tc.replacement {
+			case true:
 				assert.Equal(t, len(st.Warnings()), 0)
-			} else {
+			case false:
 				want[0].Subject = manifest.DiagnosticIdentity{ID: id, Resource: id}
 				want[0].Count = 1
 				assert.Diff(t, st.Warnings(), want)

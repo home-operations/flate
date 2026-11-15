@@ -34,7 +34,6 @@ func (o *Orchestrator) updateDependencyGraphFor(ctx context.Context, id manifest
 	}
 }
 
-//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (o *Orchestrator) syncPreflightFailures(ctx context.Context) error {
 	var previous map[manifest.NamedResource]string
 	for {
@@ -49,16 +48,14 @@ func (o *Orchestrator) syncPreflightFailures(ctx context.Context) error {
 		if o.entryBinding.Failure != nil {
 			failures[o.entryBinding.Producer] = o.entryBinding.Failure.Error()
 		}
+		unique := make(map[*dependencyCycle]struct{})
 		for id, cycle := range paths {
 			failures[id] = cycle.diagnostic(o)
+			unique[cycle] = struct{}{}
 		}
 		o.preflightMu.Lock()
 		cleared := o.replacePreflightFailures(failures)
 		o.preflightMu.Unlock()
-		unique := make(map[*dependencyCycle]struct{})
-		for _, cycle := range paths {
-			unique[cycle] = struct{}{}
-		}
 		for cycle := range unique {
 			o.store.AddWarning(
 				manifest.Warning{

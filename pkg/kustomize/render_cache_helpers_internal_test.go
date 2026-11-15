@@ -12,21 +12,17 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:gochecknoglobals // Accepted-history fixtures must share the identical immutable render input.
-var acceptedInput = PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec}, nil).Content()
-
 func acceptedEmission(
 	tb testing.TB,
 	owner manifest.NamedResource,
 	receipt *manifest.RenderReceipt,
-	children []store.Child,
+	content any,
 ) *store.Emission {
 	tb.Helper()
 	emission := &store.Emission{
 		Render:      receipt,
-		Fingerprint: manifest.Fingerprint(acceptedInput),
+		Fingerprint: manifest.Fingerprint(content),
 		Complete:    true,
-		Children:    children,
 	}
 	st := store.New()
 	st.AddObject(
@@ -47,31 +43,29 @@ func acceptedEmission(
 	return emission
 }
 
-func previousHistory(
+func (c *TreeCache) previousHistory(
 	ctx context.Context,
-	cache *TreeCache,
 	incoming *RenderRequest,
 	owner manifest.NamedResource,
+	content any,
 ) (
 	iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 	bool,
 ) {
 	request := *incoming
-	_, receipt, found := cache.PreviousRender(ctx, request)
+	_, receipt, found := c.PreviousRender(ctx, request)
 	if !found {
 		return nil, false
 	}
-	content := acceptedInput
-	return cache.RenderHistory(owner, receipt, content)
+	return c.RenderHistory(owner, receipt, content)
 }
 
-func acceptanceForEmission(owner manifest.NamedResource, emission *store.Emission) RenderAcceptance {
+func acceptanceForEmission(owner manifest.NamedResource, emission *store.Emission, content any) RenderAcceptance {
 	if emission == nil {
 		return RenderAcceptance{}
 	}
-	var content any
-	if emission.Fingerprint != "" {
-		content = acceptedInput
+	if emission.Fingerprint == "" {
+		content = nil
 	}
 	return RenderAcceptance{
 		Owner:       owner,

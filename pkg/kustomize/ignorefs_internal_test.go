@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/kustomize/kyaml/filesys"
-
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -65,7 +63,7 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 			t.Parallel()
 			testIgnoreFSHidesExcludedPathsCase(
 				t,
-				&testIgnoreFSHidesExcludedPathsCaseInputs{root: &root, ig: &ig, abs: &abs, tc: &tc},
+				&testIgnoreFSHidesExcludedPathsCaseInputs{root: &root, ig: ig, abs: &abs, tc: &tc},
 			)
 		},
 		)
@@ -313,7 +311,7 @@ configMapGenerator:
 
 type testIgnoreFSHidesExcludedPathsCaseInputs struct {
 	root *string
-	ig   *filesys.FileSystem
+	ig   *treeFS
 	abs  *func(rel string) string
 	tc   *struct {
 		rel     string
@@ -325,12 +323,12 @@ func testIgnoreFSHidesExcludedPathsCase(t *testing.T, testCaseInput *testIgnoreF
 	t.Helper()
 	p := (*testCaseInput.abs)(testCaseInput.tc.rel)
 	{
-		got := (*testCaseInput.ig).Exists(p)
+		got := testCaseInput.ig.Exists(p)
 		assert.ErrorIf(t, got != testCaseInput.tc.visible, "Exists = %v, want %v", got, testCaseInput.tc.visible)
 	}
 	isDir := testTreeFS(t, (*testCaseInput.root)).IsDir(p)
 	{
-		got := (*testCaseInput.ig).IsDir(p)
+		got := testCaseInput.ig.IsDir(p)
 		assert.ErrorIf(
 			t,
 			got != (testCaseInput.tc.visible && isDir),
@@ -339,7 +337,7 @@ func testIgnoreFSHidesExcludedPathsCase(t *testing.T, testCaseInput *testIgnoreF
 			testCaseInput.tc.visible && isDir,
 		)
 	}
-	_, _, err := (*testCaseInput.ig).CleanedAbs(p)
+	_, _, err := testCaseInput.ig.CleanedAbs(p)
 	assert.ErrorIf(
 		t,
 		(err == nil) != testCaseInput.tc.visible,
@@ -348,7 +346,7 @@ func testIgnoreFSHidesExcludedPathsCase(t *testing.T, testCaseInput *testIgnoreF
 		testCaseInput.tc.visible,
 	)
 	if !isDir {
-		_, err := (*testCaseInput.ig).ReadFile(p)
+		_, err := testCaseInput.ig.ReadFile(p)
 		assert.ErrorIf(
 			t,
 			(err == nil) != testCaseInput.tc.visible,
@@ -370,6 +368,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 	testCaseInput *bool,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	root := testutil.WriteTree(t, map[string]string{
 		".sourceignore": "b.yaml\n",
@@ -407,17 +406,17 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec},
+			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
 	assert.FatalIf(t, err != nil, "first render: %v", err)
 	{
-		recordRenderErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt})
+		recordRenderErr := cache.RecordRender(ctx, RenderAcceptance{Owner: spec.Named(), Receipt: receipt})
 		assert.NoError(t, recordRenderErr)
 	}
 	assert.FatalIf(t, hasRenderField(out1, "name", "b"), "b.yaml should be excluded; got %s", out1)
-	req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec}
 	input, err := cache.sourceRootFor(ctx, req.Source, root)
 	assert.NoError(t, err)
 	key := renderKey(&req, root, input.ignore)
@@ -433,7 +432,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec},
+			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)

@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest // The policy-limit case sets and restores archive.MaxDecompressedChartSize.
 func TestLoadFSChart_FailureRecovery(t *testing.T) {
 	for _, failure := range []string{"read", "close", "disappeared", "parse", "policy-limit"} {
 		t.Run(failure, func(t *testing.T) {

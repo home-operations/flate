@@ -57,8 +57,6 @@ type Rendered struct {
 // RenderTrees plans and renders isolated cluster trees using one invocation budget.
 // Borrowed Cache, Network and HelmClient remain caller-owned. Returned documents
 // and completed stores remain readable; later lazy source reads require a borrowed cache.
-//
-//nolint:funlen // Invocation resources MUST share one lifetime through admission, discovery and rendering.
 func RenderTrees(
 	ctx context.Context,
 	trees []Tree,
@@ -76,9 +74,10 @@ func RenderTrees(
 		defer cfg.Network.Close()
 	}
 	cfg.GitTransports = maps.Clone(cfg.GitTransports)
-	_, clientErr := sourcegit.NewClient(sourcegit.ClientConfig{Transports: cfg.GitTransports, Network: cfg.Network})
-	if clientErr != nil {
-		return nil, clientErr
+	if _, err = sourcegit.NewClient(
+		sourcegit.ClientConfig{Transports: cfg.GitTransports, Network: cfg.Network},
+	); err != nil {
+		return nil, err
 	}
 	if cfg.Cache == nil {
 		cfg.Cache, err = sourcecache.New(ctx, cfg.CacheDir)
@@ -99,11 +98,10 @@ func RenderTrees(
 			DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking,
 		},
 	)
-	budget := task.NewBounded(cfg.Concurrency)
-	inputs := source.NewHTTPInputs(cfg.Cache, cfg.Network, budget)
+	r := renderInvocation{cfg: &cfg, budget: task.NewBounded(cfg.Concurrency)}
+	inputs := source.NewHTTPInputs(cfg.Cache, cfg.Network, r.budget)
 	defer inputs.Close()
 	cfg.projections = new(manifest.ProducerProjections)
-	r := renderInvocation{cfg: &cfg, budget: budget}
 	trees, err = r.prepareTrees(ctx, trees, &inputs)
 	if err != nil {
 		inputs.Close()
@@ -111,11 +109,8 @@ func RenderTrees(
 	}
 	results = make([]Rendered, len(trees))
 	defer func() {
-		if err == nil {
-			return
-		}
 		for _, result := range results {
-			if result.Orchestrator != nil {
+			if err != nil && result.Orchestrator != nil {
 				result.stop()
 			}
 		}

@@ -22,7 +22,7 @@ func (e *countedDetailError) Error() string {
 	return "upstream diagnostic"
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // Run calls setLogLevel, which replaces slog.Default and log output.
 func TestRun_FailureDetailsEvaluation(t *testing.T) {
 	path := writeFixture(t)
 	for _, level := range []string{"error", "debug"} {
@@ -83,7 +83,7 @@ func preservePersistenceNoticeState(t *testing.T) {
 	assert.NoError(t, os.Unsetenv("FLATE_LOG_LEVEL"))
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_RenderPersistenceNotice(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	path := writeMultiNamespaceFixture(t)
@@ -158,7 +158,7 @@ func TestRun_RenderPersistenceNoticeEnvAndLevel(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_RenderPersistenceNoticeCommands(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
@@ -277,7 +277,7 @@ func (w *persistenceNoticeFailWriter) Write(p []byte) (int, error) {
 	return w.Buffer.Write(p)
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // Run replaces barSink, slog.Default, and log output between commands.
 func TestRun_ProgressSinkResetsPerCommand(t *testing.T) {
 	savedBar := barSink
 	savedLogger, savedLogWriter := slog.Default(), log.Writer()

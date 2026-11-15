@@ -67,7 +67,7 @@ func TestCacheGC_ExplicitRoot(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestCache_RemovedSurfaceUnavailable(t *testing.T) {
 	for _, args := range [][]string{{"cache", "removed-command"}, {"cache", "gc", "--include-mirrors"}} {
 		{
@@ -78,7 +78,7 @@ func TestCache_RemovedSurfaceUnavailable(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestCacheGC_WarningWriteError(t *testing.T) {
 	root := t.TempDir()
 	owner, err := cache.New(t.Context(), root)

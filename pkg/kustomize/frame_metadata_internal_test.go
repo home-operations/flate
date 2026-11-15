@@ -65,6 +65,8 @@ func TestRender_OversizedFrameMetadata(t *testing.T) {
 
 func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	content := PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec}, nil).Content()
 	renderer := newTestTreeCache(t, t.TempDir())
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	assert.Equal(t, renderer.owner.CanPersistRenders(), persistent)
@@ -79,9 +81,9 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	acceptance := RenderAcceptance{
-		Owner:   demoSpec.Named(),
+		Owner:   spec.Named(),
 		Receipt: receipt,
-		Content: acceptedInput,
+		Content: content,
 		Records: emptyRenderInventory,
 		Sources: []manifest.SourceEvidence{},
 	}
@@ -133,18 +135,19 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	var header renderHeader
 	stored, err := sourcecache.OpenFrame(t.Context(), frameDomain, current, &header)
 	assert.NoError(t, err)
-	_, complete := stored.History(demoSpec.Named(), acceptedInput)
+	_, complete := stored.History(spec.Named(), content)
 	assert.Equal(t, complete, true)
 }
 
 func TestApplicationReceipt_OversizedFrameMetadata(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	renderer := newTestTreeCache(t, t.TempDir())
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	assert.Equal(t, renderer.owner.CanPersistRenders(), persistent)
 	root := testutil.WriteTree(t, map[string]string{"producer.yaml": "accepted"})
 	input := RenderRequest{Source: localSource(t, root), SubPath: "."}
-	owner := demoSpec.Named()
+	owner := spec.Named()
 	evidence := EntryEvidence{
 		Owner:       owner,
 		Producer:    owner,

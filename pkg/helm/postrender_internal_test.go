@@ -9,6 +9,8 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
+	"helm.sh/helm/v4/pkg/action"
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/kustomize/kyaml/openapi"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
@@ -16,17 +18,33 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestNewPostRenderer_NilWhenNoKustomize(t *testing.T) {
 	t.Parallel()
-	{
-		pr := newPostRenderer(nil)
-		assert.ErrorIf(t, pr != nil, "expected nil for empty list, got %T", pr)
-	}
-	{
-		pr := newPostRenderer([]helmv2.PostRenderer{{}})
-		assert.ErrorIf(t, pr != nil, "expected nil for postRenderer without Kustomize, got %T", pr)
+	for _, tc := range []struct {
+		name      string
+		renderers []helmv2.PostRenderer
+		usable    bool
+	}{
+		{name: "empty"},
+		{name: "without Kustomize", renderers: []helmv2.PostRenderer{{}}},
+		{name: "with Kustomize", renderers: []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}, usable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pr := newPostRenderer(tc.renderers)
+			assert.Equal(t, pr != nil, tc.usable)
+			hr := &manifest.HelmRelease{PostRenderers: tc.renderers}
+			inst, _ := newInstallAction(
+				new(action.Configuration),
+				hr,
+				Options{},
+				chartcommon.DefaultCapabilities.Copy(),
+			)
+			assert.Equal(t, inst.PostRenderer != nil, tc.usable)
+		})
 	}
 }
 

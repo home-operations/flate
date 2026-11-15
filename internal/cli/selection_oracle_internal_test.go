@@ -17,7 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_Selection_FullBuildOracle(t *testing.T) {
 	for _, scope := range []struct {
 		name, producer, namespace string
@@ -68,7 +68,7 @@ func TestE2E_Selection_FullBuildOracle(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_Selection_WarmNamedOracle(t *testing.T) {
 	before, after, cache := t.TempDir(), t.TempDir(), t.TempDir()
 	selectionOracleFixture(t, before, "before")
@@ -111,7 +111,7 @@ func TestE2E_Selection_WarmNamedOracle(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_Selection_ResolvedRevisionOracle(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	for _, side := range []struct{ root, value string }{{before, "before"}, {after, "after"}} {

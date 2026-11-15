@@ -11,13 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest // stubHTTPTransport replaces http.DefaultTransport for upstream selection.
 func TestPreflightGitBase_UpstreamSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name, role, raw, body string
@@ -135,6 +137,7 @@ func testPreflightGitBaseErrorPrecedenceCase(
 	},
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(testCaseInput.status)
@@ -159,7 +162,7 @@ func testPreflightGitBaseErrorPrecedenceCase(
 		),
 	}
 	_, _, err := testutil.RenderMaps(
-		Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{}),
+		Render(t.Context(), c, RenderRequest{Source: input, Spec: spec}, sourcecache.RetryConfig{}),
 	)
 	assert.FatalIf(t, err == nil, "%s", "invalid input rendered")
 	switch {

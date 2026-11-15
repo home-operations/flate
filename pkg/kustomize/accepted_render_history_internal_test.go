@@ -45,6 +45,7 @@ type acceptedHistoryCase struct {
 	key        sourcecache.BlobKey
 	child      manifest.NamedResource
 	records    map[manifest.NamedResource]manifest.DiscoveryRecord
+	content    any
 }
 
 func TestRenderFlux_AcceptedHistory(t *testing.T) {
@@ -76,6 +77,7 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 		SubPath:   ".",
 		SkipKinds: []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
 	}
+	content := PrepareShape(&req, nil).Content()
 	owner := spec.Named()
 	owner.Namespace = "inherited"
 	var absent *TreeCache
@@ -108,7 +110,7 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	return &acceptedHistoryCase{
 		persistent: sourcecache.RenderPersistenceDisabledReason() == "",
 		root:       root, cacheDir: cacheDir, cache: cache, req: req, owner: owner,
-		receipt: receipt, frame: frame, raw: raw, key: key, child: child, records: records,
+		receipt: receipt, frame: frame, raw: raw, key: key, child: child, records: records, content: content,
 	}
 }
 
@@ -149,16 +151,16 @@ func (h *acceptedHistoryCase) unaccepted(t *testing.T) {
 	assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "standalone render wrote durable output: %v", err)
 
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: nil, Content: acceptedInput,
+		Owner: owner, Receipt: receipt, Records: nil, Content: h.content,
 	}))
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   owner,
 		Receipt: nil,
 		Records: emptyRenderInventory,
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	{
-		records, complete := previousHistory(t.Context(), cache, &req, owner)
+		records, complete := cache.previousHistory(t.Context(), &req, owner, h.content)
 		assert.FatalIf(t, complete || records != nil, "%s", "unaccepted output supplied history")
 	}
 }
@@ -172,10 +174,10 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 		Owner:   owner,
 		Receipt: receipt,
 		Records: maps.All(records),
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	fresh := newTestTreeCache(t, cacheDir)
-	previous, complete := previousHistory(t.Context(), fresh, &req, owner)
+	previous, complete := fresh.previousHistory(t.Context(), &req, owner, h.content)
 	assert.Equal(t, complete, h.persistent)
 	assert.Equal(t, previous != nil, h.persistent)
 	if h.persistent {
@@ -183,7 +185,7 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 	}
 	equal := req
 	equal.SkipKinds = slices.Clone(equal.SkipKinds)
-	equalPrevious, equalComplete := previousHistory(t.Context(), fresh, &equal, owner)
+	equalPrevious, equalComplete := fresh.previousHistory(t.Context(), &equal, owner, h.content)
 	assert.Equal(t, equalComplete, h.persistent)
 	assert.Equal(t, equalPrevious != nil, h.persistent)
 	if h.persistent {
@@ -191,7 +193,7 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 	}
 	changed := equal
 	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
-	_, changedComplete := previousHistory(t.Context(), fresh, &changed, owner)
+	_, changedComplete := fresh.previousHistory(t.Context(), &changed, owner, h.content)
 	assert.Equal(t, changedComplete, false)
 	_, acceptedReceipt, rawHit := fresh.PreviousRender(t.Context(), req)
 	assert.Equal(t, rawHit, h.persistent)
@@ -200,7 +202,7 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 		assert.FatalIf(t, complete, "%s", "raw hit supplied history for different final inputs")
 	}
 	{
-		_, complete := fresh.RenderHistory(owner, receipt, acceptedInput)
+		_, complete := fresh.RenderHistory(owner, receipt, h.content)
 		assert.FatalIf(t, complete, "%s", "pending receipt supplied accepted history")
 	}
 	t.Run("preparation", h.preparation)
@@ -230,11 +232,11 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 		Owner:   owner,
 		Receipt: pending,
 		Records: maps.All(records),
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	reader := newTestTreeCache(t, directory)
 	counted.opens.Store(0)
-	previous, complete := previousHistory(t.Context(), reader, &input, owner)
+	previous, complete := reader.previousHistory(t.Context(), &input, owner, h.content)
 	assert.Equal(t, complete, h.persistent)
 	assert.Equal(t, previous != nil, h.persistent)
 	if h.persistent {
@@ -248,13 +250,13 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	cancel()
 	counted.opens.Store(0)
 	{
-		previous, complete := previousHistory(canceled, reader, &input, owner)
+		previous, complete := reader.previousHistory(canceled, &input, owner, h.content)
 		assert.FatalIf(t, previous != nil || complete, "%s", "canceled enabled renderer supplied history")
 	}
 	assert.Equal(t, counted.opens.Load(), 0)
 	input.Source = nil
 	{
-		previous, complete := previousHistory(t.Context(), reader, &input, owner)
+		previous, complete := reader.previousHistory(t.Context(), &input, owner, h.content)
 		assert.FatalIf(t, previous != nil || complete, "%s", "unavailable source supplied history")
 	}
 }
@@ -271,7 +273,7 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	assert.NoError(t, err)
 	foreignFrame, err := testDecodeFrame(t, foreignReceipt)
 	assert.NoError(t, err)
-	accepted, err := testAcceptedFrame(t, owner, &foreignFrame, maps.All(records))
+	accepted, err := foreignFrame.testAcceptedFrame(t, owner, maps.All(records), h.content)
 	assert.NoError(t, err)
 	_, _, _, err = isolated.owner.Blob(
 		t.Context(),
@@ -285,7 +287,7 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	assert.NoError(t, err)
 
 	{
-		_, complete := previousHistory(t.Context(), isolated, &req, owner)
+		_, complete := isolated.previousHistory(t.Context(), &req, owner, h.content)
 		assert.FatalIf(t, complete, "%s", "foreign request key supplied accepted history")
 	}
 }
@@ -306,10 +308,10 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 		Owner:   owner,
 		Receipt: current,
 		Records: maps.All(records),
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	{
-		_, complete := previousHistory(t.Context(), isolated, &mutable, owner)
+		_, complete := isolated.previousHistory(t.Context(), &mutable, owner, h.content)
 		assert.Equal(t, complete, h.persistent)
 	}
 	before, err := isolated.prepareRender(t.Context(), &mutable)
@@ -321,7 +323,7 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 	assert.FatalIf(t, before.key != after.key, "%s", "mutable content changed the fixed request key")
 
 	{
-		_, complete := previousHistory(t.Context(), isolated, &mutable, owner)
+		_, complete := isolated.previousHistory(t.Context(), &mutable, owner, h.content)
 		assert.FatalIf(t, complete, "%s", "changed mutable read supplied accepted history")
 	}
 }
@@ -340,16 +342,16 @@ func (h *acceptedHistoryCase) frozenPreparation(t *testing.T) {
 		Owner:   owner,
 		Receipt: pending,
 		Records: maps.All(records),
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	before := input
 	before.SkipKinds = []string{"Skipped"}
 	{
-		_, complete := previousHistory(t.Context(), renderer, &before, owner)
+		_, complete := renderer.previousHistory(t.Context(), &before, owner, h.content)
 		assert.Equal(t, complete, h.persistent)
 	}
 	{
-		_, complete := previousHistory(t.Context(), renderer, &input, owner)
+		_, complete := renderer.previousHistory(t.Context(), &input, owner, h.content)
 		assert.FatalIf(t, complete, "%s", "mutated policy borrowed the prepared receipt")
 	}
 }
@@ -377,12 +379,12 @@ func (h *acceptedHistoryCase) incompatiblePolicies(t *testing.T) {
 				Owner:   owner,
 				Receipt: receipt,
 				Records: maps.All(records),
-				Content: acceptedInput,
+				Content: h.content,
 			}))
 			changed := req
 			tc.mutate(&changed)
 			{
-				_, complete := previousHistory(t.Context(), isolated, &changed, owner)
+				_, complete := isolated.previousHistory(t.Context(), &changed, owner, h.content)
 				assert.FatalIf(t, complete, "%s", "incompatible policy or source borrowed history")
 			}
 			out, _, err := testutil.RenderMaps(Render(t.Context(), isolated, changed, sourcecache.RetryConfig{}))
@@ -398,7 +400,7 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 	foreign := owner
 	foreign.Namespace = "foreign"
 	{
-		_, complete := previousHistory(t.Context(), fresh, &req, foreign)
+		_, complete := fresh.previousHistory(t.Context(), &req, foreign, h.content)
 		assert.FatalIf(t, complete, "%s", "foreign effective owner borrowed history")
 	}
 	canceled, cancel := context.WithCancel(t.Context())
@@ -408,11 +410,11 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 			Owner:   owner,
 			Receipt: receipt,
 			Records: emptyRenderInventory,
-			Content: acceptedInput,
+			Content: h.content,
 		})
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled acceptance: %v", err)
 	}
-	previous, complete := previousHistory(t.Context(), fresh, &req, owner)
+	previous, complete := fresh.previousHistory(t.Context(), &req, owner, h.content)
 	assert.Equal(t, complete, h.persistent)
 	if previous != nil {
 		for id := range previous {
@@ -423,9 +425,9 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 		Owner:   owner,
 		Receipt: receipt,
 		Records: emptyRenderInventory,
-		Content: acceptedInput,
+		Content: h.content,
 	}))
-	previous, complete = previousHistory(t.Context(), fresh, &req, owner)
+	previous, complete = fresh.previousHistory(t.Context(), &req, owner, h.content)
 	assert.Equal(t, complete, h.persistent)
 	assert.Equal(t, previous != nil, h.persistent)
 	if previous != nil {
@@ -448,17 +450,17 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 			header: remote, binding: frame.binding, output: frame.output, stored: remoteFrame,
 		}, equalRenderFrame),
 		Records: maps.All(records),
-		Content: acceptedInput,
+		Content: h.content,
 	}))
 	fresh.SetGitBaseFetcher(
 		func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			t.Fatal("history acquired a remote")
-			//nolint:nilnil // The fixture explicitly models an absent successful result.
+			//nolint:nilnil // History must reject remote observations before this fetcher can return an artifact.
 			return nil, nil
 		},
 	)
 	{
-		_, complete := previousHistory(t.Context(), fresh, &req, owner)
+		_, complete := fresh.previousHistory(t.Context(), &req, owner, h.content)
 		assert.FatalIf(t, complete, "%s", "remote observations supplied history")
 	}
 	reader, _, _, err := cache.owner.Blob(t.Context(), key, &sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)

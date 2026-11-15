@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml]\n")
@@ -56,7 +56,7 @@ func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 	root := writeInputWarningsFixture(t, "10m")
 	cli := runCLI(t, "build", "all", "--path", root,
@@ -155,12 +155,12 @@ func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 		!strings.Contains(stdout, "hidden.txt: stable"), "full build lost normal manifest output: %s", stdout)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_IncompleteInputCoverage(t *testing.T) {
 	testComparisonInputWarnings(t, "all")
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffImages_IncompleteInputCoverage(t *testing.T) {
 	testComparisonInputWarnings(t, "images")
 }

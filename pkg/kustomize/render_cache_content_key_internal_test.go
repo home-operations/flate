@@ -13,10 +13,11 @@ import (
 
 func TestRenderKey_ContentInputs(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	req := RenderRequest{
 		Source:  &store.SourceArtifact{Key: "family", Content: "generation"},
 		SubPath: ".",
-		Spec:    demoSpec,
+		Spec:    spec,
 	}
 	key := renderKey(&req, "/source", nil)
 	for _, tc := range []struct {

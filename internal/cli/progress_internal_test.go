@@ -28,7 +28,7 @@ import (
 // at EOF — and [os.Stderr] is restored afterward. Not parallel: it swaps the
 // process-wide [os.Stderr].
 //
-//nolint:paralleltest // test replaces process-wide stderr.
+//nolint:paralleltest // captureStderr replaces os.Stderr until restore drains the pipe.
 func TestCaptureStderr(t *testing.T) {
 	orig := os.Stderr
 	var mu sync.Mutex
@@ -174,7 +174,7 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 	t.Run("started-cleanup", func(t *testing.T) { t.Parallel(); barWriterProgressLifecycleStartedCleanup(t) })
 }
 
-//nolint:paralleltest // test replaces process-wide stderr.
+//nolint:paralleltest // slog.SetDefault and barWriter.progress replace the process logger and os.Stderr.
 func TestBarWriter_CaptureTail(t *testing.T) {
 	out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{})}
 	w := &barWriter{out: out}

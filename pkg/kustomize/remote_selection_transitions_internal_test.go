@@ -49,6 +49,7 @@ func testRenderRemoteSelectionTransitionCase(
 	},
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	var changed atomic.Bool
 	var hits atomic.Int32
@@ -90,7 +91,7 @@ func testRenderRemoteSelectionTransitionCase(
 		return c
 	}
 	c := newCache()
-	request := RenderRequest{Source: localSource(t, root), Label: root, Spec: demoSpec}
+	request := RenderRequest{Source: localSource(t, root), Label: root, Spec: spec}
 	out, receipt, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 	assert.FatalIf(
 		t,
@@ -103,7 +104,7 @@ func testRenderRemoteSelectionTransitionCase(
 	{
 		recordRenderErr := c.RecordRender(
 			t.Context(),
-			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt},
+			RenderAcceptance{Owner: spec.Named(), Receipt: receipt},
 		)
 		assert.NoError(t, recordRenderErr)
 	}

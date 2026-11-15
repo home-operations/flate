@@ -44,7 +44,7 @@ func (h *acceptedHistoryCase) publication(t *testing.T) {
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	if !h.persistent {
 		docs, receipt, err := testutil.RenderMaps(Render(t.Context(), p.renderer, p.req, sourcecache.RetryConfig{}))
@@ -75,7 +75,7 @@ func (h *acceptedHistoryCase) publication(t *testing.T) {
 				ctx = canceled
 			}
 			err := p.renderer.RecordRender(ctx, RenderAcceptance{
-				Owner: state.owner, Receipt: state.receipt, Content: acceptedInput, Records: maps.All(state.records),
+				Owner: state.owner, Receipt: state.receipt, Content: p.content, Records: maps.All(state.records),
 			})
 			assert.Equal(t, errors.Is(err, state.want), true)
 			reader, _, _, lookupErr := p.renderer.owner.Blob(
@@ -86,13 +86,13 @@ func (h *acceptedHistoryCase) publication(t *testing.T) {
 			)
 			assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
 			assert.Equal(t, reader == nil, true)
-			previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+			previous, complete := p.renderer.previousHistory(t.Context(), &p.req, p.owner, p.content)
 			assert.Equal(t, previous == nil, true)
 			assert.Equal(t, complete, false)
 		}
 		closeTestTreeCache(t, p.renderer)
 		assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
-			Owner: p.owner, Receipt: p.pending, Content: acceptedInput, Records: emptyRenderInventory,
+			Owner: p.owner, Receipt: p.pending, Content: p.content, Records: emptyRenderInventory,
 		}))
 		return
 	}
@@ -117,7 +117,7 @@ func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	assert.NoError(t, err)
 	content := descriptor.Annotations["flate.accepted-render"]
 	assert.FatalIf(t,
-		content == "" || content != testPublicationIdentity(t, &stored, p.owner),
+		content == "" || content != testPublicationIdentity(t, &stored, p.owner, p.content),
 		"%s", "stored accepted-frame key does not identify the actual accepted frame",
 	)
 	return content
@@ -127,12 +127,13 @@ func testPublicationIdentity(
 	tb testing.TB,
 	frame *renderFrame,
 	owner manifest.NamedResource,
+	content any,
 ) string {
 	tb.Helper()
-	history, complete := frame.stored.History(owner, acceptedInput)
+	history, complete := frame.stored.History(owner, content)
 	assert.Equal(tb, complete, true)
 	publication, err := frame.stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{
-		Owner: owner, Content: acceptedInput, Records: history, Complete: true,
+		Owner: owner, Content: content, Records: history, Complete: true,
 	})
 	assert.NoError(tb, err)
 	return publication.Identity()
@@ -173,14 +174,14 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 		"%s",
 		"warm receipt did not carry decoded accepted evidence",
 	)
-	_, complete := resident.stored.History(p.owner, acceptedInput)
+	_, complete := resident.stored.History(p.owner, p.content)
 	assert.Equal(t, complete, true)
 	check := p.unchanged(t)
 	assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	check()
 	reader, _, _, err := p.renderer.owner.Blob(
@@ -207,7 +208,7 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	assert.Equal(t, p.storedKey(t), p.initialKey)
 	closeTestTreeCache(t, p.renderer)
@@ -218,7 +219,7 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	check()
 }
@@ -231,7 +232,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: emptyRenderInventory,
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	changedIndex, err := os.ReadFile(p.indexPath)
 	assert.NoError(t, err)
@@ -242,7 +243,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		"changed accepted frame retained the previous content key",
 	)
 	assert.FatalIf(t, bytes.Equal(initialIndex, changedIndex), "%s", "changed accepted frame was not published")
-	previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+	previous, complete := p.renderer.previousHistory(t.Context(), &p.req, p.owner, p.content)
 	assert.Equal(t, complete && previous != nil, true)
 	for range previous {
 		t.Fatal("changed complete-empty frame retained children")
@@ -255,20 +256,20 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		Owner:   foreign,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	{
-		_, previousHistoryComplete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+		_, previousHistoryComplete := p.renderer.previousHistory(t.Context(), &p.req, p.owner, p.content)
 		assert.FatalIf(t, previousHistoryComplete, "%s", "foreign overwrite retained the previous owner's history")
 	}
 	assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   p.owner,
 		Receipt: borrowedReceipt,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	assert.Equal(t, p.storedKey(t), p.initialKey)
-	previous, complete = previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+	previous, complete = p.renderer.previousHistory(t.Context(), &p.req, p.owner, p.content)
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, p.records)
@@ -277,7 +278,7 @@ func (p *acceptedHistoryPublication) change(t *testing.T) {
 		Owner:   p.owner,
 		Receipt: p.pending,
 		Records: maps.All(p.records),
-		Content: acceptedInput,
+		Content: p.content,
 	}))
 	check()
 }
@@ -292,7 +293,7 @@ func (p *acceptedHistoryPublication) failures(t *testing.T) {
 			Owner:   p.owner,
 			Receipt: p.pending,
 			Records: maps.All(p.records),
-			Content: acceptedInput,
+			Content: p.content,
 		})
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "canceled same-frame publication: %v", err)
 	}
@@ -303,7 +304,7 @@ func (p *acceptedHistoryPublication) failures(t *testing.T) {
 			Owner:   p.owner,
 			Receipt: manifest.NewRenderReceipt("invalid", nil),
 			Records: maps.All(p.records),
-			Content: acceptedInput,
+			Content: p.content,
 		})
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux), "failed receipt publication: %v", err)
 	}
@@ -315,13 +316,13 @@ func (p *acceptedHistoryPublication) failures(t *testing.T) {
 			Owner:   p.owner,
 			Receipt: p.pending,
 			Records: emptyRenderInventory,
-			Content: acceptedInput,
+			Content: p.content,
 		})
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux), "closed owner lookup: %v", err)
 	}
 	check()
 	p.renderer = newTestTreeCache(t, p.directory)
-	previous, complete := previousHistory(t.Context(), p.renderer, &p.req, p.owner)
+	previous, complete := p.renderer.previousHistory(t.Context(), &p.req, p.owner, p.content)
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, p.records)

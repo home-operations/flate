@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
 	testutil.WriteFile(
@@ -59,7 +59,7 @@ func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
 	root := substitutionFixture(t, "  postBuild: {substituteStrategy: Always}\n", "${VALUE}")
 	cache := t.TempDir()
@@ -80,7 +80,7 @@ func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
 	assert.FatalIf(t, code != 0 || first != last, "strict run changed cached default output: %s", diagnostic)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 	for _, tc := range []struct{ name, kind, input string }{
 		{"ConfigMap", "ConfigMap", externalCM},

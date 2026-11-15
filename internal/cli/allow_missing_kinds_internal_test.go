@@ -36,7 +36,7 @@ func TestBindCommon_AllowMissingKinds(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_AllowMissingKindsValidation(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
 	for _, arg := range []string{"secret", "Unknown", "true", "Secret,,ConfigMap", "Secret,"} {

@@ -9,8 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun changes process-global state.
 func TestStore_QueryAndExecutionAllocations(t *testing.T) {
 	t.Run("Store_ProductionsQueryAllocations", func(t *testing.T) {
 		s := New()
@@ -66,14 +65,17 @@ func TestStore_QueryAndExecutionAllocations(t *testing.T) {
 		s.SetWorkTree(manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}, (&manifest.WorkRecorder{}).Scope())
 		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 		s.AddObject(owner)
-		var reads [2]ReadSet
+		const runs = 100
+		var reads [runs + 2]ReadSet
 		for i := range reads {
 			reads[i].Init(s, owner.Named(), nil)
 			reads[i].GetObject(owner.Named())
 		}
+		// Shared identity and admission storage must exist before steady-state measurement.
 		reads[0].BeginExecution(nil)
-		i := 0
-		allocations := testing.AllocsPerRun(1, func() {
+		reads[0].WorkScope().Admission().Add(&manifest.WorkCounts{OwnerPrepares: 1})
+		i := 1
+		allocations := testing.AllocsPerRun(runs, func() {
 			reads[i].BeginExecution(nil)
 			reads[i].WorkScope().Admission().Add(&manifest.WorkCounts{OwnerPrepares: 1})
 			i++

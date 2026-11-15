@@ -171,7 +171,7 @@ func (i gitInfo) Sys() any           { return nil }
 // Mutable views refresh before reuse or construction; committed identities stay pinned.
 // An error may return warning evidence without a usable filesystem.
 //
-//nolint:gocognit,gocritic // Construction keeps live filesystem diagnostics separate from pinned identities without another admission layer; the SDK accepts a value snapshot.
+//nolint:gocritic // Construction keeps live filesystem diagnostics separate from pinned identities without another admission layer; the SDK accepts a value snapshot.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
 		current, _ := opts.Current.(*FS)
@@ -197,7 +197,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	if liveWorktree && opts.Mode == Direct {
 		root := opts.Worktree.Root()
 		if _, err := os.Stat(root); err != nil {
-			return nil, "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+			return nil, "", err //nolint:wrapcheck // New forwards the current view refresh error with its existing filesystem operation and path.
 		}
 		input := newLocal(root, false, &localPolicy{})
 		input.location, input.membership = opts.Location, opts.membership
@@ -205,14 +205,13 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	}
 	source := opts.Mode == Source
 	current, matcher, reuse, err := opts.refreshCurrent(ctx, commit)
-	if err != nil {
-		return warningOnly(current), "", err
-	}
 	identity := opts.CurrentContent
-	if reuse && opts.Current != nil && (current != nil || identity == "") {
-		if current != nil {
-			return current, identity, nil
-		}
+	switch {
+	case err != nil:
+		return warningOnly(current), "", err
+	case reuse && opts.Current != nil && current != nil:
+		return current, identity, nil
+	case reuse && opts.Current != nil && identity == "":
 		input := &struct {
 			FS
 			directView
@@ -226,10 +225,10 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return &input.FS, "", nil
 	}
 	input, err := newTree(ctx, backing, commit, new(opts))
-	if err != nil {
-		if source && errors.Is(err, fs.ErrPermission) {
-			return warningOnly(input), "", fmt.Errorf("sourceignore load: %w", err)
-		}
+	switch {
+	case err != nil && source && errors.Is(err, fs.ErrPermission):
+		return warningOnly(input), "", fmt.Errorf("sourceignore load: %w", err)
+	case err != nil:
 		return warningOnly(input), "", err
 	}
 	input.policy = matcher
@@ -340,7 +339,7 @@ func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Wa
 	objectStore := borrowed.storage
 	c, err := object.GetCommit(objectStore, commit)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return nil, fmt.Errorf("read commit %s: %w", commit, err)
 	}
 	return g.walkCommit(ctx, objectStore, c.TreeHash, ".")
 }
@@ -356,7 +355,7 @@ func (g *gitView) walkCommit(
 	}
 	t, err := object.GetTree(objectStore, hash)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return nil, fmt.Errorf("read tree %s: %w", hash, err)
 	}
 	var warnings []manifest.Warning
 	for _, entry := range t.Entries {
@@ -366,7 +365,7 @@ func (g *gitView) walkCommit(
 		name := path.Join(prefix, entry.Name)
 		mode, err := entry.Mode.ToOSFileMode()
 		if err != nil {
-			return warnings, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return warnings, fmt.Errorf("convert tree entry mode %q: %w", name, err)
 		}
 		if entry.Mode == filemode.Submodule {
 			warnings = append(warnings, manifest.Warning{
@@ -401,7 +400,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 	}
 	entries, err := g.worktree.ReadDir(filepath.FromSlash(prefix))
 	if err != nil {
-		return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return err //nolint:wrapcheck // walkWorktree forwards ReadDir PathError fields from the admitted Billy worktree.
 	}
 	for _, entry := range entries {
 		if entry.Name() == gitDirectory {
@@ -413,7 +412,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return err //nolint:wrapcheck // walkWorktree forwards DirEntry.Info PathError fields for the admitted worktree entry.
 		}
 		mode := info.Mode()
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
@@ -456,7 +455,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 		return g.missingInfo(name)
 	}
 	if g.backing == nil && g.current != nil {
-		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+		//nolint:wrapcheck // Lstat forwards the current filesystem PathError fields without resolving the final alias.
 		return fs.Lstat(
 			g.current,
 			name,
@@ -466,7 +465,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 		return gitInfo{gitNode: node}, nil
 	}
 	if g.worktree != nil {
-		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+		//nolint:wrapcheck // Lstat forwards the admitted Billy worktree PathError fields.
 		return g.worktree.Lstat(
 			filepath.FromSlash(name),
 		)
@@ -489,7 +488,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 		size, err = objectStore.EncodedObjectSize(node.hash)
 	}
 	if err != nil {
-		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return nil, fmt.Errorf("size %q: %w", name, err)
 	}
 	info := &gitInfo{node, size}
 	node.info.Store(info)
@@ -553,9 +552,13 @@ func (g *gitView) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	objectStore := borrowed.storage
 	blob, err := object.GetBlob(objectStore, hash)
 	if err != nil {
-		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return nil, fmt.Errorf("read blob %s: %w", hash, err)
 	}
-	return blob.Reader() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+	reader, err := blob.Reader()
+	if err != nil {
+		return reader, fmt.Errorf("open blob reader %s: %w", hash, err)
+	}
+	return reader, nil
 }
 
 type gitFile struct {
@@ -582,7 +585,7 @@ func (f *gitFile) Close() error {
 		err = f.reader.Close()
 	}
 	f.input, f.reader, f.info, f.entries = nil, nil, nil, nil
-	return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+	return err //nolint:wrapcheck // Close forwards the owned reader close error after releasing its view and cursor.
 }
 
 func (f *gitFile) Read(p []byte) (int, error) {
@@ -592,7 +595,7 @@ func (f *gitFile) Read(p []byte) (int, error) {
 	if f.reader == nil {
 		return 0, fs.ErrInvalid
 	}
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // Read MUST forward the reader's exact io.EOF sentinel and byte count.
 	return f.reader.Read(
 		p,
 	)
@@ -632,7 +635,7 @@ func (g *gitView) ReadFile(name string) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+			//nolint:wrapcheck // ReadFile forwards current filesystem bytes and PathError fields.
 			return os.ReadFile(abs)
 		}
 	}
@@ -668,7 +671,7 @@ func (g *gitView) ReadLink(name string) (string, error) {
 		}
 	}
 	if g.backing == nil && g.worktree == nil && g.current != nil {
-		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+		//nolint:wrapcheck // ReadLink forwards current filesystem targets and PathError fields.
 		return fs.ReadLink(
 			g.current,
 			name,
@@ -679,7 +682,7 @@ func (g *gitView) ReadLink(name string) (string, error) {
 		var err error
 		target, err = g.worktree.Readlink(filepath.FromSlash(name))
 		if err != nil {
-			return "", err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return "", err //nolint:wrapcheck // ReadLink forwards the admitted Billy Readlink operation and path.
 		}
 	} else {
 		var err error
@@ -725,7 +728,7 @@ func (o *ViewOptions) refreshCurrent(
 			if err != nil {
 				return refreshed, nil, false, err
 			}
-			current, v = refreshed, refreshed.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			current, v = refreshed, refreshed.view.(*gitView) //nolint:errcheck // New publishes *gitView before refreshCurrent reads the refreshed representation; corruption MUST panic.
 		}
 		o.CurrentContent = v.identity
 		if commit == plumbing.ZeroHash {
@@ -754,7 +757,7 @@ func (g *FS) finishGitView(
 	opts *ViewOptions,
 	identity string,
 ) (*FS, string, error) {
-	v := g.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	v := g.view.(*gitView) //nolint:errcheck // New constructs *gitView before finishGitView selects its nodes; corruption MUST panic.
 	if commit != plumbing.ZeroHash {
 		identity = ""
 	}
@@ -805,7 +808,7 @@ func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native 
 }
 
 func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // walkCurrent forwards fs.WalkDir PathError fields and callback cancellation without changing traversal evidence.
 	return fs.WalkDir(g.current, prefix, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -843,7 +846,7 @@ func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {
 	}
 	if g.backing == nil && g.current != nil {
 		if _, err := fs.Lstat(g.current, name); err != nil {
-			return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return nil, err //nolint:wrapcheck // missingInfo forwards the current filesystem Lstat error with its original operation and path.
 		}
 	}
 	return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
@@ -880,7 +883,7 @@ func (g *gitView) relativeLink(name, target string) (string, error) {
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			rel, err = filepath.Rel(filepath.FromSlash(path.Dir(name)), rel)
 			if err != nil {
-				return "", err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+				return "", fmt.Errorf("relate link target %q: %w", name, err)
 			}
 			target = filepath.ToSlash(rel)
 		}

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -78,11 +79,11 @@ func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, 
 	if !fresh && root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
 		idx, err := g.location.Repository.Storer.Index()
 		if err != nil {
-			return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return fmt.Errorf("read fingerprint index: %w", err)
 		}
 		prefix, err = filepath.Rel(g.location.RepositoryRoot, root)
 		if err != nil {
-			return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return fmt.Errorf("relate fingerprint root %q: %w", root, err)
 		}
 		prefix = filepath.ToSlash(prefix)
 		nodes["."] = merklefs.NewRootNodeWithOptions(
@@ -102,7 +103,7 @@ func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, 
 		}
 		children, err := parent.Children()
 		if err != nil {
-			return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			return nil, fmt.Errorf("list fingerprint parent %q: %w", path.Dir(name), err)
 		}
 		for _, child := range children {
 			nodes[path.Join(path.Dir(name), child.Name())] = child
@@ -232,7 +233,7 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe b
 		err = fs.WalkDir(g, ".", visit)
 	}
 	if !observe || !contentParents {
-		return inventory, err //nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+		return inventory, err //nolint:wrapcheck // fingerprintFiles forwards fs.WalkDir PathError fields and callback cancellation with its partial inventory.
 	}
 	// File observations retain content parents independently of admitted empty directories.
 	inventory.types["."] = fs.ModeDir
@@ -241,7 +242,7 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe b
 			inventory.types[parent] = fs.ModeDir
 		}
 	}
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // fingerprintFiles forwards fs.WalkDir PathError fields and callback cancellation with its partial inventory.
 	return inventory, err
 }
 
@@ -469,7 +470,7 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 		if err != nil {
 			return nil, err
 		}
-		return input.(*FS), nil //nolint:errcheck // Sub preserves the concrete owner for a native parent.
+		return input.(*FS), nil //nolint:errcheck // Sub returns a scoped *FS for the native parent selected by freshInput.
 	case *gitView:
 		if v.refresh == nil {
 			return g, nil

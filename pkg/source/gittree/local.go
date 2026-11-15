@@ -68,7 +68,7 @@ func (g *localView) OpenRegular(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // OpenRegular forwards os.Open PathError fields for the mounted regular file.
 	return os.Open(
 		abs,
 	)
@@ -111,7 +111,7 @@ func (g *localView) ReadDir(name string) ([]fs.DirEntry, error) {
 		return g.readDir(abs)
 	}
 	cached, _ := g.observations.Load(abs)
-	entries, err := cached.(*localObservation).list( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	entries, err := cached.(*localObservation).list( //nolint:errcheck // localStat and readDir publish only *localObservation to observations; corruption MUST panic.
 		func() ([]fs.DirEntry, error) { return g.readDir(abs) },
 	)
 	return slices.Clone(entries), err
@@ -147,7 +147,7 @@ func (g *localView) Open(name string) (fs.File, error) {
 		}
 		return &gitFile{info: info, input: g, entries: entries}, nil
 	}
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // Open forwards os.Open PathError fields after local admission.
 	return os.Open(
 		abs,
 	)
@@ -163,7 +163,7 @@ func (g *localView) ReadLink(name string) (string, error) {
 	}
 	target, err := os.Readlink(abs)
 	if err != nil {
-		return "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return "", err //nolint:wrapcheck // ReadLink forwards os.Readlink PathError fields for the mounted alias.
 	}
 	return target, nil
 }
@@ -188,14 +188,14 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 	var info fs.FileInfo
 	var err error
 	if cached, ok := g.observations.Load(abs); g.operation && ok {
-		observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		observation := cached.(*localObservation) //nolint:errcheck // localStat and readDir publish only *localObservation to observations; corruption MUST panic.
 		info, err = observation.info, observation.err
 	} else {
 		info, err = g.statPath(name, abs)
 		if g.operation && (err != nil || info.IsDir()) {
 			candidate := &localObservation{info: info, err: err}
 			cached, _ := g.observations.LoadOrStore(abs, candidate)
-			observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			observation := cached.(*localObservation) //nolint:errcheck // localStat LoadOrStore publishes only *localObservation; corruption MUST panic.
 			info, err = observation.info, observation.err
 		}
 	}
@@ -211,11 +211,11 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 	var listing *localObservation
 	if g.operation && name != "." {
-		if cached, ok := g.observations.Load(
-			filepath.Dir(abs),
-		); ok &&
-			cached.(*localObservation).listed.Load() { //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-			listing = cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		if cached, ok := g.observations.Load(filepath.Dir(abs)); ok {
+			observation := cached.(*localObservation) //nolint:errcheck // localStat and readDir publish only *localObservation to observations; corruption MUST panic.
+			if observation.listed.Load() {
+				listing = observation
+			}
 		}
 	}
 	if listing != nil {
@@ -232,19 +232,19 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 		})
 		if !found {
 			if cached, ok := g.observations.Load(abs); ok {
-				observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				observation := cached.(*localObservation) //nolint:errcheck // localStat and readDir publish only *localObservation to observations; corruption MUST panic.
 				return observation.info, observation.err
 			}
 			return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 		}
-		return entries[i].Info() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		return entries[i].Info() //nolint:wrapcheck // statPath forwards DirEntry.Info PathError fields from its captured parent listing.
 	}
 	if parent := path.Dir(name); parent != "." {
 		if err := g.admitDirectory(parent, filepath.Dir(abs)); err != nil {
 			return nil, err
 		}
 	}
-	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
+	//nolint:wrapcheck // statPath forwards os.Lstat PathError fields after ancestor admission.
 	return os.Lstat(
 		abs,
 	)

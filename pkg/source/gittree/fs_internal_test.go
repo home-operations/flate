@@ -488,6 +488,17 @@ func testNewEntryPolicyLocalReads(t *testing.T) {
 func testNewEntryPolicyLocalOperationObservations(t *testing.T) {
 	t.Helper()
 
+	t.Run("corrupt_parent_cache", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		view := newLocal(root, true, &localPolicy{}).view.(*localView)
+		view.observations.Store(root, "invalid observation")
+		defer func() {
+			_, ok := recover().(*runtime.TypeAssertionError)
+			assert.Equal(t, ok, true)
+		}()
+		_, _ = view.Lstat("child")
+	})
 	t.Run(
 		"ignore_snapshot",
 		func(t *testing.T) {

@@ -78,7 +78,7 @@ func (g *FS) excludes(name string) bool {
 
 // Open MUST keep excluded paths absent from file and directory handles.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // Open forwards admitted files and PathError fields and retains joined read and close errors.
 func (g *FS) Open(name string) (fs.File, error) {
 	if g.excludes(name) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
@@ -111,7 +111,7 @@ func (g *FS) OpenRegular(name string) (fs.File, error) {
 
 // ReadFile MUST keep optimized reads within the captured membership.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // ReadFile forwards admitted bytes and the underlying PathError fields.
 func (g *FS) ReadFile(name string) ([]byte, error) {
 	if g.excludes(name) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
@@ -121,7 +121,7 @@ func (g *FS) ReadFile(name string) ([]byte, error) {
 
 // Stat MUST report excluded paths as absent even when backing metadata exists.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // Stat forwards admitted metadata and the underlying PathError fields.
 func (g *FS) Stat(name string) (fs.FileInfo, error) {
 	if g.excludes(name) {
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
@@ -131,7 +131,7 @@ func (g *FS) Stat(name string) (fs.FileInfo, error) {
 
 // Lstat MUST enforce membership without following aliases.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // Lstat forwards admitted metadata and the underlying PathError fields.
 func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 	if g.excludes(name) {
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
@@ -141,7 +141,7 @@ func (g *FS) Lstat(name string) (fs.FileInfo, error) {
 
 // ReadLink MUST report excluded paths as absent before resolving an alias.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // ReadLink forwards admitted targets and the underlying PathError fields.
 func (g *FS) ReadLink(name string) (string, error) {
 	if g.excludes(name) {
 		return "", &fs.PathError{Op: readLinkOperation, Path: name, Err: fs.ErrNotExist}
@@ -151,7 +151,7 @@ func (g *FS) ReadLink(name string) (string, error) {
 
 // ReadDir MUST never modify shared listings when it removes excluded entries.
 //
-//nolint:wrapcheck // Filesystem adapters retain the original I/O error contracts.
+//nolint:wrapcheck // ReadDir retains partial listings and the underlying PathError fields while filtering membership.
 func (g *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	if g.excludes(name) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
@@ -217,7 +217,7 @@ func (g *FS) memberFilesystem(files billy.Filesystem, root string) *memberFilesy
 // ReadDir MUST filter excluded names before metadata access.
 // Repository coordinates MUST stay intact for the index and .git/info/exclude.
 //
-//nolint:wrapcheck // The bridge preserves filesystem errors and their concrete identities.
+//nolint:wrapcheck // ReadDir forwards backing ReadDir and DirEntry.Info PathError fields while retaining repository coordinates.
 func (f *memberFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	if f.names == nil {
 		return f.Filesystem.ReadDir(name)

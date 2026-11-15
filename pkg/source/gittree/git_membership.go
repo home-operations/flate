@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -20,65 +21,58 @@ import (
 	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
 )
 
-//nolint:funlen,gocognit,wrapcheck // Native capture keeps its index, submodule, and ignore decisions in one admission lifetime and preserves their error identities.
 func (d *Directory) captureMembership() (membership, error) {
 	ctx, location, observed := d.observed.ctx, d.location, d.observed
-	if err := ctx.Err(); err != nil {
-		return membership{}, err
-	}
-	if location == nil || location.Repository == nil {
-		return membership{captured: true}, nil
+	switch err := ctx.Err(); {
+	case err != nil, location == nil, location.Repository == nil:
+		return membership{captured: err == nil}, err
 	}
 	//nolint:staticcheck // Admission MUST capture ignore errors and observations before index access.
-	patterns, err := gitignore.ReadPatterns(
-		observed,
-		nil,
-	)
+	patterns, err := gitignore.ReadPatterns(observed, nil)
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("read git ignore patterns: %w", err)
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return membership{}, ctxErr
-	}
-	if len(patterns) == 0 {
-		return membership{captured: true}, nil
+	switch ctxErr := ctx.Err(); {
+	case ctxErr != nil, len(patterns) == 0:
+		return membership{captured: ctxErr == nil}, ctxErr
 	}
 	idx, err := location.Repository.Storer.Index()
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("read git index: %w", err)
 	}
 	repo, err := git.Open(location.Repository.Storer, observed)
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("open membership repository: %w", err)
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("open membership worktree: %w", err)
 	}
 	modules, err := worktree.Submodules()
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("read membership submodules: %w", err)
 	}
 	status, err := modules.Status()
 	if err != nil {
-		return membership{}, err
+		return membership{}, fmt.Errorf("read membership submodule status: %w", err)
 	}
 	submodules := make(map[string]plumbing.Hash, len(status))
 	for _, module := range status {
 		submodules[module.Path] = cmp.Or(module.Current, module.Expected)
 	}
-	current := merklefs.NewRootNodeWithOptions(worktree.Filesystem(), submodules, merklefs.Options{})
 	changes, err := merkletrie.DiffTreeContext(
 		ctx,
 		merkleindex.NewRootNode(idx),
-		current,
+		merklefs.NewRootNodeWithOptions(worktree.Filesystem(), submodules, merklefs.Options{}),
 		membershipEqual,
 	)
 	if err != nil {
-		return membership{}, errors.Join(err, ctx.Err())
+		return membership{}, fmt.Errorf("compare git membership: %w", errors.Join(err, ctx.Err()))
 	}
-	matcher := gitignore.NewMatcher(patterns)
-	var ignored map[string]struct{}
+	var (
+		matcher = gitignore.NewMatcher(patterns)
+		ignored map[string]struct{}
+	)
 	for _, change := range changes {
 		if len(change.From) != 0 || len(change.To) == 0 {
 			continue
@@ -91,16 +85,14 @@ func (d *Directory) captureMembership() (membership, error) {
 			continue
 		}
 		name, err := filepath.Rel(
-			location.ContentRoot,
-			filepath.Join(location.RepositoryRoot, filepath.FromSlash(change.To.String())),
+			location.ContentRoot, filepath.Join(location.RepositoryRoot, filepath.FromSlash(change.To.String())),
 		)
-		if err != nil {
-			return membership{}, err
-		}
-		if name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+		switch {
+		case err != nil:
+			return membership{}, fmt.Errorf("relate ignored path %q to content root: %w", change.To, err)
+		case name == "..", strings.HasPrefix(name, ".."+string(filepath.Separator)):
 			continue
-		}
-		if ignored == nil {
+		case ignored == nil:
 			ignored = make(map[string]struct{})
 		}
 		ignored[filepath.ToSlash(name)] = struct{}{}
@@ -129,7 +121,7 @@ type membershipDirectory struct {
 	err     error
 }
 
-//nolint:wrapcheck // Capture-local I/O preserves filesystem error identities.
+//nolint:wrapcheck // ReadDir reuses the backing directory's entries and fs.PathError without changing its operation or path.
 func (f *membershipFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	if err := f.err(); err != nil {
 		return nil, err
@@ -151,7 +143,7 @@ func (f *membershipFilesystem) Open(name string) (billy.File, error) {
 	return f.OpenFile(name, os.O_RDONLY, 0)
 }
 
-//nolint:wrapcheck // The billy filesystem contract requires billy.File and preserves filesystem error identities.
+//nolint:wrapcheck // OpenFile forwards billy.Filesystem errors and returns open fs.PathError for an absent observed entry.
 func (f *membershipFilesystem) OpenFile(name string, flag int, mode fs.FileMode) (billy.File, error) {
 	if err := f.err(); err != nil {
 		return nil, err
@@ -177,7 +169,7 @@ func (f *membershipFilesystem) OpenFile(name string, flag int, mode fs.FileMode)
 	return f.Filesystem.OpenFile(name, flag, mode)
 }
 
-//nolint:wrapcheck // Capture-local metadata preserves filesystem error identities.
+//nolint:wrapcheck // Lstat forwards cached ReadDir, DirEntry.Info, and backing Lstat errors with their original fs.PathError fields.
 func (f *membershipFilesystem) Lstat(name string) (fs.FileInfo, error) {
 	if err := f.err(); err != nil {
 		return nil, err
@@ -203,7 +195,7 @@ type membershipRoot struct {
 	root *os.Root
 }
 
-//nolint:wrapcheck // Capture-local directory reads preserve OS error identities.
+//nolint:wrapcheck // Root.Open and File.Readdir supply fs.PathError with the failed directory operation and path.
 func (f *membershipRoot) ReadDir(name string) ([]fs.DirEntry, error) {
 	directory, err := f.root.Open(cmp.Or(name, "."))
 	if err != nil {
@@ -230,7 +222,7 @@ func (f *membershipFilesystem) err() error {
 	return f.ctx.Err()
 }
 
-//nolint:wrapcheck // The raw adapter preserves filesystem error identities.
+//nolint:wrapcheck // Readlink forwards billy.Filesystem errors with their original fs.PathError operation and path.
 func (f *membershipFilesystem) Readlink(name string) (string, error) {
 	if err := f.err(); err != nil {
 		return "", err
@@ -238,7 +230,7 @@ func (f *membershipFilesystem) Readlink(name string) (string, error) {
 	return f.Filesystem.Readlink(name)
 }
 
-//nolint:wrapcheck // Raw stat retains the rule reader's filesystem semantics.
+//nolint:wrapcheck // Stat forwards billy.Filesystem errors with their original fs.PathError operation and path for ignore-rule reads.
 func (f *membershipFilesystem) Stat(name string) (fs.FileInfo, error) {
 	if err := f.err(); err != nil {
 		return nil, err

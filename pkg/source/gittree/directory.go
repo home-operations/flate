@@ -2,6 +2,7 @@ package gittree
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -34,16 +35,15 @@ func OpenDirectory(ctx context.Context, location *gitrepo.Location) (*Directory,
 	return openDirectoryAt(ctx, location, "")
 }
 
-//nolint:wrapcheck // Admission preserves filesystem and cancellation error identities.
 func openDirectoryAt(ctx context.Context, location *gitrepo.Location, excluded string) (*Directory, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if location.RepositoryRoot != "" && location.LookupErr != nil {
-		return nil, location.LookupErr
+		return nil, fmt.Errorf("admit directory %q: %w", location.ContentRoot, location.LookupErr)
 	}
 	if _, err := os.Stat(location.ContentRoot); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("admit directory %q: %w", location.ContentRoot, err)
 	}
 	var root *os.Root
 	var backing billy.Filesystem
@@ -51,7 +51,7 @@ func openDirectoryAt(ctx context.Context, location *gitrepo.Location, excluded s
 		var err error
 		root, err = os.OpenRoot(location.RepositoryRoot)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("open repository root %q: %w", location.RepositoryRoot, err)
 		}
 		backing = &membershipRoot{Filesystem: osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), root: root}
 	}
@@ -107,15 +107,13 @@ func (d *Directory) Artifact() *store.SourceArtifact {
 
 // Worktree requires a Git directory and the same admission's selected descriptor.
 // The caller MUST apply cache exclusion to current before comparison.
-//
-//nolint:wrapcheck // The adapter preserves upstream repository error identities.
 func (d *Directory) Worktree(current *FS) (*git.Worktree, error) {
 	if err := d.observed.err(); err != nil {
 		return nil, err
 	}
 	prefix, err := filepath.Rel(d.location.RepositoryRoot, d.location.ContentRoot)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("relate content root %q: %w", d.location.ContentRoot, err)
 	}
 	input := &directoryFilesystem{
 		Filesystem: d.observed, observed: d.observed, current: current,
@@ -123,14 +121,18 @@ func (d *Directory) Worktree(current *FS) (*git.Worktree, error) {
 	}
 	repo, err := git.Open(d.location.Repository.Storer, input)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open admitted repository: %w", err)
 	}
-	return repo.Worktree()
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("open admitted worktree: %w", err)
+	}
+	return worktree, nil
 }
 
 // Close invalidates all borrowed views, including cached metadata.
 //
-//nolint:wrapcheck // Closing retains the root's error identity.
+//nolint:wrapcheck // Close forwards the owned os.Root close error after invalidating every borrowed view.
 func (d *Directory) Close() error {
 	d.observed.closed = true
 	d.observed.directories = nil
@@ -246,7 +248,7 @@ func (f *directoryFilesystem) Readlink(name string) (string, error) {
 	return f.observed.Readlink(f.Join(f.prefix, directoryName(name)))
 }
 
-//nolint:wrapcheck // Chroot implements the upstream filesystem interface and retains observation lifetime.
+//nolint:wrapcheck // Chroot forwards filesystem errors and keeps the bounded adapter within Directory.Close lifetime.
 func (f *directoryFilesystem) Chroot(name string) (billy.Filesystem, error) {
 	if _, err := f.Lstat(name); err != nil {
 		return nil, err

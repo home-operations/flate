@@ -106,4 +106,7 @@ func testNewWarningsSurviveFailureCase(t *testing.T, failure *string,
 			"traversal" && !errors.Is(err, plumbing.ErrObjectNotFound), "original error lost: %v",
 		err,
 	)
+	if (*failure) == "traversal" {
+		assert.Equal(t, strings.HasPrefix(err.Error(), "read tree "), true)
+	}
 }

@@ -7,10 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/go-git/go-git/v6/utils/merkletrie"
 	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
 	merkleindex "github.com/go-git/go-git/v6/utils/merkletrie/index"
@@ -295,6 +297,8 @@ func TestDirectory_ClosedObservation(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, file.Close())
 	assert.NoError(t, directory.Close())
+	_, err = directory.Worktree(artifact.FS.(*FS))
+	assert.Equal(t, errors.Is(err, fs.ErrClosed), true)
 	for _, name := range []string{"deep", "unread"} {
 		_, err = scoped.ReadDir(name)
 		assert.FatalIf(t, !errors.Is(err, os.ErrClosed), "closed observation remains readable: %v", err)
@@ -316,4 +320,53 @@ func TestDirectory_ClosedObservation(t *testing.T) {
 	data, err := fs.ReadFile(artifact.FS, "nested/deep/file")
 	assert.NoError(t, err)
 	assert.Equal(t, string(data), "before")
+}
+
+func TestDirectory_AdmissionErrors(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"lookup", "content root", "repository root"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.GitInit(t, root)
+			location, err := gitrepo.Locate(t.Context(), root, root)
+			assert.NoError(t, err)
+			want := &fs.PathError{Op: "lookup", Path: root, Err: fs.ErrPermission}
+			operation := "admit directory "
+			switch failure {
+			case "lookup":
+				location.LookupErr = want
+			case "content root":
+				location.ContentRoot = filepath.Join(root, "missing")
+				want = &fs.PathError{Op: "stat", Path: location.ContentRoot, Err: fs.ErrNotExist}
+			case "repository root":
+				location.RepositoryRoot = filepath.Join(root, "missing")
+				operation = "open repository root "
+				want = &fs.PathError{Op: "open", Path: location.RepositoryRoot, Err: fs.ErrNotExist}
+			}
+			_, err = OpenDirectory(t.Context(), location)
+			assert.Equal(t, errors.Is(err, want.Err), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), operation), true)
+			got, ok := errors.AsType[*fs.PathError](err)
+			assert.FatalIf(t, !ok, "directory admission error = %v", err)
+			assert.Equal(t, got.Op, want.Op)
+			assert.Equal(t, got.Path, want.Path)
+			assert.Equal(t, errors.Is(got.Err, want.Err), true)
+		})
+	}
+}
+
+func TestDirectory_WorktreeError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	location, err := gitrepo.Locate(t.Context(), root, root)
+	assert.NoError(t, err)
+	directory, err := OpenDirectory(t.Context(), location)
+	assert.NoError(t, err)
+	defer func() { assert.NoError(t, directory.Close()) }()
+	location.Repository.Storer = memory.NewStorage()
+	_, err = directory.Worktree(directory.Artifact().FS.(*FS))
+	assert.Equal(t, errors.Is(err, git.ErrRepositoryNotExists), true)
+	assert.Equal(t, strings.HasPrefix(err.Error(), "open admitted repository:"), true)
 }

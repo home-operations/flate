@@ -167,8 +167,8 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 	assert.FatalIf(t, err != nil || len(got) != 0, "incomplete history did not fall back: %v, %v", got, err)
 }
 
-//nolint:paralleltest // Allocation measurements use process-wide test accounting.
-//nolint:paralleltest // Allocation measurements use process-wide test accounting.
+//nolint:paralleltest // testing.AllocsPerRun changes process-wide allocation accounting.
+//nolint:paralleltest // testing.AllocsPerRun changes process-wide allocation accounting.
 func TestResolveLocal_NoWarningAllocations(t *testing.T) {
 	empty := []*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{})}
 	authored := []*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: "v1.0.0"})}
@@ -483,7 +483,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest,tparallel // Child options must finish before the parent moves their shared repository metadata.
+//nolint:paralleltest,tparallel // Subtests MUST finish sparse and submodule reads before the parent renames their shared .git directory.
 func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 	t.Parallel()
 
@@ -629,7 +629,9 @@ func TestResolveSemver_DeterministicTiesAndReadErrors(t *testing.T) {
 	t.Parallel()
 	localFixtureResult14 := localFixture(t)
 	repo, a, b := localFixtureResult14.repo, localFixtureResult14.base, localFixtureResult14.head
-	for name, hash := range map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b} {
+	for name, hash := range map[string]plumbing.Hash{
+		"1.0.0": a, "v1.0.0": b, "invalid-version": b, "v3.0.0": b,
+	} {
 		{
 			err := repo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hash),

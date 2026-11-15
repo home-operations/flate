@@ -29,7 +29,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // testutil.StubDNS replaces net.DefaultResolver and clears all six HTTP proxy environment variables.
 func TestFetcher_NetworkRoutes(t *testing.T) {
 	for _, route := range []string{"registry", "token", "redirect", "tags", "manifest", "layer", "copy", "fallback"} {
 		t.Run(

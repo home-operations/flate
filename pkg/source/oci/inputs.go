@@ -93,6 +93,8 @@ func produceRegistryInputs(
 		}
 		inputs = append(inputs, input)
 	}
-	//nolint:wrapcheck // Preserve codec and cache writer error identity.
-	return cache.ProducerResult{}, json.NewEncoder(w).Encode(inputs)
+	if err := json.NewEncoder(w).Encode(inputs); err != nil {
+		return cache.ProducerResult{}, fmt.Errorf("encode registry inputs: %w", err)
+	}
+	return cache.ProducerResult{}, nil
 }

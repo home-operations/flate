@@ -297,7 +297,7 @@ func (f *Fetcher) fetch(
 			viewOptions.Worktree = worktree
 			input, identity, err = gittree.New(
 				ctx,
-				storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // cache.gitProducer.produce passes filesystem.Storage to this callback; a mismatched storage intentionally panics.
 				hash,
 				viewOptions,
 			)
@@ -612,7 +612,10 @@ func (r *gitAcquisition) fetchRevision(ctx context.Context, repo *git.Repository
 	}
 	err := repo.FetchContext(fetchCtx, fetch)
 	recordTransfer(r.work, r.protocol, err)
-	return err //nolint:wrapcheck // Preserve go-git protocol error identity and messages.
+	if err != nil {
+		return fmt.Errorf("fetch revision: %w", err)
+	}
+	return nil
 }
 
 func (r *gitAcquisition) fetchPin(

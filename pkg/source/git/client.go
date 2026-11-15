@@ -76,24 +76,31 @@ func newClient(cfg *ClientConfig, auth any) (*Client, error) {
 	return c, nil
 }
 
-// List preserves upstream error identity for baseline classification.
+// List keeps upstream failures available to structural baseline classification.
 func (c *Client) List(ctx context.Context, remoteURL string) ([]*plumbing.Reference, error) {
 	remote := git.NewRemote(
 		memory.NewStorage(),
 		&config.RemoteConfig{Name: git.DefaultRemoteName, URLs: []string{remoteURL}},
 	)
-	return remote.ListContext( //nolint:wrapcheck // Baseline classification requires upstream error identity.
+	refs, err := remote.ListContext(
 		ctx,
 		&git.ListOptions{ClientOptions: c.options},
 	)
+	if err != nil {
+		return refs, fmt.Errorf("list remote references: %w", err)
+	}
+	return refs, nil
 }
 
-// Fetch preserves the caller's fetch policy and upstream error identity.
+// Fetch keeps caller policy and upstream failures available to structural classification.
 func (c *Client) Fetch(ctx context.Context, st storage.Storer, remoteURL string, options *git.FetchOptions) error {
 	opts := *options
 	opts.ClientOptions = c.options
 	remote := git.NewRemote(st, &config.RemoteConfig{Name: git.DefaultRemoteName, URLs: []string{remoteURL}})
-	return remote.FetchContext(ctx, &opts) //nolint:wrapcheck // Upstream errors retain their protocol identity.
+	if err := remote.FetchContext(ctx, &opts); err != nil {
+		return fmt.Errorf("fetch remote references: %w", err)
+	}
+	return nil
 }
 
 type streamTransport struct{ connect Transport }
@@ -103,8 +110,12 @@ func (t streamTransport) Handshake(ctx context.Context, req *transport.Request) 
 	if err != nil {
 		return nil, err
 	}
-	return transport.NewStreamSession( //nolint:wrapcheck // Upstream owns negotiation and connection cleanup.
+	session, err := transport.NewStreamSession(
 		conn,
 		req.Command,
 	)
+	if err != nil {
+		return session, fmt.Errorf("negotiate git session: %w", err)
+	}
+	return session, nil
 }

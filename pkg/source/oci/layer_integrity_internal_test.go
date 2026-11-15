@@ -16,6 +16,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"oras.land/oras-go/v2/content"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -135,6 +136,12 @@ func testFetcherLayerDigestMismatchPublishesNothingCase(
 				terminal,
 				fetchErr,
 			)
+		}
+		if *corruption == "digest" {
+			assert.FatalIf(t, !strings.Contains(manifest.ErrorDetails(fetchErr), "verify layer content: "),
+				"lost verification context: %v", fetchErr)
+			assert.FatalIf(t, !errors.Is(fetchErr, content.ErrMismatchedDigest),
+				"lost digest cause: %v", fetchErr)
 		}
 		assert.FatalIf(
 			t, (*corruption) !=

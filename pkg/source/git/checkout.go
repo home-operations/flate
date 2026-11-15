@@ -18,22 +18,25 @@ import (
 func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) error {
 	wt, err := repo.Worktree()
 	if err != nil {
-		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+		return fmt.Errorf("open worktree: %w", err)
 	}
-	return wt.Checkout( //nolint:wrapcheck // The checkout adapter must preserve upstream protocol error identity and messages.
+	if err := wt.Checkout(
 		&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)},
-	)
+	); err != nil {
+		return fmt.Errorf("checkout revision: %w", err)
+	}
+	return nil
 }
 
 // Flux reuses the parent's credentials for submodules on every host.
 func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, options submoduleOptions) error {
 	wt, err := repo.Worktree()
 	if err != nil {
-		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+		return fmt.Errorf("open submodule worktree: %w", err)
 	}
 	subs, err := wt.Submodules()
 	if err != nil {
-		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+		return fmt.Errorf("list submodules: %w", err)
 	}
 	client, err := newClient(&ClientConfig{Transports: f.GitTransports, Network: f.Network}, options.auth)
 	if err != nil {
@@ -44,15 +47,15 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, op
 	})
 	for _, sub := range subs {
 		if err := sub.Init(); err != nil && !errors.Is(err, git.ErrSubmoduleAlreadyInitialized) {
-			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+			return fmt.Errorf("initialize submodule %q: %w", sub.Config().Name, err)
 		}
 		child, err := sub.Repository()
 		if err != nil {
-			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+			return fmt.Errorf("open submodule %q: %w", sub.Config().Name, err)
 		}
 		remote, err := child.Remote(git.DefaultRemoteName)
 		if err != nil {
-			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+			return fmt.Errorf("open remote for submodule %q: %w", sub.Config().Name, err)
 		}
 		endpoint, err := f.validateRepo(
 			manifest.NewGitRepository(
@@ -65,7 +68,7 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, op
 		err = sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{ClientOptions: client.options})
 		recordTransfer(options.work, endpoint.Scheme, err)
 		if err != nil {
-			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+			return fmt.Errorf("update submodule %q: %w", sub.Config().Name, err)
 		}
 		if options.depth <= 0 {
 			continue

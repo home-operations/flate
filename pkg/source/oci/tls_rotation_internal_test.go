@@ -27,8 +27,8 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // The parent clears HTTPS_PROXY, NO_PROXY, and no_proxy before the rotation cases run.
+//nolint:paralleltest // testFetcherResolveTLSSnapshotRotationCase changes https_proxy and no_proxy between credential snapshots.
 func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap"})
 	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)

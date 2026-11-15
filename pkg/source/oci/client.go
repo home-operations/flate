@@ -178,7 +178,7 @@ func (f *operation) configure(
 	}
 	request.client.Client = &auth.Client{
 		Client:     &http.Client{Transport: tr},
-		Cache:      tr.(auth.Cache), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		Cache:      tr.(auth.Cache), //nolint:errcheck // Network.HTTPTransport returns networkTransport, which embeds auth.Cache for OCI token reuse.
 		Credential: auth.StaticCredential(request.client.Reference.Registry, cred),
 	}
 	return nil

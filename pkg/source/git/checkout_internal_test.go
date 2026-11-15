@@ -21,7 +21,10 @@ import (
 	"github.com/home-operations/flate/internal/fetcherr"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/format/index"
@@ -31,6 +34,8 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	filetransport "github.com/go-git/go-git/v6/plumbing/transport/file"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/minio/minio-go/v7"
 	"golang.org/x/crypto/ssh"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -472,4 +477,111 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 			err,
 		)
 	}
+}
+
+func TestCheckoutRef_ErrorContext(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		bare      bool
+		operation string
+		cause     error
+	}{
+		{name: "worktree", bare: true, operation: "open worktree", cause: git.ErrIsBareRepository},
+		{name: "checkout", operation: "checkout revision", cause: plumbing.ErrObjectNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var options []git.InitOption
+			if !tc.bare {
+				options = append(options, git.WithWorkTree(memfs.New()))
+			}
+			repo, err := git.Init(memory.NewStorage(), options...)
+			assert.NoError(t, err)
+			err = checkoutRef(repo, plumbing.NewHash(strings.Repeat("a", 40)), nil)
+			assert.Equal(t, errors.Is(err, tc.cause), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), tc.operation+": "), true)
+		})
+	}
+}
+
+func TestFetcher_SubmoduleErrorContext(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("submodule storage unavailable")
+	for _, tc := range []struct {
+		name      string
+		operation string
+		cause     error
+	}{
+		{name: "worktree", operation: "open submodule worktree", cause: git.ErrIsBareRepository},
+		{name: "list", operation: "list submodules", cause: failure},
+		{name: "initialize", operation: `initialize submodule "lib"`, cause: failure},
+		{name: "repository", operation: `open submodule "lib"`, cause: failure},
+		{name: "remote", operation: `open remote for submodule "lib"`, cause: git.ErrRemoteNotFound},
+		{name: "update", operation: `update submodule "lib"`, cause: index.ErrEntryNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			mustInitRepoWithFiles(t, root, map[string]string{
+				".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = https://fixture.invalid/lib\n",
+			})
+			repo, err := git.PlainOpen(root)
+			assert.NoError(t, err)
+			boundary := &submoduleErrorStore{Storer: repo.Storer}
+			repo.Storer = boundary
+			switch tc.name {
+			case "worktree":
+				repo, err = git.Init(memory.NewStorage())
+				assert.NoError(t, err)
+			case "list":
+				boundary.configErr = failure
+			case "initialize":
+				boundary.setConfigErr = failure
+			case "repository":
+				wt, worktreeErr := repo.Worktree()
+				assert.NoError(t, worktreeErr)
+				repo, err = git.Open(boundary, &submoduleErrorWorktree{Filesystem: wt.Filesystem(), err: failure})
+				assert.NoError(t, err)
+			case "remote":
+				_, initErr := git.PlainInit(filepath.Join(root, ".git", "modules", "lib"), true)
+				assert.NoError(t, initErr)
+			}
+			f := &Fetcher{Network: networktest.New(t)}
+			err = f.updateSubmodules(t.Context(), repo, submoduleOptions{})
+			assert.Equal(t, errors.Is(err, tc.cause), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), tc.operation+": "), true)
+		})
+	}
+}
+
+type submoduleErrorStore struct {
+	storage.Storer
+
+	configErr    error
+	setConfigErr error
+}
+
+func (s *submoduleErrorStore) Config() (*config.Config, error) {
+	if s.configErr != nil {
+		return nil, s.configErr
+	}
+	return s.Storer.Config()
+}
+
+func (s *submoduleErrorStore) SetConfig(cfg *config.Config) error {
+	if s.setConfigErr != nil {
+		return s.setConfigErr
+	}
+	return s.Storer.SetConfig(cfg)
+}
+
+type submoduleErrorWorktree struct {
+	billy.Filesystem
+
+	err error
+}
+
+func (s *submoduleErrorWorktree) Chroot(string) (billy.Filesystem, error) {
+	return nil, s.err
 }

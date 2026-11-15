@@ -35,7 +35,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:ireturn // The upstream keyring constructor exposes only the agent interface.
+//nolint:ireturn // agent.NewKeyring returns agent.Agent and keeps its concrete keyring type private.
 func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.Int32, agent.Agent) {
 	t.Helper()
 	keyring := agent.NewKeyring()
@@ -71,8 +71,8 @@ func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.I
 	return closed, &opened, keyring
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // testFetcherAmbientAcquisitionCase sets HOME and SSH_AUTH_SOCK and replaces slog.Default for the fallback case.
+//nolint:paralleltest // acquisitionAgent and the refused-agent case change the working directory with t.Chdir.
 func TestFetcher_AmbientAcquisition(t *testing.T) {
 	for _, shape := range []string{"accepted", "rejected", "absent", "refused", "unset", "empty agent", "provider", "unverified", "bad ref", "source only", "retry", "fallback"} {
 		t.Run(shape, func(t *testing.T) {
@@ -82,8 +82,8 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // acquisitionAgent sets SSH_AUTH_SOCK for the preparation cases.
+//nolint:paralleltest // acquisitionAgent changes the working directory with t.Chdir.
 func TestFetcher_AmbientPreparation(t *testing.T) {
 	for _, shape := range []string{"source only", "missing proxy", "invalid proxy", "malformed identity", "malformed hosts", "HTTPS"} {
 		t.Run(shape, func(t *testing.T) {
@@ -93,8 +93,8 @@ func TestFetcher_AmbientPreparation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // testFetcherStalledAgentCase sets HOME and SSH_AUTH_SOCK.
+//nolint:paralleltest // testFetcherStalledAgentCase changes the working directory with t.Chdir.
 func TestFetcher_StalledAgent(t *testing.T) {
 	for _, cause := range []string{"timeout", "cancel"} {
 		t.Run(

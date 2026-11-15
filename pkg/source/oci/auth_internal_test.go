@@ -161,7 +161,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixtures change the process environment.
+//nolint:paralleltest // testFetcherResolveConfigCredentialPrecedenceCase changes DOCKER_CONFIG and HELM_REGISTRY_CONFIG.
 func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 	const secretJSON = `{"auths":{"ghcr.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`
 	const explicitJSON = `{"auths":{"ghcr.io":{"username":"explicit","password":"explicit"}}}`
@@ -241,7 +241,7 @@ func TestFetcher_CorruptDockerConfig(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixtures change the process environment.
+//nolint:paralleltest // testFetcherMachineCredentialsCase changes HOME, PATH, DOCKER_CONFIG, HELM_REGISTRY_CONFIG, and FLATE_HELPER_MARKER.
 func TestFetcher_MachineCredentials(t *testing.T) {
 	const docker = `{"auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`
 	const helm = `{"auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`
@@ -272,7 +272,7 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixtures change the process environment.
+//nolint:paralleltest // testFetcherHelmConfigAvailabilityCase changes DOCKER_CONFIG, HELM_CONFIG_HOME, and HELM_REGISTRY_CONFIG.
 func TestFetcher_HelmConfigAvailability(t *testing.T) {
 	for _, mode := range []string{"absent", "open failure", "read failure", "malformed", "default", "override"} {
 		t.Run(mode, func(t *testing.T) {
@@ -282,7 +282,7 @@ func TestFetcher_HelmConfigAvailability(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixtures change the process environment.
+//nolint:paralleltest // testFetcherMachineCredentialsAcquisitionCase changes PATH, DOCKER_CONFIG, HELM_REGISTRY_CONFIG, FLATE_HELPER_MARKER, and FLATE_HELPER_SECRET.
 func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
 	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
@@ -369,8 +369,8 @@ func TestAcquirePrepared_AnonymousDenial(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test replaces the process HTTP transport and restores it afterward.
-//nolint:paralleltest // The test replaces the process HTTP transport and restores it afterward.
+//nolint:paralleltest // The test replaces http.DefaultTransport before constructing the shared Network.
+//nolint:paralleltest // Cleanup restores http.DefaultTransport after the synctest workers finish.
 func TestFetcher_SharedMachineFailure(t *testing.T) {
 	previous := http.DefaultTransport
 	transport := previous.(*http.Transport).Clone()
@@ -386,7 +386,7 @@ func TestFetcher_SharedMachineFailure(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixtures change the process environment.
+//nolint:paralleltest // The test replaces DOCKER_CONFIG and HELM_REGISTRY_CONFIG before the policy cases run.
 func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))

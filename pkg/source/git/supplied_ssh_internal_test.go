@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // SSH fixtures change process-global state.
+//nolint:paralleltest // testSSHAcquisitions sets SSH_AUTH_SOCK with t.Setenv for both acquisition modes.
 func TestFetcher_SSHAcquisitionsOnBothSides(t *testing.T) {
 	for _, mode := range []string{"supplied", "repository", "agent", "absent"} {
 		t.Run(mode, func(t *testing.T) { testSSHAcquisitions(t, mode) })

@@ -125,7 +125,7 @@ func (s *selection) reader(
 	if err := s.acquireBodies(ctx, entries, bodies); err != nil {
 		return nil, "", err
 	}
-	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // The repository uses filesystem storage.
+	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // Baseline selection retains the filesystem repository admitted by source discovery.
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}

@@ -8,7 +8,11 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-type archiveSelection struct{ Alias, Path, Destination string }
+type archiveSelection struct {
+	Alias       string `json:"Alias"`
+	Path        string `json:"Path"`
+	Destination string `json:"Destination"`
+}
 
 func (e *evaluation) composition(id manifest.NamedResource, req *request) (cache.Composition, error) {
 	e.projectedInputs = slices.Grow(e.projectedInputs[:0], len(e.identity))[:len(e.identity)]

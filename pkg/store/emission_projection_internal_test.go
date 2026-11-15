@@ -540,7 +540,6 @@ func projectionApplicationChild(t *testing.T, source manifest.NamedResource, mod
 	return Child{Obj: object, Doc: document}
 }
 
-//nolint:gocognit // One lifecycle table MUST keep the same captured-production assertions across terminal transitions.
 func TestStore_UnpublishedDeclarationProduction(t *testing.T) {
 	t.Parallel()
 	for _, terminal := range []string{"pending", "raw owner", "self declaration", "owner output", "ancestor withdrawal", "owner deleted"} {
@@ -572,10 +571,11 @@ func TestStore_UnpublishedDeclarationProduction(t *testing.T) {
 				Source:      source,
 				File:        "generator.yaml",
 			}
-			if terminal == "raw owner" {
+			selfDeclaration := terminal == "self declaration"
+			switch terminal {
+			case "raw owner":
 				production.Declaration = manifest.NamedResource{}
-			}
-			if terminal == "self declaration" {
+			case "self declaration":
 				production.Declaration = target
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -586,13 +586,13 @@ func TestStore_UnpublishedDeclarationProduction(t *testing.T) {
 				declaration: {Productions: []manifest.Production{production}},
 				target:      {Productions: []manifest.Production{production}},
 			}}
-			if terminal == "self declaration" {
+			if selfDeclaration {
 				delete(index.Records, declaration)
 			}
 			s.SetDiscoveryIndex(index)
 			s.AddObject(entry)
 			assert.Equal(t, s.coverage[parent].slot.visible.Load(), false)
-			pending := terminal != "raw owner" && terminal != "self declaration"
+			pending := terminal != "raw owner" && !selfDeclaration
 			assert.Equal(t, s.coverage[parent].slot.hidden.Load(), !pending)
 			want := []manifest.Production{}
 			if pending {
@@ -604,28 +604,28 @@ func TestStore_UnpublishedDeclarationProduction(t *testing.T) {
 			reads.Init(s, ownerID("consumer"), nil)
 			defer reads.Close()
 			assert.Diff(t, reads.Productions(target, nil), want)
-			if terminal == "pending" || !pending {
-				return
-			}
 			owner := parent
 			if terminal == "ancestor withdrawal" {
 				owner = entry.Named()
 			}
-			if terminal == "owner deleted" {
+			switch terminal {
+			case "owner deleted":
 				projectionOwner(s, "parent", source)
 				s.DeleteObject(parent)
 				successor := entry.Clone()
 				successor.Path = "next"
 				s.AddObject(successor)
 				assert.Equal(t, s.coverage[parent].slot.hidden.Load(), true)
-			} else {
-				if terminal == "owner output" {
-					projectionOwner(s, "parent", source)
-				}
+			case "owner output":
+				projectionOwner(s, "parent", source)
+				fallthrough
+			case "ancestor withdrawal":
 				_, _, attempt := s.GetEmission(owner)
 				defer attempt.Finish()
 				attempt.Complete = true
 				s.RecordEmitted(owner, &attempt, nil)
+			default:
+				return
 			}
 			assert.Equal(t, reads.Valid(), false)
 			assert.Equal(t, len(s.Productions(target, nil)), 0)

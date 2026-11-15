@@ -51,7 +51,7 @@ func defaultNamespace(
 	if !changed {
 		doc = maps.Clone(doc)
 	}
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // The parse path supplies metadata as map[string]any before namespace projection.
 	metadata := maps.Clone(doc[metadataKey].(map[string]any))
 	metadata[namespaceKey] = namespace
 	doc[metadataKey] = metadata

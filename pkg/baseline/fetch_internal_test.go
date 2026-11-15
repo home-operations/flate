@@ -701,7 +701,6 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 		), "%v", "adopted writes did not retain fetched-upper ownership")
 }
 
-//nolint:gocognit // History recovery MUST retain the existing body, filter, and request assertions in the shared policy table.
 func testBaseRemoteFetchPolicyCaseSegment(
 	t *testing.T,
 	testCaseInput *testBaseRemoteFetchPolicyCaseInputs,
@@ -709,34 +708,40 @@ func testBaseRemoteFetchPolicyCaseSegment(
 	wants *[]plumbing.Hash,
 ) {
 	t.Helper()
-	history := len(testCaseInput.tc.responsePins) > 1 ||
-		len(testCaseInput.tc.failures) > 0 && errors.Is(testCaseInput.tc.failures[0], git.NoErrAlreadyUpToDate)
+	var history bool
+	switch {
+	case len(testCaseInput.tc.responsePins) > 1:
+		history = true
+	case len(testCaseInput.tc.failures) > 0:
+		history = errors.Is(testCaseInput.tc.failures[0], git.NoErrAlreadyUpToDate)
+	}
 	for i, request := range (*fixture).requests {
 		bodyRequest := testCaseInput.tc.bodies && testCaseInput.tc.reachable && i == 0
 		want := []plumbing.Hash{*testCaseInput.pin}
-		if bodyRequest {
+		switch {
+		case testCaseInput.tc.wildcard:
+			want = []plumbing.Hash{*testCaseInput.pin, *testCaseInput.pin}
+		case bodyRequest:
 			want = *wants
 		}
-		if testCaseInput.tc.wildcard {
-			want = []plumbing.Hash{*testCaseInput.pin, *testCaseInput.pin}
-		}
 		recovering := history && i > 0
-		depth := 0
-		if testCaseInput.tc.shallow && !bodyRequest && !testCaseInput.tc.wildcard && !recovering {
-			depth = 1
+		depth := 1
+		switch {
+		case !testCaseInput.tc.shallow, bodyRequest, testCaseInput.tc.wildcard, recovering:
+			depth = 0
 		}
-		filtered := !testCaseInput.tc.bodies && !testCaseInput.tc.full && testCaseInput.tc.filter
-		if i > 0 {
-			filtered = filtered && history && i == 1
-		}
+		filterRequested := !testCaseInput.tc.bodies && !testCaseInput.tc.full && testCaseInput.tc.filter
+		filterAttempt := i == 0 || history && i == 1
+		filtered := filterRequested && filterAttempt
 		if recovering {
 			assert.Equal(t, (*fixture).targets[i] == (*fixture).targets[0], false)
 			assert.Equal(t, (*fixture).targets[i] == (*fixture).targets[i-1], false)
 		}
-		if !slices.Equal(request.Wants, want) || request.Depth != depth ||
-			(request.Depth > 0 && (*fixture).capabilities.Supports(capability.Shallow)) != (depth != 0) ||
-			(request.Filter != "") != filtered ||
-			request.Progress != nil {
+		switch {
+		case !slices.Equal(request.Wants, want), request.Depth != depth,
+			(request.Depth > 0 && (*fixture).capabilities.Supports(capability.Shallow)) != (depth != 0),
+			(request.Filter != "") != filtered,
+			request.Progress != nil:
 			t.Fatalf(
 				"request %d: wants=%v depth=%v filter=%q caps=%q",
 				i,
@@ -750,9 +755,7 @@ func testBaseRemoteFetchPolicyCaseSegment(
 		if filtered {
 			wantFilter = packp.FilterBlobNone()
 		}
-		if request.Filter != wantFilter {
-			t.Fatalf("request %d filter=%q, want %q", i, request.Filter, wantFilter)
-		}
+		assert.FatalIf(t, request.Filter != wantFilter, "request %d filter=%q, want %q", i, request.Filter, wantFilter)
 		assert.FatalIf(t, i > 0 &&
 			request == (*fixture).requests[0], "%v", "fallback reused a partial request")
 	}

@@ -84,7 +84,7 @@ func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (k *Kustomization) ProjectionCompatible(previous BaseManifest) bool {
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // BaseManifest.ProjectionCompatible requires the same concrete type for both operands.
 	p := previous.(*Kustomization)
 	return k.TargetNamespace == p.TargetNamespace && k.diagnosticOwner == p.diagnosticOwner &&
 		k.diagnosticPath == p.diagnosticPath &&
@@ -281,7 +281,7 @@ var kustomizationEncoders = sync.Pool{New: func() any {
 
 // RenderDocument derives a Flux desired document; callers MUST keep it immutable.
 func (k *Kustomization) RenderDocument() (map[string]any, error) {
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // kustomizationEncoders.New and RenderDocument publish only *kustomizationEncoder values.
 	state := kustomizationEncoders.Get().(*kustomizationEncoder)
 	state.buffer.Reset()
 	state.encoder.Reset(&state.buffer)

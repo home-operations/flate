@@ -85,7 +85,7 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (h *HelmChartSource) ProjectionCompatible(previous BaseManifest) bool {
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // BaseManifest.ProjectionCompatible requires the same concrete type for both operands.
 	p := previous.(*HelmChartSource)
 	return h.diagnosticOwner == p.diagnosticOwner && h.diagnosticPath == p.diagnosticPath &&
 		h.hasDiagnostic == p.hasDiagnostic

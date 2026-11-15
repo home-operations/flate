@@ -62,9 +62,9 @@ func (c *Controller) ReconcileNode(
 }
 
 type inputIdentity struct {
-	Alias  string
-	Source manifest.NamedResource
-	Input  store.ArtifactInput
+	Alias  string                 `json:"Alias"`
+	Source manifest.NamedResource `json:"Source"`
+	Input  store.ArtifactInput    `json:"Input"`
 }
 
 type evaluation struct {

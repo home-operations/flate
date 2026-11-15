@@ -161,8 +161,8 @@ func TestMapEqualExcept_JSONValues(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for declaration equality.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for declaration equality.
 func TestEqual_Allocations(t *testing.T) {
 	document := func() map[string]any {
 		return map[string]any{

@@ -17,6 +17,7 @@ func TestObjectDocument_Ownership(t *testing.T) {
 	for _, tc := range []struct {
 		kind, version, spec string
 	}{
+		{KindConfigMap, "v1", ""},
 		{KindKustomization, FluxKustomizeDomain + "/v1", "path: ./old\npostBuild: {substitute: {releaseVersion: v1}}"},
 		{KindHelmRelease, HelmReleaseDomain + "/v2", "chart: {spec: {chart: authored, sourceRef: {kind: GitRepository, name: source}}}\nvalues: {nested: {integer: 9007199254740993, fraction: 1.25}}"},
 	} {
@@ -78,7 +79,9 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	assert.NoError(t, err)
 	specs, err := splitDocMaps([]byte(testCaseInput.spec))
 	assert.NoError(t, err)
-	docs[0]["spec"] = specs[0]
+	if testCaseInput.spec != "" {
+		docs[0]["spec"] = specs[0]
+	}
 	parsed, err := ParseDoc(docs[0], ParseDocOptions{})
 	obj := parsed.Object
 	assert.NoError(t, err)
@@ -86,7 +89,27 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 		h.Chart.Name = "resolved"
 		h.Values = map[string]any{"merged": true}
 	}
-	renderer := obj.(documentRenderer)
+	renderer, ok := obj.(documentRenderer)
+	if !ok {
+		id := obj.Named()
+		id.Name, id.Namespace = "captured", ""
+		want := map[string]any{
+			"apiVersion": "", "kind": KindConfigMap,
+			"metadata": map[string]any{"name": "captured", "namespace": ""},
+		}
+		doc, projectionErr := ObjectDocument(id, obj)
+		assert.NoError(t, projectionErr)
+		assert.Diff(t, doc, want)
+		again, projectionErr := ObjectDocument(id, obj)
+		assert.NoError(t, projectionErr)
+		assert.Diff(t, again, want)
+		doc["status"] = map[string]any{"observedGeneration": int64(1)}
+		doc["metadata"].(map[string]any)["name"] = "overlay"
+		doc["metadata"].(map[string]any)["generation"] = int64(1)
+		assert.Diff(t, again, want)
+		assert.Equal(t, obj.Named(), NamedResource{Kind: KindConfigMap, Name: "original", Namespace: "authored"})
+		return
+	}
 	rendered, err := renderer.RenderDocument()
 	assert.NoError(t, err)
 	before := DeepCopyMap(rendered)
@@ -94,6 +117,8 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	id.Name, id.Namespace = "captured", ""
 	doc, err := ObjectDocument(id, obj)
 	assert.NoError(t, err)
+	assert.Equal(t, DocIdentity(doc), id)
+	assert.Equal(t, doc["apiVersion"].(string), testCaseInput.version)
 	metadata := doc["metadata"].(map[string]any)
 	assert.Equal(t, metadata["name"], "captured")
 	assert.Equal(t, metadata["namespace"], "")
@@ -108,6 +133,7 @@ func testObjectDocumentOwnershipCase(t *testing.T, testCaseInput *struct {
 	metadata["name"] = "overlay"
 	again, err := ObjectDocument(obj.Named(), obj)
 	assert.NoError(t, err)
+	assert.Diff(t, again, before)
 	{
 		_, present := again["metadata"].(map[string]any)["generation"]
 		assert.FatalIf(t, present, "%s", "generation overlay mutated desired document")

@@ -10,7 +10,9 @@ import (
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-git/v6"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
 	"github.com/go-git/go-git/v6/utils/merkletrie"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -104,6 +106,63 @@ func TestStatus_Cancellation(t *testing.T) {
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "metadata read ignored cancellation: %v", err)
 	_, err = (&selection{repo: repo}).worktreeChanges(ctx, original, nil)
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "observation ignored cancellation: %v", err)
+	assert.Equal(t, err.Error(), "context: "+context.Canceled.Error())
+}
+
+func TestStatus_OperationErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path string
+	}{
+		{name: "index", path: ".git/index"},
+		{name: "diff worktree", path: "nested"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			repo := testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "nested/file", "body")
+			worktree, err := repo.Worktree()
+			assert.NoError(t, err)
+			cause := &fs.PathError{Op: "read", Path: tc.path, Err: fs.ErrPermission}
+			if tc.name == "index" {
+				repo.Storer = &statusErrorIndex{Storer: repo.Storer, err: cause}
+			} else {
+				repo, err = git.Open(repo.Storer, &statusErrorFilesystem{Filesystem: worktree.Filesystem(), err: cause})
+				assert.NoError(t, err)
+				worktree, err = repo.Worktree()
+				assert.NoError(t, err)
+			}
+			_, err = (&selection{repo: repo}).worktreeChanges(t.Context(), worktree, &gitindex.Index{})
+			assert.FatalIf(t, !errors.Is(err, cause), "operation lost its original cause: %v", err)
+			assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+			typed, ok := errors.AsType[*fs.PathError](err)
+			assert.Equal(t, ok, true)
+			assert.Equal(t, typed, cause)
+			assert.Equal(t, err.Error(), tc.name+": "+cause.Error())
+		})
+	}
+}
+
+type statusErrorIndex struct {
+	storage.Storer
+
+	err error
+}
+
+func (s *statusErrorIndex) Index() (*gitindex.Index, error) { return nil, s.err }
+
+type statusErrorFilesystem struct {
+	billy.Filesystem
+
+	err *fs.PathError
+}
+
+func (f *statusErrorFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == f.err.Path {
+		return nil, f.err
+	}
+	return f.Filesystem.ReadDir(name)
 }
 
 type countedMetadata struct {

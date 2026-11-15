@@ -131,7 +131,6 @@ func remotePin(refs []*plumbing.Reference, rev string) (plumbing.Hash, error) {
 	return plumbing.ZeroHash, fmt.Errorf("origin has no ref named %s", rev)
 }
 
-//nolint:gocognit // History recovery and capability retries MUST share one invocation budget.
 func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
@@ -157,14 +156,13 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 			options.Depth = 0
 		}
 		acquired, transferErr := r.fetchObjects(ctx, upper, options, history)
-		if acquired {
-			if errors.Is(transferErr, plumbing.ErrObjectNotFound) && options.Depth > 0 {
-				history = true
-				continue
-			}
+		switch {
+		case acquired && errors.Is(transferErr, plumbing.ErrObjectNotFound) && options.Depth > 0:
+			history = true
+			continue
+		case acquired:
 			return transferErr
-		}
-		if ctx.Err() != nil {
+		case ctx.Err() != nil:
 			return fmt.Errorf("context: %w", ctx.Err())
 		}
 		var err error

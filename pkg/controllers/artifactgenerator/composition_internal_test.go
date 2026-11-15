@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:musttag // Identity serialization MUST retain its existing untagged fields.
 func TestComposition_IdentityFacts(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -101,10 +100,10 @@ func TestComposition_IdentityFacts(t *testing.T) {
 			got, err := e.composition(id, &req)
 			assert.NoError(t, err)
 			want := struct {
-				Namespace string
-				Generator manifest.NamedResource
-				Request   request
-				Inputs    []inputIdentity
+				Namespace string                 `json:"Namespace"`
+				Generator manifest.NamedResource `json:"Generator"`
+				Request   request                `json:"Request"`
+				Inputs    []inputIdentity        `json:"Inputs"`
 			}{"artifactgenerator/output/v1", id, req, e.identity}
 			wantBytes, err := json.Marshal(want)
 			assert.NoError(t, err)
@@ -130,7 +129,6 @@ func TestComposition_IdentityFacts(t *testing.T) {
 	}
 }
 
-//nolint:musttag // Extraction identity MUST retain its existing untagged fields.
 func TestComposition_Lowering(t *testing.T) {
 	t.Parallel()
 	e := evaluation{
@@ -186,9 +184,9 @@ func TestComposition_Lowering(t *testing.T) {
 				alias = "second"
 			}
 			want := struct {
-				Namespace string
-				Inputs    []inputIdentity
-				Selection archiveSelection
+				Namespace string           `json:"Namespace"`
+				Inputs    []inputIdentity  `json:"Inputs"`
+				Selection archiveSelection `json:"Selection"`
 			}{"artifactgenerator/extract/v1", e.identity, archiveSelection{alias, selected, "normalized"}}
 			wantBytes, err := json.Marshal(want)
 			assert.NoError(t, err)

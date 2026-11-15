@@ -141,8 +141,8 @@ func TestDiscoveryIndex_OwnersOfFilePrefixGroups(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for unclaimed file ownership.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for unclaimed file ownership.
 func TestDiscoveryIndex_OwnersOfFileUnclaimed(t *testing.T) {
 	index := &DiscoveryIndex{Claims: map[string][]NamedResource{"other/": {{Name: "owner"}}}}
 	var owners, ancestors []NamedResource

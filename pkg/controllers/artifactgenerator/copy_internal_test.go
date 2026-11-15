@@ -100,11 +100,10 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	_, _, _, err = owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever, Work: &req.work})
 	assert.FatalIf(t, err != nil, "%v", err)
 	want := struct {
-		Namespace string
-		Inputs    []inputIdentity
-		Selection archiveSelection
+		Namespace string           `json:"Namespace"`
+		Inputs    []inputIdentity  `json:"Inputs"`
+		Selection archiveSelection `json:"Selection"`
 	}{"artifactgenerator/extract/v1", identities, selection}
-	//nolint:musttag // The fixture MUST match the production identity's untagged JSON names.
 	wantBytes, err := json.Marshal(want)
 	assert.NoError(t, err)
 	gotBytes, err := json.Marshal(composition.Copies[0].ExtractContent(selection.Path, selection.Destination))

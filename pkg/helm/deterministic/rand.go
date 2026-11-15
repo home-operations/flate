@@ -15,20 +15,8 @@ const (
 	charsAlphaNum = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	charsAlpha    = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	charsNumeric  = "0123456789"
+	charsASCII    = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 )
-
-// charsASCII is the printable ASCII range (bytes 32..126) — sprig's randAscii
-// character set.
-//
-//nolint:gochecknoglobals // The immutable ASCII alphabet is shared without per-render allocation.
-var charsASCII = func() string {
-	const firstPrintable, lastPrintable = byte(32), byte(126)
-	b := make([]byte, 0, int(lastPrintable-firstPrintable)+1)
-	for c := firstPrintable; c <= lastPrintable; c++ {
-		b = append(b, c)
-	}
-	return string(b)
-}()
 
 // randFuncs registers deterministic overrides for sprig's crypto/rand- and
 // math/rand-backed string/byte/int/uuid functions, all drawing from the

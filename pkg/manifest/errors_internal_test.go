@@ -61,8 +61,8 @@ func TestError_ClassificationAndDetails(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for category traversal.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for category traversal.
 func TestError_CategoryTraversalAllocations(t *testing.T) {
 	allocations := testing.AllocsPerRun(100, func() {
 		if !errors.Is(ErrInput, ErrFlux) {
@@ -75,8 +75,8 @@ func TestError_CategoryTraversalAllocations(t *testing.T) {
 	assert.FatalIf(t, allocations != 0, "category traversal allocates %v objects, want 0", allocations)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for cause traversal.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for cause traversal.
 func TestError_CauseTraversalAllocations(t *testing.T) {
 	cause := errors.New("failure")
 	err := NewError(ErrInput, cause, "")

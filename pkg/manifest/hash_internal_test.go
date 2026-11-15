@@ -36,8 +36,8 @@ func TestSHA256Hex(t *testing.T) {
 	assert.ErrorIf(t, a != b, "not deterministic: %q != %q", a, b)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for SHA256Hex.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for SHA256Hex.
 func TestSHA256Hex_Allocations(t *testing.T) {
 	var fingerprint string
 	allocs := testing.AllocsPerRun(100, func() { fingerprint = SHA256Hex([]byte("abc")) })
@@ -154,7 +154,7 @@ func TestFingerprint_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testing.Benchmark measures process-wide allocation counters for chart fingerprints.
 func TestFingerprint_ChartAllocatedBytes(t *testing.T) {
 	files := make([][]byte, 128)
 	for i := range files {

@@ -173,7 +173,7 @@ func TestExecution_QualificationFailurePrecedence(t *testing.T) {
 					case "cancellation":
 						cancel()
 					case "blocked":
-						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{producer.Named()}}
+						return &depwait.BlockedError{Deps: []manifest.NamedResource{producer.Named()}}
 					case "invalid":
 						st.AddObject(
 							&manifest.ConfigMap{

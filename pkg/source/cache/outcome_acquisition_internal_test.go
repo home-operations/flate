@@ -151,7 +151,7 @@ func testOutcomeAcquisitionValidityCaseCallback(
 	)
 	if (*(*testCaseInput.scenario)) == "missing" || (*(*testCaseInput.scenario)) == "corrupt" {
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.FatalIf(
 				t,
 				!ok || calls != 0,

@@ -56,7 +56,7 @@ func (e *Execution) Acquire(
 	if len(p.prepared.Inputs) != 0 {
 		if err := e.Require(ctx, p.prepared.Inputs, level); err != nil {
 			p.cause = err
-			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+			if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 				return p
 			}
 			return err
@@ -96,7 +96,7 @@ func (p *pendingAcquisitionError) Unwrap() error {
 	if len(p.prepared.Inputs) != 0 || p.missing == nil || p.ambientConsumed {
 		return p.cause
 	}
-	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
+	return &depwait.BlockedError{Deps: []manifest.NamedResource{p.missing.Secret}}
 }
 
 func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.DrainLevel) (resultErr error) {
@@ -108,7 +108,7 @@ func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.Dra
 	if len(p.prepared.Inputs) != 0 {
 		if err := e.classify(ctx, level); err != nil {
 			p.cause = err
-			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+			if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 				return p
 			}
 			return err
@@ -137,7 +137,7 @@ func (p *pendingAcquisitionError) finish(err error) {
 	if err == nil || errors.Is(err, manifest.ErrSourceSkipped) {
 		return
 	}
-	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); !blocked {
+	if _, blocked := errors.AsType[*depwait.BlockedError](err); !blocked {
 		e.Reads.SetAcquisition(store.AcquisitionPending)
 	}
 }
@@ -161,7 +161,7 @@ func (p *pendingAcquisitionError) advance(ctx context.Context, level manifest.Dr
 		local, err = p.acquisition.Resolve(ctx, level)
 		if err != nil {
 			p.cause = err
-			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+			if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 				return p
 			}
 			return err

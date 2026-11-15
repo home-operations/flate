@@ -117,7 +117,7 @@ func httpFailureIdentity(err error) remoteIdentity {
 	if !ok || response.StatusCode != http.StatusNotFound {
 		return remoteIdentity{}
 	}
-	if _, ok := errors.AsType[*cache.CacheError](err); ok {
+	if _, ok := errors.AsType[*cache.Error](err); ok {
 		return remoteIdentity{}
 	}
 	var stable func(error) bool

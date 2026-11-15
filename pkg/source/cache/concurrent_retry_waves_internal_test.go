@@ -226,7 +226,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletion(
 		}
 		if (*captures.testCaseInput.testCaseInput.result) == "publication" {
 			{
-				_, ok := errors.AsType[*CacheError](innerErr2)
+				_, ok := errors.AsType[*Error](innerErr2)
 				assert.FatalIf(t, !ok, "publication failure lost: %v", innerErr2)
 			}
 		}

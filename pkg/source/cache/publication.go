@@ -30,7 +30,7 @@ func (c *Cache) publish(
 	}
 	info, err := tmp.Stat()
 	if err != nil {
-		return ocispec.Descriptor{}, "", err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+		return ocispec.Descriptor{}, "", err //nolint:wrapcheck // Cache.publish forwards the staging file Stat PathError for cache classification.
 	}
 	stored := e.storedDescriptor(payload, info.Size())
 	if err := c.store.Push(ctx, stored, tmp); err != nil {
@@ -121,7 +121,7 @@ func (c *Cache) persistPayload(
 func (c *Cache) repairPayload(tmp *os.File, stored *ocispec.Descriptor) (string, error) {
 	info, err := os.Stat(filepath.Join(c.root.Name(), blobPath(stored.Digest)))
 	if err != nil {
-		return "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return "", err //nolint:wrapcheck // repairPayload forwards the retained blob Stat PathError.
 	}
 	if info.Size() == stored.Size {
 		return "", nil
@@ -136,14 +136,14 @@ func (c *Cache) repairPayload(tmp *os.File, stored *ocispec.Descriptor) (string,
 			return "", err
 		}
 		if err := tmp.Chmod(immutableFileMode); err != nil {
-			return "", err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+			return "", err //nolint:wrapcheck // repairPayload forwards the staging file Chmod PathError.
 		}
 		repair := acquirePath(uuid.NewString())
 		if err := c.root.Link(name, repair); err != nil {
-			return "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+			return "", err //nolint:wrapcheck // repairPayload forwards the rooted repair Link PathError.
 		}
 		if err := c.root.Rename(repair, blobPath(stored.Digest)); err != nil {
-			return repair, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+			return repair, err //nolint:wrapcheck // repairPayload retains the repair path and rooted Rename PathError.
 		}
 	}
 	return "", nil

@@ -91,7 +91,7 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 			"obsolete generated object remained visible at the source wait",
 		)
 
-		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{blocked}}
+		return &depwait.BlockedError{Deps: []manifest.NamedResource{blocked}}
 	}
 	run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, check)
 

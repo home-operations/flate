@@ -48,7 +48,7 @@ func testAcquireAdmissionFailure(t *testing.T) {
 		},
 	)
 	{
-		_, ok := errors.AsType[*CacheError](
+		_, ok := errors.AsType[*Error](
 			err,
 		)
 		assert.FatalIf(

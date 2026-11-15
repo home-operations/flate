@@ -73,7 +73,7 @@ func (p *Preparation) readFrame(ctx context.Context, generation fs.FS) (renderFr
 		frame.output, err = stored.Payload(ctx)
 	}
 	if err != nil {
-		if _, ok := errors.AsType[*sourcecache.CacheError](err); ok {
+		if _, ok := errors.AsType[*sourcecache.Error](err); ok {
 			return renderFrame{}, false, manifest.NewError(
 				manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "",
 			)

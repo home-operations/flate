@@ -507,7 +507,7 @@ func runSharedChartSource(t *testing.T, inputs *testReconcileSharedChartSourceCo
 				ex,
 				func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 					_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
-					if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+					if _, ok := errors.AsType[*depwait.BlockedError](err); ok {
 						parked <- id
 					}
 					return err

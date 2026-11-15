@@ -44,7 +44,7 @@ func (c *Cache) attempt(
 ) (*entry, error) {
 	key := *keyValue
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	history := e.attemptHistory()
 	if history.due {
@@ -66,7 +66,7 @@ func (c *Cache) attempt(
 func classifyAttemptFailure(err error, attempts int) error {
 	// A joined cleanup failure must retain cache failure attribution.
 	if producer, ok := errors.AsType[*producerError](err); !ok || !errors.Is(producer, err) {
-		return &CacheError{err}
+		return &Error{err}
 	}
 	if _, terminal := errors.AsType[*TerminalError](err); !terminal && retryable(err) && attempts <= 1 {
 		return &TerminalError{Err: err, Attempted: true}

@@ -150,13 +150,19 @@ func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string
 type placementView struct{ fs.FS }
 
 func (v placementView) Lstat(name string) (fs.FileInfo, error) {
-	//nolint:wrapcheck // SecureJoinVFS consumes filesystem errors directly.
-	return fs.Lstat(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+	info, err := fs.Lstat(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+	if err != nil {
+		return info, fmt.Errorf("lstat placement: %w", err)
+	}
+	return info, nil
 }
 
 func (v placementView) Readlink(name string) (string, error) {
-	//nolint:wrapcheck // SecureJoinVFS consumes filesystem errors directly.
-	return fs.ReadLink(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+	link, err := fs.ReadLink(v.FS, cmp.Or(strings.TrimLeft(filepath.ToSlash(name), "/"), "."))
+	if err != nil {
+		return link, fmt.Errorf("readlink placement: %w", err)
+	}
+	return link, nil
 }
 
 func resolvePlacement(input fs.FS, name string) (string, error) {

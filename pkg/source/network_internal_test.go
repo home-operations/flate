@@ -359,7 +359,7 @@ func testNetworkRouteIdentityCase(t *testing.T, tc *struct {
 		tr.Proxy = func(*http.Request) (*url.URL, error) {
 			proxyCalls++
 			if proxy == "" {
-				return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+				return nil, nil //nolint:nilnil // A nil proxy selects a direct connection for this route identity case.
 			}
 			if proxyCalls%2 == 0 {
 				return url.Parse("http://wrong.test:9000")

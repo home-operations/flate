@@ -471,7 +471,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 		},
 		manifest.DrainNone,
 	)
-	blocked, waiting := errors.AsType[*depwait.ErrBlocked](err)
+	blocked, waiting := errors.AsType[*depwait.BlockedError](err)
 	var want []manifest.NamedResource
 	for _, supplier := range append(slices.Clone(testCaseInput.tc.producers), testCaseInput.tc.owners...) {
 		if supplier != (*testCaseInput.consumer) && testCaseInput.tc.ref.Name != "" &&

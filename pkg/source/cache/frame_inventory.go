@@ -143,7 +143,7 @@ type FramePublicationInput struct {
 //nolint:gocritic // Value input retains the publication argument snapshot.
 func (f *Frame) PreparePublication(ctx context.Context, input FramePublicationInput) (*FramePublication, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	frame := Frame{
 		envelope: f.envelope, header: f.header, payload: f.payload,

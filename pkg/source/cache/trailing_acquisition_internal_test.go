@@ -93,7 +93,7 @@ func testAcquireTrailingFailureKeepsCacheIdentityCase(
 	assert.FatalIf(t, !trailingWriteFailed, "%s", "trailing write did not fail")
 
 	{
-		_, ok := errors.AsType[*CacheError](err)
-		assert.FatalIf(t, !ok, "%T %v, want *CacheError", err, err)
+		_, ok := errors.AsType[*Error](err)
+		assert.FatalIf(t, !ok, "%T %v, want *Error", err, err)
 	}
 }

@@ -54,7 +54,7 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 	} {
 		_, _, _, err := c.Blob(t.Context(), invalid, &Policy{MaxAge: Forever}, nil)
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.FatalIf(
 				t,
 				!ok || !errors.Is(err, manifest.ErrInput),
@@ -67,7 +67,7 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 	renderMetadataResult, err := c.RenderMetadata(t.Context(), "", "", nil)
 	enabled := renderMetadataResult.Enabled
 	{
-		_, ok := errors.AsType[*CacheError](err)
+		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(
 			t,
 			!ok || !errors.Is(err, manifest.ErrInput) || enabled,
@@ -85,13 +85,13 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 		nil,
 	)
 	{
-		_, ok := errors.AsType[*CacheError](err)
+		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled), "canceled render lookup: %v", err)
 	}
 	renderMetadataResult2, renderMetadataResult2Err := c.RenderMetadata(canceled, "render", "", nil)
 	enabled, err = renderMetadataResult2.Enabled, renderMetadataResult2Err
 	{
-		_, ok := errors.AsType[*CacheError](
+		_, ok := errors.AsType[*Error](
 			err,
 		)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled) ||

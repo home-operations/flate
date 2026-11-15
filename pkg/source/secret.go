@@ -101,7 +101,7 @@ func AcquireMachine(
 	policy := *policyValue
 	classify := func(err error) error {
 		if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
-			if _, cached := errors.AsType[*cache.CacheError](err); !cached {
+			if _, cached := errors.AsType[*cache.Error](err); !cached {
 				if !errors.Is(err, manifest.ErrFlux) {
 					err = manifest.NewError(manifest.ErrFlux, err, "")
 				}

@@ -146,7 +146,7 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 					func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 						if execution.Reads.GetObject(obj.Named()) == nil {
 							close(attempted)
-							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{obj.Named()}}
+							return &depwait.BlockedError{Deps: []manifest.NamedResource{obj.Named()}}
 						}
 						completed.Store(true)
 						return nil

@@ -104,21 +104,21 @@ func NewFrame(domain string, metadata any, payload []byte) (*Frame, error) {
 // OpenFrame decodes the index without hydrating payloads or retaining an open file.
 func OpenFrame(ctx context.Context, domain string, generation fs.FS, metadata any) (*Frame, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	input, err := generation.Open(payloadName)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	defer func() { _ = input.Close() }()
 	info, err := input.Stat()
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	var prefix [framePrefixSize]byte
 	if _, err := io.ReadFull(input, prefix[:]); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, &CacheError{err}
+			return nil, &Error{err}
 		}
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read cache frame: %w", err), "")
 	}
@@ -134,7 +134,7 @@ func OpenFrame(ctx context.Context, domain string, generation fs.FS, metadata an
 	data := header[framePrefixSize:]
 	if _, err := io.ReadFull(input, data); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, &CacheError{err}
+			return nil, &Error{err}
 		}
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read cache envelope: %w", err), "")
 	}
@@ -173,7 +173,7 @@ func (f *Frame) readAccepted(input fs.File, size int64) (*Frame, error) {
 	}
 	tail := make([]byte, tailSize)
 	if _, err := positioned.ReadAt(tail, end); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	var accepted acceptedRender
 	if json.Unmarshal(tail, &accepted) == nil && accepted.valid(f.raw) {
@@ -186,7 +186,7 @@ func (f *Frame) readAccepted(input fs.File, size int64) (*Frame, error) {
 // Payload returns immutable bytes after validating the complete payload identity.
 func (f *Frame) Payload(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	return f.payloadBytes()
 }
@@ -217,7 +217,7 @@ func (f *Frame) payloadBytes() ([]byte, error) {
 // ReadPayload uses payload-relative coordinates within the retained immutable generation.
 func (f *Frame) ReadPayload(ctx context.Context, offset int64, size int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	return f.readPayload(offset, size)
 }
@@ -237,7 +237,7 @@ func (f *Frame) readPayload(offset int64, size int) ([]byte, error) {
 	}
 	input, err := f.generation.Open(payloadName)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	defer func() { _ = input.Close() }()
 	positioned, ok := input.(io.ReaderAt)
@@ -247,7 +247,7 @@ func (f *Frame) readPayload(offset int64, size int) ([]byte, error) {
 	data := make([]byte, size)
 	if _, err := positioned.ReadAt(data, int64(len(f.header))+offset); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, &CacheError{err}
+			return nil, &Error{err}
 		}
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read cache payload: %w", err), "")
 	}
@@ -299,7 +299,7 @@ func (o *frameIdentityTokens) UnmarshalJSONFrom(input *jsontext.Decoder) error {
 
 // InputFrameIdentity separates stable source lookup from certified frame content.
 //
-//nolint:gocritic // Distinct result types separate the lookup handle from certified content.
+//nolint:gocritic // The lookup key and certified frame content are distinct results; nonamedreturns forbids result names.
 func InputFrameIdentity(origin, url string, content *Frame) (BlobKey, string) {
 	lookup := manifest.Fingerprint(struct {
 		Version             int

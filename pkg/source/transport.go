@@ -122,7 +122,7 @@ func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 		return &selected, nil
 	}
 	if m.environment == nil {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // No explicit proxy or captured environment selects a direct connection.
 	}
 	return m.environment.ProxyFunc()(target)
 }
@@ -131,8 +131,12 @@ func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func NewHTTPTransport(material TransportMaterial) *http.Transport {
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		panic("source: http.DefaultTransport must be *http.Transport")
+	}
 	material = captureTransportEnvironment(new(material))
-	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	tr := defaultTransport.Clone()
 	if material.config != nil {
 		tr.TLSClientConfig = material.config.Clone()
 	}
@@ -214,7 +218,7 @@ func (n *Network) HTTPTransport(cfg HTTPTransportConfig) (http.RoundTripper, err
 			}
 			next = maps.Clone(*current)
 		}
-		next[key] = selected.(*networkTransport) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		next[key] = selected
 		if n.transports.CompareAndSwap(current, &next) {
 			return selected, nil
 		}

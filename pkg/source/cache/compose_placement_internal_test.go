@@ -3,6 +3,8 @@ package cache
 import (
 	"errors"
 	"io/fs"
+	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 
@@ -19,6 +21,79 @@ type compositionPlacementCase struct {
 	ignore      string
 	want        map[string]compositionFile
 	fail        bool
+}
+
+type placementResultFS struct {
+	fs.FS
+
+	info fs.FileInfo
+	link string
+	err  error
+	name string
+}
+
+func (f *placementResultFS) Lstat(name string) (fs.FileInfo, error) {
+	f.name = name
+	return f.info, f.err
+}
+
+func (f *placementResultFS) ReadLink(name string) (string, error) {
+	f.name = name
+	return f.link, f.err
+}
+
+func TestPlacementView_ResultsAndErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{name: "success"},
+		{name: "missing", cause: fs.ErrNotExist},
+		{name: "invalid parent", cause: syscall.ENOTDIR},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, operation := range []string{"lstat", "readlink"} {
+				t.Run(operation, func(t *testing.T) {
+					t.Parallel()
+					input := fstest.MapFS{"file": {Data: []byte("input")}}
+					info, err := fs.Stat(input, "file")
+					assert.NoError(t, err)
+					backing := &placementResultFS{FS: input, info: info, link: "target"}
+					var original *fs.PathError
+					if tc.cause != nil {
+						original = &fs.PathError{Op: operation, Path: "file", Err: tc.cause}
+						backing.err = original
+					}
+					view := placementView{backing}
+					if operation == "lstat" {
+						var got fs.FileInfo
+						got, err = view.Lstat("///file")
+						assert.Equal(t, got, info)
+					} else {
+						var got string
+						got, err = view.Readlink("///file")
+						assert.Equal(t, got, backing.link)
+					}
+					assert.Equal(t, backing.name, "file")
+					if tc.cause == nil {
+						assert.NoError(t, err)
+						return
+					}
+					assert.FatalIf(t, err == nil, "expected %s failure", operation)
+					assert.Equal(t, strings.HasPrefix(err.Error(), operation+" placement: "), true)
+					assert.Equal(t, errors.Is(err, tc.cause), true)
+					pathErr, ok := errors.AsType[*fs.PathError](err)
+					assert.FatalIf(t, !ok, "expected PathError, got %v", err)
+					assert.Equal(t, pathErr, original)
+					assert.Equal(t, pathErr.Op, operation)
+					assert.Equal(t, pathErr.Path, "file")
+					assert.Equal(t, pathErr.Err, tc.cause)
+				})
+			}
+		})
+	}
 }
 
 func TestCompose_PlaceTree(t *testing.T) {

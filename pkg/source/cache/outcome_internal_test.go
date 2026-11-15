@@ -333,7 +333,7 @@ func TestOutcome_Exclusions(t *testing.T) {
 		{"missing credential", manifest.ErrMissingSecret},
 		{"skipped source", manifest.ErrSourceSkipped},
 		{"path IO", &fs.PathError{Op: "write", Path: "fixture-secret", Err: syscall.ECONNRESET}},
-		{"cache IO", &CacheError{syscall.ECONNRESET}},
+		{"cache IO", &Error{syscall.ECONNRESET}},
 		{"short write", io.ErrShortWrite},
 		{"integrity", content.ErrMismatchedDigest},
 		{"permanent HTTP", &fetcherr.ResponseError{StatusCode: 404}},

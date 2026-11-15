@@ -2,8 +2,9 @@ package depwait
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -95,17 +96,9 @@ func TestClassify_CoreStates(t *testing.T) {
 	} {
 		{
 			got := w.Classify(t.Context(), statusless, level)
-			assert.ErrorIf(
-				t,
-				!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
-					got,
-					want,
-				),
-				"statusless@%v: got %+v, want %+v",
-				level,
-				got,
-				want,
-			)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("statusless@%v (-want +got):\n%s", level, diff)
+			}
 		}
 	}
 	// Absent: blocks at none, fails "dependency not found" once draining.
@@ -277,15 +270,9 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 			manifest.DependencyRef{NamedResource: b},
 			manifest.DrainForce,
 		)
-		assert.FatalIf(
-			t,
-			!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
-				got,
-				next,
-			),
-			"unchanged failure changed: %+v",
-			got,
-		)
+		if diff := cmp.Diff(next, got); diff != "" {
+			t.Fatalf("unchanged failure changed (-want +got):\n%s", diff)
+		}
 	}
 	s.UpdateStatus(a, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "leaf failure"})
 	w.Store = captureState(t, s)
@@ -482,17 +469,9 @@ func testClassifyCoreStatesCase3(t *testing.T, testCaseInput testClassifyCoreSta
 		}
 		{
 			got := testCaseInput.w.Classify(t.Context(), dep, level)
-			assert.FatalIf(
-				t,
-				!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
-					got,
-					want,
-				),
-				"missing CRD at %v: %+v, want %+v",
-				level,
-				got,
-				want,
-			)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("missing CRD at %v (-want +got):\n%s", level, diff)
+			}
 		}
 	}
 }
@@ -543,12 +522,9 @@ func testClassifyOrdinaryPromotionCase(t *testing.T, testCaseInput *struct {
 			data.Named(),
 			data,
 		), "%v", "classification lost the captured dependency subject")
-	if promotion.calls != 1 ||
-		!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
-			got,
-			testCaseInput.want,
-		) {
-		t.Fatalf("promotion calls=%d Classification=%+v, want %+v", promotion.calls, got, testCaseInput.want)
+	assert.FatalIf(t, promotion.calls != 1, "promotion calls=%d, want 1", promotion.calls)
+	if diff := cmp.Diff(testCaseInput.want, got); diff != "" {
+		t.Fatalf("classification (-want +got):\n%s", diff)
 	}
 }
 

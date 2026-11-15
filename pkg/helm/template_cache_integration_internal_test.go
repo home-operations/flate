@@ -395,7 +395,7 @@ func testTemplateCacheTemplateIntegrationCase2(
 			err,
 		)
 		{
-			_, storage := errors.AsType[*cache.CacheError](err)
+			_, storage := errors.AsType[*cache.Error](err)
 			assert.FatalIf(t, storage, "keyed=%t: producer failure classified as storage: %v", keyed, err)
 		}
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), keyed)

@@ -74,9 +74,9 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 					return false, nil
 				}
 				_, statErr := c.root.Stat(
-					e.fs.(fileFS).backingPath, //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+					e.fs.(fileFS).backingPath, //nolint:errcheck // blobProducer publishes fileFS for accepted inventory payloads; corruption must panic.
 				)
-				return statErr == nil, statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+				return statErr == nil, statErr //nolint:wrapcheck // RecordInventory forwards the accepted payload Stat PathError for cache classification.
 			},
 			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 				result, produceErr := producer.produce(
@@ -112,7 +112,7 @@ func (i AcceptedInventory[T]) write(
 	_, metadataErr = i.Content.WriteTo(output)
 	return ProducerResult{
 		Annotations: metadata,
-	}, metadataErr //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+	}, metadataErr //nolint:wrapcheck // AcceptedInventory.write forwards Content.WriteTo failure for producer classification.
 }
 
 // RenderHistory supplies source paths associated with one accepted inventory.
@@ -137,7 +137,7 @@ func (r *historyRecord) metadata() (map[string]string, error) {
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	return map[string]string{historyAnnotation: string(data)}, nil
 }
@@ -241,7 +241,7 @@ func (c *Cache) ProducersForPaths(
 	query []manifest.SourceEvidence,
 ) (map[manifest.NamedResource][]manifest.SourceEvidence, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	if !c.CanPersistRenders() || len(query) == 0 {
 		return nil, nil
@@ -254,7 +254,7 @@ func (c *Cache) ProducersForPaths(
 		tags = append(tags, batch...)
 		return nil
 	}); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	owners := map[manifest.NamedResource][]manifest.SourceEvidence{}
 	seen := map[historyVersion]struct{}{}
@@ -347,14 +347,14 @@ func (c *Cache) pathProducer(
 		return manifest.NamedResource{}, nil, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return manifest.NamedResource{}, nil, &CacheError{err}
+		return manifest.NamedResource{}, nil, &Error{err}
 	}
 	descriptor, err := c.store.Resolve(ctx, tag)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return manifest.NamedResource{}, nil, nil
 	}
 	if err != nil {
-		return manifest.NamedResource{}, nil, &CacheError{err}
+		return manifest.NamedResource{}, nil, &Error{err}
 	}
 	data := descriptor.Annotations[historyAnnotation]
 	if data == "" {
@@ -380,7 +380,7 @@ func (c *Cache) pathProducer(
 		return manifest.NamedResource{}, nil, nil
 	}
 	if err != nil {
-		return manifest.NamedResource{}, nil, &CacheError{err}
+		return manifest.NamedResource{}, nil, &Error{err}
 	}
 	if !info.Mode().IsRegular() || info.Size() != descriptor.Size {
 		return manifest.NamedResource{}, nil, nil

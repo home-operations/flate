@@ -394,7 +394,7 @@ func testDAGKeepBeforeLateDataPublicationCase(
 						childRuns.Add(1)
 						obj := e.Reads.GetObject(data)
 						if obj == nil {
-							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{data}}
+							return &depwait.BlockedError{Deps: []manifest.NamedResource{data}}
 						}
 						next.Children = []store.Child{
 							{

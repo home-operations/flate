@@ -74,7 +74,7 @@ func testBlobRepairFailureCleanupCase(t *testing.T, failure *bool,
 		err,
 	)
 	{
-		_, ok := errors.AsType[*CacheError](
+		_, ok := errors.AsType[*Error](
 			err,
 		)
 		assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) || r != nil ||

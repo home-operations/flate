@@ -97,7 +97,7 @@ func testRenderMetadataCurrentDirectoryCase(t *testing.T, name *string,
 	assert.FatalIf(t, err == nil || current != "", "%s", "invalid current directory authorized a metadata hit")
 
 	{
-		_, ok := errors.AsType[*CacheError](err)
+		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(t, !ok, "metadata failure lost cache attribution: %v", err)
 	}
 	assert.FatalIf(

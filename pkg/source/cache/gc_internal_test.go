@@ -469,7 +469,7 @@ func testSweepGitGenerationsCaseCompletion(t *testing.T, captures *testSweepGitG
 	)
 	if strings.HasPrefix((*(*captures.scenario)), "escaping-") {
 		{
-			_, ok := errors.AsType[*CacheError](
+			_, ok := errors.AsType[*Error](
 				err,
 			)
 			assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) ||

@@ -39,7 +39,7 @@ func testAcquireTagSaveFailureDoesNotBecomeHitOutcome(t *testing.T) {
 			},
 		)
 		{
-			_, ok := errors.AsType[*CacheError](
+			_, ok := errors.AsType[*Error](
 				err,
 			)
 			assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) ||

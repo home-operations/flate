@@ -45,7 +45,7 @@ func (w *Waiter) Assess(ctx context.Context, reads *store.ReadSet, level manifes
 	}
 	if len(blocked) > 0 {
 		slices.SortFunc(blocked, manifest.NamedResource.Compare)
-		return &ErrBlocked{Deps: slices.Compact(blocked)}
+		return &BlockedError{Deps: slices.Compact(blocked)}
 	}
 	if cause != nil {
 		return cause

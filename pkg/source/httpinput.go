@@ -55,7 +55,7 @@ func (h *HTTPInputs) Close() {
 				close(workers.drain)
 			}
 			h.remoteFetches.Range(func(_, value any) bool {
-				if cancel := value.(*remoteFetch).cancel.Load(); cancel != nil { //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				if cancel := value.(*remoteFetch).cancel.Load(); cancel != nil { //nolint:errcheck // HTTPInputs.Acquire stores only *remoteFetch in remoteFetches.
 					(*cancel)()
 				}
 				return true
@@ -104,7 +104,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, requestValue *HTTPRequest) (fs
 	key.normalize()
 	candidate := &remoteFetch{done: make(chan struct{})}
 	loaded, _ := h.remoteFetches.LoadOrStore(key, candidate)
-	rf := loaded.(*remoteFetch) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	rf := loaded.(*remoteFetch) //nolint:errcheck // HTTPInputs.Acquire stores only *remoteFetch in remoteFetches.
 	winner := false
 	rf.start.Do(func() {
 		winner = true

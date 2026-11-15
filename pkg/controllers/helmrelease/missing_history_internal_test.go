@@ -220,7 +220,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 					return nil
 				},
 			}, manifest.DrainNone)
-			blocked, isBlocked := errors.AsType[*depwait.ErrBlocked](waitErr)
+			blocked, isBlocked := errors.AsType[*depwait.BlockedError](waitErr)
 			assert.Equal(t, isBlocked, true)
 			assert.Diff(t, blocked.Deps, []manifest.NamedResource{producer})
 			assert.Equal(t, resumed, false)

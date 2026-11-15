@@ -60,23 +60,19 @@ type TypedFetcher[T manifest.BaseManifest] interface {
 	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy *sourcecache.Policy) (PreparedFetch, error)
 }
 
-// Wrap converts a TypedFetcher into the untyped Fetcher interface
-// used by the source-controller dispatcher map. The single
-// type-assertion site is here — a mismatched payload returns
-// ErrInput rather than panicking. Embeds the Kind label so the
-// error message names the responsible fetcher.
-//
-//nolint:ireturn // The SDK dispatcher contract returns Fetcher; exposing its private adapter would change the public signature.
-func Wrap[T manifest.BaseManifest](kindLabel string, f TypedFetcher[T]) Fetcher {
-	return typedAdapter[T]{label: kindLabel, inner: f}
+// Wrap MUST preserve preparation inputs and lifecycle callbacks.
+func Wrap[T manifest.BaseManifest](kindLabel string, f TypedFetcher[T]) Adapter[T] {
+	return Adapter[T]{label: kindLabel, inner: f}
 }
 
-type typedAdapter[T manifest.BaseManifest] struct {
+// Adapter keeps the only manifest type assertion at the dispatcher boundary.
+type Adapter[T manifest.BaseManifest] struct {
 	label string
 	inner TypedFetcher[T]
 }
 
-func (a typedAdapter[T]) Fetch(
+// Fetch MUST reject mismatched payloads before invoking the typed fetcher.
+func (a Adapter[T]) Fetch(
 	ctx context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,

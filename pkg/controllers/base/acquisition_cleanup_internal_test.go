@@ -44,7 +44,7 @@ func TestAcquire_PreparedCleanup(t *testing.T) {
 				},
 				Resolve: func(context.Context, manifest.DrainLevel) (*store.SourceArtifact, error) {
 					if blocked {
-						return nil, &depwait.ErrBlocked{Deps: []manifest.NamedResource{owner.Named()}}
+						return nil, &depwait.BlockedError{Deps: []manifest.NamedResource{owner.Named()}}
 					}
 					return artifact, nil
 				},

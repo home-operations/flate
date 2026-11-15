@@ -2,6 +2,7 @@ package source
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -105,6 +106,24 @@ func TestResolveTransport_ProxySnapshot(t *testing.T) {
 	selected, err = explicit.ProxyURL(&url.URL{Scheme: "http", Host: "chart.invalid"})
 	assert.NoError(t, err)
 	assert.Equal(t, selected.Host, "explicit.invalid")
+
+	originalDefault := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalDefault })
+	validDefault := &http.Transport{MaxIdleConns: 37}
+	http.DefaultTransport = validDefault
+	transport := NewHTTPTransport(material)
+	t.Cleanup(transport.CloseIdleConnections)
+	assert.FatalIf(t, transport == validDefault, "%s", "default transport was not cloned")
+	assert.Equal(t, transport.MaxIdleConns, validDefault.MaxIdleConns)
+	proxy, err := transport.Proxy(&http.Request{URL: &url.URL{Scheme: "http", Host: "chart.invalid"}})
+	assert.NoError(t, err)
+	assert.Equal(t, proxy.Host, "first.invalid:8080")
+
+	http.DefaultTransport = &Network{}
+	defer func() {
+		assert.Equal(t, recover(), any("source: http.DefaultTransport must be *http.Transport"))
+	}()
+	NewHTTPTransport(material)
 }
 
 func TestResolveTransport_InputOrder(t *testing.T) {

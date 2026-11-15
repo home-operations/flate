@@ -122,7 +122,7 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 		return e, err
 	}
 	first, err := assess()
-	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+	blocked, ok := errors.AsType[*depwait.BlockedError](err)
 	assert.Equal(t, ok, true)
 	assert.Diff(t, blocked.Deps, []manifest.NamedResource{producer.Named()})
 	assert.Equal(t, first.Reads.Valid(), true)
@@ -130,7 +130,7 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 	assert.Equal(t, first.Reads.Valid(), false)
 
 	second, err := assess()
-	_, ok = errors.AsType[*depwait.ErrBlocked](err)
+	_, ok = errors.AsType[*depwait.BlockedError](err)
 	assert.Equal(t, ok, true)
 	assert.Equal(t, second.Reads.Valid(), true)
 	st.RecordEmitted(producer.Named(), &store.Emission{Complete: true}, nil)
@@ -142,7 +142,7 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 	assert.Equal(t, settled.Reads.Valid(), false)
 	_, err = assess()
-	blocked, ok = errors.AsType[*depwait.ErrBlocked](err)
+	blocked, ok = errors.AsType[*depwait.BlockedError](err)
 	assert.Equal(t, ok, true)
 	assert.Diff(t, blocked.Deps, []manifest.NamedResource{producer.Named()})
 	_, statusExists := st.GetStatus(owner.Named())

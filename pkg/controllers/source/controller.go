@@ -237,7 +237,7 @@ func (c *execution) resolve(
 	}
 	if level == manifest.DrainNone {
 		if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
-			return nil, &depwait.ErrBlocked{Deps: blocked}
+			return nil, &depwait.BlockedError{Deps: blocked}
 		}
 	}
 	if c.acquired != nil {
@@ -338,7 +338,7 @@ func (c *execution) compose(
 		include := &composition.Includes[i]
 		input, _ := c.run.Reads.GetArtifact(include.Reference.NamedResource, store.ArtifactContent).(*store.SourceArtifact)
 		if input == nil || input.FS == nil {
-			return nil, &depwait.ErrBlocked{Deps: []manifest.NamedResource{include.Reference.NamedResource}}
+			return nil, &depwait.BlockedError{Deps: []manifest.NamedResource{include.Reference.NamedResource}}
 		}
 		request.Inputs[i] = cache.CompositionInput{FS: input.FS, Content: input.Content}
 		request.Copies[i] = cache.Copy{Input: i, From: include.FromPath, To: include.ToPath, Mode: cache.PlaceTree}

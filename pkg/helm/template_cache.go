@@ -343,14 +343,14 @@ func (c *Client) readRender(ctx context.Context, key string, input *RenderOption
 	identity := cache.AcquisitionIdentity(reader)
 	var frame renderFrame
 	stored, err := cache.OpenFrame(ctx, frameDomain, reader, &frame.header)
-	if _, storage := errors.AsType[*cache.CacheError](err); storage {
+	if _, storage := errors.AsType[*cache.Error](err); storage {
 		return nil, err
 	}
 	if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
 		return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 	}
 	frame.output, err = stored.Payload(ctx)
-	if _, storage := errors.AsType[*cache.CacheError](err); storage {
+	if _, storage := errors.AsType[*cache.Error](err); storage {
 		return nil, err
 	}
 	if err != nil {
@@ -441,7 +441,7 @@ func (r *templateRequest) template(
 	if result.admissionErr != nil {
 		return nil, nil, result.admissionErr
 	}
-	if _, storage := errors.AsType[*cache.CacheError](err); !storage {
+	if _, storage := errors.AsType[*cache.Error](err); !storage {
 		return nil, nil, err
 	}
 	if r.input.Admit != nil && !result.observed {

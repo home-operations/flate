@@ -60,16 +60,8 @@ func (p *Preparation) matchesOwner(client *Client, declaration *manifest.HelmRel
 	return p.binding.same(&binding)
 }
 
-func (p *Preparation) matchesInputs(source *store.SourceArtifact, current map[string]any) bool {
-	valuesEqual := len(p.values) == 0 && len(current) == 0 || manifest.ValueEqual(p.values, current)
-	if !valuesEqual || source == nil || p.source == nil {
-		return false
-	}
-	read := store.ArtifactContent
-	if p.declaration.TracksDigest() {
-		read |= store.ArtifactRevision
-	}
-	return p.source == source || source.Content != "" && p.source.Input(read) == source.Input(read)
+func (p *Preparation) matchesValues(current map[string]any) bool {
+	return len(p.values) == 0 && len(current) == 0 || manifest.ValueEqual(p.values, current)
 }
 
 type templateRequest struct {
@@ -95,8 +87,14 @@ func (c *Client) prepareTemplate(
 	}
 	source := input.Sources.chartInput(hr)
 	previous := input.Preparation
-	reusable := previous != nil && previous.complete && previous.matchesOwner(c, hr, input) &&
-		previous.matchesInputs(source, hrValues)
+	reusable := previous != nil && previous.complete && previous.matchesOwner(c, hr, input)
+	if reusable {
+		read := store.ArtifactContent
+		if hr.TracksDigest() {
+			read |= store.ArtifactRevision
+		}
+		reusable = source != nil && previous.source.SameMaterial(source, read) && previous.matchesValues(hrValues)
+	}
 	if reusable && source.Content != "" {
 		input.Work.Fingerprint(previous.key)
 		previous.bindSource(hr, source, input)

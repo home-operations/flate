@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
@@ -156,6 +157,64 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 			assert.Equal(t, rebound.binding.source, source)
 			assert.Equal(t, rebound.binding.artifact, replacement)
 			assert.Equal(t, len(rebound.Children), 0)
+		})
+	}
+
+	for _, tc := range []struct {
+		name        string
+		replacement string
+		equal       bool
+	}{
+		{"shared wrapper", "wrapper", true},
+		{"independent mutable", "independent", false},
+		{"metadata only", "metadata", true},
+		{"different source ID", "source", false},
+		{"absent source", "absent", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Name:      "source",
+				Namespace: "apps",
+			}
+			owner := &manifest.HelmRelease{
+				Name:      "owner",
+				Namespace: "apps",
+				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name},
+			}
+			st.AddObject(owner)
+			first := &SourceArtifact{FS: fstest.MapFS{}}
+			binding := sourceBinding{source: source, artifact: first}
+			st.SetArtifact(binding.source, first)
+			_, _, initial := st.GetEmission(owner.Named())
+			defer initial.Finish()
+			initial.Fingerprint, initial.Complete = "render", true
+			st.RecordEmitted(owner.Named(), &initial, nil)
+			next := first.WithReads(&ReadSet{})
+			switch tc.replacement {
+			case "independent":
+				replacement := *first
+				next = &replacement
+			case "metadata":
+				next.Revision = "next"
+				next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+			case "source":
+				binding.source.Name = "other"
+				replacement := owner.Clone()
+				replacement.ChartRef.Name = binding.source.Name
+				st.AddObject(replacement)
+			case "absent":
+				next = nil
+			}
+			st.SetArtifact(binding.source, next)
+			_, _, current := st.GetEmission(owner.Named())
+			defer current.Finish()
+			assert.Equal(t, initial.binding.equal(&current.binding), tc.equal)
+			assert.Equal(t, current.binding.source, binding.source)
+			assert.Equal(t, current.binding.artifact, next)
 		})
 	}
 

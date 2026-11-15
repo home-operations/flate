@@ -228,7 +228,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
 	if d.resolvedSources != nil {
 		if input, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok &&
-			!input.SameMaterial(d.cfg.Input) {
+			!input.SameMaterial(d.cfg.Input, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 			d.cfg.Input = input
 		}
 	}
@@ -334,7 +334,10 @@ func (d *Session) resolveEntrySource(
 			!previous.ownsDeclaration(candidate.object) &&
 			d.cfg.Store.GetDeclaration(id) == previous.object {
 			current, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-			if !current.SameMaterial(previous.artifact) {
+			if !current.SameMaterial(
+				previous.artifact,
+				store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+			) {
 				return false, nil
 			}
 			d.cfg.Store.DeleteObject(id)
@@ -349,7 +352,11 @@ func (d *Session) resolveEntrySource(
 func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 	id := candidate.object.Named()
 	current, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	sameMaterial := current.SameMaterial(candidate.artifact) && current.Reads.Valid()
+	sameMaterial := current.SameMaterial(
+		candidate.artifact,
+		store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+	) &&
+		current.Reads.Valid()
 	if facts, ok := candidate.object.(interface {
 		Composition() manifest.ArtifactComposition
 	}); ok && len(facts.Composition().Includes) != 0 {
@@ -480,7 +487,8 @@ func (a *Admission) Resolve(
 			)
 		}
 		current, _ := a.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if current.SameMaterial(resolved.artifact) && current.Reads.Valid() {
+		if current.SameMaterial(resolved.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
+			current.Reads.Valid() {
 			resolved.artifact = current
 		}
 	}

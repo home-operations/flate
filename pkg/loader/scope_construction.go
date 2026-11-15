@@ -51,7 +51,7 @@ type sourceState struct {
 
 func (s *sourceState) matches(other *sourceState) bool {
 	return s.id == other.id && s.object == other.object && s.repoRoot == other.repoRoot &&
-		s.artifact.SameMaterial(other.artifact)
+		s.artifact.SameMaterial(other.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
 }
 
 type sourceScope struct {

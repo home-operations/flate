@@ -441,9 +441,6 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 			e.binding.source = ref.NamedResource
 			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
 				e.binding.artifact = a
-				if a.Content == "" {
-					e.binding.mutable = a.mutableMaterial()
-				}
 			}
 			break
 		}
@@ -452,9 +449,6 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 		e.binding.source = manifest.BootstrapSourceID
 		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
 			e.binding.artifact = a
-			if a.Content == "" {
-				e.binding.mutable = a.mutableMaterial()
-			}
 		}
 	}
 }
@@ -534,9 +528,6 @@ func (s *Store) addDiscoveryCoverage(
 			}
 			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
 				c.binding.artifact = a
-				if a.Content == "" {
-					c.binding.mutable = a.mutableMaterial()
-				}
 			}
 		}
 	}
@@ -769,9 +760,6 @@ func (s *Store) sourceQualifiedReferenceData(
 		c.binding.artifact != nil {
 		artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
 		binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
-		if artifact != nil && artifact.Content == "" {
-			binding.mutable = artifact.mutableMaterial()
-		}
 		if !c.binding.equal(&binding) {
 			candidate.DeclaredKeys, candidate.OfflineData = nil, nil
 		}

@@ -169,7 +169,7 @@ func (r *documentReader) mountSources(
 func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []string {
 	var changed []string
 	for root, art := range mounted {
-		if !r.artifacts[root].SameMaterial(art) {
+		if !r.artifacts[root].SameMaterial(art, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 			changed = append(changed, root)
 		}
 	}
@@ -192,7 +192,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 		r.views = map[string]fs.FS{}
 	}
 	for root, art := range mounted {
-		if r.artifacts[root].SameMaterial(art) {
+		if r.artifacts[root].SameMaterial(art, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 			continue
 		}
 		r.views[root] = art.FS

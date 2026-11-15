@@ -37,30 +37,30 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	)
 	var refreshed ReadSet
 	refreshed.Init(st, ownerID("consumer"), nil)
-	defer refreshed.Retire()
+	t.Cleanup(refreshed.Retire)
 	assert.Equal(t, refreshed.Matches(&before), true)
 	assert.Equal(t, before.MatchesContent(&refreshed, source.Named()), true)
 	var metadataBefore ReadSet
 	metadataBefore.Init(st, ownerID("metadata-consumer"), nil)
-	defer metadataBefore.Retire()
+	t.Cleanup(metadataBefore.Retire)
 	metadataBefore.GetArtifact(source.Named(), ArtifactContent|ArtifactRevision)
 	metadata := artifact.WithReads(&ReadSet{})
 	metadata.Revision = "next"
 	st.SetArtifact(source.Named(), metadata)
 	var metadataCurrent ReadSet
 	metadataCurrent.Init(st, ownerID("metadata-consumer"), nil)
-	defer metadataCurrent.Retire()
+	t.Cleanup(metadataCurrent.Retire)
 	assert.Equal(t, metadataCurrent.Matches(&metadataBefore), false)
 	var contentCurrent ReadSet
 	contentCurrent.Init(st, ownerID("content-consumer"), nil)
-	defer contentCurrent.Retire()
+	t.Cleanup(contentCurrent.Retire)
 	assert.Equal(t, contentCurrent.Matches(&before), true)
 	changed := artifact.WithReads(&ReadSet{})
 	changed.Key = "different"
 	st.SetArtifact(source.Named(), changed)
 	var contentChanged ReadSet
 	contentChanged.Init(st, ownerID("content-consumer"), nil)
-	defer contentChanged.Retire()
+	t.Cleanup(contentChanged.Retire)
 	assert.Equal(t, contentChanged.Matches(&before), false)
 	st.SetArtifact(source.Named(), &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS})
 	var replacement ReadSet
@@ -71,6 +71,38 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 		"%s",
 		"a new mutable artifact was inferred equal from its location",
 	)
+	for _, read := range []ArtifactRead{ArtifactRevision, ArtifactOrigin} {
+		for _, transition := range []string{"independent", "changed metadata", "nil to present", "present to nil"} {
+			t.Run(fmt.Sprintf("metadata/%d/%s", read, transition), func(t *testing.T) {
+				t.Parallel()
+				st := New()
+				id := manifest.BootstrapSourceID
+				first := &SourceArtifact{FS: fstest.MapFS{}}
+				next := *first
+				prior, replacement := first, &next
+				switch transition {
+				case "changed metadata":
+					next.Revision = "next"
+					next.Metadata = map[string]string{"org.opencontainers.image.revision": ""}
+				case "nil to present":
+					prior = nil
+				case "present to nil":
+					replacement = nil
+				}
+				st.SetArtifact(id, prior)
+				var before, current ReadSet
+				before.Init(st, ownerID("before"), nil)
+				current.Init(st, ownerID("current"), nil)
+				t.Cleanup(before.Retire)
+				t.Cleanup(current.Retire)
+				before.GetArtifact(id, read)
+				st.SetArtifact(id, replacement)
+				assert.Equal(t, current.Matches(&before), transition == "independent")
+				current.GetArtifact(id, read)
+				assert.Equal(t, compareCapturedContent(t, &current, &before, id), transition == "independent")
+			})
+		}
+	}
 }
 
 func TestReadSet_MatchesRawCollection(t *testing.T) {

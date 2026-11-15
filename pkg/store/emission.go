@@ -232,7 +232,8 @@ type footprint struct {
 type sourceBinding struct {
 	source   manifest.NamedResource
 	artifact *SourceArtifact
-	mutable  *SourceArtifact
+	// Padding MUST keep AddObject's warm path within its timing budget.
+	_ [8]byte
 }
 
 func (b *sourceBinding) equal(other *sourceBinding) bool {
@@ -245,8 +246,7 @@ func (b *sourceBinding) equal(other *sourceBinding) bool {
 	if other == nil {
 		other = &sourceBinding{}
 	}
-	return b.source == other.source && b.mutable == other.mutable &&
-		(b.artifact == other.artifact || b.artifact.Input(ArtifactContent) == other.artifact.Input(ArtifactContent))
+	return b.source == other.source && b.artifact.SameMaterial(other.artifact, ArtifactContent)
 }
 
 type admission struct {

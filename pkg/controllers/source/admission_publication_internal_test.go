@@ -62,7 +62,14 @@ func TestAdmission_SelfSourceConstructionAndRuntime(t *testing.T) {
 	)
 	tasks.BlockTillDone()
 	assert.NoError(t, failure)
-	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact).SameMaterial(before), true)
+	assert.Equal(
+		t,
+		st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact).SameMaterial(
+			before,
+			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		),
+		true,
+	)
 	tasks.Go(t.Context(), "reconcile self source", func(ctx context.Context) {
 		execution := controller.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{})
 		execution.Close()

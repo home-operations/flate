@@ -211,7 +211,9 @@ func (a *Admission) classifyMissingSource(
 		artifact = a.store.GetArtifact(id, store.ArtifactContent)
 	}
 	owned, _ := artifact.(*store.SourceArtifact)
-	if artifact != nil && !owned.SameMaterial(previous.artifact) && owned.Reads.Valid() {
+	if artifact != nil &&
+		!owned.SameMaterial(previous.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
+		owned.Reads.Valid() {
 		return *candidate
 	}
 	if a.sourceProduced(id, request) || len(candidate.producers) != 0 {

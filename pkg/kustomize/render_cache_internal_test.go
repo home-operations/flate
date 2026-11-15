@@ -531,6 +531,94 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	)
 }
 
+//nolint:paralleltest,tparallel // Executions share one retained preparation and mutable filesystem.
+func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
+	t.Parallel()
+	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
+	t.Logf("render persistence enabled=%t reason=%q", persistent, sourcecache.RenderPersistenceDisabledReason())
+	root := testutil.WriteTree(t, map[string]string{
+		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
+		"b.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
+		".sourceignore": "b.yaml\n",
+	})
+	cache := newTestTreeCache(t, t.TempDir())
+	source := &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root}
+	var preparation Preparation
+	t.Cleanup(preparation.Retire)
+	req := RenderRequest{
+		Preparation: &preparation, ApplyIgnore: true, Label: root, SubPath: ".",
+		Spec: &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"},
+	}
+	var previousLower fs.FS
+	var previousSource *store.SourceArtifact
+	var previousOutput []byte
+	var firstKey string
+	previousPolicy := "b.yaml\n"
+	for _, tc := range []struct {
+		name, policy, resource string
+	}{
+		{"initial", "b.yaml\n", "a"},
+		{"unchanged_wrapper", "b.yaml\n", "a"},
+		{"changed_policy", "a.yaml\n", "b"},
+		{"repeated_policy", "a.yaml\n", "b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.policy != previousPolicy {
+				testutil.WriteFile(t, root, ".sourceignore", tc.policy)
+			}
+			req.Source = source.WithReads(&store.ReadSet{})
+			assert.Equal(t, req.Source.Content, "")
+			assert.ErrorIf(t, req.Source == previousSource, "%s", "execution reused its source wrapper")
+			input, err := cache.sourceRootFor(t.Context(), req.Source, root)
+			assert.NoError(t, err)
+			assert.Diff(t, input.ignore, []struct {
+				Path string
+				Data []byte
+			}{{".sourceignore", []byte(tc.policy)}})
+			want, err := testutil.EncodeRender([]map[string]any{{
+				"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": tc.resource},
+			}})
+			assert.NoError(t, err)
+			if previousLower != nil {
+				previous, _, found := cache.PreviousRender(t.Context(), req)
+				assert.Equal(t, found, persistent && tc.policy == previousPolicy)
+				if found {
+					output, encodeErr := manifest.EncodeRender(previous)
+					assert.NoError(t, encodeErr)
+					assert.Equal(t, string(output), string(want))
+				}
+			}
+			docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			output, err := manifest.EncodeRender(docs)
+			assert.NoError(t, err)
+			assert.Equal(t, string(output), string(want))
+			if previousLower != nil && tc.policy == previousPolicy {
+				assert.Equal(t, string(output), string(previousOutput))
+			}
+			assert.Equal(t, preparation.lower, input.fs)
+			assert.ErrorIf(t, preparation.lower == previousLower, "%s", "retained the previous admission filesystem")
+			assert.Equal(t, preparation.source, req.Source)
+			assert.Equal(t, preparation.key, renderKey(&req, root, input.ignore))
+			if firstKey == "" {
+				firstKey = preparation.key
+			}
+			assert.Equal(t, preparation.key == firstKey, tc.policy == "b.yaml\n")
+			assert.Equal(t, RenderInputs(receipt)[tc.resource+".yaml"], true)
+			content := PrepareShape(&req, docs).Content()
+			emission := acceptedEmission(t, req.Spec.Named(), receipt, content)
+			assert.NoError(t, cache.RecordRender(
+				t.Context(), acceptanceForEmission(req.Spec.Named(), emission, content),
+			))
+			history, complete := cache.previousHistory(t.Context(), &req, req.Spec.Named(), content)
+			assert.Equal(t, complete, persistent)
+			assert.Equal(t, history == nil, !persistent)
+			previousLower, previousSource, previousPolicy = preparation.lower, req.Source, tc.policy
+			previousOutput = output
+		})
+	}
+}
+
 // TestRender_MemoryOwnerUnchanged pins output parity across backing choices.
 func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 	t.Parallel()

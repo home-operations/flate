@@ -1,12 +1,14 @@
 package selection
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"testing"
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -97,25 +99,25 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Each lineage mutation MUST exercise the same retained obligation and capture.
 func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, beforePath, beforeFile, afterPath, afterFile string
-		source, authored, declaration                      bool
-		runnable, sourceTarget, replaceDeclaration         bool
+		sourceName, declarationName                        string
+		authored                                           manifest.NamedResource
+		declaration, runnable, sourceTarget                bool
 		want                                               bool
 	}{
 		{name: "resolved path", beforeFile: "child.yaml", afterPath: "/source/child.yaml", afterFile: "child.yaml", want: true},
 		{name: "diff coordinate", beforePath: "/source/child.yaml", beforeFile: "../fetched/child.yaml", afterPath: "/source/child.yaml", afterFile: "child.yaml", want: true},
 		{name: "rebound path", beforePath: "/source/child.yaml", beforeFile: "child.yaml", afterPath: "/replacement/child.yaml", afterFile: "child.yaml"},
-		{name: "foreign source", source: true},
-		{name: "foreign source with runnable declaration", source: true, runnable: true},
-		{name: "foreign authored with runnable declaration", authored: true, runnable: true},
-		{name: "replaced declaration", runnable: true, replaceDeclaration: true},
+		{name: "foreign source", sourceName: "replacement"},
+		{name: "foreign source with runnable declaration", sourceName: "replacement", runnable: true},
+		{name: "foreign authored with runnable declaration", authored: testutil.KustomizationID("apps", "factory"), runnable: true},
+		{name: "replaced declaration", runnable: true, declarationName: "replacement"},
 		{name: "raw source file", sourceTarget: true, beforePath: "/source/artifact.yaml", afterPath: "/source/artifact.yaml", beforeFile: "artifact.yaml", afterFile: "artifact.yaml"},
 		{name: "nonlocal runnable declaration", runnable: true, beforePath: "/source/generator.yaml", afterPath: "/source/generator.yaml", beforeFile: "generator.yaml", afterFile: "../outside/generator.yaml"},
-		{name: "foreign authored", authored: true},
+		{name: "foreign authored", authored: testutil.KustomizationID("apps", "factory")},
 		{name: "nonlocal", beforePath: "/source/child.yaml", beforeFile: "child.yaml", afterPath: "/source/child.yaml", afterFile: "../outside/child.yaml", declaration: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,15 +149,9 @@ func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 			}
 			current := production
 			current.Path, current.File = tc.afterPath, tc.afterFile
-			if tc.replaceDeclaration {
-				current.Declaration.Name = "replacement"
-			}
-			if tc.source {
-				current.Source.Name = "replacement"
-			}
-			if tc.authored {
-				current.Authored = owner.Named()
-			}
+			current.Declaration.Name = cmp.Or(tc.declarationName, current.Declaration.Name)
+			current.Source.Name = cmp.Or(tc.sourceName, current.Source.Name)
+			current.Authored = tc.authored
 			facts := &solverFacts{store: st, index: manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer: {Productions: []manifest.Production{current}},
@@ -394,11 +390,25 @@ func TestAdmission_ProjectedProductionLifetime(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Source readiness and producer lifetime MUST share one retained obligation across the state table.
 func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"index-only", "unpublished declaration", "completed parent", "partial parent", "declaration without content", "metadata without files", "available", "failed generator", "withdrawn", "replacement"} {
-		t.Run(state, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		physical, producers bool
+		demands             int
+	}{
+		{name: "index-only", physical: true, producers: true, demands: 1},
+		{name: "unpublished declaration", physical: true, producers: true, demands: 1},
+		{name: "completed parent", producers: true},
+		{name: "partial parent", producers: true},
+		{name: "declaration without content", producers: true},
+		{name: "metadata without files", producers: true},
+		{name: "available"},
+		{name: "failed generator"},
+		{name: "withdrawn"},
+		{name: "replacement", producers: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "factory"}
@@ -441,8 +451,7 @@ func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 			previous.Retire()
 			assert.Equal(t, st.GetDeclaration(generator.Named()), manifest.BaseManifest(nil))
 			assert.Equal(t, production.Materializer(target), parent.Named())
-			physical := state == "index-only" || state == "unpublished declaration"
-			if state == "unpublished declaration" {
+			if tc.name == "unpublished declaration" {
 				record := facts.index.Records[generator.Named()]
 				record.BuilderOwner, record.Builder = parent.Named(), "factory/kustomization.yaml"
 				record.Authored = generator.Named()
@@ -454,18 +463,18 @@ func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 				assert.Equal(t, st.GetObject(generator.Named()), manifest.BaseManifest(generator))
 				assert.Equal(t, st.GetDeclaration(generator.Named()), manifest.BaseManifest(nil))
 			}
-			if !physical {
+			if !tc.physical {
 				st.RecordEmitted(
 					parent.Named(),
 					&store.Emission{
-						Complete:    state != "partial parent",
+						Complete:    tc.name != "partial parent",
 						Fingerprint: "initial",
 						Children:    []store.Child{{Obj: generator, Generated: true}},
 					},
 					nil,
 				)
 			}
-			switch state {
+			switch tc.name {
 			case "declaration without content":
 				st.AddObject(&manifest.ExternalArtifact{Name: target.Name, Namespace: target.Namespace})
 			case "metadata without files":
@@ -481,16 +490,15 @@ func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			demands := slices.Collect(proposal.Demands())
-			execution := !physical && state != "available" && state != "failed generator" && state != "withdrawn"
-			assert.Equal(t, len(demands), map[bool]int{false: 0, true: 1}[physical])
+			assert.Equal(t, len(demands), tc.demands)
 			for _, demand := range demands {
 				assert.Equal(t, demand.Identity, parent.Named())
 				assert.Equal(t, manifest.KindOf(demand.Witness).Structural, true)
 			}
 			assert.Equal(t, len(proposal.Needed), 0)
 			assert.Equal(t, len(proposal.Ordinary), 0)
-			assert.Equal(t, len(proposal.producers) != 0, physical || execution)
-			if state == "declaration without content" {
+			assert.Equal(t, len(proposal.producers) != 0, tc.producers)
+			if tc.name == "declaration without content" {
 				var required store.ReadSet
 				required.Init(st, manifest.NamedResource{}, nil)
 				defer required.Retire()
@@ -513,7 +521,7 @@ func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, session.Snapshot() == snapshot, true)
-			if state == "replacement" {
+			if tc.name == "replacement" {
 				replacement := *generator
 				replacement.Spec = map[string]any{
 					"sources": []any{map[string]any{"kind": "GitRepository", "name": "replacement"}},

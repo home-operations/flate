@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:gocognit,paralleltest,tparallel // Transition cases MUST share retained generation and evidence.
+//nolint:paralleltest,tparallel // Transition cases MUST share retained generation and evidence.
 func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	t.Parallel()
 	st := store.New()
@@ -63,11 +63,12 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			var guard store.ReadSet
 			guard.Init(st, parent.Named(), nil)
-			previousGeneration := generation
+			var retired []store.Child
 			switch change {
 			case "new generation":
 				generation = slices.Clone(generation)
 			case "new declarations":
+				retired = generation
 				generation = make([]store.Child, len(generation))
 				for i := range generation {
 					generation[i].Obj = &manifest.ConfigMap{Name: fmt.Sprintf("replacement-%d", i), Namespace: "apps"}
@@ -84,11 +85,9 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 				Generation: generation, Owner: parent.Named(), Reads: &guard, Preparation: &preparation,
 			})
 			assert.NoError(t, err)
-			if change == "new declarations" {
-				for _, child := range previousGeneration {
-					_, retained := preparation.closure.states[child.Obj.Named()]
-					assert.Equal(t, retained, false)
-				}
+			for _, child := range retired {
+				_, retained := preparation.closure.states[child.Obj.Named()]
+				assert.Equal(t, retained, false)
 			}
 			assert.Equal(t, proposal.reused, false)
 			assert.Equal(t, proposal.reads == evidence, false)

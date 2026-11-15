@@ -190,21 +190,19 @@ func propagateContribution[S staticScope](scope S, i int) bool {
 	return changed
 }
 
-//nolint:gocognit // Cancellation MUST surround each borrowed read before eligibility publication.
 func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, error) bool) bool {
 	for file, doc := range scope.Files() {
 		if err := ctx.Err(); err != nil {
 			read("", err)
 			return false
 		}
-		if scope.PlainEntry() != "" && filepath.Dir(file) == scope.PlainEntry() && doc.Loaded && !scope.Terminal(file) {
+		switch {
+		case scope.PlainEntry() != "" && filepath.Dir(file) == scope.PlainEntry() && doc.Loaded && !scope.Terminal(file):
 			markFile(scope, file, RootEligible)
 			continue
-		}
-		if doc.Eligibility != RootUnknown || !doc.ObjectsKnown {
+		case doc.Eligibility != RootUnknown || !doc.ObjectsKnown:
 			continue
-		}
-		if !read(filepath.Dir(file), nil) {
+		case !read(filepath.Dir(file), nil):
 			return false
 		}
 		if err := ctx.Err(); err != nil {
@@ -218,10 +216,11 @@ func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, er
 		coordinate := scope.Coordinate(file)
 		for _, claim := range scope.Claims() {
 			owner, _ := scope.Owner(claim.ID)
-			if strings.HasPrefix(coordinate, claim.Prefix) && owner != file {
-				state = RootInactive
-				break
+			if !strings.HasPrefix(coordinate, claim.Prefix) || owner == file {
+				continue
 			}
+			state = RootInactive
+			break
 		}
 		markFile(scope, file, state)
 	}

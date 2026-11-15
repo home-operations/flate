@@ -10,8 +10,6 @@ import (
 )
 
 // Predictions retains diagnostic membership without admitting declarations for execution.
-//
-//nolint:gocognit // Diagnostic membership and references MUST share one captured snapshot.
 func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[manifest.Reference]] {
 	if len(s.Failed) == 0 || s.Facts == nil {
 		return func(func(manifest.NamedResource, iter.Seq[manifest.Reference]) bool) {}
@@ -34,11 +32,14 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 				parent = cmp.Or(parent, s.Entry.Producer)
 			}
 			failure, failed := s.Failed[parent]
-			if !failed {
+			switch {
+			case !failed:
 				continue
-			}
-			if !parent.ReportHidden() && (s.Store.EmissionOwner(parent) == (manifest.NamedResource{}) ||
-				s.Facts.RootEvidence(parent, &reads, true).Occurrence.Declaration.File == "") {
+			case parent.ReportHidden():
+				// Synthetic entry parents have no emitted declaration to require.
+			case s.Store.EmissionOwner(parent) == (manifest.NamedResource{}):
+				continue
+			case s.Facts.RootEvidence(parent, &reads, true).Occurrence.Declaration.File == "":
 				continue
 			}
 			occurrence := evidence.Occurrence

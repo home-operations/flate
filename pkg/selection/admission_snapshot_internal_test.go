@@ -2,6 +2,8 @@ package selection
 
 import (
 	"fmt"
+	"iter"
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -140,8 +142,16 @@ func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {
 
 func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"required", "emitted"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		mode   string
+		frozen bool
+	}{
+		{mode: "required"},
+		{mode: "emitted"},
+		{mode: "required", frozen: true},
+		{mode: "emitted", frozen: true},
+	} {
+		t.Run(fmt.Sprintf("%s/frozen_%t", tc.mode, tc.frozen), func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			st.SetArtifact(
@@ -151,6 +161,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			object := &manifest.Kustomization{Name: "app", Namespace: "apps", Path: "app"}
 			st.AddObject(object)
 			session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{object.Named()}})
+			session.facts.(*solverFacts).context.Frozen = tc.frozen
 			facts := &countedAdmissionFacts{census: session.facts, roots: map[manifest.NamedResource]int{}}
 			session.facts = facts
 			var preparation *Preparation
@@ -159,18 +170,20 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			reads.Init(st, object.Named(), nil)
 			defer reads.Close()
 			request := PrepareRequest{Preparation: &preparation, Reads: &reads}
-			switch mode {
+			switch tc.mode {
 			case "required":
 				reads.RequireData(object.Named())
 			case "emitted":
 				request.Generation = []store.Child{{Obj: object}}
 			}
+			observation := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "observed"}
+			facts.onRoot = func() { preparation.closure.proposal.reads.GetObject(observation) }
 			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
-			assert.Equal(t, session.Snapshot().Output(object.Named()), mode != "required")
+			assert.Equal(t, session.Snapshot().Output(object.Named()), tc.mode != "required")
 			assert.Equal(t, facts.roots[object.Named()], 1)
 			clear(facts.roots)
 			_, retry := publishDecision(t, session, new(Admission{
@@ -185,6 +198,40 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
+			if !tc.frozen {
+				return
+			}
+			previousReads := preparation.evidence
+			consumed := slices.Collect(previousReads.Inputs())
+			request.History = map[manifest.NamedResource]struct {
+				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+				Complete bool
+			}{object.Named(): {Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{
+				object.Named(): {
+					ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"history"}},
+				},
+			})}}
+			input, _ := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+			request.Missing = preparation.closure.missing
+			request.Acquired = []Acquisition{{
+				Demand: Demand{Source: manifest.BootstrapSourceID, Root: "history", History: true, Artifact: input},
+				Root:   "resolved", Available: true, Reads: &reads,
+			}}
+			proposal, err = session.Prepare(t.Context(), request)
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, proposal.reused, false)
+			assert.Equal(t, proposal.reads != previousReads, true)
+			assert.Equal(t, proposal.reads.Valid(), true)
+			assert.Diff(t, facts.roots, map[manifest.NamedResource]int{object.Named(): 1})
+			assert.Equal(t, slices.Contains(consumed, observation), true)
+			fresh := slices.Collect(proposal.reads.Inputs())
+			for _, id := range consumed {
+				assert.Equal(t, slices.Contains(fresh, id), true)
+			}
+			assert.Equal(t, len(proposal.demands), 0)
+			assert.Diff(t, preparation.closure.accepted[object.Named()][object.Named()].ContentRoots,
+				map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"resolved"}})
 		})
 	}
 }
@@ -404,7 +451,8 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 	t.Parallel()
 	session := newPublicationSession(t)
 	st := session.store
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
 	producer := &manifest.HelmRelease{Name: "generator", Namespace: "apps"}
 	st.AddObject(producer)
 	application := &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"}
@@ -420,7 +468,12 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 		Application: application, Producer: producer.Named(), Root: producer.Named(), Reads: &support, Bound: true,
 	})
 	proposal, err := session.refreshHistoryTest(
-		t.Context(), previous, PrepareRequest{Invocation: true, Changes: change.NewSet(nil)},
+		t.Context(), previous, PrepareRequest{
+			Invocation: true, Changes: change.NewSet(nil),
+			HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{
+				producer.Named(): {{Source: input.HistoryIdentity(manifest.BootstrapSourceID)}},
+			},
+		},
 	)
 	assert.NoError(t, err)
 	defer proposal.Retire()

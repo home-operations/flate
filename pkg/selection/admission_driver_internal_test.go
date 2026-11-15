@@ -107,7 +107,6 @@ func TestAdmit_EntryHistory(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Publication retries MUST compare every history state and rejected observation.
 func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 	t.Parallel()
 	for _, availability := range []string{"unavailable", "incomplete", "complete empty"} {
@@ -132,22 +131,23 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 			request := PrepareRequest{History: borrowed}
 			rejected := testutil.KustomizationID("apps", "rejected")
 			acceptedChild := testutil.KustomizationID("apps", "accepted")
+			acceptedRecords := map[manifest.NamedResource]manifest.DiscoveryRecord{}
+			if availability == "incomplete" {
+				acceptedRecords[acceptedChild] = manifest.DiscoveryRecord{File: "accepted.yaml"}
+			}
+			var records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			if availability != "unavailable" {
+				records = maps.All(acceptedRecords)
+			}
 			request.ReadHistory = func(_ context.Context, demand *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 				reads++
 				assert.Equal(t, demand.Reads.Valid(), true)
 				if reads == 1 {
-					return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-						yield(rejected, manifest.DiscoveryRecord{File: "rejected.yaml"})
-					}, true
+					return maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{
+						rejected: {File: "rejected.yaml"},
+					}), true
 				}
-				if availability == "unavailable" {
-					return nil, false
-				}
-				return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-					if availability == "incomplete" {
-						yield(acceptedChild, manifest.DiscoveryRecord{File: "accepted.yaml"})
-					}
-				}, availability == "complete empty"
+				return records, availability == "complete empty"
 			}
 			published := false
 			stop := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -173,12 +173,13 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 			assert.Equal(t, history.Complete, availability == "complete empty")
 			assert.Equal(t, borrowed[owner.Named()].Records == nil, true)
 			assert.Equal(t, borrowed[owner.Named()].Complete, false)
+			var captured map[manifest.NamedResource]manifest.DiscoveryRecord
 			if history.Records != nil {
-				captured := maps.Collect(history.Records)
-				_, rejectedPresent := captured[rejected]
-				assert.Equal(t, rejectedPresent, false)
-				assert.Equal(t, len(captured) == 1, availability == "incomplete")
+				captured = maps.Collect(history.Records)
 			}
+			_, rejectedPresent := captured[rejected]
+			assert.Equal(t, rejectedPresent, false)
+			assert.Equal(t, len(captured) == 1, availability == "incomplete")
 			assert.Equal(t, result.Request.Preparation, nil)
 			assert.Equal(t, len(result.Demands), 0)
 			next, nextAccepted, nextErr := session.admitTest(

@@ -170,7 +170,6 @@ func (c *admissionClosure) rootRequired(root string) bool {
 	return false
 }
 
-//nolint:gocognit // Initial obligations MUST seed one closure before its work queue is built.
 func (c *admissionClosure) finishStart(
 	known []bool,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
@@ -186,15 +185,16 @@ func (c *admissionClosure) finishStart(
 	slices.Sort(c.proposal.Namespaces)
 	c.proposal.Namespaces = slices.Compact(c.proposal.Namespaces)
 	for i, target := range c.session.request.Roots {
-		if !known[i] || target.Name == "" && target.Namespace != "" {
-			materializers(
-				materializerDemand{target: target, source: c.context.Root, required: target.Name != ""},
-				manifest.NamedResource{},
-			)
+		if known[i] && (target.Name != "" || target.Namespace == "") {
+			continue
 		}
+		materializers(
+			materializerDemand{target: target, source: c.context.Root, required: target.Name != ""},
+			manifest.NamedResource{},
+		)
 	}
-	if route := c.proposal.entry; route != nil && route.Application != nil &&
-		!c.proposal.entrySupported() && c.context.PlainEntry && c.literalEntryChanged() && !c.pendingEntrySources() {
+	route := c.proposal.entry
+	if c.entryRequiresMaterialization() {
 		application := route.Application
 		root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
 		c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
@@ -205,11 +205,7 @@ func (c *admissionClosure) finishStart(
 	}
 
 	for _, id := range slices.SortedFunc(maps.Keys(c.historyOwners), manifest.NamedResource.Compare) {
-		if route := c.proposal.entry; route != nil && route.Bound &&
-			(route.Producer == id || route.Root == id) && c.proposal.entrySupported() {
-			continue
-		}
-		if !c.replace[id] && c.historyOwnerSupported(id) {
+		if c.historyOwnerRequired(id) {
 			c.add(id, admissionRole{needed: true, ordinary: true})
 		}
 	}
@@ -226,7 +222,23 @@ func (c *admissionClosure) finishStart(
 	}
 }
 
-func (c *admissionClosure) historyOwnerSupported(id manifest.NamedResource) bool {
+func (c *admissionClosure) entryRequiresMaterialization() bool {
+	route := c.proposal.entry
+	if route == nil || route.Application == nil || c.proposal.entrySupported() {
+		return false
+	}
+	return c.context.PlainEntry && c.literalEntryChanged() && !c.pendingEntrySources()
+}
+
+func (c *admissionClosure) historyOwnerRequired(id manifest.NamedResource) bool {
+	route := c.proposal.entry
+	routedOwner := route != nil && route.Bound && (route.Producer == id || route.Root == id)
+	if routedOwner && c.proposal.entrySupported() {
+		return false
+	}
+	if c.replace[id] {
+		return false
+	}
 	if !c.declarationLocated(id, c.objects) {
 		return false
 	}

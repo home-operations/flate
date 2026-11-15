@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/maphash"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -566,4 +567,52 @@ func TestSnapshot_ChildrenByParent(t *testing.T) {
 		snapshot.childrenByParent(),
 		map[manifest.NamedResource][]manifest.NamedResource{parent: {first, second}, other: {first}},
 	)
+}
+
+func TestSnapshot_HiddenParentPredictions(t *testing.T) {
+	t.Parallel()
+	for _, blocked := range []bool{false, true} {
+		name := "failed parent"
+		if blocked {
+			name = "blocked parent"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			parent := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+			child := testutil.KustomizationID("apps", "child")
+			st := store.New()
+			failure := store.StatusInfo{Status: store.StatusFailed}
+			if blocked {
+				failure = store.FailureStatus(&manifest.DependencyFailedError{
+					Parent: parent, Failed: []manifest.NamedResource{manifest.BootstrapSourceID},
+				})
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child: {File: "child.yaml", Parent: parent},
+			}}
+			facts := &solverFacts{roots: map[manifest.NamedResource]RootEvidence{
+				child: {Occurrence: OccurrenceFacts{Declaration: OccurrenceID{File: "child.yaml"}}},
+			}}
+			snapshot := Snapshot{
+				Store: st, Index: index, Facts: facts,
+				Failed: map[manifest.NamedResource]store.StatusInfo{parent: failure},
+			}
+			assert.Equal(t, parent.ReportHidden(), true)
+			assert.Equal(t, st.EmissionOwner(parent), manifest.NamedResource{})
+			predictions := map[manifest.NamedResource][]manifest.Reference{}
+			for id, references := range snapshot.Predictions() {
+				predictions[id] = slices.Collect(references)
+			}
+			assert.Equal(t, len(predictions), 1)
+			references := predictions[child]
+			assert.FatalIf(
+				t, len(references) != 1, "predicted child references = %v, want one materializer", references,
+			)
+			assert.Equal(t, references[0].NamedResource, parent)
+			assert.Equal(t, references[0].Use, "materializer")
+			assert.Equal(t, references[0].Gate, manifest.GateParents)
+			assert.Equal(t, references[0].Optional, true)
+			assert.Equal(t, st.GetDeclaration(child), nil)
+		})
+	}
 }

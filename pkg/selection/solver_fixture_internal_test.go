@@ -129,6 +129,12 @@ func (f *solverFacts) PreparedObject(id manifest.NamedResource, _ *store.ReadSet
 	return f.roots[id].BuiltChild, f.roots[id].BuiltCurrent
 }
 
+func (f *solverFacts) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	return f.declarations[id]
+}
+
+func (f *solverFacts) SourceExternal(manifest.NamedResource, *store.ReadSet) bool { return false }
+
 func (f *solverFacts) RootEvidence(id manifest.NamedResource, _ *store.ReadSet, _ bool) RootEvidence {
 	return f.roots[id]
 }

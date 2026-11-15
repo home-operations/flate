@@ -22,7 +22,7 @@ func NewMissingPolicy(kinds []string) *MissingPolicy {
 // Admission MUST project values policy without importing values into selection.
 func (p *MissingPolicy) Admission(ref *manifest.Reference, input *store.ReferenceFacts) selection.InputAdmission {
 	if !ref.NamedResource.KindInfo().Data {
-		if ref.Optional || ref.NamedResource.IsCRD() && p.AllowsKind(ref.Kind) {
+		if ref.Optional || p.allowsMissingDeclaration(ref.NamedResource) {
 			return selection.OptionalInput
 		}
 		return selection.RequiredInput
@@ -44,4 +44,8 @@ func (p *MissingPolicy) Admission(ref *manifest.Reference, input *store.Referenc
 // AllowsKind MUST share the invocation selection with source acquisition.
 func (p *MissingPolicy) AllowsKind(kind string) bool {
 	return slices.Contains(p.kinds, kind)
+}
+
+func (p *MissingPolicy) allowsMissingDeclaration(id manifest.NamedResource) bool {
+	return id.IsCRD() && p.AllowsKind(id.Kind)
 }

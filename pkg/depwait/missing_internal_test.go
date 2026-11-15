@@ -44,6 +44,7 @@ func TestMissingPolicy_ReferenceRules(t *testing.T) {
 		{name: "materializer alone requires data", input: store.ReferenceFacts{Materializers: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "producer"}}}},
 		{name: "selected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}, kinds: []string{manifest.KindCustomResourceDefinition}, allowed: true},
 		{name: "unselected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}},
+		{name: "optional unselected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Optional: true}, allowed: true},
 		{name: "foreign CRD", ref: manifest.Reference{Group: "example.test", Kind: manifest.KindCustomResourceDefinition}, kinds: []string{manifest.KindCustomResourceDefinition}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

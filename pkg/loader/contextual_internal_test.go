@@ -490,26 +490,25 @@ func TestFinalizeIndex_ContextualSelectors(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("apps", "provider-owner")), true)
 }
 
-//nolint:gocognit // Known, unread, and excluded contexts MUST share the same scalar and immutability assertions.
 func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, disabled string
-		unknown        bool
+		known          bool
+		from           []manifest.SubstituteReference
 	}{
-		{name: "known"},
-		{name: "unread input with defaults", unknown: true},
+		{name: "known", known: true},
+		{name: "unread input with defaults", from: []manifest.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "unread"},
+		}},
 		{name: "disabled annotation", disabled: "annotations"},
 		{name: "disabled label", disabled: "labels"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			owner.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ACTIVE": "true"}}
-			if tc.unknown {
-				owner.PostBuild.SubstituteFrom = []manifest.SubstituteReference{
-					{Kind: manifest.KindConfigMap, Name: "unread"},
-				}
+			owner.PostBuild = &kustomizev1.PostBuild{
+				Substitute: map[string]string{"ACTIVE": "true"}, SubstituteFrom: tc.from,
 			}
 			st := store.New()
 			st.AddObject(owner)
@@ -540,14 +539,12 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 					},
 				},
 			}
-			if tc.disabled != "" {
-				metadata := doc["metadata"].(map[string]any)
-				fields, _ := metadata[tc.disabled].(map[string]any)
-				if fields == nil {
-					fields = map[string]any{}
-					metadata[tc.disabled] = fields
-				}
-				fields[manifest.SubstituteAnnotationKey] = "disabled"
+			metadata := doc["metadata"].(map[string]any)
+			switch tc.disabled {
+			case "annotations":
+				metadata["annotations"] = map[string]any{manifest.SubstituteAnnotationKey: "disabled"}
+			case "labels":
+				metadata["labels"].(map[string]any)[manifest.SubstituteAnnotationKey] = "disabled"
 			}
 			child := new(
 				documentReader,
@@ -590,7 +587,7 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				child.version,
 			)
 			assert.NoError(t, err)
-			known := !tc.unknown && tc.disabled == ""
+			known := tc.known
 			want := func(raw, resolved string) string {
 				if known {
 					return resolved
@@ -638,20 +635,18 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 			assert.Equal(t, projected.facts.structural.Components[0], want("${COMP:-../../shared}", "../../shared"))
 			assert.Equal(t, fact.facts.path, "./${DIR:-a}")
 			assert.Equal(t, fact.facts.structural.SourceRef.Name, "${SOURCE:-repo}")
+			refs := make(map[string]manifest.Reference)
 			for ref := range projected.references() {
-				switch ref.Use {
-				case "source":
-					assert.Equal(t, ref.Name, want("${SOURCE:-repo}", "repo"))
-				case "dependsOn":
-					assert.Equal(t, ref.Name, want("${DEP:-prior}", "prior"))
-				case "substituteFrom":
-					assert.Equal(t, ref.Name, want("${INPUT:-vars}", "vars"))
-					assert.Equal(t, ref.Namespace, "apps")
-					assert.Equal(t, ref.NamespaceDefault, true)
-					assert.Equal(t, ref.Optional, true)
-					assert.Equal(t, ref.Position, 0)
-				}
+				refs[ref.Use] = ref
 			}
+			assert.Equal(t, refs["source"].Name, want("${SOURCE:-repo}", "repo"))
+			assert.Equal(t, refs["dependsOn"].Name, want("${DEP:-prior}", "prior"))
+			substitute := refs["substituteFrom"]
+			assert.Equal(t, substitute.Name, want("${INPUT:-vars}", "vars"))
+			assert.Equal(t, substitute.Namespace, "apps")
+			assert.Equal(t, substitute.NamespaceDefault, true)
+			assert.Equal(t, substitute.Optional, true)
+			assert.Equal(t, substitute.Position, 0)
 			selectorDoc := map[string]any{
 				"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": doc["metadata"],
 				"spec": map[string]any{"inputsFrom": []any{map[string]any{"selector": map[string]any{
@@ -678,12 +673,13 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				set.version,
 			)
 			assert.NoError(t, err)
-			references := 0
-			for ref := range setProjection.references() {
-				if ref.Use != "inputsFrom" {
-					continue
-				}
-				references++
+			references := slices.DeleteFunc(
+				slices.Collect(setProjection.references()),
+				func(ref manifest.Reference) bool {
+					return ref.Use != "inputsFrom"
+				},
+			)
+			for _, ref := range references {
 				assert.Equal(t, ref.Selector.MatchLabels[want("${LABEL:-role}", "role")], want("${VALUE:-y}", "y"))
 				expression := ref.Selector.MatchExpressions[0]
 				assert.Equal(t, expression.Key, want("${KEY:-peer}", "peer"))
@@ -692,12 +688,13 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				assert.Equal(t, ref.NamespaceDefault, true)
 				assert.Equal(t, ref.Position, 0)
 			}
-			assert.Equal(t, references, 1)
-			for ref := range setFact.references() {
-				if ref.Use == "inputsFrom" {
-					assert.Equal(t, ref.Selector.MatchExpressions[0].Key, "${KEY:-peer}")
-					assert.Equal(t, ref.Selector.MatchLabels["${LABEL:-role}"], "${VALUE:-y}")
-				}
+			assert.Equal(t, len(references), 1)
+			authored := slices.DeleteFunc(slices.Collect(setFact.references()), func(ref manifest.Reference) bool {
+				return ref.Use != "inputsFrom"
+			})
+			for _, ref := range authored {
+				assert.Equal(t, ref.Selector.MatchExpressions[0].Key, "${KEY:-peer}")
+				assert.Equal(t, ref.Selector.MatchLabels["${LABEL:-role}"], "${VALUE:-y}")
 			}
 		})
 	}

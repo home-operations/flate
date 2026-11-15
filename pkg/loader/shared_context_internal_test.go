@@ -278,7 +278,6 @@ func assertAdmissionCapturedMembership(
 	assert.Equal(t, reads.ID(), owner)
 }
 
-//nolint:gocognit // Demand MUST survive indexed, partial, and emitted output in full mode and both diff directions.
 func TestFilter_RequiredSourceProducerDemand(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"full", "forward", "reverse"} {
@@ -342,14 +341,24 @@ spec: {url: oci://fixture.invalid/app-template}
 					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n"),
 				},
 			}
-			for _, namespace := range []string{"default", "flux-system", "other"} {
-				files["apps/"+namespace+"/transformer.yaml"] = &fstest.MapFile{Data: []byte(`apiVersion: builtin
+			files["apps/default/transformer.yaml"] = &fstest.MapFile{Data: []byte(`apiVersion: builtin
 kind: NamespaceTransformer
-metadata: {name: apply-ns, namespace: ` + namespace + `}
+metadata: {name: apply-ns, namespace: default}
 fieldSpecs:
   - {path: spec/targetNamespace, group: kustomize.toolkit.fluxcd.io, kind: Kustomization, create: true}
 `)}
-			}
+			files["apps/flux-system/transformer.yaml"] = &fstest.MapFile{Data: []byte(`apiVersion: builtin
+kind: NamespaceTransformer
+metadata: {name: apply-ns, namespace: flux-system}
+fieldSpecs:
+  - {path: spec/targetNamespace, group: kustomize.toolkit.fluxcd.io, kind: Kustomization, create: true}
+`)}
+			files["apps/other/transformer.yaml"] = &fstest.MapFile{Data: []byte(`apiVersion: builtin
+kind: NamespaceTransformer
+metadata: {name: apply-ns, namespace: other}
+fieldSpecs:
+  - {path: spec/targetNamespace, group: kustomize.toolkit.fluxcd.io, kind: Kustomization, create: true}
+`)}
 			other := make(fstest.MapFS, len(files))
 			maps.Copy(other, files)
 			readerFile := "apps/default/nextflux/app/helmrelease.yaml"
@@ -367,9 +376,10 @@ spec:
 				LocalPath: root,
 				FS:        other,
 			}
-			if mode == "reverse" {
-				before, after = after, before
-			}
+			pair := map[string][2]*store.SourceArtifact{
+				"full": {before, after}, "forward": {before, after}, "reverse": {after, before},
+			}[mode]
+			before, after = pair[0], pair[1]
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, after)
 			st.AddObject(&manifest.Kustomization{
@@ -385,14 +395,12 @@ spec:
 			l := New(st)
 			defer l.Close()
 			l.SourceRoot = root
-			if mode != "full" {
-				var err error
-				l.Options.Changes, err = change.Detect(t.Context(), before, after, change.DetectConfig{})
-				assert.NoError(t, err)
-				assert.Diff(t, l.Options.Changes.Paths(), []string{readerFile})
-			}
+			changes, err := change.Detect(t.Context(), before, after, change.DetectConfig{})
+			assert.NoError(t, err)
+			assert.Diff(t, changes.Paths(), []string{readerFile})
+			l.Options.Changes = map[string]*change.Set{"forward": changes, "reverse": changes}[mode]
 			configureSelection(t, l, selection.Request{Changed: mode != "full"})
-			_, err := l.Load(t.Context(), filepath.Join(root, "cluster"), manifest.NamedResource{}, nil)
+			_, err = l.Load(t.Context(), filepath.Join(root, "cluster"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{
 				Group:     manifest.FluxKustomizeDomain,
@@ -443,14 +451,13 @@ spec:
 				assert.NoError(t, err)
 			}
 			assert.FatalIf(t, child.Obj == nil, "reader declaration is unavailable")
-			matched := false
-			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
-				if ref.NamedResource == source {
-					matched = true
-					assert.Equal(t, ref.ContentInput(), true)
-				}
-			}
-			assert.Equal(t, matched, true)
+			references := slices.Collect(manifest.References(child.Obj, manifest.ReferenceRelations))
+			assert.Equal(t, slices.ContainsFunc(references, func(ref manifest.Reference) bool {
+				return ref.NamedResource == source
+			}), true)
+			assert.Equal(t, slices.ContainsFunc(references, func(ref manifest.Reference) bool {
+				return ref.NamedResource == source && !ref.ContentInput()
+			}), false)
 			assert.NoError(t, l.PromoteOrphans(t.Context()))
 			assert.Equal(t, st.GetObject(source) == nil, true)
 			assert.Equal(t, selection.Root(l.RootEvidence(source, nil, true)).Independent, false)
@@ -471,105 +478,77 @@ spec:
 				assert.NoError(t, err)
 				owners = append(owners, builtObjectsForTest(t, string(data))...)
 			}
-			for _, phase := range []string{"indexed", "partial", "owners emitted", "reader emitted", "emitted"} {
-				if phase == "partial" {
-					st.RecordEmitted(producer, &store.Emission{Complete: false}, nil)
+			publish := func(owner manifest.NamedResource, generation []store.Child, requireProducer bool) {
+				proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+					Owner: owner, Generation: generation,
+				})
+				assert.NoError(t, err)
+				assert.ErrorIf(t, requireProducer && !slices.Contains(proposal.Needed, producer),
+					"reader emitted: required source producer lacks execution demand: needed=%v", proposal.Needed)
+				_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
+				assert.NoError(t, err)
+				assert.Equal(t, committed, true)
+				st.RecordEmitted(owner, &store.Emission{Children: generation, Complete: true}, nil)
+			}
+			demand := func(phase string, requireProducer bool) {
+				proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
+				assert.NoError(t, err)
+				assert.ErrorIf(t, !slices.Contains(proposal.Needed, reader), "%s: reader lacks execution demand", phase)
+				assert.ErrorIf(t, requireProducer && !slices.Contains(proposal.Needed, producer),
+					"%s: required source producer lacks execution demand: needed=%v", phase, proposal.Needed)
+				assert.Equal(t, slices.Contains(proposal.Needed, source), true)
+				assert.Equal(t, slices.Contains(proposal.Needed, unrelated), false)
+				assert.Equal(t, slices.Contains(proposal.Selected, unrelated), false)
+				assert.Equal(t, slices.Contains(proposal.Selected, source), false)
+				proposal.Retire()
+			}
+			if mode == "full" {
+				publish = func(owner manifest.NamedResource, generation []store.Child, _ bool) {
+					st.RecordEmitted(owner, &store.Emission{Children: generation, Complete: true}, nil)
 				}
-				if phase == "owners emitted" {
-					st.RecordEmitted(manifest.NamedResource{
-						Group:     manifest.FluxKustomizeDomain,
-						Kind:      manifest.KindKustomization,
-						Namespace: "flux-system",
-						Name:      "cluster-apps",
-					}, &store.Emission{Children: owners, Complete: true}, nil)
-				}
-				if phase == "reader emitted" && mode != "full" {
-					readerOwner := manifest.NamedResource{
-						Group:     manifest.FluxKustomizeDomain,
-						Kind:      manifest.KindKustomization,
-						Namespace: "default",
-						Name:      "nextflux",
-					}
-					child.Productions = l.Index.Records[reader].Productions
-					proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
-						Owner: readerOwner, Generation: []store.Child{child},
-					})
-					assert.NoError(t, err)
-					assert.ErrorIf(
-						t,
-						!slices.Contains(proposal.Needed, producer),
-						"%s: required source producer lacks execution demand: needed=%v",
-						phase,
-						proposal.Needed,
-					)
-					_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
-					assert.NoError(t, err)
-					assert.Equal(t, committed, true)
-					st.RecordEmitted(readerOwner, &store.Emission{Children: []store.Child{child}, Complete: true}, nil)
-				}
-				if phase == "emitted" {
-					producerIndex := slices.IndexFunc(
-						owners,
-						func(child store.Child) bool { return child.Obj.Named() == producer },
-					)
-					assert.FatalIf(t, producerIndex < 0, "built source producer declaration is unavailable")
-					producerChild := owners[producerIndex]
-					assert.Equal(t, producerChild.Obj.EmissionPolicy().Namespace, producer.Namespace)
-					docs := builtObjectsForTest(
-						t,
-						string(files["apps/flux-system/instance/ks/ocirepository.yaml"].Data),
-					)
-					parsed := ParseChildren(
-						producerChild.Obj,
-						[]manifest.DocOccurrence{{Document: docs[0].Doc}},
-						manifest.ParseDocOptions{},
-						nil,
-					)
-					assert.Equal(t, len(parsed.Failures), 0)
-					assert.FatalIf(t, len(parsed.Children) != 1, "source emission children=%d", len(parsed.Children))
-					output := parsed.Children[0]
-					assert.Equal(t, output.Obj.Named(), source)
-					output.Productions = record.Productions
-					if mode != "full" {
-						proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
-							Owner: producer, Generation: []store.Child{output},
-						})
-						assert.NoError(t, err)
-						_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
-						assert.NoError(t, err)
-						assert.Equal(t, committed, true)
-					}
-					st.RecordEmitted(producer, &store.Emission{Children: []store.Child{output}, Complete: true}, nil)
-					st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusReady})
-					assert.Equal(t, st.GetObject(source) != nil, true)
-				}
-				if mode == "full" {
+				demand = func(_ string, _ bool) {
 					decision := l.Options.Session.Snapshot()
 					assert.Equal(t, decision.Reconcile(reader), true)
 					assert.Equal(t, decision.Reconcile(producer), true)
 					assert.Equal(t, decision.Reconcile(source), true)
-					continue
 				}
-				proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
-				assert.NoError(t, err)
-				assert.ErrorIf(t, !slices.Contains(proposal.Needed, reader), "%s: reader lacks execution demand", phase)
-				if phase != "emitted" {
-					assert.ErrorIf(
-						t,
-						!slices.Contains(proposal.Needed, producer),
-						"%s: required source producer lacks execution demand: needed=%v",
-						phase,
-						proposal.Needed,
-					)
-				}
-				assert.Equal(t, slices.Contains(proposal.Needed, source), true)
-				if mode != "full" {
-					assert.Equal(t, slices.Contains(proposal.Needed, unrelated), false)
-					assert.Equal(t, slices.Contains(proposal.Selected, unrelated), false)
-					assert.Equal(t, slices.Contains(proposal.Selected, source), false)
-				}
-				proposal.Retire()
 			}
+			demand("indexed", true)
+			st.RecordEmitted(producer, &store.Emission{Complete: false}, nil)
+			demand("partial", true)
+			st.RecordEmitted(manifest.NamedResource{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
+				Namespace: "flux-system", Name: "cluster-apps",
+			}, &store.Emission{Children: owners, Complete: true}, nil)
+			demand("owners emitted", true)
+			if mode != "full" {
+				readerOwner := manifest.NamedResource{
+					Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
+					Namespace: "default", Name: "nextflux",
+				}
+				child.Productions = l.Index.Records[reader].Productions
+				publish(readerOwner, []store.Child{child}, true)
+			}
+			demand("reader emitted", true)
+			producerIndex := slices.IndexFunc(
+				owners,
+				func(child store.Child) bool { return child.Obj.Named() == producer },
+			)
+			assert.FatalIf(t, producerIndex < 0, "built source producer declaration is unavailable")
+			producerChild := owners[producerIndex]
+			assert.Equal(t, producerChild.Obj.EmissionPolicy().Namespace, producer.Namespace)
+			docs := builtObjectsForTest(t, string(files["apps/flux-system/instance/ks/ocirepository.yaml"].Data))
+			parsed := ParseChildren(producerChild.Obj, []manifest.DocOccurrence{{Document: docs[0].Doc}},
+				manifest.ParseDocOptions{}, nil)
+			assert.Equal(t, len(parsed.Failures), 0)
+			assert.FatalIf(t, len(parsed.Children) != 1, "source emission children=%d", len(parsed.Children))
+			output := parsed.Children[0]
+			assert.Equal(t, output.Obj.Named(), source)
+			output.Productions = record.Productions
+			publish(producer, []store.Child{output}, false)
+			st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusReady})
+			assert.Equal(t, st.GetObject(source) != nil, true)
+			demand("emitted", false)
 		})
 	}
 }

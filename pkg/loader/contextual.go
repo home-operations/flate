@@ -60,7 +60,6 @@ func (l *Loader) contextualParents() map[manifest.NamedResource]manifest.NamedRe
 	return parents
 }
 
-//nolint:gocognit // Identity, namespace, and census reuse MUST share one occurrence projection.
 func (l *Loader) projectOccurrence(
 	o *authoredOccurrence,
 	visit *graphVisit,
@@ -77,36 +76,40 @@ func (l *Loader) projectOccurrence(
 		if err != nil {
 			return projected, err
 		}
-		uncertain := id.Name == "" || identitySubstituted(id)
-		owned := visit.owner != (manifest.NamedResource{})
-		if uncertain != projected.facts.uncertain ||
-			owned && projected.facts.structural != nil && projected.facts.structural.Named() != id {
-			facts := *projected.facts
-			facts.uncertain = uncertain
-			if owned && facts.structural != nil && !uncertain {
-				previous := l.locations[id]
-				facts.projectStructure(id, &previous)
-			}
-			projected.facts = &facts
+	}
+	uncertain := projected.Identity.Name == "" || identitySubstituted(projected.Identity)
+	owned := visit.owner != (manifest.NamedResource{})
+	structureChanged := owned && projected.facts.structural != nil &&
+		projected.facts.structural.Named() != projected.Identity
+	switch {
+	case known:
+	case uncertain != projected.facts.uncertain, structureChanged:
+		facts := *projected.facts
+		facts.uncertain = uncertain
+		if owned && facts.structural != nil && !uncertain {
+			previous := l.locations[projected.Identity]
+			facts.projectStructure(projected.Identity, &previous)
 		}
+		projected.facts = &facts
 	}
 	previous, found := l.locations[projected.Identity]
 	sameCensus := found && previous.facts.census != nil && previous.facts.census == projected.facts.census
-	if structural := projected.facts.structural; structural != nil && o.facts.structural != nil {
-		namespace := cmp.Or(structural.TargetNamespace, o.facts.structural.TargetNamespace)
-		// Namespace prediction MUST survive later visits of the same immutable declaration.
-		if namespace == "" && sameCensus && previous.facts.structural != nil {
-			namespace = previous.facts.structural.TargetNamespace
-		}
-		if namespace != projected.facts.policy.Namespace {
-			facts := *projected.facts
-			if facts.projectNamespace(namespace) {
-				target := *structural
-				target.TargetNamespace = facts.policy.Namespace
-				facts.structural = &target
-				facts.catalog = o.facts.catalog
-				projected.facts = &facts
-			}
+	inheritedNamespace := ""
+	// Namespace prediction MUST survive later visits of the same immutable declaration.
+	if sameCensus && previous.facts.structural != nil {
+		inheritedNamespace = previous.facts.structural.TargetNamespace
+	}
+	switch structural := projected.facts.structural; {
+	case structural == nil, o.facts.structural == nil:
+	default:
+		namespace := cmp.Or(structural.TargetNamespace, o.facts.structural.TargetNamespace, inheritedNamespace)
+		facts := *projected.facts
+		if facts.projectNamespace(namespace) {
+			target := *structural
+			target.TargetNamespace = facts.policy.Namespace
+			facts.structural = &target
+			facts.catalog = o.facts.catalog
+			projected.facts = new(facts)
 		}
 	}
 	unchanged := sameCensus && sameOccurrenceProjection(&previous, &projected)
@@ -123,15 +126,11 @@ func (l *Loader) projectOccurrence(
 	return projected, nil
 }
 
-//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 	inputs := map[manifest.NamedResource]bool{}
 	prediction := map[string]nsResolution{}
 	full := false
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	for pending := true; pending && ctx.Err() == nil; {
 		// Expanded applications MUST retain ordinary discovery of their producers.
 		for key := range l.scopes.contextual {
 			occurrence := l.scopes.contextual[key]
@@ -144,12 +143,10 @@ func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 		if err := resolution.resolveContextual(ctx); err != nil {
 			return err
 		}
-		changed := resolution.contextualChanged
 		// Absent bindings MUST retain discovery of possible input producers.
-		needsInputs := resolution.needsInputs && !full
-		if needsInputs {
-			full, changed = true, true
-		}
+		previousFull := full
+		full = full || resolution.needsInputs
+		changed := resolution.contextualChanged || full != previousFull
 		for key := range l.scopes.contextual {
 			_, present := resolution.contextual[key]
 			changed = changed || !present
@@ -163,10 +160,9 @@ func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 		if err := l.admit(ctx, repoRoot, prediction); err != nil {
 			return err
 		}
-		if !needsInputs && l.construction == construction {
-			return nil
-		}
+		pending = full != previousFull || l.construction != construction
 	}
+	return ctx.Err()
 }
 
 func (p *substitutionResolution) resolveContextual(

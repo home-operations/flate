@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"iter"
 	"path/filepath"
@@ -11,9 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// FinalizeIndex freezes source-qualified graph contributions before reconciliation.
-//
-//nolint:gocognit // Finalization MUST retain contextual resolution, input hydration, and freeze ordering.
+// FinalizeIndex MUST freeze source-qualified graph contributions before reconciliation.
 func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -22,14 +21,14 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if l.documents.compact && l.frozen {
 		return nil
 	}
-	if l.SourceRoot == "" {
-		l.SourceRoot = repoRoot
-	}
+	l.SourceRoot = cmp.Or(l.SourceRoot, repoRoot)
 	l.mountSources()
+	var err error
 	if freeze {
-		if err := l.PersistInputs(ctx); err != nil {
-			return err
-		}
+		err = l.PersistInputs(ctx)
+	}
+	if err != nil {
+		return err
 	}
 	if err := l.prepareIndexScopes(ctx, repoRoot, freeze); err != nil {
 		return err
@@ -63,10 +62,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 
 	if l.documents.compact {
 		l.derived, l.indexDerived = l.construction, true
-		if !freeze {
-			return nil
+		if freeze {
+			l.freezeConstruction()
 		}
-		l.freezeConstruction()
 		return nil
 	}
 	if freeze {

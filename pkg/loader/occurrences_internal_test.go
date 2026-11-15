@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -63,12 +62,7 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.FatalIf(t, len(one) != 2 || len(two) != 2, "%s", "same-identity declarations lost occurrence evidence")
 	repeated, err := l.Occurrences(t.Context(), filepath.Join(root, "one"), "")
 	assert.NoError(t, err)
-	assert.Equal(
-		t,
-		//nolint:govet // Snapshot equality must include immutable unexported facts.
-		reflect.DeepEqual(repeated, one),
-		true,
-	)
+	assert.Equal(t, snapshotDiff(one, repeated), "")
 	repeated[0].Identity.Name = "caller-owned"
 	assert.Equal(t, one[0].Identity.Name, "one-owner")
 	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 2)
@@ -348,12 +342,7 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 		if first == nil {
 			first = got
 		} else {
-			assert.Equal(
-				t,
-				//nolint:govet // Snapshot equality must include immutable unexported facts.
-				reflect.DeepEqual(got, first),
-				true,
-			)
+			assert.Equal(t, snapshotDiff(first, got), "")
 		}
 	}
 	assert.Diff(t, l.OccurrenceClaims(root, first), []manifest.KSClaim{{ID: want, Prefix: "captured/"}})

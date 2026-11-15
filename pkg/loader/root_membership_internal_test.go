@@ -2,7 +2,6 @@ package loader
 
 import (
 	"os"
-	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -78,12 +77,7 @@ func TestAdmission_OrderingEmittedPathProof_LiveOwnership(t *testing.T) {
 		slices.ContainsFunc(proposal.Objects, func(c store.Child) bool { return c.Obj.Named() == child }),
 		true,
 	)
-	assert.Equal(
-		t,
-		//nolint:govet // Snapshot equality must include immutable unexported facts.
-		reflect.DeepEqual(*l.roots.get(child), static),
-		true,
-	)
+	assert.Equal(t, snapshotDiff(static, *l.roots.get(child)), "")
 	assert.Equal(t, l.Store.GetArtifact(source.Named(), store.ArtifactContent) != nil, true)
 }
 

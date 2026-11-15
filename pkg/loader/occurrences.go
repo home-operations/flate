@@ -425,8 +425,6 @@ func (l *Loader) projectIdentity(
 }
 
 // EntryFailure MUST defer admission until selection consumes its iterator.
-//
-//nolint:gocognit // Admission MUST stay inside the lazy failure iterator.
 func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 	var admissionErr error
 	err := l.Options.Session.EntryFailure(ctx, func(yield func(selection.EntryFailure) bool) {
@@ -438,11 +436,10 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 		visits := l.entryFailureVisits(repoRoot, filepath.ToSlash(relative))
 		for i := range visits {
 			visit := &visits[i]
-			if visit.role != kustomizeinput.Resource || visit.document != nil || !visit.readable || visit.deferDecode {
-				continue
-			}
 			doc := l.documents.cache[visit.file]
-			if doc.selected {
+			unreadable := !visit.readable || visit.deferDecode
+			switch {
+			case visit.role != kustomizeinput.Resource, visit.document != nil, unreadable, doc.selected:
 				continue
 			}
 			index := slices.IndexFunc(doc.objects, func(child parsedObject) bool { return child.outcome.Err != nil })

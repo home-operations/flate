@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -224,7 +225,11 @@ func (r *documentReader) claimBase(root, p string) string {
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
 	inputFile := new(r).input(filepath.Clean(file))
-	return fs.Lstat(inputFile.fs, inputFile.name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
+	info, err := fs.Lstat(inputFile.fs, inputFile.name)
+	if err != nil {
+		return info, fmt.Errorf("document lstat: %w", err)
+	}
+	return info, nil
 }
 
 // Readlink uses the same mounted source view as Lstat.
@@ -232,7 +237,11 @@ func (r documentReader) Lstat(file string) (fs.FileInfo, error) {
 //nolint:gocritic // SecureJoin consumes filesystem methods from documentReader values.
 func (r documentReader) Readlink(file string) (string, error) {
 	input := new(r).input(filepath.Clean(file))
-	return fs.ReadLink(input.fs, input.name) //nolint:wrapcheck // SecureJoin requires original filesystem errors.
+	target, err := fs.ReadLink(input.fs, input.name)
+	if err != nil {
+		return target, fmt.Errorf("document readlink: %w", err)
+	}
+	return target, nil
 }
 
 type sourceStore interface {

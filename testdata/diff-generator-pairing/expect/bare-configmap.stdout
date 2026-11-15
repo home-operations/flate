@@ -1,0 +1,15 @@
+--- ConfigMap default/app-values-6ct9mmbc44 (entry)
++++ ConfigMap default/app-values-6ct9mmbc44 (entry)
+@@ -1,10 +1,10 @@
+ apiVersion: v1
+ data:
+   values.yaml: |
+-    replicas: 1
++    replicas: 2
+     image: example/app:1.0.0
+ kind: ConfigMap
+ metadata:
+-  name: app-values-dhk64mm4t5
++  name: app-values-6ct9mmbc44
+   namespace: default
+ 

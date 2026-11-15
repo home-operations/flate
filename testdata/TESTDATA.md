@@ -16,6 +16,23 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`diff-generator-pairing/` covers issue #1560 through `cli.Run`.
+The bare cases generate a ConfigMap or a synthetic Secret.
+The Flux case generates both kinds and supplies them to a local Helm chart.
+Each case retains an unchanged sibling.
+Full and changed-only diffs use two workers and separate private caches.
+Two replays compare complete streams and exit zero.
+The second replay reuses the caches.
+Expected streams follow authored documents and the upstream hash test.
+The issue values retain the original image line.
+The Flux expectation retains the real HelmRelease reference edits.
+
+| Case | Behavior |
+| --- | --- |
+| `diff-generator-pairing/bare-configmap` | Reproduce the issue ConfigMap edit. |
+| `diff-generator-pairing/bare-secret` | Pair a synthetic Secret edit. |
+| `diff-generator-pairing/flux` | Retain generated values, local Helm output, and real reference edits. |
+
 `duplicate-producers/` covers complete duplicate attribution through `cli.Run`.
 Each aggregate lacks a parent `kustomization.yaml`, so rendering discovers its resources.
 The healthy base emits three ConfigMaps from two directories and one loose file.

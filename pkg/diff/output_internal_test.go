@@ -23,6 +23,30 @@ func TestCompare_OutputMembership(t *testing.T) {
 	old := selectedSnapshot(&parent, []Doc{oldDoc}, store.StatusInfo{})
 	current := selectedSnapshot(&parent, []Doc{newDoc}, store.StatusInfo{})
 	failed := selectedSnapshot(&parent, []Doc{newDoc}, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
+	generatedOld := withGeneratorHash(t, new(oldDoc))
+	generatedNew := withGeneratorHash(t, new(newDoc))
+	generatedLeft := selectedSnapshot(
+		&parent,
+		[]Doc{generatedOld, cmDoc(&parent, manifest.NamedResource{Name: "unchanged"}, "same", "")},
+		store.StatusInfo{},
+	)
+	generatedRight := selectedSnapshot(
+		&parent,
+		[]Doc{generatedNew, cmDoc(&parent, manifest.NamedResource{Name: "unchanged"}, "same", "")},
+		store.StatusInfo{},
+	)
+	oldID, newID := manifest.DocIdentity(generatedOld.Manifest), manifest.DocIdentity(generatedNew.Manifest)
+	suppliedOld, suppliedNew := generatedLeft, generatedRight
+	suppliedOld.Manifests = slices.Clone(generatedLeft.Manifests)
+	suppliedNew.Manifests = slices.Clone(generatedRight.Manifests)
+	suppliedOld.Manifests[0].Identities = []manifest.NamedResource{
+		{},
+		manifest.DocIdentity(generatedLeft.Manifests[0].Documents[1]),
+	}
+	suppliedNew.Manifests[0].Identities = []manifest.NamedResource{
+		{Kind: "ConfigMap", Name: "independent-new-output"},
+		manifest.DocIdentity(generatedRight.Manifests[0].Documents[1]),
+	}
 	partial := errors.New("partial render")
 	for _, format := range Formats() {
 		t.Run(string(format), func(t *testing.T) {
@@ -32,6 +56,8 @@ func TestCompare_OutputMembership(t *testing.T) {
 				normalize bool
 				want      [2][]manifest.NamedResource
 			}{
+				{name: "generated pair", group: Group{Orig: generatedLeft, Current: generatedRight}, want: [2][]manifest.NamedResource{{oldID}, {newID}}},
+				{name: "generated supplied identities", group: Group{Orig: suppliedOld, Current: suppliedNew}, want: [2][]manifest.NamedResource{{{}}, {{Kind: "ConfigMap", Name: "independent-new-output"}}}},
 				{name: "changed pair", group: Group{Orig: old, Current: current}, want: [2][]manifest.NamedResource{{id}, {id}}},
 				{name: "added", group: Group{Current: current}, want: [2][]manifest.NamedResource{nil, {id}}},
 				{name: "removed", group: Group{Orig: old}, want: [2][]manifest.NamedResource{{id}, nil}},
@@ -60,6 +86,9 @@ func TestCompare_OutputMembership(t *testing.T) {
 						want = [2][]manifest.NamedResource{}
 					}
 					assert.Diff(t, comparison.Groups[0].Output, want)
+					if tc.name == "generated supplied identities" && format != FormatBrief && format != FormatJSON {
+						assert.Equal(t, slices.Contains(comparison.Groups[0].Subjects, newID), true)
+					}
 					var first, second bytes.Buffer
 					assert.NoError(t, comparison.Write(&first, nil))
 					assert.NoError(t, comparison.Write(&second, nil))

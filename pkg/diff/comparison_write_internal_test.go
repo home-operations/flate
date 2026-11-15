@@ -24,14 +24,15 @@ func TestComparison_WriteTwice(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					t.Parallel()
-					testComparisonWriteTwice(t, format, supplied)
+					testComparisonWriteTwice(t, format, supplied, false)
+					testComparisonWriteTwice(t, format, supplied, true)
 				})
 			}
 		})
 	}
 }
 
-func testComparisonWriteTwice(t *testing.T, format Format, supplied bool) {
+func testComparisonWriteTwice(t *testing.T, format Format, supplied, generated bool) {
 	t.Helper()
 	groups := make([]Group, 2)
 	originals := make([]map[string]any, 0, 4)
@@ -46,6 +47,9 @@ func testComparisonWriteTwice(t *testing.T, format Format, supplied bool) {
 				"metadata": map[string]any{"namespace": "apps", "name": "config"},
 				"data":     map[string]any{"key": value},
 			}
+			if generated {
+				doc = withGeneratorHash(t, new(Doc{Manifest: doc})).Manifest
+			}
 			snapshots[side].Manifests = []manifest.DocumentBatch{testutil.DocumentBatch(parent, []map[string]any{doc})}
 			inputs = append(inputs, doc)
 			originals = append(originals, manifest.DeepCopyMap(doc))
@@ -55,7 +59,11 @@ func testComparisonWriteTwice(t *testing.T, format Format, supplied bool) {
 	comparison, err := Compare(groups, Options{Format: format, Normalize: func(doc map[string]any) {
 		calls++
 		metadata := doc["metadata"].(map[string]any)
-		metadata["name"] = metadata["name"].(string) + "-normalized"
+		if generated {
+			doc["data"].(map[string]any)["normalized"] = "yes"
+		} else {
+			metadata["name"] = metadata["name"].(string) + "-normalized"
+		}
 	}})
 	assert.NoError(t, err)
 	assert.Equal(t, calls, 4)
@@ -79,14 +87,22 @@ func testComparisonWriteTwice(t *testing.T, format Format, supplied bool) {
 	assert.NoError(t, comparison.Write(&second, names))
 	assert.Diff(t, second.String(), first.String())
 	assert.FatalIf(t, first.Len() == 0, "changed groups produced empty %s output", format)
+	name := "config-normalized"
+	if generated {
+		snapshot := groups[0].Current
+		if format == FormatGitHub {
+			snapshot = groups[0].Orig
+		}
+		name = manifest.DocIdentity(snapshot.Manifests[0].Documents[0]).Name
+	}
 	for _, cluster := range clusters {
 		prefix := cluster + ": "
-		label := prefix + "ConfigMap apps/config-normalized"
+		label := prefix + "ConfigMap apps/" + name
 		if format == FormatGitHub {
-			label = prefix + "v1/ConfigMap/apps/config-normalized"
+			label = prefix + "v1/ConfigMap/apps/" + name
 		}
 		if format == FormatHTML {
-			label = prefix + "apps/config-normalized"
+			label = prefix + "apps/" + name
 		}
 		assert.ErrorIf(t, !strings.Contains(first.String(), label), "missing label %q in %s", label, first.String())
 		assert.ErrorIf(t, strings.Contains(second.String(), prefix+prefix), "repeated prefix in %s", second.String())

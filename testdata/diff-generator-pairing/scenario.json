@@ -1,0 +1,690 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "e65003058dfc53b06e4226d3d1799175eefb9c1d",
+    "paths": [
+      "pkg/diff/prepare_pair.go"
+    ],
+    "reductions": "Issue #1560 input and authored offline Secret and Flux-owned variants. Expected documents come from authored inputs, upstream hash values, and the diff contract."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "bare-configmap-before",
+      "overlay": "bare-configmap-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "bare-configmap-after",
+      "overlay": "bare-configmap-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "bare-configmap-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "bare-configmap-baseline",
+      "overlay": "bare-configmap-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "bare-secret-before",
+      "overlay": "bare-secret-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "bare-secret-after",
+      "overlay": "bare-secret-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "bare-secret-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "bare-secret-baseline",
+      "overlay": "bare-secret-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "flux-before",
+      "overlay": "flux-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "flux-after",
+      "overlay": "flux-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "flux-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "flux-baseline",
+      "overlay": "flux-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "bare-configmap-before",
+      "directory": "overlays/bare-configmap-before"
+    },
+    {
+      "name": "bare-configmap-after",
+      "directory": "overlays/bare-configmap-after"
+    },
+    {
+      "name": "bare-secret-before",
+      "directory": "overlays/bare-secret-before"
+    },
+    {
+      "name": "bare-secret-after",
+      "directory": "overlays/bare-secret-after"
+    },
+    {
+      "name": "flux-before",
+      "directory": "overlays/flux-before"
+    },
+    {
+      "name": "flux-after",
+      "directory": "overlays/flux-after"
+    }
+  ],
+  "cases": [
+    {
+      "name": "bare-configmap",
+      "description": "Pair generated renames and retain real data and reference edits.",
+      "setup": [
+        {
+          "commit": "bare-configmap-after"
+        },
+        {
+          "commit": "bare-configmap-baseline"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "entry",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "full",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/bare-configmap.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "entry",
+              "--base",
+              "@@commit:bare-configmap-before@@",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "changed-only",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/bare-configmap.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bare-secret",
+      "description": "Pair generated renames and retain real data and reference edits.",
+      "setup": [
+        {
+          "commit": "bare-secret-after"
+        },
+        {
+          "commit": "bare-secret-baseline"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "entry",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "full",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/bare-secret.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "entry",
+              "--base",
+              "@@commit:bare-secret-before@@",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "changed-only",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/bare-secret.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flux",
+      "description": "Pair generated renames and retain real data and reference edits.",
+      "setup": [
+        {
+          "commit": "flux-after"
+        },
+        {
+          "commit": "flux-baseline"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "root",
+              "--path-orig",
+              "@@baseline@@/root",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "full",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/flux.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "root",
+              "--base",
+              "@@commit:flux-before@@",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=CustomResourceDefinition"
+            ],
+            "cache": {
+              "name": "changed-only",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/flux.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/bare-configmap.stdout",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/bare-secret.stdout",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/flux.stdout",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "bare-configmap",
+        "bare-secret",
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-after/repo/entry/values.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/baseline/entry/kustomization.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/baseline/entry/sibling.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/baseline/entry/values.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/repo/entry/kustomization.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/repo/entry/sibling.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-configmap-before/repo/entry/values.yaml",
+      "cases": [
+        "bare-configmap"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-after/repo/entry/secret-values.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/baseline/entry/kustomization.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/baseline/entry/secret-values.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/baseline/entry/sibling.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/repo/entry/kustomization.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/repo/entry/secret-values.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/bare-secret-before/repo/entry/sibling.yaml",
+      "cases": [
+        "bare-secret"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-after/repo/apps/secret-values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-after/repo/apps/values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/helmrelease.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/kustomization.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/references.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/secret-values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/sibling.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/apps/values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/charts/demo/templates/output.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/charts/demo/values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/root/cluster.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/baseline/root/kustomization.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/helmrelease.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/kustomization.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/references.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/secret-values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/sibling.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/apps/values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/charts/demo/templates/output.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/charts/demo/values.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/root/cluster.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/flux-before/repo/root/kustomization.yaml",
+      "cases": [
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    },
+    {
+      "path": "scenario.json",
+      "cases": [
+        "bare-configmap",
+        "bare-secret",
+        "flux"
+      ],
+      "purpose": "Authored input or independently derived complete expected stream."
+    }
+  ]
+}

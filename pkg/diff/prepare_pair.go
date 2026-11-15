@@ -22,7 +22,8 @@ type pairKey struct {
 }
 
 func prepare(left, right []Doc, opts *Options) prepared {
-	idx := make(map[pairKey]*pair, len(left)+len(right))
+	idx := make(map[pairKey]int, len(left)+len(right))
+	entries := make([]pair, 0, len(left)+len(right))
 	var warnings []manifest.Warning
 	add := func(side Side, d, original Doc, pos int) {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
@@ -36,12 +37,14 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		if key, known := keys[parent]; known {
 			parent = key
 		}
-		k := pairKey{parent, resource}
-		p, ok := idx[k]
+		k := pairKey{parent: parent, resource: resource}
+		entry, ok := idx[k]
 		if !ok {
-			p = &pair{Resource: resource, OldPos: len(left), NewPos: len(right)}
-			idx[k] = p
+			entry = len(entries)
+			entries = append(entries, pair{Resource: resource, OldPos: len(left), NewPos: len(right)})
+			idx[k] = entry
 		}
+		p := &entries[entry]
 		p.Parent = d.Parent
 		p.APIVersion = apiVersion
 		p.Output[sideIndex] = resource
@@ -77,15 +80,16 @@ func prepare(left, right []Doc, opts *Options) prepared {
 	for i, d := range normalizedRight {
 		add(SideCurrent, d, right[i], i)
 	}
+	refineGenerated(idx, entries, [2][]Doc{left, right})
 	out := make([]pair, 0, len(idx))
-	for _, p := range idx {
-		out = append(out, *p)
+	for _, entry := range idx {
+		out = append(out, entries[entry])
 	}
 	slices.SortFunc(out, func(a, b pair) int {
-		return cmp.Or(
-			a.Parent.Compare(b.Parent.NamedResource),
-			a.Resource.Compare(b.Resource),
-		)
+		if order := cmp.Or(a.Parent.Compare(b.Parent.NamedResource), a.Resource.Compare(b.Resource)); order != 0 {
+			return order
+		}
+		return a.canonicalParent(opts).Compare(b.canonicalParent(opts))
 	})
 	slices.SortFunc(warnings, manifest.CompareWarning)
 	return prepared{
@@ -95,4 +99,16 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		leftCopied:  leftCopied,
 		rightCopied: rightCopied,
 	}
+}
+
+func (p *pair) canonicalParent(opts *Options) manifest.NamedResource {
+	side := 0
+	if p.New != nil {
+		side = 1
+	}
+	parent := p.Parent.NamedResource
+	if key, known := opts.producerKeys[side][parent]; known {
+		return key
+	}
+	return parent
 }

@@ -121,8 +121,12 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 		status                  ChangeStatus
 		opts                    Options
 		leftBinary, rightBinary bool
+		generated               bool
 	}{
 		{name: "changed", status: StatusChanged, opts: Options{}},
+		{name: "generated", status: StatusChanged, generated: true},
+		{name: "generated binary", status: StatusChanged, generated: true, leftBinary: true, rightBinary: true},
+		{name: "generated normalized", status: StatusChanged, generated: true, opts: Options{Normalize: func(m map[string]any) { m["data"].(map[string]any)["normalized"] = "yes" }}},
 		{name: "added", status: StatusAdded, opts: Options{}},
 		{name: "removed", status: StatusRemoved, opts: Options{}},
 		{name: "normalized options", status: StatusChanged, opts: Options{Normalize: func(m map[string]any) {
@@ -389,6 +393,7 @@ func testChangesReturnedManifestsIndependentCase(
 		opts        Options
 		leftBinary  bool
 		rightBinary bool
+		generated   bool
 	},
 ) {
 	t.Helper()
@@ -402,6 +407,9 @@ func testChangesReturnedManifestsIndependentCase(
 		}
 		if binary {
 			d.Manifest["binaryData"] = map[string]any{}
+		}
+		if testCaseInput.generated && name != "keep" {
+			d = withGeneratorHash(t, new(d))
 		}
 		return d
 	}
@@ -427,6 +435,9 @@ func testChangesReturnedManifestsIndependentCase(
 			Name:       "edit",
 			Status:     testCaseInput.status,
 		},
+	}
+	if testCaseInput.generated {
+		want[0].Name = manifest.DocIdentity(right[1].Manifest).Name
 	}
 	if testCaseInput.status != StatusAdded {
 		want[0].Old = doc("edit", "old", testCaseInput.leftBinary).Manifest

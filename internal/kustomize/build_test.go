@@ -101,6 +101,55 @@ func buildFixture(t *testing.T) buildFiles {
 		"plugin/transformer.yaml",
 		"apiVersion: schema.example/v1\nkind: ExternalTransformer\nmetadata: {name: external}\n",
 	)
+	for _, behavior := range []string{"create", "merge", "replace", "disabled"} {
+		config := "resources: [../generator-base]\n"
+		if behavior == "create" || behavior == "disabled" {
+			config = "resources: [../generator-base/pod.yaml]\n"
+		}
+		generatorBehavior := ""
+		if behavior == "merge" || behavior == "replace" {
+			generatorBehavior = "    behavior: " + behavior + "\n"
+		}
+		config += "configMapGenerator:\n  - name: settings\n" + generatorBehavior + "    literals: [new=value]\n" +
+			"secretGenerator:\n  - name: credentials\n" + generatorBehavior + "    literals: [token=synthetic]\n"
+		if behavior == "disabled" {
+			config += "generatorOptions:\n  disableNameSuffixHash: true\n"
+		}
+		testutil.WriteFile(t, root, "generator-"+behavior+"/kustomization.yaml", config)
+	}
+	testutil.WriteFile(
+		t,
+		root,
+		"generator-base/kustomization.yaml",
+		"resources: [configmap.yaml, secret.yaml, pod.yaml]\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"generator-base/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {original: retained}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"generator-base/secret.yaml",
+		"apiVersion: v1\nkind: Secret\nmetadata: {name: credentials}\ntype: Opaque\ndata: {original: c3ludGhldGlj}\n",
+	)
+	testutil.WriteFile(t, root, "generator-base/pod.yaml", `apiVersion: v1
+kind: Pod
+metadata:
+  name: consumer
+spec:
+  containers:
+    - name: app
+      image: example.test/app:v1
+      envFrom:
+        - configMapRef:
+            name: settings
+        - secretRef:
+            name: credentials
+`)
+
 	return buildFiles{fs: filesys.MakeFsOnDisk(), root: root}
 }
 
@@ -171,6 +220,10 @@ func TestBuild_FluxParity(t *testing.T) {
 		{"conflict", "cannot use both"},
 		{"resource-error", "missing.yaml"},
 		{"parent-file", ""},
+		{"generator-create", ""},
+		{"generator-merge", ""},
+		{"generator-replace", ""},
+		{"generator-disabled", ""},
 		{"plugin", "external plugins disabled"},
 	}
 	kustomize.BuildMutex.Lock()

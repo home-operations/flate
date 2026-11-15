@@ -96,6 +96,53 @@ func TestCompare_OptionalBatchIdentities(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
+		name string
+		ids  [2][]manifest.NamedResource
+	}{
+		{"generated omitted", [2][]manifest.NamedResource{}},
+		{"generated supplied", [2][]manifest.NamedResource{{{Kind: "ConfigMap", Name: "old-output"}}, {{Kind: "ConfigMap", Name: "new-output"}}}},
+		{"generated original zero", [2][]manifest.NamedResource{{{}}, {{Kind: "ConfigMap", Name: "new-output"}}}},
+		{"generated current zero", [2][]manifest.NamedResource{{{Kind: "ConfigMap", Name: "old-output"}}, {{}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			left := withGeneratorHash(t, new(cmDoc(&Parent{}, id, "old", "")))
+			right := withGeneratorHash(t, new(cmDoc(&Parent{}, id, "new", "")))
+			group := Group{
+				Orig: Snapshot{
+					Manifests: []manifest.DocumentBatch{
+						{Documents: []map[string]any{left.Manifest}, Identities: tc.ids[0]},
+					},
+				},
+				Current: Snapshot{
+					Manifests: []manifest.DocumentBatch{
+						{Documents: []map[string]any{right.Manifest}, Identities: tc.ids[1]},
+					},
+				},
+			}
+			comparison, err := Compare([]Group{group}, Options{Format: FormatJSON})
+			assert.NoError(t, err)
+			want := [2][]manifest.NamedResource{
+				{manifest.DocIdentity(left.Manifest)},
+				{manifest.DocIdentity(right.Manifest)},
+			}
+			for side, ids := range tc.ids {
+				if len(ids) != 0 {
+					want[side] = ids
+				}
+			}
+			assert.Diff(t, comparison.Groups[0].Output, want)
+			assert.Equal(t, len(comparison.output[0].changes), 1)
+			assert.Equal(t, comparison.output[0].changes[0].Name, manifest.DocIdentity(right.Manifest).Name)
+			assert.Equal(t, comparison.output[0].changes[0].Status, StatusChanged)
+			var first, second bytes.Buffer
+			assert.NoError(t, comparison.Write(&first, nil))
+			assert.NoError(t, comparison.Write(&second, nil))
+			assert.Diff(t, second.Bytes(), first.Bytes())
+		})
+	}
+
+	for _, tc := range []struct {
 		name    string
 		omitted int
 		reverse bool

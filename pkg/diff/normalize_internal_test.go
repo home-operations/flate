@@ -236,3 +236,45 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 	assert.Diff(t, calls, map[string]int{"old": 1, "new": 1})
 	assert.Diff(t, []Doc{left, right}, before)
 }
+
+func TestRenderDocs_GeneratorNormalization(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		normalize func(map[string]any)
+		fields    []string
+		pairs     int
+	}{
+		{"data only", func(m map[string]any) { delete(m, "data") }, nil, 1},
+		{"name", func(m map[string]any) {
+			meta := m["metadata"].(map[string]any)
+			meta["name"] = "normalized-" + meta["name"].(string)
+		}, nil, 2},
+		{"namespace", func(m map[string]any) { m["metadata"].(map[string]any)["namespace"] = "normalized" }, nil, 2},
+		{"kind", func(m map[string]any) { m["kind"] = "Secret" }, nil, 2},
+		{"group", func(m map[string]any) { m["apiVersion"] = "example.test/v1" }, nil, 2},
+		{"version only", func(m map[string]any) { m["apiVersion"] = "v2" }, nil, 1},
+		{"deleted identity", nil, []string{"metadata"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			old := withGeneratorHash(t, new(cm("settings", "apps", "owner", "before")))
+			current := withGeneratorHash(t, new(cm("settings", "apps", "owner", "after")))
+			before := []map[string]any{manifest.DeepCopyMap(old.Manifest), manifest.DeepCopyMap(current.Manifest)}
+			calls := 0
+			opts := Options{StripFields: tc.fields, Normalize: func(m map[string]any) {
+				calls++
+				if tc.normalize != nil {
+					tc.normalize(m)
+				}
+			}}
+			got := prepare([]Doc{old}, []Doc{current}, &opts)
+			assert.Equal(t, len(got.Pairs), tc.pairs)
+			assert.Equal(t, calls, 2)
+			assert.Diff(t, []map[string]any{old.Manifest, current.Manifest}, before)
+			if tc.pairs == 1 && tc.name != "deleted identity" {
+				assert.Equal(t, got.Pairs[0].Resource.Name, manifest.DocIdentity(current.Manifest).Name)
+			}
+		})
+	}
+}

@@ -270,7 +270,7 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (o *OCIRepository) ProjectionCompatible(previous BaseManifest) bool {
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // BaseManifest.ProjectionCompatible requires the same concrete type for both operands.
 	p := previous.(*OCIRepository)
 	return o.diagnosticOwner == p.diagnosticOwner && o.diagnosticPath == p.diagnosticPath &&
 		o.hasDiagnostic == p.hasDiagnostic

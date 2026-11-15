@@ -86,7 +86,6 @@ func (f *GitSSH) serve(tb testing.TB, conn net.Conn, cfg *ssh.ServerConfig, work
 	}
 }
 
-//nolint:gocognit // The f keeps service admission and failure injection in one SSH session.
 func (f *GitSSH) serveSession(
 	tb testing.TB,
 	channel ssh.Channel,
@@ -128,24 +127,24 @@ func (f *GitSSH) serveSession(
 	if closer, ok := st.(io.Closer); ok {
 		defer closer.Close()
 	}
-	if failure != nil {
-		if errors.Is(failure, syscall.ECONNRESET) {
-			var advertisement bytes.Buffer
-			if advertiseErr := transport.AdvertiseRefs(
-				tb.Context(),
-				st,
-				&advertisement,
-				transport.UploadPackService,
-				false,
-				protocol.V0,
-			); advertiseErr != nil {
-				tb.Error(advertiseErr)
-				return
-			}
-			_, _ = channel.Write(advertisement.Bytes()[:advertisement.Len()-pktline.LenSize-1])
-		} else {
-			_, _ = pktline.WriteError(channel, failure)
+	switch {
+	case failure != nil && !errors.Is(failure, syscall.ECONNRESET):
+		_, _ = pktline.WriteError(channel, failure)
+		return
+	case failure != nil:
+		var advertisement bytes.Buffer
+		if advertiseErr := transport.AdvertiseRefs(
+			tb.Context(),
+			st,
+			&advertisement,
+			transport.UploadPackService,
+			false,
+			protocol.V0,
+		); advertiseErr != nil {
+			tb.Error(advertiseErr)
+			return
 		}
+		_, _ = channel.Write(advertisement.Bytes()[:advertisement.Len()-pktline.LenSize-1])
 		return
 	}
 	err = transport.UploadPack(

@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 	"io/fs"
+	"maps"
 	"path/filepath"
-	"reflect"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -319,19 +319,16 @@ func artifactValueEqual(prev, next Artifact) bool {
 		return a == b
 	}
 	if !aok || !bok {
-		return reflect.DeepEqual(prev, next)
+		return false
 	}
 	if (a.FS == nil) != (b.FS == nil) || a.FS != nil && (a.Content == "" || b.Content == "") {
 		return false
 	}
-	ac, bc := *a, *b
-	ac.FS, bc.FS = nil, nil
-	ac.Reads, bc.Reads = nil, nil
-	ac.material, bc.material = nil, nil
-	ac.Warnings, bc.Warnings = nil, nil
-	ac.ContentFingerprint, bc.ContentFingerprint = nil, nil
-	//nolint:govet // The projection clears error-bearing warnings and filesystem handles before comparing metadata.
-	return reflect.DeepEqual(ac, bc)
+	identityEqual := a.Kind == b.Kind && a.URL == b.URL && a.Revision == b.Revision && a.Key == b.Key
+	contentEqual := a.Content == b.Content && a.Digest == b.Digest && a.Size == b.Size
+	originEqual := a.LocalPath == b.LocalPath && a.LocalRoot == b.LocalRoot && a.InputAlias == b.InputAlias
+	metadataEqual := (a.Metadata == nil) == (b.Metadata == nil) && maps.Equal(a.Metadata, b.Metadata)
+	return identityEqual && contentEqual && originEqual && metadataEqual
 }
 
 func emissionCurrent(e *Emission, viewValue *capture) bool {

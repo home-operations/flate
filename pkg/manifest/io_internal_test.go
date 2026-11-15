@@ -13,8 +13,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for ReleaseDoc.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for ReleaseDoc.
 func TestReleaseDoc_WithoutAllocations(t *testing.T) {
 	docs, err := decodeDocMaps(strings.NewReader(strings.Repeat("kind: ConfigMap\n---\n", 101)))
 	assert.NoError(t, err)

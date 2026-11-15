@@ -16,8 +16,8 @@ import (
 
 type request struct {
 	work     manifest.AcquisitionWork
-	Output   manifest.ArtifactGeneratorOutput
-	Captures map[string]string
+	Output   manifest.ArtifactGeneratorOutput `json:"Output"`
+	Captures map[string]string                `json:"Captures"`
 }
 
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

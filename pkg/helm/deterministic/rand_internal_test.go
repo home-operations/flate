@@ -51,11 +51,14 @@ func TestRandFuncs_DifferentSeedDiffers(t *testing.T) {
 	assert.ErrorIf(t, a(24) == b(24), "%s", "different seeds produced identical randAlphaNum output")
 }
 
-// TestRandFuncs_CharacterClassesAndShape pins that the deterministic ports
-// keep sprig's contracts: right length, right character class, and a valid v4
-// UUID / correctly sized randBytes.
 func TestRandFuncs_CharacterClassesAndShape(t *testing.T) {
 	t.Parallel()
+	var ascii []byte
+	for c := byte(32); c <= 126; c++ {
+		ascii = append(ascii, c)
+	}
+	assert.Equal(t, charsASCII, string(ascii))
+
 	fm := Funcs(SeedFor("rel", "ns"))
 
 	alpha := fm["randAlpha"].(func(int) string)(64)

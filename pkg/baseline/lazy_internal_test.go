@@ -185,7 +185,7 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 					Category: manifest.WarnBaselineStatusUnavailable,
 					Message:  "Git status unavailable; comparing checkout conservatively",
 					Count:    1,
-					Detail:   []string{statusErr.Error()},
+					Detail:   []string{"index: " + statusErr.Error()},
 				},
 			})
 			if errors.Is(tc.err, cause) {

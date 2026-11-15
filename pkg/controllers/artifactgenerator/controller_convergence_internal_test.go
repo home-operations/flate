@@ -24,7 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:containedctx // This context wrapper probes propagation into cache operations.
+//nolint:containedctx // acquireProbe retains the test context only while Cache.Acquire probes run.
 type acquireProbe struct {
 	context.Context
 
@@ -60,7 +60,7 @@ func (f acquireControlFS) Stat(name string) (fs.FileInfo, error) {
 	return fs.Stat(f.FS, name)
 }
 
-//nolint:paralleltest,tparallel // Subtests share ordered cold-to-warm cache state.
+//nolint:paralleltest,tparallel // Cold and warm phases share owner, firstKey, and producer counters in execution order.
 func TestArtifactGenerator_AcquireObservationControl(
 	t *testing.T,
 ) {

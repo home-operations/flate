@@ -24,7 +24,7 @@ var decodedMapPool = sync.Pool{
 }
 
 func getDecodedMap() map[string]any {
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
+	//nolint:errcheck // decodedMapPool.New and ReleaseDoc publish only map[string]any values.
 	return decodedMapPool.Get().(map[string]any)
 }
 

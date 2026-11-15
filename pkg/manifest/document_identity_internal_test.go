@@ -6,8 +6,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for DocIdentity.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for DocIdentity.
 func TestDocIdentity_ReadOnly(t *testing.T) {
 	for _, tc := range []struct {
 		name string

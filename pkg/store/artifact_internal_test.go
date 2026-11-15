@@ -14,6 +14,135 @@ type hookFS struct{ open func(string) (fs.File, error) }
 
 func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
 
+func TestArtifactValueEqual_SourceFacts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*SourceArtifact)
+		equal  bool
+	}{
+		{name: "kind", change: func(a *SourceArtifact) { a.Kind = "other" }},
+		{name: "URL", change: func(a *SourceArtifact) { a.URL = "other" }},
+		{name: "local path", change: func(a *SourceArtifact) { a.LocalPath = "other" }},
+		{name: "revision", change: func(a *SourceArtifact) { a.Revision = "other" }},
+		{name: "content", change: func(a *SourceArtifact) { a.Content = "other" }},
+		{name: "digest", change: func(a *SourceArtifact) { a.Digest = "other" }},
+		{name: "size", change: func(a *SourceArtifact) { a.Size++ }},
+		{name: "local root", change: func(a *SourceArtifact) { a.LocalRoot = "other" }},
+		{name: "key", change: func(a *SourceArtifact) { a.Key = "other" }},
+		{name: "input alias", change: func(a *SourceArtifact) { a.InputAlias = true }},
+		{name: "metadata value", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"origin": "other"} }},
+		{name: "metadata key", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"other": "revision"} }},
+		{name: "equal metadata", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"origin": "revision"} }, equal: true},
+		{name: "filesystem absence", change: func(a *SourceArtifact) { a.FS = nil }},
+		{name: "unknown content", change: func(a *SourceArtifact) { a.Content = "" }},
+		{name: "filesystem handle", change: func(a *SourceArtifact) { a.FS = &hookFS{} }, equal: true},
+		{name: "reads", change: func(a *SourceArtifact) { a.Reads = new(ReadSet) }, equal: true},
+		{name: "material", change: func(a *SourceArtifact) { a.material = new(SourceArtifact) }, equal: true},
+		{
+			name: "warnings", equal: true,
+			change: func(a *SourceArtifact) {
+				a.Warnings = []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Detail: []string{"module"}}}
+			},
+		},
+		{name: "fingerprint callback", change: func(a *SourceArtifact) { a.ContentFingerprint = nil }, equal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			first := &SourceArtifact{
+				Kind: "GitRepository", URL: "https://fixture.invalid/repo", LocalPath: "/snapshot",
+				Revision: "revision", Content: "content", Digest: "digest", Size: 1,
+				LocalRoot: "/origin", Key: "key", Metadata: map[string]string{"origin": "revision"},
+				FS: &hookFS{open: func(string) (fs.File, error) {
+					t.Fatal("artifact equality opened a filesystem")
+					return nil, fs.ErrNotExist
+				}},
+				ContentFingerprint: func(context.Context, fs.FS) (string, error) {
+					t.Fatal("artifact equality called a fingerprint callback")
+					return "", nil
+				},
+			}
+			next := *first
+			tc.change(&next)
+			assert.Equal(t, artifactValueEqual(first, &next), tc.equal)
+			assert.Equal(t, artifactValueEqual(&next, first), tc.equal)
+		})
+	}
+}
+
+func TestArtifactValueEqual_NilAndVariants(t *testing.T) {
+	t.Parallel()
+	mutable := &SourceArtifact{FS: &hookFS{}}
+	emission := &Emission{}
+	for _, tc := range []struct {
+		name        string
+		first, next Artifact
+		equal       bool
+	}{
+		{name: "nil", equal: true},
+		{name: "same source", first: mutable, next: mutable, equal: true},
+		{name: "same emission", first: emission, next: emission, equal: true},
+		{name: "nil sources", first: (*SourceArtifact)(nil), next: (*SourceArtifact)(nil), equal: true},
+		{name: "nil emissions", first: (*Emission)(nil), next: (*Emission)(nil), equal: true},
+		{name: "nil and source", next: &SourceArtifact{}},
+		{name: "nil and emission", next: emission},
+		{name: "nil and typed source", next: (*SourceArtifact)(nil)},
+		{name: "nil and typed emission", next: (*Emission)(nil)},
+		{name: "typed nil and source", first: (*SourceArtifact)(nil), next: &SourceArtifact{}},
+		{name: "typed nil and emission", first: (*Emission)(nil), next: emission},
+		{name: "mixed variants", first: &SourceArtifact{}, next: emission},
+		{name: "mixed nil variants", first: (*SourceArtifact)(nil), next: (*Emission)(nil)},
+		{name: "nil source and emission", first: (*SourceArtifact)(nil), next: emission},
+		{name: "source and nil emission", first: &SourceArtifact{}, next: (*Emission)(nil)},
+		{name: "nil metadata", first: &SourceArtifact{}, next: &SourceArtifact{}, equal: true},
+		{name: "empty metadata", first: &SourceArtifact{Metadata: map[string]string{}}, next: &SourceArtifact{Metadata: map[string]string{}}, equal: true},
+		{name: "nil and empty metadata", first: &SourceArtifact{}, next: &SourceArtifact{Metadata: map[string]string{}}},
+		{name: "unknown content", first: mutable, next: &SourceArtifact{FS: &hookFS{}}},
+		{name: "nil and empty children", first: &Emission{}, next: &Emission{Children: []Child{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, artifactValueEqual(tc.first, tc.next), tc.equal)
+			assert.Equal(t, artifactValueEqual(tc.next, tc.first), tc.equal)
+		})
+	}
+}
+
+func TestArtifactValueEqual_Emission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*Emission)
+		equal  bool
+	}{
+		{name: "equal", change: func(*Emission) {}, equal: true},
+		{name: "completeness", change: func(e *Emission) { e.Complete = false }},
+		{name: "child order", change: func(e *Emission) { e.Children = []Child{e.Children[1], e.Children[0]} }},
+		{name: "child declaration", change: func(e *Emission) { e.Children = []Child{emissionChild("other", "same"), e.Children[1]} }},
+		{name: "fingerprint", change: func(e *Emission) { e.Fingerprint = "other" }},
+		{name: "failures", change: func(e *Emission) { e.Failures = []manifest.DocOccurrence{{Ordinal: 1}} }},
+		{
+			name: "content",
+			change: func(e *Emission) {
+				e.Manifests = []manifest.DocOccurrence{{Ordinal: 0, Document: map[string]any{"value": "other"}}}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			first := &Emission{
+				Children:    []Child{emissionChild("first", "same"), emissionChild("second", "same")},
+				Manifests:   []manifest.DocOccurrence{{Ordinal: 0, Document: map[string]any{"value": "same"}}},
+				Fingerprint: "same", Complete: true,
+			}
+			next := *first
+			tc.change(&next)
+			assert.Equal(t, artifactValueEqual(first, &next), tc.equal)
+			assert.Equal(t, artifactValueEqual(&next, first), tc.equal)
+		})
+	}
+}
+
 func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	t.Parallel()
 	s := New()

@@ -430,7 +430,7 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testReferencesNoAllocationsCase helpers call testing.AllocsPerRun with process-wide allocation counters.
 func TestReferences_NoAllocations(t *testing.T) {
 	var kinds []string
 	for info := range Kinds() {
@@ -494,8 +494,8 @@ func TestReferences_NoAllocations(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for reference views.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for reference views.
 func TestReferences_Views(t *testing.T) {
 	obj := &Kustomization{
 		Name: "consumer", Namespace: "apps", Path: "./consumer",

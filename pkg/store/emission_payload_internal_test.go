@@ -3,7 +3,6 @@ package store
 import (
 	"archive/tar"
 	"context"
-	"fmt"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -174,8 +173,17 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 
 func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 	t.Parallel()
-	for _, equal := range []bool{false, true} {
-		t.Run(fmt.Sprintf("equal=%t", equal), func(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		equal bool
+	}{
+		{name: "equal=false"},
+		{name: "equal=true", equal: true},
+		{name: "metadata only"},
+		{name: "nil and empty metadata"},
+		{name: "warnings only", equal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := New()
 			a, z, zz := ownerID("a"), ownerID("z"), ownerID("zz")
@@ -201,9 +209,18 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 				Metadata: map[string]string{"origin": "a"},
 				FS:       fstest.MapFS{"file": {Data: []byte("a")}},
 			}
-			if !equal {
+			switch tc.name {
+			case "equal=false":
 				last.Key, last.Digest, last.Revision = "z", "z", "z"
 				last.Metadata, last.FS = map[string]string{"origin": "z"}, fstest.MapFS{"file": {Data: []byte("z")}}
+			case "metadata only":
+				last.Metadata = map[string]string{"origin": "z"}
+			case "nil and empty metadata":
+				first.Metadata, last.Metadata = nil, map[string]string{}
+			case "warnings only":
+				last.Warnings = []manifest.Warning{
+					{Category: manifest.WarnSkippedSubmodule, Detail: []string{"module"}},
+				}
 			}
 			s.RecordEmitted(
 				a,
@@ -216,7 +233,7 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 				map[manifest.NamedResource]*SourceArtifact{target: last},
 			)
 			var want []manifest.Warning
-			if !equal {
+			if !tc.equal {
 				want = []manifest.Warning{
 					{
 						Resource: target,

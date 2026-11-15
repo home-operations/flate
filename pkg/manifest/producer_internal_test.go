@@ -309,8 +309,8 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for no-op producer targets.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for no-op producer targets.
 func TestProducerTargets_NoOpAllocations(t *testing.T) {
 	for _, obj := range []BaseManifest{&Kustomization{}, &RawObject{Kind: "Unrelated"}} {
 		{

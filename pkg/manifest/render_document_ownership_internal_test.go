@@ -35,7 +35,7 @@ spec: {path: ./p0}
 	assert.Diff(t, repeated, snapshot)
 }
 
-//nolint:paralleltest // The test replaces a package variable shared by other tests.
+//nolint:paralleltest // This test replaces the process-wide kustomizationEncoders pool.
 func TestRenderDocument_BufferOwnership(t *testing.T) {
 	factory := kustomizationEncoders.New
 	t.Cleanup(func() { kustomizationEncoders = sync.Pool{New: factory} })

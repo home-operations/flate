@@ -28,8 +28,8 @@ func TestDiagnosticFor_EntryContext(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for manifest diagnostics.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for manifest diagnostics.
 func TestManifest_Allocations(t *testing.T) {
 	t.Run("DiagnosticFor_StackAllocation", func(t *testing.T) {
 		allocs := testing.AllocsPerRun(100, func() {

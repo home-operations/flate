@@ -22,7 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:paralleltest,tparallel // The subtests produce the values compared by their parent.
+//nolint:paralleltest,tparallel // The first and second subtests must set both publication results before the parent compares them.
 func TestArtifactGenerator_PartialSourceConvergence(t *testing.T) {
 	t.Parallel()
 

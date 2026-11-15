@@ -81,8 +81,8 @@ func TestGeneratedObjects_EmptyRule(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for inline chart references.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for inline chart references.
 func TestReferences_InlineTemplateNoAllocations(t *testing.T) {
 	for _, kind := range []string{KindHelmChart, KindOCIRepository} {
 		t.Run(kind, func(t *testing.T) {
@@ -240,8 +240,8 @@ func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 		), "%s", "effective identity or no-op template history policy changed")
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-//nolint:paralleltest // This test changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for HelmRelease projection equality.
+//nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for HelmRelease projection equality.
 func TestEqual_HelmReleaseProjectionCache(t *testing.T) {
 	hr := (&HelmRelease{Name: "app", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}).WithNamespace("apps").(*HelmRelease)
 	clone := hr.Clone()

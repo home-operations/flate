@@ -47,20 +47,19 @@ type documentRenderer interface {
 // ObjectDocument projects captured identity and desired fields with owned top-level
 // and metadata maps; nested payloads MUST remain immutable.
 func ObjectDocument(id NamedResource, obj BaseManifest) (map[string]any, error) {
-	var doc map[string]any
+	var doc, meta map[string]any
 	if r, ok := obj.(documentRenderer); ok {
 		rendered, err := r.RenderDocument()
 		if err != nil {
 			return nil, err
 		}
 		doc = maps.Clone(rendered)
-		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
-		doc[metadataKey] = maps.Clone(rendered[metadataKey].(map[string]any))
+		//nolint:errcheck // Sealed manifest RenderDocument implementations produce metadata as map[string]any.
+		meta = maps.Clone(rendered[metadataKey].(map[string]any))
 	} else {
-		doc = map[string]any{metadataKey: map[string]any{}}
+		doc, meta = map[string]any{}, map[string]any{}
 	}
-	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
-	meta := doc[metadataKey].(map[string]any)
+	doc[metadataKey] = meta
 	meta[nameKey], meta[namespaceKey] = id.Name, id.Namespace
 	doc[kindKey], doc[apiVersionKey] = id.Kind, id.KindInfo().APIVersion()
 	return doc, nil

@@ -18,13 +18,17 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:gocognit // Both publication orders MUST share the same complete history assertions.
 func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"mutable", "pinned"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
+			mutable := mode == "mutable"
+			localPath, localRoot, key, content := root, "", "", ""
+			if !mutable {
+				localPath, localRoot, key, content = "/selected", root, "commit", "generation"
+			}
 			source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
 			owner := testutil.KustomizationID("apps", "emitter")
 			child := &manifest.Kustomization{
@@ -39,10 +43,10 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				st.AddObject(source)
 				art := &store.SourceArtifact{
 					FS:        fstest.MapFS{"apps/red/file": {Data: []byte("changed")}},
-					LocalPath: root,
-				}
-				if mode == "pinned" {
-					art.LocalPath, art.LocalRoot, art.Key, art.Content = "/selected", root, "commit", "generation"
+					LocalPath: localPath,
+					LocalRoot: localRoot,
+					Key:       key,
+					Content:   content,
 				}
 				st.SetArtifact(source.Named(), art)
 				l, _ := admissiontest.New(
@@ -58,7 +62,8 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				)
 				filter := l.Options.Session
 				production := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
-				if side == 0 {
+				switch side {
+				case 0:
 					proposal, err := admissiontest.Prepare(
 						t.Context(), t, l,
 						selection.PrepareRequest{
@@ -90,7 +95,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					)
 					proposal.Retire()
 					assert.NoError(t, commitErr)
-				} else {
+				case 1:
 					controller := New(st, task.NewBounded(2))
 					controller.Configure(Options{Session: filter, Loader: l})
 					kept1, admissionErr1 := controller.KeepEmitted(
@@ -102,15 +107,16 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 						},
 					)
 					assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
-					assert.Equal(t, kept1, mode == "mutable")
+					assert.Equal(t, kept1, mutable)
 				}
-				assert.Equal(t, filter.Snapshot().Reconcile(child.Named()), mode == "mutable")
-				assert.Equal(t, filter.Snapshot().Reconcile(owner), mode == "mutable")
+				assert.Equal(t, filter.Snapshot().Reconcile(child.Named()), mutable)
+				assert.Equal(t, filter.Snapshot().Reconcile(owner), mutable)
 				assert.Equal(t, st.GetObject(child.Named()) == nil, true)
 				for _, id := range []manifest.NamedResource{child.Named(), owner, source.Named(), manifest.BootstrapSourceID} {
-					if filter.Snapshot().Reconcile(id) {
-						selections[side] = append(selections[side], id)
+					if !filter.Snapshot().Reconcile(id) {
+						continue
 					}
+					selections[side] = append(selections[side], id)
 				}
 			}
 			assert.Diff(t, selections[0], selections[1])

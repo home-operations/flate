@@ -410,12 +410,14 @@ func TestCapture_AcquiringOwnSource(t *testing.T) {
 	assert.Equal(t, acquisition.Valid(), false)
 }
 
-//nolint:gocognit // The capture scope MUST end before collection across all authority transitions.
 func TestReadSet_SourceBindingRetainsOnlySourceCapture(t *testing.T) {
 	t.Parallel()
 	for _, change := range []string{"source", "owned source", "producer", "late producer"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
+			hasOwner := change != "source"
+			lateProducer := change == "late producer"
+			capturesProducer := hasOwner && !lateProducer
 			st := New()
 			source := manifest.BootstrapSourceID
 			original := &SourceArtifact{
@@ -424,7 +426,7 @@ func TestReadSet_SourceBindingRetainsOnlySourceCapture(t *testing.T) {
 			st.SetArtifact(source, original)
 			child := &manifest.ConfigMap{Name: "admitted", Namespace: "apps"}
 			var owner manifest.NamedResource
-			if change != "source" {
+			if hasOwner {
 				owner = ownerID("producer")
 				recordForTest(t, st, owner, nil)
 				st.SetDiscoveryIndex(
@@ -441,13 +443,16 @@ func TestReadSet_SourceBindingRetainsOnlySourceCapture(t *testing.T) {
 					st.AddObject(object)
 					reads.GetObject(object.Named())
 				}
-				if owner != (manifest.NamedResource{}) && change != "late producer" {
+				switch {
+				case capturesProducer:
 					reads.Productions(child.Named(), nil)
 					assert.Equal(t, reads.input(owner).cell(producerFacet).head != nil, true)
-				}
-				reads.Admit(Child{Obj: child}, source, owner)
-				if change == "late producer" {
+					reads.Admit(Child{Obj: child}, source, owner)
+				case lateProducer:
+					reads.Admit(Child{Obj: child}, source, owner)
 					reads.Productions(child.Named(), nil)
+				default:
+					reads.Admit(Child{Obj: child}, source, owner)
 				}
 				reads.GetArtifact(source, ArtifactOrigin)
 				reads.Retire()
@@ -458,9 +463,10 @@ func TestReadSet_SourceBindingRetainsOnlySourceCapture(t *testing.T) {
 			runtime.GC()
 			assert.Equal(t, captured.Value() == nil, true)
 			assert.Equal(t, st.GetObject(child.Named()), manifest.BaseManifest(child))
-			if change == "producer" || change == "late producer" {
+			switch change {
+			case "producer", "late producer":
 				recordForTest(t, st, owner, nil)
-			} else {
+			default:
 				replacement := *original
 				replacement.Metadata = map[string]string{"org.opencontainers.image.revision": "second"}
 				st.SetArtifact(source, &replacement)

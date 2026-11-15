@@ -42,196 +42,233 @@ type AdmissionResult struct {
 	producerOwner *producerObligation
 }
 
+type admissionDriver struct {
+	session      *Session
+	options      *AdmissionOptions
+	request      PrepareRequest
+	ownedHistory bool
+	proposal     *Admission
+	proof        *store.ReadSet
+	absent       map[manifest.NamedResource]struct{}
+	publication  uint64
+	publishing   *Preparation
+}
+
 // Admit MUST capture accepted observations before retiring the proposal.
 //
-//nolint:cyclop,funlen,gocognit,gocritic,gocyclo // One owner MUST retain acquisitions and first-attempt presence through publication retries.
+//nolint:gocritic // One owner MUST retain acquisitions and first-attempt presence through publication retries.
 func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
-	request := options.Request
-	local := request.Preparation == nil
+	driver := admissionDriver{session: s, options: &options, request: options.Request}
+	local := driver.request.Preparation == nil
 	var preparation *Preparation
 	if local {
-		request.Preparation = &preparation
+		driver.request.Preparation = &preparation
 		defer func() { preparation.Retire() }()
 	}
-	var proposal *Admission
-	defer func() { proposal.Retire() }()
-	var proof *store.ReadSet
-	defer func() { s.store.Retire(proof) }()
-	ownedHistory := false
-	insertHistory := func(owner manifest.NamedResource, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], complete bool) {
-		if !ownedHistory {
-			request.History = maps.Clone(request.History)
-			ownedHistory = true
-		}
-		if request.History == nil {
-			request.History = map[manifest.NamedResource]struct {
-				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-				Complete bool
-			}{}
-		}
-		request.History[owner] = struct {
-			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-			Complete bool
-		}{Records: records, Complete: complete}
-	}
-	forgetInvalidHistory := func(acquired *Acquisition) bool {
-		demand := &acquired.Demand
-		if !demand.History || demand.Root != "" || acquired.Reads.Valid() && demand.Reads.Valid() {
-			return false
-		}
-		if !ownedHistory {
-			return true
-		}
-		for i := range request.Acquired {
-			current := &request.Acquired[i]
-			sameHistory := current.Demand.History && current.Demand.Root == "" &&
-				current.Demand.Identity == demand.Identity
-			if sameHistory && current.Reads.Valid() && current.Demand.Reads.Valid() {
-				return true
-			}
-		}
-		if entry := options.EntryHistory; entry.Owner == demand.Identity {
-			insertHistory(entry.Owner, entry.Records, true)
-		} else if original, supplied := options.Request.History[demand.Identity]; supplied {
-			insertHistory(demand.Identity, original.Records, original.Complete)
-		} else {
-			delete(request.History, demand.Identity)
-		}
-		return true
-	}
-
+	defer driver.retire()
 	if entry := options.EntryHistory; entry.Owner != (manifest.NamedResource{}) {
-		insertHistory(entry.Owner, entry.Records, true)
+		driver.insertHistory(entry.Owner, entry.Records, true)
 	}
-	var absent map[manifest.NamedResource]struct{}
-	var publication uint64
-	var publishing *Preparation
-	defer func() {
-		if publishing != nil {
-			publishing.closure.publication = 0
-		}
-	}()
 	for {
-		if err := ctx.Err(); err != nil {
+		switch err := ctx.Err(); {
+		case err != nil:
 			return AdmissionResult{}, false, err
-		}
-		if !options.Authority.Valid() {
+		case !options.Authority.Valid():
 			return AdmissionResult{}, false, nil
 		}
-		if options.Authority != nil && (proof == nil || !proof.Valid()) {
-			s.store.Retire(proof)
-			proof = s.admissionProof(options.Authority)
-			request.Reads = proof
-		}
-		// Rejected history MUST leave derivation before its successor computes membership.
-		if current := *request.Preparation; current != nil && current.closure.session == s {
-			for key := range current.acquired {
-				acquired := current.acquired[key]
-				if forgetInvalidHistory(&acquired) {
-					delete(current.acquired, key)
-				}
-			}
-		}
-		for i := range request.Acquired {
-			forgetInvalidHistory(&request.Acquired[i])
-		}
-		var next *Admission
-		var err error
-		if options.Previous != nil {
-			next, err = s.refreshHistory(ctx, options.Previous, request)
-		} else {
-			next, err = s.Prepare(ctx, request)
-		}
-		proposal.Retire()
-		proposal = next
-		if err != nil {
+		if err := driver.prepare(ctx); err != nil {
 			return AdmissionResult{}, false, err
 		}
-		if !s.guardCurrent(proposal) {
-			if options.Authority == nil && !request.Reads.Valid() {
+		if !s.guardCurrent(driver.proposal) {
+			if options.Authority == nil && !driver.request.Reads.Valid() {
 				return AdmissionResult{}, false, nil
 			}
 			continue
 		}
-		request = proposal.Request
-		request.Acquired = nil
-		for i := range proposal.demands {
-			demand := &proposal.demands[i]
-			result := Acquisition{Demand: *demand, Reads: demand.Reads}
-			switch {
-			case demand.History && demand.Root == "":
-				history := request.History[demand.Identity]
-				if request.ReadHistory != nil {
-					history.Records, history.Complete = request.ReadHistory(ctx, demand)
-				}
-				insertHistory(demand.Identity, history.Records, history.Complete)
-				result.Available = history.Records != nil
-			case demand.History:
-				result.Root, result.Available, err = s.facts.ResolveRoot(ctx, demand.Reads, demand.Source, demand.Root)
-			case demand.Occurrence.Identity != (manifest.NamedResource{}):
-				result.Child, err = s.facts.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
-				result.Available = result.Child.Obj != nil
-			case options.Stage == Execution:
-			default:
-				continue
-			}
-			if err != nil {
-				return AdmissionResult{}, false, err
-			}
-			request.Acquired = append(request.Acquired, result)
+		if err := driver.acquire(ctx); err != nil {
+			return AdmissionResult{}, false, err
 		}
-		if len(request.Acquired) != 0 {
+		switch {
+		case len(driver.request.Acquired) != 0:
 			continue
-		}
-		if !options.Authority.Valid() {
+		case !options.Authority.Valid():
 			return AdmissionResult{}, false, nil
 		}
-		if publication == 0 {
-			publishing = proposal.preparation
-			publishing.publication++
-			publication = publishing.publication
-			publishing.closure.publication = publication
-		}
-		for i := range proposal.Objects {
-			id := proposal.Objects[i].Obj.Named()
-			state := proposal.preparation.closure.states[id]
-			if state.publication == publication {
-				continue
-			}
-			state.publication = publication
-			proposal.preparation.closure.states[id] = state
-			if s.store.GetObject(id) == nil {
-				if absent == nil {
-					absent = map[manifest.NamedResource]struct{}{}
-				}
-				absent[id] = struct{}{}
-			}
-		}
-		decision, accepted := s.publishAdmission(ctx, proposal, options.Stage)
-		if !accepted {
+		driver.capturePresence()
+		decision, accepted := s.publishAdmission(ctx, driver.proposal, options.Stage)
+		switch {
+		case !accepted:
 			continue
-		}
-		if !options.Authority.Valid() {
+		case !options.Authority.Valid():
 			return AdmissionResult{}, false, nil
 		}
-		result := proposal.result()
-		result.Revision = decision.version()
-		for i := range result.Objects {
-			id := result.Objects[i].Obj.Named()
-			if _, missing := absent[id]; missing {
-				result.Absent = append(result.Absent, id)
-			}
-		}
-		if local {
-			result.Request.Preparation = nil
-			result.Request.Acquired = nil
-		}
-		if options.Authority != nil {
-			result.Request.Reads = options.Authority
-		}
-		proposal.accept(options.Stage, decision)
-		return result, true, nil
+		return driver.accept(decision, local), true, nil
 	}
+}
+
+func (d *admissionDriver) retire() {
+	if d.publishing != nil {
+		d.publishing.closure.publication = 0
+	}
+	d.session.store.Retire(d.proof)
+	d.proposal.Retire()
+}
+
+func (d *admissionDriver) insertHistory(
+	owner manifest.NamedResource,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+	complete bool,
+) {
+	if !d.ownedHistory {
+		previous := d.request.History
+		d.request.History = make(map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}, len(previous)+1)
+		maps.Copy(d.request.History, previous)
+		d.ownedHistory = true
+	}
+	d.request.History[owner] = struct {
+		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+		Complete bool
+	}{Records: records, Complete: complete}
+}
+
+func (d *admissionDriver) forgetInvalidHistory(acquired *Acquisition) bool {
+	demand := &acquired.Demand
+	if !demand.History || demand.Root != "" || acquired.Reads.Valid() && demand.Reads.Valid() {
+		return false
+	}
+	if !d.ownedHistory {
+		return true
+	}
+	for i := range d.request.Acquired {
+		current := &d.request.Acquired[i]
+		sameHistory := current.Demand.History && current.Demand.Root == "" &&
+			current.Demand.Identity == demand.Identity
+		if sameHistory && current.Reads.Valid() && current.Demand.Reads.Valid() {
+			return true
+		}
+	}
+	original, supplied := d.options.Request.History[demand.Identity]
+	if entry := d.options.EntryHistory; entry.Owner == demand.Identity {
+		original.Records, original.Complete, supplied = entry.Records, true, true
+	}
+	if supplied {
+		d.insertHistory(demand.Identity, original.Records, original.Complete)
+	} else {
+		delete(d.request.History, demand.Identity)
+	}
+	return true
+}
+
+func (d *admissionDriver) prepare(ctx context.Context) error {
+	if authority := d.options.Authority; authority != nil && (d.proof == nil || !d.proof.Valid()) {
+		d.session.store.Retire(d.proof)
+		d.proof = d.session.admissionProof(authority)
+		d.request.Reads = d.proof
+	}
+	// Rejected history MUST leave derivation before its successor computes membership.
+	if current := *d.request.Preparation; current != nil && current.closure.session == d.session {
+		for key := range current.acquired {
+			acquired := current.acquired[key]
+			if d.forgetInvalidHistory(&acquired) {
+				delete(current.acquired, key)
+			}
+		}
+	}
+	for i := range d.request.Acquired {
+		d.forgetInvalidHistory(&d.request.Acquired[i])
+	}
+	var next *Admission
+	var err error
+	if d.options.Previous != nil {
+		next, err = d.session.refreshHistory(ctx, d.options.Previous, d.request)
+	} else {
+		next, err = d.session.Prepare(ctx, d.request)
+	}
+	d.proposal.Retire()
+	d.proposal = next
+	return err
+}
+
+func (d *admissionDriver) acquire(ctx context.Context) error {
+	d.request = d.proposal.Request
+	d.request.Acquired = nil
+	for i := range d.proposal.demands {
+		demand := &d.proposal.demands[i]
+		result := Acquisition{Demand: *demand, Reads: demand.Reads}
+		var err error
+		switch {
+		case demand.History && demand.Root == "":
+			history := d.request.History[demand.Identity]
+			if d.request.ReadHistory != nil {
+				history.Records, history.Complete = d.request.ReadHistory(ctx, demand)
+			}
+			d.insertHistory(demand.Identity, history.Records, history.Complete)
+			result.Available = history.Records != nil
+		case demand.History:
+			result.Root, result.Available, err = d.session.facts.ResolveRoot(
+				ctx, demand.Reads, demand.Source, demand.Root,
+			)
+		case demand.Occurrence.Identity != (manifest.NamedResource{}):
+			result.Child, err = d.session.facts.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
+			result.Available = result.Child.Obj != nil
+		case d.options.Stage == Execution:
+		default:
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		d.request.Acquired = append(d.request.Acquired, result)
+	}
+	return nil
+}
+
+func (d *admissionDriver) capturePresence() {
+	if d.publication == 0 {
+		d.publishing = d.proposal.preparation
+		d.publishing.publication++
+		d.publication = d.publishing.publication
+		d.publishing.closure.publication = d.publication
+	}
+	for i := range d.proposal.Objects {
+		id := d.proposal.Objects[i].Obj.Named()
+		state := d.proposal.preparation.closure.states[id]
+		if state.publication == d.publication {
+			continue
+		}
+		state.publication = d.publication
+		d.proposal.preparation.closure.states[id] = state
+		if d.session.store.GetObject(id) != nil {
+			continue
+		}
+		if d.absent == nil {
+			d.absent = map[manifest.NamedResource]struct{}{}
+		}
+		d.absent[id] = struct{}{}
+	}
+}
+
+func (d *admissionDriver) accept(decision *Decision, local bool) AdmissionResult {
+	result := d.proposal.result()
+	result.Revision = decision.version()
+	for i := range result.Objects {
+		id := result.Objects[i].Obj.Named()
+		if _, missing := d.absent[id]; missing {
+			result.Absent = append(result.Absent, id)
+		}
+	}
+	if local {
+		result.Request.Preparation = nil
+		result.Request.Acquired = nil
+	}
+	if d.options.Authority != nil {
+		result.Request.Reads = d.options.Authority
+	}
+	d.proposal.accept(d.options.Stage, decision)
+	return result
 }
 
 func (s *Session) publishAdmission(ctx context.Context, proposal *Admission, stage CommitStage) (*Decision, bool) {

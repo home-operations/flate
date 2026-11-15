@@ -282,15 +282,15 @@ func TestAdmission_SelectorCompleteness(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Authored and rendered candidates MUST share the same reference and label precedence assertions.
 func TestSelection_PreparedProjection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, builder       string
-		supported, authored bool
+		name, builder string
+		support       manifest.NamedResource
+		authored      bool
 	}{
-		{name: "authored", supported: true, authored: true},
-		{name: "rendered", builder: "built", supported: true},
+		{name: "authored", support: manifest.BootstrapSourceID, authored: true},
+		{name: "rendered", builder: "built", support: manifest.BootstrapSourceID},
 		{name: "no source support"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -307,13 +307,13 @@ func TestSelection_PreparedProjection(t *testing.T) {
 					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "${ROLE}"}},
 				}},
 			}
-			var resolved manifest.Reference
-			for ref := range manifest.References(reader, manifest.ReferenceRelations) {
-				if ref.Use == "inputsFrom" {
-					resolved = ref.Clone()
-					resolved.Selector.MatchLabels["role"] = "selected"
-				}
-			}
+			authoredReferences := slices.Collect(manifest.References(reader, manifest.ReferenceRelations))
+			inputIndex := slices.IndexFunc(authoredReferences, func(ref manifest.Reference) bool {
+				return ref.Use == "inputsFrom"
+			})
+			assert.FatalIf(t, inputIndex < 0, "reader input reference is absent")
+			resolved := authoredReferences[inputIndex].Clone()
+			resolved.Selector.MatchLabels["role"] = "selected"
 			providerCatalog, readerCatalog := *provider, *reader
 			facts := &solverFacts{
 				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -338,29 +338,26 @@ func TestSelection_PreparedProjection(t *testing.T) {
 				facts.candidates = map[manifest.NamedResource]store.Child{reader.Named(): {Obj: reader}}
 			}
 			closure := solverClosure(t, store.New(), facts)
-			var support manifest.NamedResource
-			if tc.supported {
-				support = manifest.BootstrapSourceID
-			}
 			closure.children = map[manifest.NamedResource]store.Child{
 				reader.Named(): {
 					Obj:           reader,
-					SourceSupport: support,
+					SourceSupport: tc.support,
 				},
-				provider.Named(): {Obj: provider, SourceSupport: support},
+				provider.Named(): {Obj: provider, SourceSupport: tc.support},
 			}
-			refs := 0
-			for ref := range closure.references(reader.Named(), reader) {
-				if ref.Use != "inputsFrom" {
-					continue
-				}
-				refs++
+			refs := slices.DeleteFunc(
+				slices.Collect(closure.references(reader.Named(), reader)),
+				func(ref manifest.Reference) bool {
+					return ref.Use != "inputsFrom"
+				},
+			)
+			for _, ref := range refs {
 				inputs, known, err := closure.matchingInputs(&ref, false)
 				assert.NoError(t, err)
 				assert.Equal(t, known, tc.authored)
 				assert.Equal(t, slices.Contains(inputs, provider.Named()), tc.authored)
 			}
-			assert.Equal(t, refs, 1)
+			assert.Equal(t, len(refs), 1)
 			if tc.builder != "" {
 				closure.yieldIndexedReferences(reader.Named(), func(ref manifest.Reference) bool {
 					if ref.Use == "inputsFrom" {

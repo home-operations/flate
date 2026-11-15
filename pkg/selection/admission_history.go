@@ -19,16 +19,7 @@ func (s *Session) refreshHistory(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var preparation *Preparation
-	if request.Preparation != nil {
-		preparation = *request.Preparation
-	}
-	if preparation == nil {
-		preparation = &Preparation{closure: admissionClosure{session: s, facts: s.facts}}
-		if request.Preparation != nil {
-			*request.Preparation = preparation
-		}
-	}
+	preparation := request.preparation(s)
 	if preparation.closure.session != s {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "admission preparation belongs to a different session")
 	}
@@ -48,12 +39,7 @@ func (s *Session) refreshHistory(
 	if proposal.entry != nil && proposal.entry.Bound {
 		proposal.EntryReceipt = nil
 	}
-	proposal.reads = &proposal.owned
-	owner := manifest.NamedResource{}
-	if request.Reads != nil {
-		owner = request.Reads.ID()
-	}
-	proposal.reads.Init(s.store, owner, nil)
+	proposal.captureReads(s)
 	if previous.entry != proposal.entry || previous.entryReads != nil && !proposal.entrySupported() {
 		proposal.Retire()
 		return s.Prepare(ctx, request)

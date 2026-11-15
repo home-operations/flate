@@ -148,7 +148,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 				"'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'",
 				1,
 			) + "sops: {encrypted_regex: data}\n",
-			want: "${VALUE}",
+			want: "",
 		},
 		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), fail: true},
 		{
@@ -239,22 +239,15 @@ spec: {target: {name: external}}
 			}
 			result := runCLI(t, args...)
 			assert.Equal(t, result.code, 0)
-			wantStderr := `
-  ⚠ warnings (1)
-    [UnresolvedSubstitution] substituteFrom Secret "external" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
-`
+			wantStderr := ""
 			if reason != "" {
-				wantStderr = "\n  ⚠ warnings (2)\n    [RenderPersistenceDisabled] render persistence is disabled: " + reason + "; source caching remains available\n" +
-					strings.TrimPrefix(
-						wantStderr,
-						"\n  ⚠ warnings (1)\n",
-					)
+				wantStderr = "\n  ⚠ warnings (1)\n    [RenderPersistenceDisabled] render persistence is disabled: " + reason + "; source caching remains available\n"
 			}
 			assert.Equal(t, result.stderr, wantStderr)
 			docs, err := testutil.SplitDocs([]byte(result.stdout))
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 3)
-			assert.Diff(t, docs[0]["data"], map[string]any{"value": "${VALUE}"})
+			assert.Diff(t, docs[0]["data"], map[string]any{"value": nil})
 		})
 	}
 }

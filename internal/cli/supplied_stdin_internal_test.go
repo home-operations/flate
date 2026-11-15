@@ -92,7 +92,8 @@ func testLoadInputsStdinCase1(t *testing.T, tc *struct {
 			adaptedResult1, err := data.Value(key)
 			present := adaptedResult1.Found
 			assert.NoError(t, err)
-			assert.Equal(t, present, false)
+			assert.Equal(t, present, true)
+			assert.Equal(t, adaptedResult1.Encrypted, true)
 		}
 		for key, want := range map[string]string{"PLAIN": "readable", "EMPTY": ""} {
 			adaptedResult2, err := data.Value(key)
@@ -101,9 +102,7 @@ func testLoadInputsStdinCase1(t *testing.T, tc *struct {
 			assert.Equal(t, present, true)
 			assert.Equal(t, got, want)
 		}
-		assert.Equal(t, len(child.Warnings), 1)
-		assert.Equal(t, child.Warnings[0].Category, manifest.WarnSOPSUnreadable)
-		assert.Diff(t, child.Warnings[0].Detail, []string{"A", "Z"})
+		assert.Equal(t, len(child.Warnings), 0)
 	}
 }
 
@@ -140,7 +139,8 @@ func TestLoadInputs_AnyKind(t *testing.T) {
 		adaptedResult3, err := data.Value("VALUE")
 		present := adaptedResult3.Found
 		assert.NoError(t, err)
-		assert.Equal(t, present, false)
+		assert.Equal(t, present, true)
+		assert.Equal(t, adaptedResult3.Encrypted, true)
 		for key, want := range map[string]string{"PLAIN": "readable", "EMPTY": ""} {
 			adaptedResult4, err := data.Value(key)
 			got, present := adaptedResult4.Value, adaptedResult4.Found
@@ -148,9 +148,7 @@ func TestLoadInputs_AnyKind(t *testing.T) {
 			assert.Equal(t, present, true)
 			assert.Equal(t, got, want)
 		}
-		assert.Equal(t, len(child.Warnings), 1)
-		assert.Equal(t, child.Warnings[0].Category, manifest.WarnSOPSUnreadable)
-		assert.Diff(t, child.Warnings[0].Detail, []string{"VALUE"})
+		assert.Equal(t, len(child.Warnings), 0)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -215,7 +217,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			resumed := false
 			waitErr := normal.run.AwaitData(t.Context(), base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 					resumed = true
 					return nil
 				},
@@ -305,15 +307,22 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 			t.Context(),
 			base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { resumed = true; return nil },
 			},
 			manifest.DrainNone,
 		),
 	)
 	assert.Equal(t, resumed, true)
-	assert.Diff(
-		t,
-		fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named()),
-		normal.data.Lookup(input.Named()),
-	)
+	captured := fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named())
+	expected := normal.data.Lookup(input.Named())
+	assert.Diff(t, captured.Data.Snapshot(), expected.Data.Snapshot())
+	assert.Equal(t, captured.Data.KeysKnown(), expected.Data.KeysKnown())
+	if captured.Original != nil && expected.Original != nil {
+		assert.Diff(t, captured.Original.Snapshot(), expected.Original.Snapshot())
+		assert.Equal(t, captured.Original.KeysKnown(), expected.Original.KeysKnown())
+	} else {
+		assert.Equal(t, captured.Original == nil, expected.Original == nil)
+	}
+	captured.Data, expected.Data, captured.Original, expected.Original = nil, nil, nil, nil
+	assert.Diff(t, captured, expected)
 }

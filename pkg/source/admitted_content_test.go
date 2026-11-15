@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type admittedCredentialCase struct {
@@ -183,7 +184,10 @@ func TestFetcher_PreparedMissingGitCredentials(t *testing.T) {
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok, "missing credentials: %v", err)
 	assert.Equal(t, prepared.Fetch == nil, true)
-	prepared, err = missing.RetryMachine(t.Context(), &reads)
+	request := missing.Input
+	request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+	assessment := values.Resolve(&request)
+	prepared, err = missing.RetryMachine(t.Context(), &assessment)
 	assert.NoError(t, err)
 	assert.Equal(t, prepared.LocalUnavailable, missing)
 	assert.Equal(t, prepared.Fetch != nil, true)

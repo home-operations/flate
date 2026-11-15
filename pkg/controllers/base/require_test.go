@@ -10,6 +10,8 @@ import (
 	"testing"
 	"weak"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -743,7 +745,7 @@ func testRequireRetainsArtifactFactsThroughSettlementCase(
 			return execution.AwaitData(
 				ctx,
 				base.DataWait{
-					Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+					Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 						rendered = true
 						return nil
 					},

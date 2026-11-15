@@ -78,11 +78,6 @@ func TestCompare_OptionalBatchIdentities(t *testing.T) {
 			assert.NoError(t, err)
 			comparison, err := Compare(groups, Options{Format: FormatJSON})
 			assert.NoError(t, err)
-			outputID := id
-			if len(tc.identities) != 0 {
-				outputID = tc.identities[0]
-			}
-			assert.Diff(t, comparison.Groups[0].Output, [2][]manifest.NamedResource{{outputID}, {outputID}})
 			var first, second bytes.Buffer
 			assert.NoError(t, comparison.Write(&first, nil))
 			assert.NoError(t, comparison.Write(&second, nil))
@@ -122,16 +117,6 @@ func TestCompare_OptionalBatchIdentities(t *testing.T) {
 			}
 			comparison, err := Compare([]Group{group}, Options{Format: FormatJSON})
 			assert.NoError(t, err)
-			want := [2][]manifest.NamedResource{
-				{manifest.DocIdentity(left.Manifest)},
-				{manifest.DocIdentity(right.Manifest)},
-			}
-			for side, ids := range tc.ids {
-				if len(ids) != 0 {
-					want[side] = ids
-				}
-			}
-			assert.Diff(t, comparison.Groups[0].Output, want)
 			assert.Equal(t, len(comparison.output[0].changes), 1)
 			assert.Equal(t, comparison.output[0].changes[0].Name, manifest.DocIdentity(right.Manifest).Name)
 			assert.Equal(t, comparison.output[0].changes[0].Status, StatusChanged)
@@ -220,7 +205,6 @@ func TestCompare_InvalidBatchIdentities(t *testing.T) {
 				message := fmt.Sprintf("%s batch 1: identity count %d does not match document count %d",
 					side, len(tc.identities), len(tc.documents))
 				assert.ErrorIf(t, !strings.Contains(err.Error(), message), "input error lacks context: %v", err)
-				assert.Diff(t, comparison.Groups[0].Output, [2][]manifest.NamedResource{})
 				assert.Diff(t, comparison.Groups[0].Suppressed, notes)
 				var out, second bytes.Buffer
 				assert.NoError(t, comparison.Write(&out, nil))
@@ -764,14 +748,11 @@ func testCompareMixedBatchIdentities(t *testing.T, omitted int, reverse bool) {
 	assert.NoError(t, err)
 	comparison, err := Compare([]Group{{Orig: snapshots[0], Current: snapshots[1]}}, Options{Format: FormatJSON})
 	assert.NoError(t, err)
-	want := [2][]manifest.NamedResource{{ids[0], ids[1]}, {ids[0], ids[1]}}
-	assert.Diff(t, comparison.Groups[0].Output, want)
 	var first, second bytes.Buffer
 	assert.NoError(t, comparison.Write(&first, nil))
 	assert.NoError(t, comparison.Write(&second, nil))
 	assert.Diff(t, first.String(), string(wantBytes)+"\n")
 	assert.Diff(t, second.String(), first.String())
-	assert.Diff(t, comparison.Groups[0].Output, want)
 	after, err := json.Marshal([2][]manifest.DocumentBatch{snapshots[0].Manifests, snapshots[1].Manifests})
 	assert.NoError(t, err)
 	assert.Diff(t, after, before)

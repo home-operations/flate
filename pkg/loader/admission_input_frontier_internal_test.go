@@ -52,6 +52,14 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+			readers := slices.Clone(l.inputReaders[manifest.NamedResource{
+				Kind: manifest.KindSecret, Namespace: "apps", Name: "vars",
+			}])
+			slices.SortFunc(readers, manifest.NamedResource.Compare)
+			assert.Diff(t, readers, []manifest.NamedResource{
+				testutil.KustomizationID("apps", "parent"),
+				testutil.KustomizationID("apps", "stable"),
+			})
 			proposal, err := prepareSelection(
 				t.Context(),
 				t,

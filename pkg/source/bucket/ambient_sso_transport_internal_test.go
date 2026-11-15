@@ -158,7 +158,7 @@ func testFetcherMachineSSOTransportCaseCompletion(
 		"SSO continuation unavailable: %v",
 		err,
 	)
-	artifact, err = fetchtest.Machine((*captures.ctx), missing, reads)
+	artifact, err = fetchtest.Machine((*captures.ctx), missing)
 	captures.destinations.
 		Range(func(destination, _ any) bool {
 			assert.ErrorIf(

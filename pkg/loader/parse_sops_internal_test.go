@@ -41,7 +41,8 @@ func TestPrepare_UnreadableBeforeValidation(t *testing.T) {
 	result1, err := data.Value("SECRET")
 	present := result1.Found
 	assert.NoError(t, err)
-	assert.Equal(t, present, false)
+	assert.Equal(t, present, true)
+	assert.Equal(t, result1.Encrypted, true)
 	result2, err := data.Value("EMPTY")
 	empty, present := result2.Value, result2.Found
 	assert.NoError(t, err)
@@ -50,12 +51,10 @@ func TestPrepare_UnreadableBeforeValidation(t *testing.T) {
 	assert.Equal(t, input.Data["SECRET"], any(cipher))
 	assert.Equal(t, doc["data"].(map[string]any)["SECRET"], any(cipher))
 	warnings := s.Warnings()
-	assert.Equal(t, len(warnings), 1)
-	assert.Equal(t, warnings[0].Category, manifest.WarnSOPSUnreadable)
-	assert.Diff(t, warnings[0].Detail, []string{"SECRET"})
+	assert.Equal(t, len(warnings), 0)
 }
 
-func TestInputCache_SOPSWarningHydration(t *testing.T) {
+func TestInputCache_CiphertextHydration(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"Secret", "ConfigMap"} {
 		t.Run(kind, func(t *testing.T) {
@@ -79,9 +78,7 @@ func TestInputCache_SOPSWarningHydration(t *testing.T) {
 				saved := l.documents.cache[filepath.Join(root, "object.yaml")].objects
 				assert.Equal(t, len(saved), 1)
 				assert.Equal(t, saved[0].payload != nil, persistent)
-				assert.Equal(t, len(saved[0].Warnings), 1)
-				assert.Equal(t, saved[0].Warnings[0].Category, manifest.WarnSOPSUnreadable)
-				assert.Diff(t, saved[0].Warnings[0].Detail, []string{"SECRET"})
+				assert.Equal(t, len(saved[0].Warnings), 0)
 				occurrence, known := l.Occurrence(manifest.NamedResource{Kind: kind, Name: "input", Namespace: "apps"})
 				assert.Equal(t, known, true)
 				child, err := l.OccurrenceObject(t.Context(), &occurrence, nil)
@@ -89,7 +86,8 @@ func TestInputCache_SOPSWarningHydration(t *testing.T) {
 				assert.Diff(t, child.Warnings, saved[0].Warnings)
 				data := child.Doc["data"].(map[string]any)
 				_, present := data["SECRET"]
-				assert.Equal(t, present, false)
+				assert.Equal(t, present, true)
+				assert.Equal(t, data["SECRET"], any("ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"))
 				assert.Equal(t, data["PLAIN"], any("cGxhaW4="))
 				encoded, err := manifest.EncodeRender([]manifest.DocOccurrence{{Document: child.Doc}})
 				assert.NoError(t, err)

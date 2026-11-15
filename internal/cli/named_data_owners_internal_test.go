@@ -173,8 +173,8 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		"producer diagnostic policy violated: %s",
 		stderr,
 	)
-	assert.FatalIf(t, tc.absent && tc.broken && !strings.Contains(stderr, "[OmittedValues]"),
-		"omitted values warning missing: %s", stderr)
+	assert.FatalIf(t, tc.absent && tc.broken && strings.Contains(stderr, "[OmittedValues]"),
+		"satisfied omission produced a warning: %s", stderr)
 }
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
@@ -224,10 +224,10 @@ func TestRun_DataProducerFailure_ConsumerScope(t *testing.T) {
 				)
 				got := runCLI(t, tc.args...)
 				assert.FatalIf(t, got.code != tc.code, "exit=%d, want %d: %s", got.code, tc.code, got.stderr)
-				assert.FatalIf(t, !strings.Contains(got.stderr, "[UnresolvedSubstitution]"),
-					"consumer did not retain its unknown data warning: %s", got.stderr)
+				assert.FatalIf(t, strings.Contains(got.stderr, "[UnresolvedSubstitution]"),
+					"satisfied reference produced a warning: %s", got.stderr)
 				assert.Equal(t, strings.Contains(got.stderr, "missing.yaml"), tc.name == "full")
-				want := map[string]any{"greeting": "${GREETING:=hello}", "revision": "after"}
+				want := map[string]any{"greeting": "hello", "revision": "after"}
 				if tc.name == "changed" {
 					var result struct {
 						Changes []diff.Change `json:"Changes"`

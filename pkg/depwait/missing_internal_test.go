@@ -38,9 +38,9 @@ func TestMissingPolicy_ReferenceRules(t *testing.T) {
 		{name: "readable substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Data: &manifest.Secret{StringData: map[string]any{"VALUE": "input"}}}},
 		{name: "optional substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom", Optional: true}, allowed: true},
 		{name: "foreign substitution Secret", ref: manifest.Reference{Group: "example.test", Kind: manifest.KindSecret, Use: "substituteFrom"}},
-		{name: "generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true}, allowed: true, unreadable: true, producerAbsence: true},
-		{name: "offline generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true, Offline: true}, allowed: true, unreadable: true, producerAbsence: true},
-		{name: "private offline input", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Private: true, Offline: true}, allowed: true, producerAbsence: true},
+		{name: "generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true}, unreadable: true, producerAbsence: true},
+		{name: "offline generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true, Offline: true}, unreadable: true, producerAbsence: true},
+		{name: "private offline input", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Private: true, Offline: true}},
 		{name: "materializer alone requires data", input: store.ReferenceFacts{Materializers: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "producer"}}}},
 		{name: "selected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}, kinds: []string{manifest.KindCustomResourceDefinition}, allowed: true},
 		{name: "unselected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}},
@@ -55,14 +55,13 @@ func TestMissingPolicy_ReferenceRules(t *testing.T) {
 			if tc.allowed {
 				want = selection.OptionalInput
 			}
-			if tc.input.Data != nil {
+			if tc.input.Data != nil || tc.input.Generated {
 				want = selection.AvailableInput
 			}
 			assert.Equal(t, got, want)
 			if tc.ref.NamedResource.KindInfo().Data {
-				result, err := values.Classify(new(tc.ref), new(tc.input))
-				assert.NoError(t, err)
-				assert.Equal(t, result.State() == values.Produced, tc.producerAbsence)
+				result := values.Resolve(&values.ResolveRequest{Reference: tc.ref, Facts: tc.input, Permission: policy})
+				assert.Equal(t, result.Admitted() && tc.input.Generated, tc.producerAbsence)
 			}
 		})
 	}

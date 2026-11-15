@@ -176,20 +176,7 @@ func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppre
 	options.producerKeys = [2]map[manifest.NamedResource]manifest.NamedResource{
 		orig.pairingKeys(current.Manifests), current.pairingKeys(orig.Manifests),
 	}
-	var identities [2][]manifest.NamedResource
-	for side, batches := range [2][]manifest.DocumentBatch{retained.Orig, retained.Current} {
-		for i, batch := range batches {
-			identity, err := batch.IdentityAccessor()
-			if err != nil {
-				return prepared{Subjects: options.subjects}, retained.Suppressed,
-					fmt.Errorf("%s batch %d: %w", [2]Side{SideOrig, SideCurrent}[side], i, err)
-			}
-			for j := range batch.Documents {
-				identities[side] = append(identities[side], identity(j))
-			}
-		}
-	}
-	options.identities = identities
+
 	return prepare(documents(retained.Orig), documents(retained.Current), &options), retained.Suppressed, nil
 }
 

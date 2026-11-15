@@ -124,7 +124,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 				diff := cmp.Diff(
 					tt.want,
 					got,
-					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
 				)
 				assert.FatalIf(t, diff != "", "listed objects changed (-want +got): %s", diff)
@@ -140,7 +140,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 		diff := cmp.Diff(
 			s.ListObjects("", ""),
 			inventory,
-			cmp.AllowUnexported(manifest.Kustomization{}),
+			cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 			cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
 		)
 		assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
@@ -161,7 +161,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 				diff := cmp.Diff(
 					s.ListObjects(remaining.Named().Group, id.Kind),
 					[]manifest.BaseManifest{remaining},
-					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
 				)
 				assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
@@ -172,7 +172,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 		diff := cmp.Diff(
 			s.ListObjects("", ""),
 			[]manifest.BaseManifest{other},
-			cmp.AllowUnexported(manifest.Kustomization{}),
+			cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 			cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
 		)
 		assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)

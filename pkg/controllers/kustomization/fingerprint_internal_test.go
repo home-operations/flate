@@ -115,11 +115,11 @@ func TestKustomizationFingerprint_PreparedInline(t *testing.T) {
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "first"}},
 	}
-	first, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
+	first, err := kustomize.Prepare(ks, nil)
 	assert.FatalIf(t, err != nil, "%v", err)
 	other := ks.Clone()
 	other.PostBuild.Substitute["VALUE"] = "second"
-	second, err := kustomize.Prepare(other, nil, depwait.NewMissingPolicy(nil))
+	second, err := kustomize.Prepare(other, nil)
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(t, replayKey(t.Context(), first.Content("/repo", map[string]struct{}{"VALUE": {}}, true)) ==
 		replayKey(
@@ -163,7 +163,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 					},
 				)
 				provider := values.NewStoreProvider(st)
-				prepared, err := kustomize.Prepare(ks, provider, depwait.NewMissingPolicy(nil))
+				prepared, err := kustomize.Prepare(ks, resolveTestInputs(ks, provider, depwait.NewMissingPolicy(nil)))
 				assert.FatalIf(t, err != nil, "%v", err)
 				assert.FatalIf(
 					t,
@@ -196,7 +196,10 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks.PostBuild = &kustomizev1.PostBuild{
 		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}},
 	}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil))
+	ordinary, err := kustomize.Prepare(
+		ks,
+		resolveTestInputs(ks, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)),
+	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	want := replayKey(t.Context(), ordinary.Content("/repo", map[string]struct{}{"VALUE": {}}, true))
 	for _, tc := range []struct {
@@ -211,8 +214,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
 			prepared, err := kustomize.Prepare(
 				ks,
-				values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads),
-				c.Missing,
+				resolveTestInputs(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads), c.Missing),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{

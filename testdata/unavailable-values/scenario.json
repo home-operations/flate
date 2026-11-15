@@ -190,7 +190,7 @@
             "expect": {
               "stdout": "expect/strict-encryption.stdout",
               "stderr": "expect/strict-encryption-cached.stderr",
-              "code": 1
+              "code": 0
             }
           }
         }
@@ -230,7 +230,7 @@
             "expect": {
               "stdout": "expect/wrong-kind-permission.stdout",
               "stderr": "expect/wrong-kind-permission.stderr",
-              "code": 1
+              "code": 0
             }
           }
         }
@@ -514,7 +514,7 @@
     },
     {
       "name": "requested-key-isolation",
-      "description": "A requested encrypted key retains its exact cause. Other encrypted keys do not enter the consumer warning. Supply resolves only the requested key.",
+      "description": "A satisfied encrypted key is omitted silently. Other encrypted keys do not reach the consumer. Supply resolves only the selected key.",
       "setup": [
         {
           "commit": "base"
@@ -540,9 +540,9 @@
               "2"
             ],
             "expect": {
-              "stdout": "expect/strict-encryption.stdout",
+              "stdout": "expect/produced-strict.stdout",
               "stderr": "expect/strict-encryption.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -700,7 +700,8 @@
     {
       "path": "expect/produced-strict.stdout",
       "cases": [
-        "produced-strict"
+        "produced-strict",
+        "requested-key-isolation"
       ],
       "purpose": "Independently specified complete command output for the named case."
     },

@@ -20,7 +20,10 @@ spec:
         name: app
 ---
 apiVersion: v1
-data: {}
+data:
+  values.yaml: |
+    ZW5hYmxlZDogRU5DW0FFUzI1Nl9HQ00sZGF0YTpZV0pqLGl2OlpHVm0sdGFnOloyaHAsdH
+    lwZTpzdHJdCnNvcHM6CiAgbWFjOiBFTkNbZml4dHVyZV0K
 kind: Secret
 metadata:
   name: settings-8h75cgbfc5

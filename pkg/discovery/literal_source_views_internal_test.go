@@ -13,7 +13,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -252,7 +251,7 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 func (f *literalSourceViewsFixture) publish(t *testing.T, index int) {
 	t.Helper()
 	literal := f.literal(t, index)
-	spec, err := kustomize.Prepare(literal, nil, depwait.NewMissingPolicy(nil))
+	spec, err := kustomize.Prepare(literal, nil)
 	assert.NoError(t, err)
 	docs, receipt, err := kustomize.Render(
 		t.Context(),

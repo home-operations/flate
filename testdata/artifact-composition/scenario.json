@@ -867,7 +867,7 @@
               "name": "default"
             },
             "expect": {
-              "stdout": "expect/sops.stdout",
+              "stdout": "expect/sops-changed.stdout",
               "stderr": "expect/sops.stderr",
               "code": 0
             }
@@ -899,7 +899,7 @@
               "name": "default"
             },
             "expect": {
-              "stdout": "expect/sops.stdout",
+              "stdout": "expect/sops-changed.stdout",
               "stderr": "expect/sops.stderr",
               "code": 0
             }
@@ -2162,6 +2162,11 @@
     }
   ],
   "files": [
+    {
+      "path": "expect/sops-changed.stdout",
+      "cases": ["sops"],
+      "purpose": "Authored ciphertext edit retained in composed source output."
+    },
     {
       "path": "expect/after.stdout",
       "cases": [

@@ -32,6 +32,8 @@ type acquisitionProducer interface {
 	restore(context.Context, *Cache, ocispec.Descriptor, *entry) error
 }
 
+const renderSpoolLimit = 32 << 10
+
 type payload struct {
 	writer    io.Writer
 	disk      *Cache
@@ -126,6 +128,28 @@ type ProducerResult struct {
 }
 
 func (s *payload) Write(data []byte) (int, error) {
+	buffering := s.disk != nil && s.key.render && s.file == nil
+	if buffering && len(data) == 0 {
+		return 0, nil
+	}
+	if buffering && len(data) > renderSpoolLimit-s.memory.Len() {
+		if err := s.stage(); err != nil {
+			return 0, &Error{err}
+		}
+	}
+	if buffering && s.file == nil {
+		buffered := s.memory.Bytes()
+		needed := len(buffered) + len(data)
+		if needed > cap(buffered) {
+			grown := make([]byte, len(buffered), min(renderSpoolLimit, max(needed, cap(buffered)+cap(buffered))))
+			copy(grown, buffered)
+			s.memory = *bytes.NewBuffer(grown)
+		}
+		if s.writer == nil {
+			s.hash = digest.SHA256.Digester()
+			s.writer = io.MultiWriter(&s.memory, s.hash.Hash())
+		}
+	}
 	if s.writer == nil {
 		if err := s.stage(); err != nil {
 			return 0, &Error{err}
@@ -143,8 +167,14 @@ func (s *payload) stage() error {
 		return err //nolint:wrapcheck // payload.stage forwards the staging OpenFile PathError.
 	}
 	s.file, s.name = file, name
-	s.hash = digest.SHA256.Digester()
+	if s.hash == nil {
+		s.hash = digest.SHA256.Digester()
+	}
 	s.writer = io.MultiWriter(file, s.hash.Hash())
+	if _, err := bytes.NewReader(s.memory.Bytes()).WriteTo(file); err != nil {
+		return err //nolint:wrapcheck // payload.stage preserves the buffered prefix writer error.
+	}
+	s.memory = bytes.Buffer{}
 	return nil
 }
 

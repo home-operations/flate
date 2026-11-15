@@ -96,7 +96,7 @@ Readable siblings, missing keys, kind permission, and supplied precedence retain
 | `unavailable-values/missing-key-allowed` | missing key allowed. |
 | `unavailable-values/missing-key-strict` | missing key strict. |
 | `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
-| `unavailable-values/requested-key-isolation` | Strict, permitted, and supplied references preserve the requested encrypted key cause without unrelated keys or excluded object warnings. |
+| `unavailable-values/requested-key-isolation` | Strict and permitted satisfied references omit the encrypted key silently. Supply resolves only the selected key without propagating unrelated encrypted values. |
 
 `component-secret-producer/shared-file-ordered` and `component-secret-producer/shared-file-unordered` model a shared-file parent with and without `dependsOn`.
 A native Component holds an ExternalSecret whose metadata and target names resolve through `${BUCKET}` substitution.
@@ -158,7 +158,7 @@ Two replays compare complete full-selection, changed-only, and diff output with 
   Its undiscovered-child case keeps one listed child and one unlisted declaration.
   Only the listed child renders.
 
-- `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext with complete SOPS AES256_GCM framing, authored and explicit namespaces, and one tracked child render.
+- `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, retained ciphertext with complete SOPS AES256_GCM framing, authored and explicit namespaces, and one tracked child render.
 
 ArtifactGenerator CLI fixtures are created in temporary repositories by
 `test/e2e/artifactgenerator_test.go`. `AllStrategies` combines nested directory
@@ -823,6 +823,7 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 | `substitute-sops/sops-output-mixed` | Required mixed substitution retains readable siblings and all unavailable keys. Empty supplied data removes its key from consumer details. |
 | `substitute-sops/sops-output-diff` | Native changed pairs retain both side warnings. Reversed, normalized, brief, and image-only comparisons use their own output membership. |
 | `substitute-sops/sops-output-shallow` | Shallow history preserves transformed identities and warnings in full and changed-only builds. |
+| `substitute-sops/sops-ciphertext-shallow-history` | Ciphertext-only edits preserve complete full and changed-only output across shallow history and repeated use of an explicit disk cache. |
 | `substitute-sops/sops-output-absent-side` | Added and removed objects expose warnings only on their present comparison side. |
 | `substitute-sops/sops-output-partial-failure` | A selected failure on both sides preserves strict errors and suppression. Healthy output retains its own encrypted warning causes. |
 | `substitute-sops/sops-output-internal-namespace` | ResourceSet namespaces identify raw child output in build and changed comparisons. Producer namespaces, exclusions, and comparison sides remain separate. |
@@ -1737,7 +1738,7 @@ The narrow commands require one successful HelmRelease, its rendered ConfigMap, 
 
 `rendered-declaration-site/witness`, `rendered-declaration-site/control` cover the commands described above.
 
-`declaration-readiness-secret/`, `declaration-readiness-prediction/`, and `declaration-readiness-source/` retains main's data and diagnostic results for prepared and predicted declarations.
+`declaration-readiness-secret/`, `declaration-readiness-prediction/`, and `declaration-readiness-source/` preserve declaration authority and diagnostic scope.
 The secret cases use a synthetic encrypted component under a ResourceSet-emitted Kustomization.
 The prediction cases keep a ResourceSet diagnostic after its native entry fails.
 Both shapes run with and without missing-Secret permission.
@@ -1748,12 +1749,13 @@ Every case compares complete build and test output twice with fresh caches and t
 | Case | Behavior |
 | --- | --- |
 | `declaration-readiness-secret/secret` | Private unreadable Secret blocks its consumer without a warning. |
-| `declaration-readiness-secret/secret-allowed` | Secret permission retains encrypted warnings and rendered output. |
+| `declaration-readiness-secret/secret-allowed` | Matching permission renders the child, and satisfied encrypted input remains silent. |
 | `declaration-readiness-prediction/prediction` | Failed entry retains its predicted ResourceSet blocker. |
 | `declaration-readiness-prediction/prediction-allowed` | Secret permission retains the required ConfigMap blocker. |
 | `declaration-readiness-source/source` | Blocked source retains its diagnostic row without child output. |
 
 `declaration-readiness-secret/secret-supplied` retains encrypted input authority from an explicit supply.
+Its satisfied reference emits no warning.
 
 `declaration-readiness-frontier/` limits diagnostic membership at blocked publication boundaries.
 The emitted case excludes children of an unpublished Kustomization.
@@ -1796,8 +1798,9 @@ The expectations follow authored documents, Flux labels, origin annotations, and
 No script accepts actual output as an expectation.
 
 The SOPS fixture contains inert encrypted text without a key or usable secret.
-It requires one `SOPSUnreadable` warning with the Secret identity and `VALUE` detail path.
-Its variants retain missing Secret failure, Secret allowance, input-only changes, and a control without includes.
+It preserves ciphertext in the printed Secret and projects `VALUE` as empty without a reference warning.
+Both required and permitted consumers render when the declaration exists.
+Its variants retain ciphertext-only changes and failure when the include supplies no declaration.
 The separate directory case rejects placement into the existing nonempty component directory.
 
 The diff cases cover both `--base` and `--path-orig`.
@@ -1806,3 +1809,12 @@ Other cases cover filtered input, an edit outside the copied path, remote branch
 A separate consumer exposes accidental execution or output selection.
 SDK tests assert admission, execution membership, completed coordinates, and unchanged original files and modes.
 Persistent history is unnecessary for these cold CLI cases.
+
+The encrypted-input expectations retain authored ciphertext and omit the removed encrypted-input warning.
+The `substitute-sops` cases compare both raw ciphertext diff directions and preserve the consumer projection as empty.
+The strict known-key case now succeeds because a known unreadable variable is defined as empty.
+The `artifact-composition` case uses `sops-changed.stdout` after its authored ciphertext edit.
+These expectations are authored source changes, independent of actual test output.
+
+The normalization-only ciphertext diff uses a separate complete expectation.
+Image and kind filters retain empty output.

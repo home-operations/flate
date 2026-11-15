@@ -31,7 +31,12 @@ func BenchmarkSubstituteDoc(b *testing.B) {
 			for b.Loop() {
 				data, err := values.SubstitutionDocument(manifest.DocOccurrence{Document: doc}, true)
 				input := substitutionDocument{data: data, err: err}
-				if _, err := input.apply(doc, vars, false, nil); err != nil {
+				if _, err := input.apply(
+					&manifest.DocOccurrence{Document: doc},
+					vars,
+					ShapeOptions{},
+					nil,
+				); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -122,7 +122,7 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 		stdout, stderr, code := result3.stdout, result3.stderr, result3.code
 		assert.FatalIf(
 			t,
-			code != 0 || !strings.Contains(stdout, "stringData: {}") || !strings.Contains(stderr, "[SOPSUnreadable]") ||
+			code != 0 || !strings.Contains(stdout, "ENC[AES256_GCM,") || strings.Contains(stderr, "encrypted") ||
 				strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY"),
 			"supplied build: exit=%d stdout=%s stderr=%s",
 			code,

@@ -131,12 +131,10 @@ func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.En
 	payload := selectedPayload{
 		warnings: make([][]manifest.Warning, len(groups)),
 		subjects: make([][]manifest.NamedResource, len(groups)),
-		output:   make([][2][]manifest.NamedResource, len(groups)),
 	}
 	for i, result := range comparison.Groups {
 		payload.warnings[i] = diff.MergeWarnings(result.Warnings, result.Suppressed)
 		payload.subjects[i] = result.Subjects
-		payload.output[i] = result.Output
 	}
 	var names []diff.Names
 	payload.prepare = func(resolved []diff.Names) { names = resolved }
@@ -514,25 +512,18 @@ func (c *clusterInputCommand) payload(
 		}
 		payload = resourcePayload(inv, sections, encoder, c.kind == "all")
 	case "build":
-		payload.output = make([][2][]manifest.NamedResource, len(inv.groups))
 		groups := make([]output.DocumentGroup, len(inv.groups))
 		for i, group := range inv.groups {
 			groups[i].Cluster = group.cluster
 			var err error
-			groups[i].Documents, payload.output[i][0], err = collectRendered(group.sides[0], &buildFlags{})
+			groups[i].Documents, err = collectRendered(group.sides[0], &buildFlags{})
 			payload.err = errors.Join(payload.err, err)
 		}
 		payload.write = func() error { return encoder.DocumentGroups(groups) }
 	case "test":
-		payload.output = make([][2][]manifest.NamedResource, len(inv.groups))
-		for i, group := range inv.groups {
+		for _, group := range inv.groups {
 			roster := testrunner.Run(group.sides[0])
 			payload.rosters = append(payload.rosters, roster)
-			for _, cases := range [2][]output.Case{roster.Cases, roster.Blocked} {
-				for _, test := range cases {
-					payload.output[i][0] = append(payload.output[i][0], test.ID)
-				}
-			}
 		}
 	case "diff":
 		payload = clusterDiffPayload(t, inv, encoder)
@@ -564,7 +555,6 @@ func TestClusterPayload_BatchIdentityErrors(t *testing.T) {
 			output.Encoder{Writer: &stdout, Format: output.FormatJSON},
 		)
 		assert.Equal(t, errors.Is(payload.err, manifest.ErrInput), true)
-		assert.Diff(t, payload.output, [][2][]manifest.NamedResource{{{id}, nil}, {nil, nil}, {{id}, nil}})
 		err := finishSelected(&selectedRequest{stdout: &stdout, stderr: &stderr}, inv, &payload)
 		assert.Equal(t, errors.Is(err, payload.err), true)
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)

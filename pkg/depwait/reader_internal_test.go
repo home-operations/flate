@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type structuralState struct{ stateReader }
@@ -111,10 +112,10 @@ func TestAvailable_StructuralReaderUnsettledProducers(t *testing.T) {
 			if level < manifest.DrainForce {
 				assert.Equal(t, got.Kind, schedule.Blocked)
 				assert.Diff(t, got.Blocked, []manifest.NamedResource{producer.Named()})
-				assert.Equal(t, got.Omit, false)
+				assert.Equal(t, got.Result.Effect() == values.Omitted, false)
 			} else {
 				assert.Equal(t, got.Kind, schedule.Terminal)
-				assert.Equal(t, got.Omit, true)
+				assert.Equal(t, got.Result.Effect() == values.Omitted, true)
 			}
 		})
 	}
@@ -133,5 +134,5 @@ func TestAvailable_StructuralReaderPreflightPrecedesOmission(t *testing.T) {
 		Kind: manifest.KindSecret, Namespace: "apps", Name: "absent", Use: "valuesFrom", Optional: true,
 	}, manifest.DrainNone)
 	assert.Equal(t, errors.Is(got.Err, manifest.ErrInput), true)
-	assert.Equal(t, got.Omit, false)
+	assert.Equal(t, got.Result.Effect() == values.Omitted, false)
 }

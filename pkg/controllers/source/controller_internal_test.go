@@ -23,6 +23,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -49,7 +50,10 @@ func (f *fakeFetcher) Fetch(
 	policy *sourcecache.Policy,
 ) (src.PreparedFetch, error) {
 	if f.secret != "" {
-		src.SecretLookup(reads)(obj.Named().Namespace, f.secret)
+		input := src.SecretLookup(reads)(obj.Named().Namespace, f.secret)
+		if missing, ok := errors.AsType[*src.MissingSecretError](f.err); ok {
+			missing.Input.Facts = input
+		}
 	}
 	return src.PreparedFetch{
 		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
@@ -844,4 +848,12 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 		info,
 		f.calls,
 	)
+}
+
+func sourceMissingPolicy(allow bool) *depwait.MissingPolicy {
+	var kinds []string
+	if allow {
+		kinds = []string{manifest.KindSecret}
+	}
+	return depwait.NewMissingPolicy(kinds)
 }

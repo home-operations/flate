@@ -329,6 +329,17 @@
       "email": "fixture@example.test",
       "time": "2000-01-01T00:00:00Z",
       "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "output-scope-shallow-ciphertext",
+      "overlay": "output-scope-shallow-ciphertext",
+      "parents": [
+        "output-scope-shallow"
+      ],
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:02Z"
     }
   ],
   "overlays": [
@@ -628,6 +639,10 @@
     {
       "name": "output-emitted-explicit",
       "directory": "overlays/output-emitted-explicit"
+    },
+    {
+      "name": "output-scope-shallow-ciphertext",
+      "directory": "overlays/output-scope-shallow-ciphertext"
     }
   ],
   "inputs": "inputs",
@@ -1174,7 +1189,7 @@
             "expect": {
               "stdout": "expect/sops-unreadable-empty-variable-set-strict-active-0.stdout",
               "stderr": "expect/sops-unreadable-empty-variable-set-strict-active-0.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -1204,7 +1219,7 @@
             "expect": {
               "stdout": "expect/sops-unreadable-empty-variable-set-strict-active-0.stdout",
               "stderr": "expect/sops-unreadable-empty-variable-set-strict-active-0.stderr",
-              "code": 1
+              "code": 0
             }
           }
         }
@@ -1477,7 +1492,7 @@
     },
     {
       "name": "sops-unreadable-diff-both-directions-ciphertext",
-      "description": "Preserve TestE2E_SOPSUnreadableDiffBothDirections/ciphertext and its ordered edits.",
+      "description": "Ciphertext-only changes remain visible on both snapshots through cold and accepted render histories.",
       "setup": [
         {
           "commit": "sops-unreadable-diff-both-directions-ciphertext-repo-base"
@@ -1536,9 +1551,65 @@
           }
         },
         {
+          "id": "accepted-before-edit",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
           "id": "edit-1",
           "edit": {
             "overlay": "edit-sops-unreadable-diff-both-directions-ciphertext-1"
+          }
+        },
+        {
+          "id": "accepted-after-edit",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stderr",
+              "code": 0
+            }
           }
         },
         {
@@ -1561,6 +1632,34 @@
             "env": {},
             "cache": {
               "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "accepted-replay",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": false
             },
             "expect": {
               "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stdout",
@@ -2325,7 +2424,7 @@
               "reset": true
             },
             "expect": {
-              "stdout": "expect/output-empty.stdout",
+              "stdout": "expect/output-ciphertext-diff.stdout",
               "stderr": "expect/output-empty.stderr",
               "code": 0
             }
@@ -2740,6 +2839,148 @@
           }
         }
       ]
+    },
+    {
+      "name": "sops-ciphertext-shallow-history",
+      "description": "A ciphertext-only edit crosses shallow history in full and changed-only builds with one explicit disk cache.",
+      "setup": [
+        {
+          "commit": "output-scope-shallow-ciphertext"
+        },
+        {
+          "shallow": "output-scope-shallow-ciphertext"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "before-input",
+          "edit": {
+            "overlay": "output-scope-shallow"
+          }
+        },
+        {
+          "id": "prime-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/output-shallow.stdout",
+              "stderr": "expect/ciphertext-shallow-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "after-input",
+          "edit": {
+            "overlay": "output-scope-shallow-ciphertext"
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/ciphertext-shallow-after.stdout",
+              "stderr": "expect/ciphertext-shallow-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "@@commit:output-scope-shallow@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/ciphertext-shallow-after.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "accepted-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "alpha",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/scope/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "@@commit:output-scope-shallow@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/ciphertext-shallow-after.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -2834,7 +3075,8 @@
     {
       "path": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
       "cases": [
-        "sops-unreadable-diff-both-directions-ciphertext"
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-ciphertext-shallow-history"
       ],
       "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
     },
@@ -4280,7 +4522,8 @@
     {
       "path": "overlays/output-scope-shallow/repo/scope/alpha/cm.yaml",
       "cases": [
-        "sops-output-shallow"
+        "sops-output-shallow",
+        "sops-ciphertext-shallow-history"
       ],
       "purpose": "Authored history or side-membership control."
     },
@@ -4294,7 +4537,8 @@
     {
       "path": "expect/output-shallow.stdout",
       "cases": [
-        "sops-output-shallow"
+        "sops-output-shallow",
+        "sops-ciphertext-shallow-history"
       ],
       "purpose": "Authored history or absent-side output proof."
     },
@@ -4550,6 +4794,34 @@
         "sops-unreadable-diff-both-directions-metadata"
       ],
       "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
+    },
+    {
+      "path": "overlays/output-scope-shallow-ciphertext/repo/scope/alpha/cm.yaml",
+      "cases": [
+        "sops-ciphertext-shallow-history"
+      ],
+      "purpose": "Independently authored ciphertext-only shallow-history and cache evidence."
+    },
+    {
+      "path": "expect/ciphertext-shallow-after.stdout",
+      "cases": [
+        "sops-ciphertext-shallow-history"
+      ],
+      "purpose": "Independently authored ciphertext-only shallow-history and cache evidence."
+    },
+    {
+      "path": "expect/ciphertext-shallow-full.stderr",
+      "cases": [
+        "sops-ciphertext-shallow-history"
+      ],
+      "purpose": "Independently authored ciphertext-only shallow-history and cache evidence."
+    },
+    {
+      "path": "expect/output-ciphertext-diff.stdout",
+      "cases": [
+        "sops-output-diff"
+      ],
+      "purpose": "Independently authored raw ciphertext difference after metadata normalization."
     }
   ]
 }

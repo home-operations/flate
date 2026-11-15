@@ -77,7 +77,23 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			wantText:    ".dockerconfigjson",
 			wantMissing: true,
 		},
-		{name: "unwired getter", secret: "creds", unwired: true, wantText: "source.SecretGetter"},
+		{
+			name:        "unwired getter",
+			secret:      "creds",
+			unwired:     true,
+			wantMissing: true,
+			wantOwner:   true,
+			wantText:    "secret ns/creds not found",
+		},
+		{name: "unwired cert", secret: "tls", cert: true, unwired: true, wantMissing: true, wantOwner: true},
+		{name: "unwired proxy", secret: "proxy", proxy: true, unwired: true, wantMissing: true, wantOwner: true},
+		{
+			name:        "encrypted Docker JSON",
+			secret:      "auth",
+			material:    map[string]any{dockerConfigJSONKey: "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"},
+			wantMissing: true,
+			wantText:    "unreadable",
+		},
 		{name: "missing auth secret", secret: "missing", wantText: "secret ns/missing not found", wantMissing: true},
 	}
 	testFetcherSecretReferencesTail(t, &testFetcherSecretReferencesTailInputs{tests: &tests})
@@ -335,8 +351,8 @@ func TestAcquirePrepared_AnonymousDenial(t *testing.T) {
 			cause := fmt.Errorf("registry acquisition: %w", tc.cause)
 			calls := 0
 			op := &operation{
-				Fetcher:              &Fetcher{Network: newTestNetwork(t)},
-				allowAnonymousDenied: true,
+				Fetcher: &Fetcher{Network: newTestNetwork(t)},
+
 				produce: func(context.Context, registryAcquisition, *sourcecache.Policy) (*store.SourceArtifact, error) {
 					calls++
 					return nil, cause
@@ -606,7 +622,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if _, err := fetchtest.Machine(ctx, missing, nil); !errors.Is(err, context.Canceled) {
+			if _, err := fetchtest.Machine(ctx, missing); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled continuation ran preparation: %v", err)
 			}
 		})

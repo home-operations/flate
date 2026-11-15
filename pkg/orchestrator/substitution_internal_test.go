@@ -140,7 +140,6 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	assert.Equal(t, cm.Data["A"], any(cipher))
 	assert.Equal(t, source.Doc["data"].(map[string]any)["Z"], any(cipher))
 	assert.Equal(t, secret.Data["SECRET"], any(cipher))
-	secretChild.Warnings[0].Detail[0] = "caller-change"
 	customDoc["spec"].(map[string]any)["payload"].(map[string]any)["value"] = "changed"
 	customDoc["extra"].(map[string]any)["retained"] = false
 	id := manifest.NamedResource{Group: "example.io", Kind: "Widget", Namespace: "apps", Name: "custom"}
@@ -171,7 +170,8 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 		result4, err := facts.Data.Value(key)
 		present := result4.Found
 		assert.NoError(t, err)
-		assert.Equal(t, present, false)
+		assert.Equal(t, present, true)
+		assert.Equal(t, result4.Encrypted, true)
 	}
 	secretFacts := o.store.ReferenceFacts(secret.Named(), nil, manifest.NamedResource{})
 	for _, key := range []string{"ENCODED", "VALUE"} {
@@ -183,23 +183,15 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	result1, err := secretFacts.Data.Value("SECRET")
 	present := result1.Found
 	assert.NoError(t, err)
-	assert.Equal(t, present, false)
+	assert.Equal(t, present, true)
+	assert.Equal(t, result1.Encrypted, true)
 	result2, err := secretFacts.Data.Value("EMPTY")
 	empty, present := result2.Value, result2.Found
 	assert.NoError(t, err)
 	assert.Equal(t, present, true)
 	assert.Equal(t, empty, "")
 	warnings := o.store.Warnings()
-	assert.Equal(t, len(warnings), 2)
-	for _, warning := range warnings {
-		assert.Equal(t, warning.Category, manifest.WarnSOPSUnreadable)
-		assert.Equal(t, warning.Count, 1)
-		want := []string{"SECRET"}
-		if warning.Resource.Kind == manifest.KindConfigMap {
-			want = []string{"A", "Z"}
-		}
-		assert.Diff(t, warning.Detail, want)
-	}
+	assert.Equal(t, len(warnings), 0)
 	prepared := o.cfg
 	assert.NoError(t, snapshotSubstitutions(&prepared.Config))
 	repeated := store.New()
@@ -208,11 +200,11 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	}
 	assert.Diff(t, repeated.Warnings(), warnings)
 	assert.Diff(t, o.cfg.AllowMissingKinds, []string{manifest.KindSecret})
-	assert.Equal(t, o.cfg.allowMissingSecrets, true)
+	assert.Equal(t, o.cfg.missing.AllowsKind(manifest.KindSecret), true)
 	assert.Equal(t, o.loader.Options.Missing == o.cfg.missing, true)
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
 	assert.Equal(t, plain.cfg.missing != nil, true)
-	assert.Equal(t, plain.cfg.allowMissingSecrets, false)
+	assert.Equal(t, plain.cfg.missing.AllowsKind(manifest.KindSecret), false)
 	assert.FatalIf(
 		t,
 		plain.cfg.AllowMissingKinds != nil || plain.cfg.Supply != nil,

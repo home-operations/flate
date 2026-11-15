@@ -47,18 +47,20 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 				want = ""
 			}
 			assert.Equal(t, record.Declared, want)
+			position := 0
 			assert.NoError(t,
 				(&documentReader{compact: true}).prepareStream(strings.NewReader(body),
 					manifest.ParseDocOptions{},
 					func(object parsedObject) {
 						assert.NoError(t, object.outcome.Err)
-						assert.Equal(
-							t,
-							object.Doc["data"].(map[string]any)["KEY"],
-							any(nil),
-						)
+						expected := "ENC[AES256_GCM,data:original,iv:iv,tag:tag,type:str]"
+						if conflict && position == 1 {
+							expected = "ENC[AES256_GCM,data:different,iv:iv,tag:tag,type:str]"
+						}
+						assert.Equal(t, object.Doc["data"].(map[string]any)["KEY"], any(expected))
+						position++
 						assert.FatalIf(t, object.declared == "" ||
-							object.declared == manifest.Fingerprint(
+							object.declared != manifest.Fingerprint(
 								manifest.WithoutOwnershipLabels(object.Doc),
 							), "%s", "preparation lost the original declaration fingerprint")
 					}))

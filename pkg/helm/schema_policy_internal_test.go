@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -96,6 +97,8 @@ func testTemplateActionSchemaPolicyCase1(t *testing.T, tc *struct {
 			continue
 		}
 		assert.FatalIf(t, err == nil, "%s", "invalid schema accepted after warmed skipped render")
+		_, rendering := errors.AsType[*RenderError](err)
+		assert.Equal(t, rendering, true)
 
 		if tc.absent {
 			assert.FatalIf(t, !strings.Contains(err.Error(), "name"), "%s", err)

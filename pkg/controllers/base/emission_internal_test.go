@@ -65,9 +65,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 		assert.FatalIf(t, len(children) != 2 || len(docs) != 2,
 			"parse: children=%d docs=%d", len(children), len(docs))
 
-		if _, present := docs[0].Document["stringData"].(map[string]any)["X"]; present {
-			t.Fatal("encrypted key retained")
-		}
+		assert.Diff(t, docs[0].Document["stringData"], doc["stringData"])
 
 		assert.Diff(t, docs[1].Document, invalid)
 		assert.Diff(t, children[1].Doc, skipped)

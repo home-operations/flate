@@ -22,7 +22,7 @@ stringData:
   apiKey: real-key
   enc-key: ` + sops + `
 `
-	t.Run("unreadable absent, plaintext preserved", func(t *testing.T) {
+	t.Run("ciphertext retained, plaintext preserved", func(t *testing.T) {
 		t.Parallel()
 		result1, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{DefaultNamespace: ""})
 		sobj := result1.Object
@@ -36,12 +36,8 @@ stringData:
 		assert.ErrorIf(t, s.StringData["apiKey"] != "real-key",
 			"plaintext .stringData removed: %v", s.StringData["apiKey"])
 
-		if _, present := s.Data["enc-blob"]; present {
-			t.Errorf("SOPS .data not removed: %v", s.Data["enc-blob"])
-		}
-		if _, present := s.StringData["enc-key"]; present {
-			t.Errorf("SOPS .stringData not removed: %v", s.StringData["enc-key"])
-		}
+		assert.Equal(t, s.Data["enc-blob"], any(sops))
+		assert.Equal(t, s.StringData["enc-key"], any(sops))
 	})
 
 	t.Run("base64-embedded YAML preserved", func(t *testing.T) {

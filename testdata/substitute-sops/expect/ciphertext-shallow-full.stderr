@@ -1,0 +1,5 @@
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [ConflictingProducers] ConfigMap apps/live-config: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/apps/beta
+      Kustomization.kustomize.toolkit.fluxcd.io/apps/alpha, Kustomization.kustomize.toolkit.fluxcd.io/apps/beta

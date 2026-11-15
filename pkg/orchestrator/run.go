@@ -425,10 +425,9 @@ func (o *Orchestrator) configureSources(construction bool) {
 	}
 	o.src.Configure(
 		sourcectrl.FetchOptions{
-			Session:             session,
-			Loader:              configuredLoader,
-			AllowMissingSecrets: o.cfg.allowMissingSecrets,
-			Admission:           o.admission,
+			Session:   session,
+			Loader:    configuredLoader,
+			Admission: o.admission,
 		},
 		o.cfg.SourceRetry,
 	)

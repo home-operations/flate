@@ -19,19 +19,25 @@ func ResolveStaticValue(
 	}
 	unknownInputs := false
 	var inline map[string]string
+	var inputs []Result
 	if parent.PostBuild != nil {
 		inline = parent.PostBuild.Substitute
-		for _, ref := range parent.PostBuild.SubstituteFrom {
-			id := manifest.NamedResource{Kind: ref.Kind, Namespace: parent.Namespace, Name: ref.Name}
-			result, err := Classify(
-				new(manifest.Reference{NamedResource: id, Use: substitutionUse}),
-				new(provider.Lookup(id)),
+		for ref := range manifest.References(parent, manifest.ReferenceRelations) {
+			if ref.Use != substitutionUse {
+				continue
+			}
+			result := Resolve(
+				&ResolveRequest{Reference: ref, Facts: provider.Lookup(ref.NamedResource), Permission: missing},
 			)
-			unknownInputs = unknownInputs || err != nil || result.State() != Readable
+			unknownInputs = unknownInputs || !result.StaticCertain()
+			inputs = append(inputs, result)
 		}
 	}
-	if err := ExpandPostBuildSubstituteReference(parent, provider, missing); err != nil {
-		return value, false
+	if err := ExpandPostBuildSubstituteReference(parent, inputs); err != nil {
+		if parent.PostBuild != nil {
+			parent.PostBuild.Substitute = inline
+		}
+		unknownInputs = true
 	}
 	var variables map[string]string
 	if parent.PostBuild != nil {

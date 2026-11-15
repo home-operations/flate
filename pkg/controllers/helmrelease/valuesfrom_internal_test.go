@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -24,6 +23,41 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+func TestController_ValuesFromExternalSecretMerge(t *testing.T) {
+	t.Parallel()
+	c, st := newTestControllerWithOptions(t, &base.Options{})
+	publishRawFixture(t, c, &manifest.RawObject{
+		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
+		Name: "app-creds", Namespace: "default",
+		Spec: map[string]any{
+			"target": map[string]any{
+				"name": "app-values",
+				"template": map[string]any{
+					"mergePolicy": "Merge",
+					"data":        map[string]any{"rendered.yaml": "{{ .values }}"},
+				},
+			},
+			"data": []any{map[string]any{"secretKey": "values.yaml"}},
+		},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "app", Namespace: "default",
+		ValuesFrom: []manifest.ValuesReference{{
+			Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "values.yaml",
+		}},
+	}
+	provider := values.NewStoreProvider(st)
+	inputs := resolveTestInputs(hr, provider, c.Missing)
+	assert.Equal(t, len(inputs), 1)
+	input := &inputs[0]
+	assert.NoError(t, input.Err())
+	assert.Equal(t, input.Effect(), values.Omitted)
+	facts := provider.Lookup(input.ID())
+	assert.Equal(t, facts.Generated, true)
+	assert.Equal(t, slices.Contains(facts.Keys.Names, "values.yaml"), true)
+	assert.Equal(t, facts.Keys.Complete, true)
+}
+
 func TestController_OmittedValuesAfterWait(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -36,17 +70,16 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		duplicate    bool
 		fail         bool
 		wantGreeting string
-		wantWarnings int
 	}{
-		{name: "values wait, still missing", waitValues: true, wantGreeting: "fallback", wantWarnings: 1},
+		{name: "values wait, still missing", waitValues: true, wantGreeting: "fallback"},
 		{name: "values wait, materialized", waitValues: true, materialized: true, wantGreeting: "supplied"},
-		{name: "chart wait, still missing", wantGreeting: "fallback", wantWarnings: 1},
+		{name: "chart wait, still missing", wantGreeting: "fallback"},
 		{name: "chart wait, materialized", materialized: true, wantGreeting: "supplied"},
-		{name: "chart failed", fail: true, wantWarnings: 1},
-		{name: "optional unreadable values file", unreadable: true, wantGreeting: "fallback", wantWarnings: 1},
-		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
-		{name: "mixed encrypted and readable duplicate positions", unreadable: true, mixed: true, wantGreeting: "readable", wantWarnings: 2},
-		{name: "optional absent values", optional: true, wantGreeting: "fallback", wantWarnings: 0},
+		{name: "chart failed", fail: true},
+		{name: "optional unreadable values file", unreadable: true, wantGreeting: "fallback"},
+		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback"},
+		{name: "mixed encrypted and readable duplicate positions", unreadable: true, mixed: true, wantGreeting: "readable"},
+		{name: "optional absent values", optional: true, wantGreeting: "fallback"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -67,7 +100,6 @@ func testControllerOmittedValuesAfterWaitCase1(t *testing.T, tc *struct {
 	duplicate    bool
 	fail         bool
 	wantGreeting string
-	wantWarnings int
 },
 ) {
 	t.Helper()
@@ -96,7 +128,10 @@ data:
 	publishRawFixture(t, c, &manifest.RawObject{
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
 		Name: "app-creds", Namespace: "default",
-		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
+		Spec: map[string]any{
+			"target":   map[string]any{"name": "app-values"},
+			"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "input"}}},
+		},
 	})
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
@@ -180,7 +215,7 @@ data:
 	}
 	st.UpdateStatus(src.Named(), store.StatusInfo{Status: status, Reason: "", Message: "chart source"})
 	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, status)
-	assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
+	assert.Equal(t, len(st.Warnings()), 0)
 	if tc.mixed {
 		assert.Equal(t, len(hr.ValuesFrom), 4)
 		var omissions []manifest.Warning
@@ -191,19 +226,7 @@ data:
 				omissions = append(omissions, *warning)
 			}
 		}
-		assert.FatalIf(t, len(omissions) != 1, "omissions=%+v", omissions)
-		assert.Equal(t, strings.Contains(omissions[0].Message, `key "values.yaml"`), true)
-		assert.Equal(
-			t,
-			omissions[0].Message,
-			`required valuesFrom Secret/default/app-values omitted from offline render: key "values.yaml" is SOPS-encrypted and unreadable; supply it with --supply`,
-		)
-		assert.Equal(t, len(omissions[0].Detail), 0)
-		assert.Diff(
-			t,
-			omissions[0].Related,
-			[]manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}},
-		)
+		assert.Diff(t, omissions, []manifest.Warning(nil))
 	}
 	for valueIndex := range st.Warnings() {
 		warning := st.Warnings()[valueIndex]
@@ -343,13 +366,11 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	omitted := []depwait.DataDependency{
-		{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "optional", Use: "valuesFrom", Optional: true},
-	}
+	inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
 	seed, err := helm.Prepare(
-		omitValues(hr, omitted),
+		hr,
 		helm.NewSources(st).Declaration,
-		values.NewStoreProvider(st),
+		inputs,
 		c.Helm.ValuesCache(),
 	)
 	assert.NoError(t, err)
@@ -360,7 +381,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 			seed.Values,
 			helm.RenderOptions{
 				Sources: helm.NewSources(st),
-				Omitted: omissionIDs(requiredValuesOmissions(omitted)),
+				Omitted: values.OmittedIDs(inputs),
 			},
 		),
 	)
@@ -528,11 +549,11 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				},
 			}
 			st.AddObject(hr)
-			omitted := []depwait.DataDependency{{Kind: kind, Namespace: "apps", Name: "missing", Use: "valuesFrom"}}
+			inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
 			seed, err := helm.Prepare(
-				omitValues(hr, omitted),
+				hr,
 				helm.NewSources(st).Declaration,
-				values.NewStoreProvider(st),
+				inputs,
 				c.Helm.ValuesCache(),
 			)
 			assert.NoError(t, err)
@@ -542,7 +563,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				seed.Values,
 				helm.RenderOptions{
 					Sources: helm.NewSources(st),
-					Omitted: omissionIDs(requiredValuesOmissions(omitted)),
+					Omitted: values.OmittedIDs(inputs),
 				},
 			)
 			assert.NoError(t, err)
@@ -632,7 +653,10 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 			Kind:       "ExternalSecret",
 			Namespace:  "apps",
 			Name:       "declaration",
-			Spec:       map[string]any{"target": map[string]any{"name": "values"}},
+			Spec: map[string]any{
+				"target":   map[string]any{"name": "values"},
+				"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "input"}}},
+			},
 		},
 	)
 	if (*testCaseInput.materializer) == "actual" {
@@ -664,10 +688,13 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 	}
 	result := w.Available(
 		t.Context(),
-		depwait.DataDependency{NamedResource: target, Input: input},
+		depwait.DataDependency{
+			NamedResource: target, Key: "values.yaml", Use: "valuesFrom",
+			Input: input,
+		},
 		manifest.DrainNone,
 	)
-	hasProducer, omit := input.Generated, result.Omit
+	hasProducer, omit := input.Generated, result.Result.Effect() == values.Omitted
 
 	assert.FatalIf(
 		t,

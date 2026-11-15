@@ -134,6 +134,8 @@ func (s *Store) getEmission(
 // ReferenceFacts MUST retain selected warnings and the original data before supply.
 type ReferenceFacts struct {
 	Data, Original              manifest.Data
+	Declared                    bool
+	Keys                        manifest.KeySet
 	Warnings                    []manifest.Warning
 	Materializers               []manifest.NamedResource
 	Generated, Offline, Private bool
@@ -201,28 +203,14 @@ func (s *Store) referenceData(
 	}
 	records := referenceRecords(index, id)
 	var out []manifest.ReferenceData
-	add := func(candidate manifest.ReferenceData) {
-		candidate = s.declaredReferenceData(id, reads, new(candidate))
-		if len(candidate.DeclaredKeys) != 0 || candidate.OfflineData != nil {
-			if object, ok := candidate.OfflineData.(manifest.BaseManifest); ok &&
-				object.Named().Namespace != id.Namespace {
-				//nolint:errcheck // Namespace projection retains the source Data implementation and its assertion contract.
-				candidate.OfflineData = object.WithNamespace(id.Namespace).(manifest.Data)
-			}
-			out = append(out, candidate)
-		}
-	}
 	for _, candidates := range records {
-		{
-			candidateValues := candidates
-			for candidateIndex := range candidateValues {
-				candidate := candidateValues[candidateIndex]
-				if !slices.Contains(productions, candidate.Production) {
-					continue
-				}
-
-				candidate = s.sourceQualifiedReferenceData(reads, new(candidate))
-				add(candidate)
+		for i := range candidates {
+			candidate := &candidates[i]
+			if !slices.Contains(productions, candidate.Production) {
+				continue
+			}
+			if projected, valid := s.recordReferenceData(id, reads, candidate); valid {
+				out = append(out, projected)
 			}
 		}
 	}
@@ -235,10 +223,43 @@ func (s *Store) referenceData(
 				slices.ContainsFunc(records[1], func(c manifest.ReferenceData) bool { return c.Production == p }) {
 				continue
 			}
-			add(manifest.ReferenceData{Production: p})
+			if candidate, valid := s.projectReferenceData(id, reads, &manifest.ReferenceData{Production: p}); valid {
+				out = append(out, candidate)
+			}
 		}
 	}
 	return out
+}
+
+func (s *Store) recordReferenceData(
+	id manifest.NamedResource,
+	reads *ReadSet,
+	value *manifest.ReferenceData,
+) (manifest.ReferenceData, bool) {
+	candidate, valid := s.sourceQualifiedReferenceData(reads, value)
+	if !valid {
+		if candidate.Production.Declaration == (manifest.NamedResource{}) {
+			return candidate, false
+		}
+		candidate.Keys, candidate.OfflineData = manifest.KeySet{}, nil
+	}
+	return s.projectReferenceData(id, reads, &candidate)
+}
+
+func (s *Store) projectReferenceData(
+	id manifest.NamedResource,
+	reads *ReadSet,
+	value *manifest.ReferenceData,
+) (manifest.ReferenceData, bool) {
+	candidate, valid := s.declaredReferenceData(id, reads, value)
+	if !valid {
+		return candidate, false
+	}
+	if object, ok := candidate.OfflineData.(manifest.BaseManifest); ok && object.Named().Namespace != id.Namespace {
+		//nolint:errcheck // Namespace projection retains the source Data implementation and its assertion contract.
+		candidate.OfflineData = object.WithNamespace(id.Namespace).(manifest.Data)
+	}
+	return candidate, true
 }
 
 // RenderedParent returns the smallest eligible accepted or discovered rendered owner.
@@ -706,29 +727,29 @@ func (s *Store) declaredReferenceData(
 	id manifest.NamedResource,
 	reads *ReadSet,
 	candidateValue *manifest.ReferenceData,
-) manifest.ReferenceData {
+) (manifest.ReferenceData, bool) {
 	candidate := *candidateValue
 	p := candidate.Production
 	if p.Declaration == (manifest.NamedResource{}) {
-		return candidate
+		return candidate, true
 	}
 	view := s.captureReferenceDeclaration(reads, new(p))
 	object := view.child.Obj
 	if object == nil {
-		return candidate
+		return candidate, true
 	}
-	candidate.DeclaredKeys = nil
+	candidate.Keys = manifest.KeySet{}
 	binding := view.source
 	if (view.owner == nil || view.owner.id == p.Owner) &&
 		(p.Source == (manifest.NamedResource{}) || binding.source == (manifest.NamedResource{}) || p.Source == binding.source) {
 		for _, target := range manifest.ProducerTargets(object, id) {
 			if target.NamedResource == id {
-				candidate.DeclaredKeys = target.DeclaredKeys
-				break
+				candidate.Keys = target.Keys
+				return candidate, true
 			}
 		}
 	}
-	return candidate
+	return candidate, false
 }
 
 func (s *Store) captureReferenceDeclaration(reads *ReadSet, pValue *manifest.Production) capture {
@@ -749,7 +770,7 @@ func (s *Store) captureReferenceDeclaration(reads *ReadSet, pValue *manifest.Pro
 func (s *Store) sourceQualifiedReferenceData(
 	reads *ReadSet,
 	candidateValue *manifest.ReferenceData,
-) manifest.ReferenceData {
+) (manifest.ReferenceData, bool) {
 	candidate := *candidateValue
 	getArtifact := s.GetArtifact
 	if reads != nil {
@@ -761,10 +782,10 @@ func (s *Store) sourceQualifiedReferenceData(
 		artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
 		binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
 		if !c.binding.equal(&binding) {
-			candidate.DeclaredKeys, candidate.OfflineData = nil, nil
+			return candidate, false
 		}
 	}
-	return candidate
+	return candidate, true
 }
 
 func referenceRecords(index *manifest.DiscoveryIndex, id manifest.NamedResource) [2][]manifest.ReferenceData {

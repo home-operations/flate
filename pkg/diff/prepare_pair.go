@@ -10,7 +10,6 @@ import (
 type pair struct {
 	Parent             Parent
 	Resource           manifest.NamedResource
-	Output             [2]manifest.NamedResource
 	APIVersion         string
 	OldPos, NewPos     int
 	Old, New           map[string]any
@@ -47,10 +46,6 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		p := &entries[entry]
 		p.Parent = d.Parent
 		p.APIVersion = apiVersion
-		p.Output[sideIndex] = resource
-		if opts.identities[sideIndex] != nil {
-			p.Output[sideIndex] = opts.identities[sideIndex][pos]
-		}
 		dst, dstChart, dstPos := &p.Old, &p.OldChart, &p.OldPos
 		if side == SideCurrent {
 			dst, dstChart, dstPos = &p.New, &p.NewChart, &p.NewPos

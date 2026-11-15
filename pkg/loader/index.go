@@ -475,20 +475,30 @@ func (l *Loader) markCompleteSources() {
 }
 
 func (l *Loader) indexRecordInputs() {
+	var currentReader *manifest.NamedResource
+	var recordInput func(manifest.Reference) bool
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for id, record := range l.Index.Records {
 		refs := l.recordInputReferences(id, &record)
 		if refs == nil {
 			continue
 		}
-		for ref := range refs {
-			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
-				continue
-			}
-			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
-				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
+		if recordInput == nil {
+			reader := new(manifest.NamedResource)
+			currentReader = reader
+			recordInput = func(ref manifest.Reference) bool {
+				if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
+					return true
+				}
+				if !slices.Contains(l.inputReaders[ref.NamedResource], *reader) {
+					l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], *reader)
+				}
+				return true
 			}
 		}
+		// Reference iterators MUST consume the current reader synchronously.
+		*currentReader = id
+		refs(recordInput)
 	}
 }
 

@@ -235,8 +235,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			proposal.Needed,
 			opaque.Named(),
 		),
-		testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated && !testCaseInput.allowMissing &&
-			testCaseInput.production != "self",
+		testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated && !testCaseInput.allowMissing,
 	)
 	assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
 	plain, err := prepareSelection(
@@ -249,7 +248,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	assert.Equal(t, slices.Contains(plain.Needed, owner.Named()), true)
 	wantOpaque := testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated &&
 		!testCaseInput.allowMissing
-	assert.Equal(t, slices.Contains(plain.Needed, opaque.Named()), wantOpaque && testCaseInput.production != "self")
+	assert.Equal(t, slices.Contains(plain.Needed, opaque.Named()), wantOpaque)
 	assertAdmissionCapturedMembership(t, l, consumer, plain)
 }
 

@@ -665,3 +665,37 @@ func assertNoWarningSubscriptions(t *testing.T, s *Store) {
 		sh.mu.RUnlock()
 	}
 }
+
+func TestCarryWarnings_CurrentInputAssessments(t *testing.T) {
+	t.Parallel()
+	for _, fresh := range []bool{false, true} {
+		name := "empty diagnostics"
+		if fresh {
+			name = "current diagnostics"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			owner := hrID("reader")
+			renderer := manifest.Warning{Resource: owner, Category: manifest.WarnStaleValues, Message: "unused value"}
+			previous := RenderedOutput{warnings: []manifest.Warning{
+				{Resource: owner, Category: manifest.WarnOmittedValues, Message: "old missing values"},
+				{Resource: owner, Category: manifest.WarnUnresolvedSubstitution, Message: "old missing substitutions"},
+				renderer,
+			}}
+			var reads ReadSet
+			var want []manifest.Warning
+			if fresh {
+				current := manifest.Warning{
+					Resource: owner,
+					Category: manifest.WarnOmittedValues,
+					Message:  "current missing values",
+				}
+				reads.AddWarning(current)
+				want = append(want, current)
+			}
+			want = append(want, renderer)
+			reads.CarryWarnings(previous)
+			assert.Diff(t, reads.warnings, want)
+		})
+	}
+}

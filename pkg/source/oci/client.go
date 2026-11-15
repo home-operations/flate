@@ -39,13 +39,6 @@ func (f *operation) acquire(
 	if err := ctx.Err(); err != nil {
 		return source.PreparedFetch{}, err
 	}
-	if f.secrets != nil {
-		for _, ref := range []*manifest.LocalObjectReference{access.SecretRef, access.CertSecretRef, access.ProxySecretRef} {
-			if ref != nil {
-				f.secrets(access.Namespace, ref.Name)
-			}
-		}
-	}
 	policy.Timeout = &access.Timeout
 	request, err := f.newRepoClient(ctx, new(access))
 	machine := f.machineAcquisition(&access, &request, &policy, err)
@@ -146,10 +139,21 @@ func (f *operation) newRepoClient(
 		)
 	}
 	request := registryAcquisition{reference: parsed, resolved: resolved}
-	selected, err := f.resolveRegistryConfig(ctx, new(access), parsed.Host())
+	selected, input, err := f.resolveRegistryConfig(ctx, new(access), parsed.Host())
 	if err == nil && *selected == auth.EmptyCredential && access.SecretRef != nil {
-		err = source.MissingSecretErr(owner, access.SecretRef.Name, "no credentials for the source registry")
+		err = &source.MissingSecretError{
+			Owner:   owner.ID,
+			Subject: owner,
+			Secret: manifest.NamedResource{
+				Kind:      manifest.KindSecret,
+				Namespace: access.Namespace,
+				Name:      access.SecretRef.Name,
+			},
+			Detail: "no credentials for the source registry",
+			Input:  values.ResolveRequest{Facts: input},
+		}
 	}
+
 	if err != nil {
 		return request, err
 	}
@@ -205,7 +209,7 @@ func (f *operation) acquirePrepared(
 			}
 		}
 	}
-	if !f.allowAnonymousDenied || access.SecretRef != nil || !request.anonymous {
+	if access.SecretRef != nil || !request.anonymous {
 		return artifact, err
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -215,7 +219,7 @@ func (f *operation) acquirePrepared(
 		return nil, &source.MissingSecretError{
 			Owner:           access.Owner.ID,
 			Subject:         access.Owner,
-			Detail:          "no registry credentials available",
+			Detail:          cache.MachineCredentialErr(err).Error(),
 			AnonymousDenied: true,
 			Cause:           err,
 		}
@@ -228,33 +232,29 @@ func (f *operation) resolveRegistryConfig(
 	ctx context.Context,
 	accessValue *manifest.RegistryAccess,
 	hostname string,
-) (*auth.Credential, error) {
+) (*auth.Credential, store.ReferenceFacts, error) {
 	access := *accessValue
 	if access.SecretRef == nil {
-		return &auth.Credential{}, nil
+		return &auth.Credential{}, store.ReferenceFacts{}, nil
 	}
-	if f.secrets == nil {
-		return nil, errors.New("secretRef requires source.SecretGetter")
-	}
-	sec := f.secrets(access.Namespace, access.SecretRef.Name)
+	sec := source.ResolveSecretRef(f.secrets, &access.Owner, access.SecretRef)
 	valueResult, err := source.SecretValue(&sec, new(access.Owner), access.SecretRef.Name, dockerConfigJSONKey)
 	configJSON := valueResult.Value()
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
+		return nil, sec, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
 	}
-	if valueResult.State() != values.Readable {
-		return nil, source.UnavailableSecret(new(access.Owner), access.SecretRef.Name, new(valueResult))
+	if valueResult.Effect() != values.Used {
+		missing := source.UnavailableSecret(&access.Owner, &sec, &valueResult)
+		return nil, sec, missing
 	}
 	if configJSON == "" {
-		return nil, source.MissingSecretErr(
-			access.Owner,
-			access.SecretRef.Name,
-			"missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)",
-		)
+		missing := source.UnavailableSecret(&access.Owner, &sec, &valueResult)
+		missing.Detail = "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"
+		return nil, sec, missing
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse .dockerconfigjson: %w", err), "")
+		return nil, sec, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse .dockerconfigjson: %w", err), "")
 	}
 	// ORAS normalizes Docker Hub's credential key while its callback expects the
 	// canonical Docker server address. Reconcile these in the same memory store.
@@ -263,7 +263,8 @@ func (f *operation) resolveRegistryConfig(
 	}
 	cred, err := credentials.Credential(credStore)(ctx, hostname)
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve registry credentials: %w", err), "")
+		return nil, sec, manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve registry credentials: %w", err), "")
 	}
-	return &cred, nil
+
+	return &cred, sec, nil
 }

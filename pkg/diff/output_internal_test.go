@@ -35,7 +35,7 @@ func TestCompare_OutputMembership(t *testing.T) {
 		[]Doc{generatedNew, cmDoc(&parent, manifest.NamedResource{Name: "unchanged"}, "same", "")},
 		store.StatusInfo{},
 	)
-	oldID, newID := manifest.DocIdentity(generatedOld.Manifest), manifest.DocIdentity(generatedNew.Manifest)
+	newID := manifest.DocIdentity(generatedNew.Manifest)
 	suppliedOld, suppliedNew := generatedLeft, generatedRight
 	suppliedOld.Manifests = slices.Clone(generatedLeft.Manifests)
 	suppliedNew.Manifests = slices.Clone(generatedRight.Manifests)
@@ -54,19 +54,18 @@ func TestCompare_OutputMembership(t *testing.T) {
 				name      string
 				group     Group
 				normalize bool
-				want      [2][]manifest.NamedResource
 			}{
-				{name: "generated pair", group: Group{Orig: generatedLeft, Current: generatedRight}, want: [2][]manifest.NamedResource{{oldID}, {newID}}},
-				{name: "generated supplied identities", group: Group{Orig: suppliedOld, Current: suppliedNew}, want: [2][]manifest.NamedResource{{{}}, {{Kind: "ConfigMap", Name: "independent-new-output"}}}},
-				{name: "changed pair", group: Group{Orig: old, Current: current}, want: [2][]manifest.NamedResource{{id}, {id}}},
-				{name: "added", group: Group{Current: current}, want: [2][]manifest.NamedResource{nil, {id}}},
-				{name: "removed", group: Group{Orig: old}, want: [2][]manifest.NamedResource{{id}, nil}},
+				{name: "generated pair", group: Group{Orig: generatedLeft, Current: generatedRight}},
+				{name: "generated supplied identities", group: Group{Orig: suppliedOld, Current: suppliedNew}},
+				{name: "changed pair", group: Group{Orig: old, Current: current}},
+				{name: "added", group: Group{Current: current}},
+				{name: "removed", group: Group{Orig: old}},
 				{name: "unchanged", group: Group{Orig: old, Current: old}},
 				{name: "normalization only", group: Group{Orig: old, Current: current}, normalize: true},
 				{name: "suppressed current", group: Group{Orig: old, Current: failed}},
 				{name: "suppressed original", group: Group{Orig: failed, Current: current}},
 				{name: "both unavailable", group: Group{Orig: failed, Current: failed}},
-				{name: "partial failure", group: Group{Orig: old, Current: current, SelectedErr: partial}, want: [2][]manifest.NamedResource{{id}, {id}}},
+				{name: "partial failure", group: Group{Orig: old, Current: current, SelectedErr: partial}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					opts := Options{Format: format}
@@ -81,11 +80,6 @@ func TestCompare_OutputMembership(t *testing.T) {
 						err,
 						tc.group.SelectedErr,
 					)
-					want := tc.want
-					if format == FormatBrief {
-						want = [2][]manifest.NamedResource{}
-					}
-					assert.Diff(t, comparison.Groups[0].Output, want)
 					if tc.name == "generated supplied identities" && format != FormatBrief && format != FormatJSON {
 						assert.Equal(t, slices.Contains(comparison.Groups[0].Subjects, newID), true)
 					}
@@ -93,7 +87,6 @@ func TestCompare_OutputMembership(t *testing.T) {
 					assert.NoError(t, comparison.Write(&first, nil))
 					assert.NoError(t, comparison.Write(&second, nil))
 					assert.Diff(t, second.String(), first.String())
-					assert.Diff(t, comparison.Groups[0].Output, want)
 				})
 			}
 		})
@@ -130,48 +123,14 @@ func TestCompare_OutputGroupsAndPositions(t *testing.T) {
 				{Cluster: "added", Current: left, Added: true},
 			}, Options{Format: format})
 			assert.NoError(t, err)
-			want := [][2][]manifest.NamedResource{
-				{
-					{manifest.DocIdentity(old[0].Manifest), manifest.DocIdentity(old[1].Manifest)},
-					{manifest.DocIdentity(current[1].Manifest), manifest.DocIdentity(current[2].Manifest)},
-				},
-				{
-					{
-						manifest.DocIdentity(current[0].Manifest),
-						manifest.DocIdentity(current[1].Manifest),
-						manifest.DocIdentity(current[2].Manifest),
-					},
-					nil,
-				},
-				{
-					nil,
-					{
-						manifest.DocIdentity(old[0].Manifest),
-						manifest.DocIdentity(old[1].Manifest),
-						manifest.DocIdentity(old[2].Manifest),
-					},
-				},
-			}
 			var out bytes.Buffer
 			assert.NoError(t, comparison.Write(&out, nil))
-			for group, result := range comparison.Groups {
-				for side, ids := range result.Output {
-					expected := want[group][side]
-					if format == FormatBrief {
-						expected = nil
-					}
-					got := slices.Clone(ids)
-					slices.SortFunc(got, manifest.NamedResource.Compare)
-					slices.SortFunc(expected, manifest.NamedResource.Compare)
-					assert.Diff(t, got, expected)
-				}
-			}
 			t.Run("invalid group", func(t *testing.T) {
 				testCompareInvalidOutputGroup(t, []Group{
 					{Cluster: "changes", Orig: left, Current: right},
 					{Cluster: "removed", Orig: right, Removed: true},
 					{Cluster: "added", Current: left, Added: true},
-				}, want, comparison)
+				}, comparison)
 			})
 		})
 	}
@@ -207,16 +166,12 @@ func TestCompare_OutputInternalNamespaces(t *testing.T) {
 						[2][]manifest.DocumentBatch{snapshots[0].Manifests, snapshots[1].Manifests},
 					)
 					assert.NoError(t, err)
-					if format == FormatBrief {
-						want = nil
-					}
-					comparison, err := Compare(
+					_, err = Compare(
 						[]Group{{Orig: snapshots[0], Current: snapshots[1]}},
 						Options{Format: format},
 					)
 					assert.NoError(t, err)
-					for side, got := range comparison.Groups[0].Output {
-						assert.Diff(t, got, want)
+					for side := range snapshots {
 						for _, batch := range snapshots[side].Manifests {
 							assert.Equal(t, manifest.DocMetadata(batch.Documents[0]).Namespace, tc.namespace)
 						}
@@ -298,7 +253,6 @@ func setNamespaceBatchIdentities(snapshots *[2]Snapshot, mode string, want []man
 func testCompareInvalidOutputGroup(
 	t *testing.T,
 	groups []Group,
-	want [][2][]manifest.NamedResource,
 	control *Comparison,
 ) {
 	t.Helper()
@@ -336,22 +290,8 @@ func testCompareInvalidOutputGroup(
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 		!errors.Is(err, selectedErr), "classified or selected error lost: %v", err)
 	assert.Equal(t, len(partial.Groups), 4)
-	assert.Diff(t, partial.Groups[1].Output, [2][]manifest.NamedResource{})
 	note := Suppression{Parent: objectParent(producer), Subject: subject, Side: SideOrig, Count: 1, Reason: "failed"}
 	assert.Diff(t, partial.Groups[1].Suppressed, []Suppression{note})
-	positions := []int{0, 2, 3}
-	for original, position := range positions {
-		for side, ids := range partial.Groups[position].Output {
-			expected := slices.Clone(want[original][side])
-			if format == FormatBrief {
-				expected = nil
-			}
-			got := slices.Clone(ids)
-			slices.SortFunc(got, manifest.NamedResource.Compare)
-			slices.SortFunc(expected, manifest.NamedResource.Compare)
-			assert.Diff(t, got, expected)
-		}
-	}
 	for i := range groups {
 		group := &groups[i]
 		assert.Equal(t, partial.output[i].cluster, group.Cluster)

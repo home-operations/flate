@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestSecretLookup_References(t *testing.T) {
@@ -299,7 +300,7 @@ func TestAcquireMachine_Lifecycle(t *testing.T) {
 
 func TestMissingSecretError_RetryMachine(t *testing.T) {
 	t.Parallel()
-	for _, shape := range []string{"nil reads", "source only", "producer", "unavailable", "anonymous denied", "authored anonymous denied", "canceled", "no callback"} {
+	for _, shape := range []string{"captured absence", "source only", "producer", "unavailable", "anonymous denied", "authored anonymous denied", "canceled", "no callback", "pending"} {
 		t.Run(shape, func(t *testing.T) {
 			t.Parallel()
 			testMissingSecretErrorRetryMachineCase(t, &shape)
@@ -327,7 +328,10 @@ func TestMissingSecretError_DeferredDenial(t *testing.T) {
 					},
 				}, nil
 			}
-			prepared, err := missing.RetryMachine(t.Context(), nil)
+			request := missing.Input
+			request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+			assessment := values.Resolve(&request)
+			prepared, err := missing.RetryMachine(t.Context(), &assessment)
 			assert.NoError(t, err)
 			assert.Equal(t, calls, 0)
 			_, err = prepared.Fetch(t.Context(), nil)
@@ -500,7 +504,8 @@ func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
 		reads = &store.ReadSet{}
 		reads.Init(s, owner, nil)
 		defer reads.Close()
-		assert.FatalIf(t, !missing.ProducerBacked(reads), "%s", "missing captured declaration")
+		missing.Input.Facts = reads.ReferenceFacts(missing.Secret, nil, owner)
+		assert.FatalIf(t, !missing.Input.Facts.Generated, "%s", "missing captured declaration")
 	}
 	if (*shape) == "no callback" {
 		missing.RetryAmbient = nil
@@ -510,13 +515,19 @@ func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
 	if (*shape) == "canceled" {
 		cancel()
 	}
-	preparedFetch, got := missing.RetryMachine(ctx, reads)
+	request := missing.Input
+	request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+	if *shape == "pending" {
+		request.Settlement.Pending = []manifest.NamedResource{owner}
+	}
+	assessment := values.Resolve(&request)
+	preparedFetch, got := missing.RetryMachine(ctx, &assessment)
 	var artifact *store.SourceArtifact
 	if got == nil {
 		artifact, got = preparedFetch.Fetch(ctx, nil)
 	}
 	switch *shape {
-	case "producer", "no callback", "unavailable", "authored anonymous denied":
+	case "producer", "no callback", "pending", "unavailable", "authored anonymous denied":
 		assert.FatalIf(t, !errors.Is(got, missing) || artifact != nil ||
 			calls != map[string]int{"unavailable": 1, "authored anonymous denied": 1}[(*shape)], "missing identity or eligibility changed: %v calls=%d", got, calls)
 	case "anonymous denied":
@@ -594,4 +605,64 @@ func testAcquireMachineLifecycleResult(t *testing.T, captures *machineLifecycleR
 			err,
 		)
 	}
+}
+
+func TestMissingSecretError_MachineMaterial(t *testing.T) {
+	t.Parallel()
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selected=%t", selected), func(t *testing.T) {
+			t.Parallel()
+			owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "repo"}
+			missing, _ := errors.AsType[*MissingSecretError](
+				MissingSecretErr(manifest.DiagnosticFor(owner, nil), "auth", "not found"),
+			)
+			denial := cache.MachineCredentialErr(&fetcherr.ResponseError{StatusCode: 401})
+			missing.RetryAmbient = func(context.Context) (PreparedFetch, error) {
+				prepared := PreparedFetch{
+					Fetch: func(context.Context, *store.SourceArtifact) (*store.SourceArtifact, error) { return nil, denial },
+				}
+				if !selected {
+					prepared.LocalUnavailable = missing
+				}
+				return prepared, nil
+			}
+			request := missing.Input
+			request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+			assessment := values.Resolve(&request)
+			prepared, err := missing.RetryMachine(t.Context(), &assessment)
+			assert.NoError(t, err)
+			_, err = prepared.Fetch(t.Context(), nil)
+			if selected {
+				assert.Equal(t, err, denial)
+			} else {
+				assert.Equal(t, err, error(missing))
+			}
+		})
+	}
+}
+
+func TestResolveSecretRef_CapturedIdentity(t *testing.T) {
+	t.Parallel()
+	owner := manifest.DiagnosticFor(
+		manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"},
+		nil,
+	)
+	ref := &manifest.LocalObjectReference{Name: "auth"}
+	absent := ResolveSecretRef(nil, &owner, ref)
+	result, err := SecretValue(&absent, &owner, ref.Name, "password")
+	assert.NoError(t, err)
+	missing := UnavailableSecret(&owner, &absent, &result)
+	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"})
+	assert.Equal(t, errors.Is(missing, manifest.ErrMissingSecret), true)
+	calls := 0
+	facts := store.ReferenceFacts{Generated: true}
+	captured := ResolveSecretRef(func(namespace, name string) store.ReferenceFacts {
+		calls++
+		assert.Equal(t, namespace, "apps")
+		assert.Equal(t, name, "auth")
+		return facts
+	}, &owner, ref)
+	assert.Equal(t, calls, 1)
+	assert.Equal(t, captured.Generated, true)
+	assert.Equal(t, captured.Data == nil, true)
 }

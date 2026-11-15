@@ -20,11 +20,22 @@ func TestParseChildren_SkippedDiagnostics(t *testing.T) {
 	e := newExecution(c, owner.Named())
 	defer e.Close()
 	e.Reads.GetObject(owner.Named())
-	docs := []manifest.DocOccurrence{{Document: map[string]any{
-		"apiVersion": "v1", "kind": manifest.KindSecret,
-		"metadata":   map[string]any{"name": "input"},
-		"stringData": map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
-	}}}
+	docs := []manifest.DocOccurrence{
+		{
+			Warnings: []manifest.Warning{
+				{
+					Resource: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"},
+					Category: manifest.WarnUnresolvedSubstitution,
+					Detail:   []string{"VALUE"},
+				},
+			},
+			Document: map[string]any{
+				"apiVersion": "v1", "kind": manifest.KindSecret,
+				"metadata":   map[string]any{"name": "input"},
+				"stringData": map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
+			},
+		},
+	}
 	result1 := e.ParseChildren(owner, docs, manifest.ParseDocOptions{})
 	children, visible, failures := result1.Children, result1.Visible, result1.Failures
 	assert.FatalIf(t, len(children) != 0 || len(visible) != 0 || len(failures) != 0 || len(docs[0].Warnings) != 1,

@@ -74,6 +74,7 @@ func (p *childDocumentParser) parse() store.ChildDocuments {
 	return store.ChildDocuments{Children: children, Visible: visible, Failures: failures}
 }
 
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, manifest.DocOccurrence, bool) {
 	child, outcome, changed := Prepare(doc, *p.opts)
 	obj := child.Obj

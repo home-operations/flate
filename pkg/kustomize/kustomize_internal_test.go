@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -267,7 +266,7 @@ func testRenderUnstampedMetadataCase(t *testing.T, testCaseInput *struct {
 		obj := parsed.Object
 		assert.NoError(t, err)
 		projected := obj.WithNamespace(testCaseInput.effectiveNamespace).(*manifest.Kustomization)
-		prepared, err := Prepare(projected, nil, depwait.NewMissingPolicy(nil))
+		prepared, err := Prepare(projected, nil)
 		assert.NoError(t, err)
 		ks = prepared
 	}

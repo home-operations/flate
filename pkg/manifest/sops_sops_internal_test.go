@@ -41,23 +41,13 @@ func TestSanitizeDocument_Ciphertext(t *testing.T) {
 			}
 			before := DeepCopyMap(doc)
 			want := DeepCopyMap(doc)
-			if tc.cipher {
-				delete(want["data"].(map[string]any), "ENCRYPTED")
-			}
 			delete(want, "sops")
 			admitted, changed := SanitizeDocument(DocOccurrence{Document: doc})
 			got := admitted.Document
-			assert.Equal(t, changed, tc.cipher || tc.metadata != nil)
+			assert.Equal(t, changed, tc.metadata != nil)
 			assert.Diff(t, got, want)
 			assert.Diff(t, doc, before)
-			if tc.cipher {
-				assert.FatalIf(t, len(admitted.Warnings) != 1,
-					"admission warnings: got %d, want 1", len(admitted.Warnings))
-
-				assert.Diff(t, admitted.Warnings[0].Detail, []string{"ENCRYPTED"})
-			} else {
-				assert.Equal(t, len(admitted.Warnings), 0)
-			}
+			assert.Equal(t, len(admitted.Warnings), 0)
 			replay, replayChanged := SanitizeDocument(admitted)
 			assert.Equal(t, replayChanged, false)
 			assert.Diff(t, replay, admitted)
@@ -160,16 +150,16 @@ func TestSanitizeDocument_OverlappingFieldsAndDiagnostics(t *testing.T) {
 	o, changed := SanitizeDocument(DocOccurrence{Document: doc, Ordinal: 7})
 	assert.Equal(t, changed, true)
 	assert.Equal(t, o.Ordinal, 7)
-	assert.Equal(t, len(o.Warnings), 1)
-	assert.Diff(t, o.Warnings[0].Detail, []string{"EMPTY", "READABLE"})
+	assert.Equal(t, len(o.Warnings), 0)
 	result1, err := ParseDoc(o.Document, ParseDocOptions{})
 	obj := result1.Object
 	assert.NoError(t, err)
-	for key, want := range map[string]string{"EMPTY": "", "READABLE": "repository"} {
+	for key, want := range map[string]string{"EMPTY": "", "READABLE": ""} {
 		result2, err := obj.(Data).Value(key)
 		got, found := result2.Value, result2.Found
 		assert.NoError(t, err)
 		assert.Equal(t, found, true)
+		assert.Equal(t, result2.Encrypted, key == "READABLE")
 		assert.Equal(t, got, want)
 	}
 	again, changed := SanitizeDocument(o)

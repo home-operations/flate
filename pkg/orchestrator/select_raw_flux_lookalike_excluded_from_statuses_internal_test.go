@@ -78,6 +78,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 					diff := cmp.Diff(
 						objects,
 						selected[0].Objects,
+						cmp.AllowUnexported(manifest.ConfigMap{}, manifest.Secret{}),
 						cmpopts.IgnoreUnexported(
 							manifest.HelmRelease{},
 							manifest.OCIRepository{},

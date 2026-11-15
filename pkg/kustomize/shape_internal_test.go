@@ -42,6 +42,36 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 		{"large signed integer", map[string]any{"value": int(9007199254740993)}, map[string]string{"VAR": "example"}, true, nil},
 		{"large unsigned integer", map[string]any{"value": uint64(18446744073709551615)}, map[string]string{"VAR": "example"}, true, nil},
 		{"timestamp", map[string]any{"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)}, map[string]string{"VAR": "example"}, true, nil},
+		{
+			"opaque dollar preserves int64 conversion",
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": int64(9007199254740993),
+			},
+			map[string]string{"VAR": "example"},
+			true,
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": float64(9007199254740992),
+			},
+		},
+		{
+			"opaque dollar preserves timestamp conversion",
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+			map[string]string{"VAR": "example"},
+			true,
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": "2001-01-01T00:00:00Z",
+			},
+		},
 		{"bare dollars", map[string]any{"$PID": []any{"$", "echo $PID", "$- $9", "cost $5"}}, map[string]string{"VAR": "example"}, true, nil},
 		{"key reference", map[string]any{"${VAR}": 1}, map[string]string{"VAR": "example"}, true, nil},
 		{"value reference", map[string]any{"value": "${VAR}"}, map[string]string{"VAR": "example"}, true, nil},
@@ -170,8 +200,11 @@ func TestSubstitutionNames_ExcludedAndUnproved(t *testing.T) {
 		name           string
 		doc            map[string]any
 		active, proven bool
+		prepared       bool
+		needs          bool
+		names          []string
 	}{
-		{name: "inactive", doc: map[string]any{"value": "${ARR[@]}"}, proven: true},
+		{name: "inactive", doc: map[string]any{"value": "${ARR[@]}"}, proven: true, needs: true},
 		{
 			name: "disabled",
 			doc: map[string]any{
@@ -180,24 +213,84 @@ func TestSubstitutionNames_ExcludedAndUnproved(t *testing.T) {
 			},
 			active: true,
 			proven: true,
+			needs:  true,
 		},
-		{name: "invalid expression", doc: map[string]any{"value": "${ARR[@]}"}, active: true},
+		{name: "invalid expression", doc: map[string]any{"value": "${ARR[@]}"}, active: true, prepared: true, needs: true},
 		{name: "no round trip", doc: map[string]any{"value": "literal"}, active: true, proven: true},
-		{name: "scalar round trip", doc: map[string]any{"value": math.Copysign(0, -1)}, active: true, proven: true},
+		{name: "scalar round trip", doc: map[string]any{"value": math.Copysign(0, -1)}, active: true, proven: true, prepared: true, needs: true},
+		{
+			name: "opaque bare dollar",
+			doc: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data": map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+			},
+			active: true, proven: true,
+		},
+		{
+			name: "opaque trailing dollar",
+			doc: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data": map[string]any{"TOKEN": "ENC[AES256_GCM,data:token$,iv:y,tag:z,type:str]"},
+			},
+			active: true, proven: true,
+		},
+		{
+			name: "opaque dollar with int64 framing",
+			doc: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": int64(9007199254740993),
+			},
+			active: true, proven: true, prepared: true,
+		},
+		{
+			name: "opaque dollar with timestamp framing",
+			doc: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+			active: true, proven: true, prepared: true,
+		},
+		{
+			name:   "custom representation without syntax",
+			doc:    map[string]any{"value": countedYAML{count: new(int)}},
+			active: true, proven: true,
+		},
+		{
+			name: "opaque dollar with custom representation",
+			doc: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": countedYAML{count: new(int)},
+			},
+			active: true, proven: true, prepared: true, names: []string{"VALUE"},
+		},
+		{
+			name:   "required after inspection",
+			doc:    map[string]any{"value": []any{int64(42), "$$PID"}},
+			active: true, proven: true, prepared: true, needs: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			raw, err := values.SubstitutionDocument(manifest.DocOccurrence{Document: tc.doc}, tc.active)
 			assert.NoError(t, err)
+			assert.Equal(t, raw != nil, tc.prepared)
+			assert.Equal(t, values.NeedsSubstitution(tc.doc), tc.needs)
 			names := values.SubstitutionNames(raw)
 			assert.FatalIf(
 				t,
-				(names != nil) != tc.proven || len(names) != 0,
+				(names != nil) != tc.proven || len(names) != len(tc.names),
 				"names = %v, proven = %t, want %t",
 				names,
 				names != nil,
 				tc.proven,
 			)
+			for _, name := range tc.names {
+				_, present := names[name]
+				assert.Equal(t, present, true)
+			}
 		})
 	}
 }
@@ -244,7 +337,12 @@ func testSubstituteDocPrecheckEquivalenceCase(
 
 	data, prepareErr := values.SubstitutionDocument(manifest.DocOccurrence{Document: testCaseInput.doc}, true)
 	input := substitutionDocument{data: data, err: prepareErr}
-	got, gotErr := input.apply(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict, nil)
+	got, gotErr := input.apply(
+		&manifest.DocOccurrence{Document: testCaseInput.doc},
+		testCaseInput.vars,
+		ShapeOptions{Strict: testCaseInput.strict},
+		nil,
+	)
 	if testCaseInput.want != nil {
 		assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
 		{
@@ -456,8 +554,7 @@ func TestShaping_DependencySubstitutionInputs(t *testing.T) {
 				t,
 				values.ExpandPostBuildSubstituteReference(
 					effective,
-					values.NewStoreProvider(st),
-					depwait.NewMissingPolicy(nil),
+					resolveTestInputs(effective, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)),
 				),
 			)
 			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(parsedChild.Document)}}

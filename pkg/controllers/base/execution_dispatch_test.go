@@ -8,6 +8,8 @@ import (
 	"testing"
 	"weak"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -514,7 +516,7 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 							Input:    store.ReferenceFacts{Materializers: []manifest.NamedResource{gate}},
 							Optional: true,
 						}},
-						Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return finish(s, got) },
+						Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { return finish(s, got) },
 					}, level)
 				}
 				if level == manifest.DrainNone {

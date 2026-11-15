@@ -79,7 +79,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 		st.AddObject(cm)
 	}
 	provider := values.NewStoreProvider(st)
-	prepared, err := Prepare(projected, provider, depwait.NewMissingPolicy(nil))
+	prepared, err := Prepare(projected, resolveTestInputs(projected, provider, depwait.NewMissingPolicy(nil)))
 
 	assert.NoError(t, err)
 
@@ -112,7 +112,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
-			got, prepareErr := Prepare(ks, provider, depwait.NewMissingPolicy(nil))
+			got, prepareErr := Prepare(ks, resolveTestInputs(ks, provider, depwait.NewMissingPolicy(nil)))
 
 			assert.NoError(t, prepareErr)
 
@@ -124,9 +124,9 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 			)
 		})
 	}
-	bad := original.Clone()
+	bad := projected.Clone()
 	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
-	invalid, err := Prepare(bad, provider, depwait.NewMissingPolicy(nil))
+	invalid, err := Prepare(bad, resolveTestInputs(bad, provider, depwait.NewMissingPolicy(nil)))
 
 	assert.FatalIf(t, invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
 		err.Error() != "invalid substitute variables a-invalid, z-invalid", "invalid keys not classified/sorted: %v", err)
@@ -143,12 +143,12 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
 	)
-	_, err := Prepare(entry, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil))
+	_, err := Prepare(entry, resolveTestInputs(entry, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)))
 	assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
 		strings.Contains(err.Error(), `entry path "clusters/test"`) ||
 		strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)
 	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
-	prepared, err := Prepare(entry, nil, depwait.NewMissingPolicy(nil))
+	prepared, err := Prepare(entry, nil)
 	assert.FatalIf(t, err != nil, "%v", err)
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
 	err = PrepareShape(&RenderRequest{Spec: prepared}, documents).Apply(t.Context(), ShapeOptions{Strict: true})

@@ -32,14 +32,7 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 	prepared := &httpRepository{HelmRepository: r}
 	var authErr error
 	if r.SecretRef != nil {
-		if secrets == nil {
-			return nil, manifest.NewError(
-				manifest.ErrMissingSecret,
-				nil,
-				"references secretRef but no SecretGetter is wired",
-			)
-		}
-		sec := secrets(r.Namespace, r.SecretRef.Name)
+		sec := source.ResolveSecretRef(secrets, new(manifest.DiagnosticFor(r.Named(), r)), r.SecretRef)
 		prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(
 			sec, manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name,
 		)

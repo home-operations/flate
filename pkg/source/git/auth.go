@@ -32,9 +32,6 @@ func (f *operation) resolveAuth(
 		}
 		return nil, nil //nolint:nilnil // Without SecretRef on a non-SSH endpoint, newClient omits credentials for anonymous acquisition.
 	}
-	if f.secrets == nil {
-		return nil, errors.New("secretRef requires a SecretGetter")
-	}
 	if endpoint.Scheme == sshScheme {
 		auth, err := f.resolveSSHAuth(repo, sec, endpoint)
 		if err != nil {
@@ -57,9 +54,10 @@ func (f *operation) resolveAuth(
 		repo.SecretRef.Name,
 	)
 	if err != nil {
-		if tokenResult := valueResult; errors.Is(err, manifest.ErrMissingSecret) &&
-			(tokenResult.State() == values.Encrypted || tokenResult.State() == values.Produced) {
-			return nil, source.UnavailableSecret(&owner, repo.SecretRef.Name, &tokenResult)
+		unavailableToken := valueResult.Effect() != values.Used &&
+			(valueResult.KnownKey() || valueResult.Present() && !valueResult.KeysComplete())
+		if errors.Is(err, manifest.ErrMissingSecret) && unavailableToken {
+			return nil, source.UnavailableSecret(&owner, sec, &valueResult)
 		}
 		return nil, err
 	}
@@ -98,8 +96,8 @@ func (f *operation) resolveSSHAuth(
 			if _, missing := errors.AsType[*ssh.PassphraseMissingError](
 				valueErr,
 			); missing &&
-				password.State() != values.Readable {
-				return nil, source.UnavailableSecret(&owner, repo.SecretRef.Name, &password)
+				password.Effect() != values.Used {
+				return nil, source.UnavailableSecret(&owner, sec, &password)
 			}
 			return nil, manifest.NewError(
 				manifest.ErrInput,
@@ -128,23 +126,19 @@ func (f *operation) resolveSSHAuth(
 		}
 	}
 	for _, result := range []*values.Result{&identity, &knownHosts} {
-		if result.State() != values.Readable {
-			return nil, source.UnavailableSecret(&owner, repo.SecretRef.Name, result)
+		if result.Effect() != values.Used {
+			return nil, source.UnavailableSecret(&owner, sec, result)
 		}
 	}
 	if identity.Value() == "" {
-		return nil, source.MissingSecretErr(
-			owner,
-			repo.SecretRef.Name,
-			"missing 'identity' for SSH auth",
-		)
+		missing := source.UnavailableSecret(&owner, sec, &identity)
+		missing.Detail = "missing 'identity' for SSH auth"
+		return nil, missing
 	}
 	if knownHosts.Value() == "" {
-		return nil, source.MissingSecretErr(
-			owner,
-			repo.SecretRef.Name,
-			"missing 'known_hosts' for SSH auth",
-		)
+		missing := source.UnavailableSecret(&owner, sec, &knownHosts)
+		missing.Detail = "missing 'known_hosts' for SSH auth"
+		return nil, missing
 	}
 	auth.HostKeyCallback = cb
 	return auth, nil

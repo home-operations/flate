@@ -60,7 +60,7 @@ func TestOverlayPayload_Secret(t *testing.T) {
 			_, present := got["type"]
 			assert.Equal(t, present, false)
 			assert.Diff(t, doc, input)
-			assert.Diff(t, s, before)
+			assert.Equal(t, manifest.Equal(s, before), true)
 
 			got["immutable"] = false
 			got["top"] = "new"
@@ -72,7 +72,7 @@ func TestOverlayPayload_Secret(t *testing.T) {
 				got["stringData"].(map[string]any)["password"] = "changed"
 			}
 			assert.Diff(t, doc, input)
-			assert.Diff(t, s, before)
+			assert.Equal(t, manifest.Equal(s, before), true)
 		})
 	}
 }

@@ -1,6 +1,7 @@
 ---
 apiVersion: v1
 data:
+  OTHER: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
   value: beta
 kind: ConfigMap
 metadata:

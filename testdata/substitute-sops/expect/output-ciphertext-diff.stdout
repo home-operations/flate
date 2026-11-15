@@ -1,0 +1,6 @@
+
+stringData.VALUE
+  ± value change
+    - ENC[AES256_GCM,data:after,iv:y,tag:z,type:str]
+    + ENC[AES256_GCM,data:before,iv:y,tag:z,type:str]
+

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/base64"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -75,4 +76,69 @@ func testDataWithSuppliedCase1(t *testing.T, tc *struct {
 		assert.Equal(t, value, want)
 	}
 	assert.Diff(t, tc.repository.Snapshot(), before)
+}
+
+func TestData_WithSuppliedEncryptedReplacement(t *testing.T) {
+	t.Parallel()
+	const cipher = "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"
+	for _, repository := range []Data{
+		&ConfigMap{Data: map[string]any{"HIDDEN": cipher, "CLEAR": "repository"}},
+		&Secret{Data: map[string]any{"HIDDEN": cipher}, StringData: map[string]any{"CLEAR": "repository"}},
+	} {
+		before := repository.Snapshot()
+		supplied := &ConfigMap{Data: map[string]any{"HIDDEN": "supplied", "CLEAR": "collision", "ENCRYPTED": cipher}}
+		result := repository.WithSupplied(supplied)
+		assert.Diff(t, result.Overridden, []string{"CLEAR"})
+		value, err := result.Data.Value("HIDDEN")
+		assert.NoError(t, err)
+		assert.Equal(t, value, DataValue{Value: "supplied", Found: true})
+		value, err = result.Data.Value("ENCRYPTED")
+		assert.NoError(t, err)
+		assert.Equal(t, value, DataValue{Found: true, Encrypted: true})
+		assert.Equal(t, slices.Contains(slices.Collect(result.Data.Keys()), "ENCRYPTED"), true)
+		value, err = repository.Value("HIDDEN")
+		assert.NoError(t, err)
+		assert.Equal(t, value, DataValue{Found: true, Encrypted: true})
+		assert.Diff(t, repository.Snapshot(), before)
+	}
+}
+
+func TestData_WithSuppliedEncryptedMembership(t *testing.T) {
+	t.Parallel()
+	const cipher = "ENC[AES256_GCM,data:supplied,iv:x,tag:y,type:str]"
+	const repositoryCipher = "ENC[AES256_GCM,data:repository,iv:x,tag:y,type:str]"
+	encoded := base64.StdEncoding.EncodeToString([]byte(cipher))
+	for _, supplied := range []Data{
+		NewConfigMap(NamedResource{}, map[string]any{"KEY": cipher}),
+		NewSecret(NamedResource{}, map[string]any{"KEY": encoded}, nil),
+		NewSecret(NamedResource{}, map[string]any{"KEY": base64.StdEncoding.EncodeToString([]byte("[sops]"))}, nil),
+	} {
+		for _, repository := range []Data{NewConfigMap(NamedResource{}, nil), NewSecret(NamedResource{}, nil, nil)} {
+			before := repository.Snapshot()
+			input := supplied.Snapshot()
+			result := repository.WithSupplied(supplied)
+			assert.Equal(t, result.Data.HasKeys(), true)
+			assert.Diff(t, slices.Collect(result.Data.Keys()), []string{"KEY"})
+			value, err := result.Data.Value("KEY")
+			assert.NoError(t, err)
+			assert.Equal(t, value, DataValue{Found: true, Encrypted: true})
+			assert.Diff(t, repository.Snapshot(), before)
+			assert.Diff(t, supplied.Snapshot(), input)
+			repeated := result.Data.WithSupplied(supplied)
+			assert.Equal(t, repeated.Data == result.Data, true)
+			replacement := result.Data.WithSupplied(NewConfigMap(NamedResource{}, map[string]any{"KEY": "readable"}))
+			value, err = replacement.Data.Value("KEY")
+			assert.NoError(t, err)
+			assert.Equal(t, value, DataValue{Value: "readable", Found: true})
+			assert.Diff(t, slices.Collect(replacement.Data.Keys()), []string{"KEY"})
+			collision := replacement.Data.WithSupplied(supplied)
+			assert.Equal(t, collision.Data == replacement.Data, true)
+			assert.Diff(t, collision.Overridden, []string{"KEY"})
+		}
+	}
+	repository := NewSecret(NamedResource{}, map[string]any{"KEY": repositoryCipher}, nil)
+	before := repository.Snapshot()
+	result := repository.WithSupplied(NewConfigMap(NamedResource{}, map[string]any{"KEY": cipher}))
+	assert.Equal(t, result.Data == repository, true)
+	assert.Diff(t, result.Data.Snapshot(), before)
 }

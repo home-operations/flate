@@ -129,8 +129,18 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 			{Source: source, Path: "shared/values.yaml"},
 		},
 	}
-	metadata, err := new(*history).record("accepted").metadata()
+	record := new(*history).record("accepted")
+	metadata, err := record.metadata()
 	assert.NoError(t, err)
+	assert.Equal(t, strings.Contains(metadata[historyAnnotation], `"Subtree":false`), false)
+	assert.Equal(t, strings.Contains(metadata[historyAnnotation], `"Subtree":true`), true)
+	var decoded historyRecord
+	assert.NoError(t, json.Unmarshal([]byte(metadata[historyAnnotation]), &decoded))
+	assert.Diff(t, decoded.Sources, []historyPaths{{
+		Source: manifest.Fingerprint(source),
+		Paths:  []historyPath{{Path: "apps/blue", Subtree: true}, {Path: "shared/values.yaml"}},
+	}})
+	assert.Equal(t, manifest.Fingerprint(&decoded), manifest.Fingerprint(record))
 	_, _, _, err = cache.Blob(
 		t.Context(),
 		BlobKey{Content: "history-producer", Render: RenderAccepted},

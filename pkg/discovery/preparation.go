@@ -16,17 +16,23 @@ func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	if d.admission().appliesEntry(&application) {
 		return false
 	}
+	ready := true
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 		if ref.Use != "substituteFrom" {
 			continue
 		}
 		input := d.cfg.Store.ReferenceFacts(ref.NamedResource, d.loader.Index, ks.Named())
-		value, err := values.Classify(&ref, &input)
-		if err != nil || value.State() != values.Readable {
-			return false
+		value := values.Resolve(
+			&values.ResolveRequest{Reference: ref, Facts: input, Permission: d.loader.Options.Missing},
+		)
+		if value.MaterialError() != nil {
+			return true
+		}
+		if !value.CanPrepare() {
+			ready = false
 		}
 	}
-	return true
+	return ready
 }
 
 func (q *entryQualification) close() {

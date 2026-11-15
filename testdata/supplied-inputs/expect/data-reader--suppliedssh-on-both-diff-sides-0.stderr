@@ -1,5 +1,4 @@
-
-  ⚠ warnings (<PERSISTENCE:1|2>)
-<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
->    [SOPSUnreadable] Secret flux-system/ursa-major-ssh: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      identity
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>

@@ -105,7 +105,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
-				FetchOptions{AllowMissingSecrets: tt.allowMissing})
+				FetchOptions{Missing: sourceMissingPolicy(tt.allowMissing)})
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
 			st.AddObject(repo)
 
@@ -309,7 +309,7 @@ func TestController_AmbientContextError(t *testing.T) {
 				src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"),
 			)
 			missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, failure }
-			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
+			controller, st := newConfiguredController(t, nil, FetchOptions{Missing: sourceMissingPolicy(true)})
 			st.AddObject(repo)
 			c := &execution{Controller: controller}
 			c.run.Init(controller.Controller, repo.Named())
@@ -320,7 +320,6 @@ func TestController_AmbientContextError(t *testing.T) {
 					ctx,
 					repo,
 					base.Acquisition{
-						AllowMissingSecrets: true,
 						Fetch: func(context.Context) (src.PreparedFetch, error) {
 							return src.PreparedFetch{}, missing
 						},
@@ -479,7 +478,7 @@ func testControllerUnavailableSecretAtFixpointCase(
 	}
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{AllowMissingSecrets: testCaseInput.allowMissing})
+		FetchOptions{Missing: sourceMissingPolicy(testCaseInput.allowMissing)})
 	st.SetDiscoveryIndex(index)
 	if testCaseInput.present {
 		st.AddObject(secret)
@@ -658,7 +657,7 @@ func testControllerAmbientPolicyCase(t *testing.T, testCaseInput testControllerA
 	c, st := newConfiguredController(
 		t,
 		map[string]src.Fetcher{(*testCaseInput.repo).Named().Kind: f},
-		FetchOptions{AllowMissingSecrets: testCaseInput.tt.allow},
+		FetchOptions{Missing: sourceMissingPolicy(testCaseInput.tt.allow)},
 	)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	if testCaseInput.tt.producer {

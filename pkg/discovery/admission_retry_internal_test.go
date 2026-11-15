@@ -387,7 +387,7 @@ func TestQualification_EmptyRootHistory(t *testing.T) {
 	}
 }
 
-func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
+func TestAdmit_AcceptedChildCiphertextSurvivesPublication(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name                  string
@@ -443,15 +443,13 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			assert.Equal(t, known, true)
 			child, err := l.OccurrenceObject(t.Context(), &occurrence, input)
 			assert.NoError(t, err)
-			want := []manifest.Warning{
-				{
-					Resource: id,
-					Category: manifest.WarnSOPSUnreadable,
-					Message:  "SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared",
-					Detail:   []string{"identity"},
-				},
-			}
+			var want []manifest.Warning
 			assert.Diff(t, child.Warnings, want)
+			assert.Diff(
+				t,
+				child.Doc["stringData"],
+				map[string]any{"identity": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
+			)
 			var preparation *selection.Preparation
 			defer func() { preparation.Retire() }()
 			var required store.ReadSet
@@ -474,6 +472,7 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 				)
 				assert.FatalIf(t, index < 0, "prepared indexed child is missing")
 				assert.Diff(t, initial.Objects[index].Warnings, want)
+				assert.Diff(t, initial.Objects[index].Doc["stringData"], child.Doc["stringData"])
 				assert.Equal(t, initial.Objects[index].SourceSupport, manifest.BootstrapSourceID)
 				initial.Retire()
 			}
@@ -510,6 +509,7 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			case false:
 				assert.FatalIf(t, index < 0, "accepted indexed child is missing")
 				assert.Diff(t, accepted.Objects[index].Warnings, want)
+				assert.Diff(t, accepted.Objects[index].Doc["stringData"], child.Doc["stringData"])
 				assert.Equal(t, accepted.Objects[index].SourceSupport, manifest.BootstrapSourceID)
 			}
 			assert.Equal(t, len(st.Warnings()), 0)
@@ -519,8 +519,6 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			case true:
 				assert.Equal(t, len(st.Warnings()), 0)
 			case false:
-				want[0].Subject = manifest.DiagnosticIdentity{ID: id, Resource: id}
-				want[0].Count = 1
 				assert.Diff(t, st.Warnings(), want)
 			}
 			assert.Equal(t, st.GetObject(id), manifest.BaseManifest(supplied))

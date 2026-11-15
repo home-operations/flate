@@ -113,6 +113,7 @@ func TestE2E_OrphanMembership_UnreadableInput(t *testing.T) {
 		!strings.Contains(result.Suppressed[0].Reason, "Secret/apps/settings") {
 		t.Fatalf("unreadable required input: exit=%d suppressions=%+v", code, result.Suppressed)
 	}
+	membershipCompare(t, membershipDelta(oldDocs, newDocs), result.Changes)
 }
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.

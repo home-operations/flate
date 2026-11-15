@@ -16,96 +16,49 @@ import (
 	"github.com/home-operations/flate/pkg/selection"
 )
 
-func TestFinishSelected_OutputMembership(t *testing.T) {
+func TestFinishSelected_WarningScope(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config"}
 	object := manifest.Warning{
-		Resource: id,
-		Category: manifest.WarnSOPSUnreadable,
-		Message:  "encrypted keys",
-		Detail:   []string{"token"},
-		Count:    1,
+		Resource: id, Category: manifest.WarnInputParseFailed,
+		Message: "input parse failed", Detail: []string{"token"}, Count: 1,
 	}
 	consumer := manifest.Warning{
 		Resource: testutil.KustomizationID("apps", "consumer"),
-		Category: manifest.WarnUnresolvedSubstitution,
-		Message:  "encrypted input",
-		Related:  []manifest.NamedResource{id},
+		Category: manifest.WarnUnresolvedSubstitution, Message: "absent input", Related: []manifest.NamedResource{id},
 	}
 	inv := selectedInvocation{}
-	for _, cluster := range []string{"alpha", "beta"} {
-		group := selectedGroup{cluster: cluster}
-		for range 2 {
-			group.sides = append(group.sides, &selection.Result{
+	expected := output.Report{}
+	for group, cluster := range []string{"alpha", "beta"} {
+		selected := selectedGroup{cluster: cluster}
+		expected.Groups = append(expected.Groups, output.ReportGroup{Cluster: cluster})
+		for _, context := range []string{"orig snapshot", "current snapshot"} {
+			selected.sides = append(selected.sides, &selection.Result{
 				Warnings: []manifest.Warning{object, consumer},
 				Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{id: manifest.DiagnosticFor(id, nil)},
 			})
+			expected.Warnings = append(expected.Warnings,
+				output.Warning{Warning: object, Group: group, Context: context},
+				output.Warning{Warning: consumer, Group: group, Context: context})
 		}
-		inv.groups = append(inv.groups, group)
+		inv.groups = append(inv.groups, selected)
 	}
-	for _, tc := range []struct {
-		name      string
-		inventory [][2][]manifest.NamedResource
-	}{
-		{name: "diagnostic only"},
-		{name: "per group and side", inventory: [][2][]manifest.NamedResource{{{id}, nil}, {nil, {id}}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			var stderr bytes.Buffer
-			assert.NoError(
-				t,
-				finishSelected(
-					&selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr},
-					&inv,
-					&selectedPayload{output: tc.inventory},
-				),
-			)
-			expected := output.Report{}
-			for group, selected := range inv.groups {
-				expected.Groups = append(expected.Groups, output.ReportGroup{Cluster: selected.cluster})
-				for side, context := range []string{"orig snapshot", "current snapshot"} {
-					if group < len(tc.inventory) && slices.Contains(tc.inventory[group][side], id) {
-						expected.Warnings = append(
-							expected.Warnings,
-							output.Warning{Warning: object, Group: group, Context: context},
-						)
-					}
-					expected.Warnings = append(
-						expected.Warnings,
-						output.Warning{Warning: consumer, Group: group, Context: context},
-					)
-					assert.Diff(t, selected.sides[side].Warnings, []manifest.Warning{object, consumer})
-				}
-			}
-			expected.Prepare(nil)
-			var want bytes.Buffer
-			assert.NoError(t, (output.Encoder{Writer: &want}).Report(&expected, output.Encoder{Writer: io.Discard}))
-			assert.Diff(t, stderr.String(), want.String())
-		})
-	}
-}
-
-func TestResourcePayload_OutputMembership(t *testing.T) {
-	t.Parallel()
-	ks := &manifest.Kustomization{Name: "root", Namespace: "apps"}
-	hr := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
-	inv := selectedInvocation{groups: []selectedGroup{
-		{cluster: "alpha", sides: []*selection.Result{{Objects: []manifest.BaseManifest{ks, hr}}}},
-		{cluster: "beta", sides: []*selection.Result{{Objects: []manifest.BaseManifest{hr}}}},
-	}}
-	payload := resourcePayload(
-		&inv,
-		[]listSection{collectSelected(&inv, ksView()), collectSelected(&inv, hrView())},
-		output.Encoder{Writer: io.Discard, Format: output.FormatName},
-		true,
+	var stderr, want bytes.Buffer
+	assert.NoError(
+		t,
+		finishSelected(&selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, &inv, &selectedPayload{}),
 	)
-	assert.Diff(t, payload.output, [][2][]manifest.NamedResource{{{ks.Named(), hr.Named()}, nil}, {{hr.Named()}, nil}})
-	assert.Equal(t, len(imagePayload(&inv, output.Encoder{Writer: io.Discard}).output), 0)
+	expected.Prepare(nil)
+	assert.NoError(t, (output.Encoder{Writer: &want}).Report(&expected, output.Encoder{Writer: io.Discard}))
+	assert.Diff(t, stderr.String(), want.String())
+	for _, group := range inv.groups {
+		for _, side := range group.sides {
+			assert.Diff(t, side.Warnings, []manifest.Warning{object, consumer})
+		}
+	}
 }
 
-func TestCollectRendered_IdentityAlignment(t *testing.T) {
+func TestCollectRendered_OrderAndImmutability(t *testing.T) {
 	t.Parallel()
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "z"}}
 	config := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "a"}}
@@ -129,13 +82,11 @@ func TestCollectRendered_IdentityAlignment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			for range 2 {
-				docs, ids, err := collectRendered(result, &buildFlags{onlyKinds: tc.kinds})
+				docs, err := collectRendered(result, &buildFlags{onlyKinds: tc.kinds})
 				assert.NoError(t, err)
 				assert.Equal(t, len(docs), len(tc.want))
-				assert.Equal(t, len(ids), len(tc.want))
 				for i, position := range tc.want {
 					assert.Diff(t, docs[i], result.Manifests[0].Documents[position])
-					assert.Diff(t, ids[i], identities[position])
 				}
 				assert.Diff(t, result.Manifests[0].Documents, []map[string]any{secret, config})
 				assert.Diff(t, result.Manifests[0].Identities, identities)
@@ -168,7 +119,7 @@ func TestCollectRendered_IdentityAlignment(t *testing.T) {
 			before, err := json.Marshal(input.Manifests)
 			assert.NoError(t, err)
 			for range 2 {
-				docs, ids, err := collectRendered(input, &buildFlags{onlyKinds: tc.kinds})
+				docs, err := collectRendered(input, &buildFlags{onlyKinds: tc.kinds})
 				if tc.invalid {
 					assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 					assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
@@ -176,7 +127,6 @@ func TestCollectRendered_IdentityAlignment(t *testing.T) {
 					assert.NoError(t, err)
 				}
 				assert.Diff(t, docs, tc.documents)
-				assert.Diff(t, ids, tc.identities)
 				after, err := json.Marshal(input.Manifests)
 				assert.NoError(t, err)
 				assert.Diff(t, after, before)
@@ -207,16 +157,15 @@ func TestRun_OutputMembership(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config, namespace: apps}\ndata: {token: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n",
 	)
 	for _, tc := range []struct {
-		name     string
-		args     []string
-		warnings int
+		name string
+		args []string
 	}{
-		{name: "build", args: []string{"build"}, warnings: 1},
+		{name: "build", args: []string{"build"}},
 		{name: "filtered build", args: []string{"build", "--only-kinds", "Deployment"}},
 		{name: "resource rows", args: []string{"get", "ks"}},
 		{name: "images", args: []string{"get", "images"}},
 		{name: "test roster", args: []string{"test", "ks"}},
-		{name: "document diff", args: []string{"diff", "--path-orig", t.TempDir(), "--output", "json"}, warnings: 1},
+		{name: "document diff", args: []string{"diff", "--path-orig", t.TempDir(), "--output", "json"}},
 		{name: "brief diff", args: []string{"diff", "--path-orig", t.TempDir(), "--output", "brief"}},
 		{name: "image diff", args: []string{"diff", "images", "--path-orig", t.TempDir()}},
 	} {
@@ -233,7 +182,7 @@ func TestRun_OutputMembership(t *testing.T) {
 			)
 			result := runCLI(t, args...)
 			assert.Equal(t, result.code, 0)
-			assert.Equal(t, strings.Count(result.stderr, "[SOPSUnreadable]"), tc.warnings)
+			assert.Equal(t, strings.Contains(result.stderr, "encrypted"), false)
 		})
 	}
 }

@@ -1,7 +1,10 @@
 package values
 
 import (
+	"errors"
 	"testing"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -92,9 +95,12 @@ func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 		}
 		facts := reader.ReferenceFacts(id, nil, consumer)
 		wantFacts := store.ReferenceFacts{
-			Generated:     true,
-			Productions:   want,
-			ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
+			Generated:   true,
+			Keys:        manifest.KeySet{Names: []string{"VALUE"}, Complete: true},
+			Productions: want,
+			ReferenceData: []manifest.ReferenceData{
+				{Production: want[0], Keys: manifest.KeySet{Names: []string{"VALUE"}, Complete: true}},
+			},
 		}
 		if reader == &current {
 			wantFacts.Private = true
@@ -104,5 +110,52 @@ func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 		assert.Diff(t, facts, wantFacts)
 		assert.Diff(t, NewStoreProvider(reader).Lookup(id), wantFacts)
 		assert.FatalIf(t, NewStoreProvider(reader).Lookup(id).Data != nil, "%s", "provider fabricated declared data")
+	}
+}
+
+func TestStoreProvider_BareMetadataDoesNotAdmitNamespace(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			bare := manifest.NamedResource{Name: "settings"}
+			data := map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"}
+			var raw manifest.BaseManifest = manifest.NewConfigMap(bare, data)
+			if kind == manifest.KindSecret {
+				raw = manifest.NewSecret(bare, nil, data)
+			}
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw.Named(): {Path: "settings.yaml", Declaration: raw},
+			}})
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: bare.Name}},
+			}}
+			var reads store.ReadSet
+			reads.Init(st, consumer.Named(), nil)
+			defer reads.Close()
+			id := raw.Named()
+			id.Namespace = consumer.Namespace
+			facts := NewStoreProvider(&reads).Lookup(id)
+			assert.Equal(t, facts.Declared, false)
+			assert.Equal(t, facts.Data == nil, true)
+			assert.Diff(t, facts.Keys, manifest.KeySet{Names: []string{"VALUE"}, Complete: true})
+			ref := manifest.Reference{NamedResource: id, Use: "substituteFrom"}
+			result := Resolve(&ResolveRequest{Reference: ref, Facts: facts})
+			assert.Equal(t, result.Effect(), Failed)
+			assert.FatalIf(
+				t,
+				!errors.Is(result.Err(), manifest.ErrObjectNotFound) || !errors.Is(result.Err(), manifest.ErrFlux),
+				"qualified absence lost: %v",
+				result.Err(),
+			)
+			assert.Equal(t, ExpandPostBuildSubstituteReference(consumer, []Result{result}), result.Err())
+			assert.Equal(t, consumer.PostBuild.Substitute == nil, true)
+			for _, demand := range []Demand{ObjectDemand, HelmDemand} {
+				selected := Resolve(&ResolveRequest{Reference: ref, Facts: facts, Demand: demand})
+				assert.Equal(t, selected.Effect(), Failed)
+				assert.Equal(t, errors.Is(selected.Err(), manifest.ErrObjectNotFound), true)
+			}
+		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type entryPrerequisites struct {
@@ -44,14 +45,19 @@ func (e *entryPrerequisites) prerequisites(obj manifest.BaseManifest) bool {
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.ContentInput() && ref.ArtifactStages == 0 && !ref.Acquisition {
 			facts := e.reads.ReferenceFacts(ref.NamedResource, e.loader.Index, obj.Named())
-			admission := e.loader.Options.Missing.Admission(&ref, &facts)
-			if admission == selection.AvailableInput {
+			assessment := values.Resolve(
+				&values.ResolveRequest{
+					Reference:  ref,
+					Facts:      facts,
+					Permission: e.loader.Options.Missing,
+					Demand:     values.ObjectDemand,
+				},
+			)
+			if assessment.Materialized() {
 				continue
 			}
-			if _, accepted := acceptedApplicationOutput(
-				e.reads,
-				obj.Named(),
-			); accepted && admission == selection.OptionalInput {
+			if output, accepted := acceptedApplicationOutput(e.reads, obj.Named()); accepted &&
+				output.Render != nil && assessment.Admitted() {
 				continue
 			}
 			if !ref.Optional {

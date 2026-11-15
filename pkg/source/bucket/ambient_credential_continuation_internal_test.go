@@ -108,7 +108,7 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "%s", err)
 
-		rotated, err := fetchtest.Machine(t.Context(), missing, inputs.reads)
+		rotated, err := fetchtest.Machine(t.Context(), missing)
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -121,7 +121,7 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 		testutil.WriteFileAt(t, os.Getenv("AWS_CONFIG_FILE"), "[default]\naws_access_key_id = partial\n")
 		beforeFailure := (*inputs.requests).Load()
-		failed, err := fetchtest.Machine(t.Context(), missing, inputs.reads)
+		failed, err := fetchtest.Machine(t.Context(), missing)
 		assert.FatalIf(
 			t,
 			failed != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || (*inputs.requests).

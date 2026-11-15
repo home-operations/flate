@@ -33,7 +33,11 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 					},
 				},
 			}
-			err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+			err := ExpandValueReferences(
+				hr,
+				resolveInputsForTest(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil),
+				nil,
+			)
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 				!errors.Is(err, strconv.ErrSyntax), "target parser identities lost: %v", err)
 			cause, ok := errors.AsType[*strconv.NumError](err)

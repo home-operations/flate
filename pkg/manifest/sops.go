@@ -17,7 +17,9 @@ const sopsCiphertextPrefix = "ENC[AES256_GCM,"
 // https://raw.githubusercontent.com/getsops/sops/v3.13.3/aes/cipher.go
 var sopsCiphertext = regexp.MustCompile(`^ENC\[AES256_GCM,data:(.+),iv:(.+),tag:(.+),type:(.+)\]`)
 
-// SanitizeDocument removes unreadable core data while retaining occurrence diagnostics.
+// SanitizeDocument retains canonical ciphertext and removes only SOPS metadata.
+//
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func SanitizeDocument(o DocOccurrence) (DocOccurrence, bool) {
 	doc, warnings, changed := sanitizeDocument(o.Document, o.Warnings, DocKind(o.Document), DocAPIVersion(o.Document))
 	o.Document, o.Warnings = doc, warnings
@@ -41,63 +43,67 @@ func sanitizeDocument(
 			break
 		}
 	}
-	sanitized, changed := sanitizeData(doc, kind)
-	if !changed {
+	if _, present := doc["sops"]; !present {
 		return doc, warnings, false
 	}
-	var keys []string
-	for _, field := range []string{"data", "stringData", "binaryData"} {
-		before, _ := doc[field].(map[string]any)
-		after, _ := sanitized[field].(map[string]any)
-		if len(before) == len(after) {
-			continue
-		}
-		for key := range before {
-			if _, present := after[key]; !present {
-				keys = append(keys, key)
-			}
-		}
-	}
-	doc = sanitized
-	if len(keys) > 0 {
-		slices.Sort(keys)
-		warnings = append(slices.Clone(warnings), Warning{
-			Resource: DocIdentity(doc),
-			Category: WarnSOPSUnreadable,
-			Detail:   slices.Compact(keys),
-			Message:  "SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared",
-		})
-	}
-	return doc, warnings, changed
+	doc = maps.Clone(doc)
+	delete(doc, "sops")
+	return doc, warnings, true
 }
 
-func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
-	var sanitized map[string]any
+// SubstitutionDocument keeps recognized ciphertext opaque to expression evaluation.
+//
+//nolint:gocritic // The SDK preserves immutable value snapshots and the value method set.
+func (o DocOccurrence) SubstitutionDocument() map[string]any {
+	doc := o.Document
+	kind := DocKind(doc)
+	if DocAPIVersion(doc) != CoreAPIVersion || kind != KindSecret && kind != KindConfigMap {
+		return doc
+	}
+	var projected map[string]any
 	for _, field := range []string{dataKey, stringDataKey, binaryDataKey} {
-		var encoding *base64.Encoding
-		secretData := kind == KindSecret && field == dataKey
-		if field == binaryDataKey || secretData {
-			encoding = base64.StdEncoding
+		value, changed := substitutionField(doc[field], kind == KindSecret && field == dataKey)
+		if !changed {
+			continue
 		}
-		data, _ := doc[field].(map[string]any)
-		replaced := sanitizeDataField(data, encoding, secretData)
-		if replaced != nil {
-			if sanitized == nil {
-				sanitized = maps.Clone(doc)
-			}
-			sanitized[field] = replaced
+		if projected == nil {
+			projected = maps.Clone(doc)
 		}
+		projected[field] = value
 	}
-	if _, ok := doc["sops"]; ok {
-		if sanitized == nil {
-			sanitized = maps.Clone(doc)
+	if projected != nil {
+		return projected
+	}
+	return doc
+}
+
+func substitutionField(raw any, secretData bool) (any, bool) {
+	if value, ok := raw.(string); ok {
+		if opaqueField(value) && strings.Contains(value, "$") {
+			return strings.ReplaceAll(value, "$", "$$"), true
 		}
-		delete(sanitized, "sops")
+		return raw, false
 	}
-	if sanitized != nil {
-		return sanitized, true
+	data, _ := raw.(map[string]any)
+	var encoding *base64.Encoding
+	if secretData {
+		encoding = base64.StdEncoding
 	}
-	return doc, false
+	var replaced map[string]any
+	for key, raw := range data {
+		value, ok := raw.(string)
+		if !ok || !strings.Contains(value, "$") || !encryptedValue(value, encoding, secretData) {
+			continue
+		}
+		if replaced == nil {
+			replaced = maps.Clone(data)
+		}
+		replaced[key] = strings.ReplaceAll(value, "$", "$$")
+	}
+	if replaced != nil {
+		return replaced, true
+	}
+	return raw, false
 }
 
 func encryptedValue(value string, encoding *base64.Encoding, secretData bool) bool {
@@ -130,27 +136,6 @@ func HasSubstituteDisabled(doc map[string]any) bool {
 		}
 	}
 	return false
-}
-
-func sanitizeDataField(data map[string]any, encoding *base64.Encoding, secretData bool) map[string]any {
-	var replaced map[string]any
-	for key, raw := range data {
-		if value, ok := raw.(string); ok && !secretData && len(value) < len(sopsCiphertextPrefix) {
-			continue
-		}
-		value, err := scalarString(raw)
-		if err != nil {
-			continue
-		}
-		if !encryptedValue(value, encoding, secretData) {
-			continue
-		}
-		if replaced == nil {
-			replaced = maps.Clone(data)
-		}
-		delete(replaced, key)
-	}
-	return replaced
 }
 
 func encryptedSecretValue(value string, encoding *base64.Encoding) bool {

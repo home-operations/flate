@@ -587,7 +587,7 @@ func TestReadSet_CapturedPublicationLifetime(t *testing.T) {
 	defer reads.Close()
 	warning := func() weak.Pointer[manifest.Warning] {
 		warnings := []manifest.Warning{
-			{Resource: child.Obj.Named(), Category: manifest.WarnSOPSUnreadable, Message: "publication"},
+			{Resource: child.Obj.Named(), Category: manifest.WarnInputParseFailed, Message: "publication"},
 		}
 		emitted := child
 		emitted.Warnings = warnings

@@ -48,7 +48,7 @@ func ValidateIdentity(doc map[string]any, definitions []map[string]any) error {
 func validateDataDocument(doc map[string]any, data Data) error {
 	for _, field := range []string{dataKey, binaryDataKey, stringDataKey} {
 		if value := doc[field]; value != nil {
-			if _, ok := value.(map[string]any); !ok {
+			if _, ok := value.(map[string]any); !ok && !opaqueField(value) {
 				return inputf("invalid data mapping")
 			}
 		}

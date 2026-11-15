@@ -1,12 +1,9 @@
 package base
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -134,32 +131,23 @@ func (e *Execution) DataInputs(
 	}
 	var inputs []depwait.DataDependency
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" ||
-			!ref.NamedResource.KindInfo().Data {
+		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" {
 			continue
 		}
 		input, err := e.readDataInput(ctx, ref.NamedResource, provider)
 		if err != nil {
 			return nil, err
 		}
-		result, err := values.Classify(&ref, &input)
-		if err != nil {
-			return nil, err
-		}
-		result.ReportWarnings(&e.Reads)
-		disposition := result.Disposition(e.Missing)
-		if disposition == values.Unresolved {
-			e.Unreadable = append(e.Unreadable, ref.NamedResource)
-		}
-		if disposition == values.Unresolved ||
-			ref.Use == "substituteFrom" && result.State() == values.Encrypted && disposition == values.UseData {
-			e.unresolved = append(e.unresolved, depwait.DataDependency{Reference: ref, Input: input, Result: result})
+		assessment := values.Resolve(&values.ResolveRequest{Reference: ref, Facts: input, Permission: e.Missing})
+		if assessment.UnreadableInput() {
+			e.Unreadable = append(e.Unreadable, assessment.ID())
 		}
 		inputs = append(
 			inputs,
 			depwait.DataDependency{
 				Reference: ref,
 				Input:     input,
+				Result:    assessment,
 			},
 		)
 	}
@@ -170,7 +158,7 @@ func (e *Execution) DataInputs(
 type DataWait struct {
 	Inputs []depwait.DataDependency
 	// Resume retains authored positions until consumers filter their declarations.
-	Resume func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error
+	Resume func(context.Context, manifest.DrainLevel, []values.Result) error
 }
 
 // AwaitData retains availability separately from required authored readiness gates.
@@ -182,7 +170,7 @@ type pendingDataError struct {
 	execution *Execution
 	wait      DataWait
 	blocked   []manifest.NamedResource
-	omitted   []depwait.DataDependency
+	results   []values.Result
 	failed    *manifest.DependencyFailedError
 }
 
@@ -193,7 +181,8 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	gateErr := e.classify(ctx, level)
 
 	w := e.dependencyWaiter()
-	p.omitted = p.omitted[:0]
+	p.results = p.results[:0]
+	e.Unreadable = e.Unreadable[:0]
 	p.failed, _ = errors.AsType[*manifest.DependencyFailedError](gateErr)
 	p.blocked = p.blocked[:0]
 	if blocked, ok := errors.AsType[*depwait.BlockedError](gateErr); ok {
@@ -215,41 +204,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	if gateErr != nil {
 		return gateErr
 	}
-	for i := range e.unresolved {
-		ref := &e.unresolved[i]
-		cause := ""
-		name := ref.Name
-		var detail []string
-		var related []manifest.NamedResource
-		if ref.Result.State() != values.Absent {
-			cause = ": " + ref.Result.Cause()
-		}
-		if keys := ref.Result.UnreadableKeys(); len(keys) != 0 {
-			name = ref.NamespacedName()
-			detail = keys[1:]
-			related = []manifest.NamedResource{ref.NamedResource}
-		}
-		e.Reads.AddWarning(
-			manifest.Warning{
-				Category: manifest.WarnUnresolvedSubstitution,
-				Related:  related,
-				Detail:   detail,
-				Message: fmt.Sprintf(
-					"substituteFrom %s %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values",
-					ref.Kind,
-					name,
-				) + cause,
-			},
-		)
-	}
-	slices.SortFunc(p.omitted, func(a, b depwait.DataDependency) int {
-		return cmp.Or(
-			a.NamedResource.Compare(b.NamedResource),
-			strings.Compare(a.Use, b.Use),
-			cmp.Compare(a.Position, b.Position),
-		)
-	})
-	return p.wait.Resume(ctx, level, p.omitted)
+	return p.wait.Resume(ctx, level, p.results)
 }
 
 func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
@@ -336,29 +291,31 @@ func (p *pendingDataError) settleInput(
 	if result.Err != nil {
 		return result.Err
 	}
-	if !input.Optional && !input.Input.Private && result.Result.State() != values.Readable &&
-		result.Result.State() != values.Produced {
-		for _, producer := range input.Input.Materializers {
-			e.Reads.RequireData(producer)
+	if result.Result.RequiresData() {
+		if !result.Result.Materialized() {
+			for _, producer := range input.Input.Materializers {
+				e.Reads.RequireData(producer)
+			}
 		}
-	}
-	if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
 		e.Reads.RequireData(input.NamedResource)
 	}
-	omit := result.Omit
 	switch result.Kind {
 	case schedule.Blocked:
 		p.blocked = append(p.blocked, result.Blocked...)
 	case schedule.DependencyFailed:
-		if input.Use == "valuesFrom" && len(result.Failed) == 0 {
-			return result.Result.Failure()
+		if result.Result.Err() != nil {
+			return result.Result.Err()
 		}
 		p.failed = p.addFailure(p.failed, result.Failed, &result.Reason, input)
 	case schedule.Terminal:
-		if omit {
-			input.Result = result.Result
-			p.omitted = append(p.omitted, *input)
+		if result.Result.UnreadableInput() {
+			e.Unreadable = append(e.Unreadable, result.Result.ID())
 		}
+		input.Result = result.Result
+		if !e.probe {
+			result.Result.ReportWarnings(&e.Reads)
+		}
+		p.results = append(p.results, result.Result)
 	}
 	return nil
 }

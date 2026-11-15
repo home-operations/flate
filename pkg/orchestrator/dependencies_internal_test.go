@@ -483,8 +483,8 @@ func assertGeneratedValues(t *testing.T, o *Orchestrator, generatedName string) 
 		value, present := result.Value, result.Found
 		assert.FatalIf(
 			t,
-			err != nil || present || value != "",
-			"encrypted token retained: %q %t %v",
+			err != nil || !present || !result.Encrypted || value != "",
+			"encrypted token projection: %q %t %v",
 			value,
 			present,
 			err,

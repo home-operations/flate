@@ -84,11 +84,10 @@ type Config struct {
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
 	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
-	Network             *source.Network
-	chartFetcher        *helmchart.Fetcher
-	projections         *manifest.ProducerProjections
-	missing             *depwait.MissingPolicy
-	allowMissingSecrets bool
+	Network      *source.Network
+	chartFetcher *helmchart.Fetcher
+	projections  *manifest.ProducerProjections
+	missing      *depwait.MissingPolicy
 	// HelmClient must borrow Cache; both remain caller-owned when supplied.
 	HelmClient *helm.Client
 	// StatusListener receives concurrent tree-qualified store events and must not block.
@@ -395,7 +394,6 @@ func (o *Orchestrator) completeBootstrap(ctx context.Context) error {
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher
 	o.rsc.Retry = o.cfg.SourceRetry
-	o.rsc.AllowMissingSecrets = o.cfg.allowMissingSecrets
 	return nil
 }
 

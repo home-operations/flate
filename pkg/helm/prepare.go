@@ -16,21 +16,23 @@ type valuesFiles struct {
 	normalized bool
 }
 
-// Prepare clones a HelmRelease, resolves its chartRef and expands its values.
+// Prepare MUST preserve authored dependencies for accepted-history identity.
 func Prepare(
 	hr *manifest.HelmRelease,
 	lookup func(manifest.NamedResource) manifest.BaseManifest,
-	provider values.Provider,
+	inputs []values.Result,
 	cache *values.Cache,
 ) (*manifest.HelmRelease, error) {
 	hr = hr.Clone()
 	if err := hr.ResolveChartSource(lookup); err != nil {
 		return nil, err
 	}
-	err := values.ExpandValueReferences(hr, provider, cache)
+	authored := hr.ValuesFrom
+	err := values.ExpandValueReferences(hr, inputs, cache)
 	if err != nil {
 		return nil, err
 	}
+	hr.ValuesFrom = authored
 	return hr, nil
 }
 

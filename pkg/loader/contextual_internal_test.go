@@ -767,7 +767,7 @@ spec:
 			}
 		} else {
 			assert.Equal(t, projected.facts.targets[0].Name, "credentials")
-			assert.Diff(t, projected.facts.targets[0].DeclaredKeys, []string{"token"})
+			assert.Diff(t, projected.facts.targets[0].Keys, manifest.KeySet{Names: []string{"token"}, Complete: true})
 			assert.Equal(t, fact.facts.targets[0].Name, "${SECRET:-credentials}")
 		}
 	}

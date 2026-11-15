@@ -32,6 +32,14 @@ import (
 
 var envSettings = sync.OnceValue(cli.New)
 
+// RenderError MUST wrap only engine failures after input preparation.
+type RenderError struct {
+	Err error
+}
+
+func (e *RenderError) Error() string { return "helm template: " + e.Err.Error() }
+func (e *RenderError) Unwrap() error { return e.Err }
+
 const sourceHeader = "# Source: "
 
 // Template renders a HelmRelease and returns independently owned documents.
@@ -629,7 +637,7 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 	rel, decodeChartErr := inst.RunWithContext(ctx, ch, finalValues)
 	work.Finish(decodeChartErr)
 	if decodeChartErr != nil {
-		return "", fmt.Errorf("helm template: %w", schemaError(decodeChartErr))
+		return "", &RenderError{Err: schemaError(decodeChartErr)}
 	}
 	relV1, ok := rel.(*release.Release)
 	if !ok {

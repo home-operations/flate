@@ -433,7 +433,7 @@ func (d *Session) preparePendingProducer(
 	if err != nil {
 		return false, err
 	}
-	if !guard.Valid() {
+	if !guard.Valid() || !prepared.complete {
 		return false, nil
 	}
 	if err := d.registerProducer(ctx, prepared); err != nil {

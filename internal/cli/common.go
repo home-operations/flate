@@ -362,7 +362,6 @@ type selectedPayload struct {
 	warnings [][]manifest.Warning
 	rosters  []output.TestReport
 	subjects [][]manifest.NamedResource
-	output   [][2][]manifest.NamedResource
 	prepare  func([]diff.Names)
 	write    func() error
 }
@@ -664,13 +663,7 @@ func appendSelectedGroups(
 			}
 			model.Context = snapshot
 			g.Models = append(g.Models, model)
-			var inventory []manifest.NamedResource
-			if i < len(payload.output) {
-				inventory = payload.output[i][j]
-			}
-			visible := *side
-			visible.Warnings = side.WarningsFor(inventory)
-			appendSideDiagnostics(report, i, &visible, snapshot)
+			appendSideDiagnostics(report, i, side, snapshot)
 		}
 		normalizeReportModels(g)
 

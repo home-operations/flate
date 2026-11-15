@@ -65,7 +65,7 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 		{name: "optional Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
 		{name: "unknown Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
 		{name: "missing ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
-		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}},
+		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
 		{name: "empty name", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
 		{name: "unknown kind", ref: manifest.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
 	} {
@@ -115,7 +115,7 @@ func TestResolve_SubstitutionProducers(t *testing.T) {
 		{name: "optional Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
 		{name: "unknown Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
 		{name: "missing ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
-		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}},
+		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
 		{name: "empty name", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
 		{name: "unknown kind", ref: manifest.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
 	} {
@@ -183,7 +183,7 @@ func TestSubstitutionAvailability_ObservesMaterializers(t *testing.T) {
 		{name: "optional Secret", kind: manifest.KindSecret, optional: true, known: true, want: schedule.Blocked},
 		{name: "unknown Secret", kind: manifest.KindSecret, want: schedule.Terminal},
 		{name: "unknown ConfigMap", kind: manifest.KindConfigMap, want: schedule.Blocked},
-		{name: "self produced", kind: manifest.KindConfigMap, known: true, self: true, want: schedule.Terminal},
+		{name: "self produced", kind: manifest.KindConfigMap, known: true, self: true, want: schedule.Blocked},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -467,7 +467,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 		t.Context(),
 		DataWait{
 			Inputs: inputs,
-			Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
+			Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { return nil },
 		},
 		manifest.DrainNone,
 	)
@@ -480,6 +480,18 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 		}
 	}
 	switch {
+	case slices.Contains(testCaseInput.tc.producers, *testCaseInput.consumer):
+		assert.Equal(t, waiting, true)
+		assert.Equal(t, slices.Contains(blocked.Deps, *testCaseInput.consumer), false)
+		err = c.AwaitData(
+			t.Context(),
+			DataWait{
+				Inputs: inputs,
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { return nil },
+			},
+			manifest.DrainForce,
+		)
+		assert.Equal(t, errors.Is(err, manifest.ErrObjectNotFound), true)
 	case len(want) > 0:
 
 		assert.FatalIf(t, !waiting, "supplier was not bound: %v", err)

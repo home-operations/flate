@@ -164,7 +164,7 @@ func testReconcileOptionalMaterializerAbsenceCase(
 	}
 	info, _ := s.GetStatus(ks.Named())
 	if testCaseInput.required {
-		if info.Status != store.StatusFailed ||
+		if info.Status != store.StatusFailed || !info.IsDependencyFailure() ||
 			!slices.Equal(info.BlockedBy(), []manifest.NamedResource{required}) {
 			t.Fatalf("required diagnostic causes=%+v blocked=%v", info, info.BlockedBy())
 		}

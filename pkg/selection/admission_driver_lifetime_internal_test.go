@@ -236,7 +236,12 @@ func testAdmitAcceptedDataSurvivesCallerReuse(t *testing.T) {
 	assert.Diff(t, accepted.Ordinary, ordinary)
 	assert.Diff(t, accepted.Blocked, blocked)
 	assert.Diff(t, accepted.Namespaces, namespaces)
-	if diff := cmp.Diff(objects, accepted.Objects, cmpopts.IgnoreUnexported(store.Child{})); diff != "" {
+	if diff := cmp.Diff(
+		objects,
+		accepted.Objects,
+		cmpopts.IgnoreUnexported(store.Child{}),
+		cmp.AllowUnexported(manifest.ConfigMap{}, manifest.Secret{}),
+	); diff != "" {
 		t.Errorf("accepted objects changed (-want +got):\n%s", diff)
 	}
 	assert.Diff(t, accepted.Objects[0].Warnings, []manifest.Warning{{

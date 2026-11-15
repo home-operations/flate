@@ -8,12 +8,70 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/kustomize/api/types"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
+
+func TestMaterializeGeneratorData_ActualKeySet(t *testing.T) {
+	t.Parallel()
+	const cipher = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
+		for _, tc := range []struct {
+			name    string
+			pairs   []types.Pair
+			keys    []string
+			key     string
+			value   manifest.DataValue
+			invalid bool
+		}{
+			{name: "empty"},
+			{
+				name: "unordered duplicate keys",
+				pairs: []types.Pair{
+					{Key: "z", Value: "first"}, {Key: "a", Value: "alpha"}, {Key: "z", Value: "last"},
+				},
+				keys: []string{"a", "z"}, key: "z", value: manifest.DataValue{Value: "last", Found: true},
+			},
+			{
+				name: "cipher valued", pairs: []types.Pair{{Key: "TOKEN", Value: cipher}},
+				keys: []string{"TOKEN"}, key: "TOKEN", value: manifest.DataValue{Found: true, Encrypted: true},
+			},
+			{name: "parse failure", pairs: []types.Pair{{Key: "VALUE", Value: "plain"}}, invalid: true},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				r := generatorRecord{isConfigMap: kind == manifest.KindConfigMap, namespace: "apps"}
+				if !tc.invalid {
+					r.args.Name = "input"
+				}
+				generated, err := materializeGeneratorData(&r, tc.pairs)
+				if tc.invalid {
+					assert.FatalIf(t, err == nil, "invalid generated identity was accepted")
+					assert.Equal(t, err.Error(), kind+" missing metadata.name")
+					assert.Equal(t, generated.child.Obj == nil, true)
+					assert.Diff(t, generated.keys, manifest.KeySet{})
+					return
+				}
+				assert.NoError(t, err)
+				assert.Equal(t, generated.child.Obj.Named().Kind, kind)
+				assert.Diff(t, generated.keys, manifest.KeySet{Names: tc.keys, Complete: true})
+				data, ok := generated.child.Obj.(manifest.Data)
+				assert.FatalIf(t, !ok, "generated object has no data")
+				assert.Equal(t, data.HasKeys(), len(tc.keys) != 0)
+				if tc.key != "" {
+					value, valueErr := data.Value(tc.key)
+					assert.NoError(t, valueErr)
+					assert.Equal(t, value, tc.value)
+				}
+			})
+		}
+	}
+}
 
 func TestFinalizeIndex_GeneratorData(t *testing.T) {
 	t.Parallel()
@@ -194,6 +252,12 @@ func testFinalizeIndexGeneratorDataCase1Part1(t *testing.T, tc **struct {
 ) {
 	t.Helper()
 	want := (*tc).want
+	if (*tc).unreadable {
+		want = strings.TrimPrefix((*tc).value, "VALUE=")
+		if want == "" {
+			want = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
+		}
+	}
 	if (*kind) == manifest.KindSecret {
 		want = base64.StdEncoding.EncodeToString([]byte(want))
 	}
@@ -212,10 +276,7 @@ func testFinalizeIndexGeneratorDataCase1Part1(t *testing.T, tc **struct {
 		assert.FatalIf(t, clearValue != wantClear,
 			"CLEAR=%v, want %q", clearValue, wantClear)
 	}
-	if (*tc).unreadable {
-		assert.FatalIf(t, got != nil,
-			"encrypted VALUE retained: %v", got)
-	} else if got != want {
+	if got != want {
 		t.Fatalf("VALUE=%v, want %q", got, want)
 	}
 }
@@ -284,6 +345,15 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 	} else {
 		testFinalizeIndexGeneratorDataCase1Part1(t, inputs.tc, inputs.kind, obj)
 	}
+	if obj != nil && !(*inputs.tc).existing {
+		want := []string{"CLEAR", "VALUE"}
+		if (*inputs.tc).unreadable {
+			want = []string{"ALPHA", "CLEAR", "VALUE", "ZULU"}
+		}
+		references := (*inputs.l).Index.Records[*inputs.id].ReferenceData
+		assert.Equal(t, len(references), 1)
+		assert.Diff(t, references[0].Keys, manifest.KeySet{Names: want, Complete: true})
+	}
 	if (*inputs.tc).unreadable {
 		var reads store.ReadSet
 		reads.Init((*inputs.st), (*inputs.ks).Named(), nil)
@@ -300,16 +370,20 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		if got := (*inputs.st).Warnings(); len(got) != 0 {
 			t.Fatalf("unaccepted lookup published warnings: %+v", got)
 		}
-		result, err := values.Classify(&manifest.Reference{NamedResource: *inputs.id, Use: "substituteFrom"}, &input)
-		assert.NoError(t, err)
+		result := values.Resolve(
+			&values.ResolveRequest{
+				Reference: manifest.Reference{NamedResource: *inputs.id, Use: "substituteFrom"},
+				Facts:     input,
+			},
+		)
+		assert.NoError(t, result.Err())
 		result.ReportWarnings(&reads)
 		reads.Accept(store.AssessmentReconciled)
 		warnings := (*inputs.st).Warnings()
-		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSOPSUnreadable ||
-			warnings[0].Resource != (*inputs.id) ||
-			warnings[0].Count != 1 ||
-			!slices.Equal(warnings[0].Detail, []string{"ALPHA", "VALUE", "ZULU"}),
-			"accepted generator warnings: %+v", warnings)
+		assert.Equal(t, len(warnings), 0)
+		value, err := obj.Value("VALUE")
+		assert.NoError(t, err)
+		assert.Equal(t, value, manifest.DataValue{Found: true, Encrypted: true})
 	}
 	var owners []manifest.NamedResource
 	if !(*inputs.tc).external && !(*inputs.tc).escape {

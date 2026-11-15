@@ -556,7 +556,7 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *Loader, root string, share
 	)
 }
 
-func TestPromoteOrphans_UnreadableSecretWarning(t *testing.T) {
+func TestPromoteOrphans_UnreadableSecretRetainsCiphertext(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "secret.yaml", `apiVersion: v1
@@ -578,11 +578,7 @@ sops: {version: 3.9.0}
 	assert.FatalIf(t, !ok, "orphan Secret was not promoted")
 	value, err := secret.Value("password")
 	assert.NoError(t, err)
-	assert.Equal(t, value.Found, false)
-	warnings := st.Warnings()
-	assert.FatalIf(t, len(warnings) != 1, "warnings = %+v, want one SOPS warning", warnings)
-	assert.Equal(t, warnings[0].Resource, id)
-	assert.Equal(t, warnings[0].Category, manifest.WarnSOPSUnreadable)
-	assert.Equal(t, warnings[0].Count, 1)
-	assert.Diff(t, warnings[0].Detail, []string{"password"})
+	assert.Equal(t, value, manifest.DataValue{Found: true, Encrypted: true})
+	assert.Equal(t, secret.Data["password"], any("ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"))
+	assert.Equal(t, len(st.Warnings()), 0)
 }

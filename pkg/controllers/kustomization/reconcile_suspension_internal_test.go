@@ -137,7 +137,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 	}()
 	ks, ok := execution.run.Reads.Get[*manifest.Kustomization](ks.Named())
 	assert.FatalIf(t, !ok, "%v", "Kustomization not captured")
-	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
+	source, _, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	assert.FatalIf(t, !execution.run.Reads.Valid(), "%v", "initial capture is invalid")
 	before := guard.opened.Load()
@@ -153,7 +153,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		close(captured)
 		c.Tasks.YieldSlot(func() { <-resume })
 		valid := execution.run.Reads.Valid()
-		err := execution.render(ctx, ks, source, applyIgnore)
+		err := execution.render(ctx, ks, source, nil)
 		opens := guard.opened.Load() - before
 		fingerprintDedupResult1, fingerprintDedupResult1Err := execution.run.FingerprintDedup(
 			t.Context(),
@@ -550,7 +550,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 	t.Logf("persisted renderer hit enabled: %t", persistent)
 	before := guard.opened.Load()
-	prepared, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
+	prepared, err := kustomize.Prepare(ks, nil)
 	assert.NoError(t, err)
 	rendered, _, err := testutil.RenderMaps(
 		kustomize.Render(

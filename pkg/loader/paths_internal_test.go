@@ -117,10 +117,12 @@ func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
 			}
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "vars"}
 			if tc.encrypted {
-				data := manifest.NewSecret(id, nil, nil)
-				reader.inputs[id] = store.ReferenceFacts{Data: data, Original: data, Warnings: []manifest.Warning{
-					{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"VALUE"}},
-				}}
+				data := manifest.NewSecret(
+					id,
+					nil,
+					map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
+				)
+				reader.inputs[id] = store.ReferenceFacts{Data: data, Original: data, Declared: true}
 			}
 			resolution := substitutionResolution{loader: l, provider: values.NewStoreProvider(reader)}
 			_, known := resolution.resolveValue(t.Context(), owner.Named(), "${VALUE}")

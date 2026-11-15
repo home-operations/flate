@@ -648,3 +648,45 @@ func testWithDeclarationsEffectiveInputApplicabilityCase(
 		}
 	}
 }
+
+func TestReferenceChanged_EncryptedSelectedKey(t *testing.T) {
+	t.Parallel()
+	const first = "ENC[AES256_GCM,data:one,iv:x,tag:y,type:str]"
+	const second = "ENC[AES256_GCM,data:two,iv:x,tag:y,type:str]"
+	for _, tc := range []struct {
+		name           string
+		values         [2]string
+		known, changed bool
+	}{
+		{name: "ciphertext change", values: [2]string{first, second}},
+		{name: "encrypted before", values: [2]string{first, "readable"}},
+		{name: "encrypted after", values: [2]string{"readable", second}},
+		{name: "readable change", values: [2]string{"before", "after"}, known: true, changed: true},
+		{name: "readable equal", values: [2]string{"same", "same"}, known: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+				t.Run(kind, func(t *testing.T) {
+					t.Parallel()
+					var inputs [2]store.Child
+					for side, value := range tc.values {
+						var data manifest.BaseManifest = &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"chosen": value}}
+						if kind == manifest.KindSecret {
+							data = &manifest.Secret{
+								Name:       "input",
+								Namespace:  "apps",
+								StringData: map[string]any{"chosen": value},
+							}
+						}
+						inputs[side].Obj = data
+					}
+					comparison, err := referenceChanged(&manifest.Reference{Key: "chosen"}, &inputs)
+					assert.NoError(t, err)
+					assert.Equal(t, comparison.Known, tc.known)
+					assert.Equal(t, comparison.Changed, tc.changed)
+				})
+			}
+		})
+	}
+}

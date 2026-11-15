@@ -99,7 +99,7 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	artifacts := make([]*store.SourceArtifact, (*callers))
 	failures := make([]error, (*callers))
 	for i := range *callers {
-		wg.Go(func() { <-start; artifacts[i], failures[i] = fetchtest.Machine(t.Context(), missing, nil) })
+		wg.Go(func() { <-start; artifacts[i], failures[i] = fetchtest.Machine(t.Context(), missing) })
 	}
 	close(start)
 	wg.Wait()

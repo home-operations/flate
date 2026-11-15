@@ -1,4 +1,0 @@
-
-  ⚠ warnings (1)
-    [SOPSUnreadable] ConfigMap other/config: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      REMOTE

@@ -50,7 +50,7 @@ func labelsSubstituted(labels map[string]string) bool {
 func targetsSubstituted(targets []manifest.ProducerTarget) bool {
 	for _, target := range targets {
 		if identitySubstituted(target.NamedResource) ||
-			slices.ContainsFunc(target.DeclaredKeys, manifest.HasEnvsubstReference) {
+			slices.ContainsFunc(target.Keys.Names, manifest.HasEnvsubstReference) {
 			return true
 		}
 	}
@@ -151,7 +151,11 @@ func projectTargets(targets []manifest.ProducerTarget, resolve func(string) stri
 	for i := range targets {
 		target := &targets[i]
 		target.Name, target.Namespace = resolve(target.Name), resolve(target.Namespace)
-		target.DeclaredKeys = projectStrings(target.DeclaredKeys, resolve)
+		if slices.ContainsFunc(target.Keys.Names, manifest.HasEnvsubstReference) {
+			target.Keys.Names = projectStrings(target.Keys.Names, resolve)
+			slices.Sort(target.Keys.Names)
+			target.Keys.Names = slices.Compact(target.Keys.Names)
+		}
 	}
 	return targets
 }

@@ -19,6 +19,8 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+const substitutionReferenceUse = "substituteFrom"
+
 // ReferenceFacts resolves data against the current discovery index before publication.
 func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
@@ -132,7 +134,11 @@ func (l *Loader) hydratePathInput(ctx context.Context, inputID manifest.NamedRes
 			production := productionValues[productionIndex]
 			inputRecord.ReferenceData = append(
 				inputRecord.ReferenceData,
-				manifest.ReferenceData{Production: production, OfflineData: data},
+				manifest.ReferenceData{
+					Production:  production,
+					OfflineData: data,
+					Keys:        manifest.KeySet{Names: slices.Sorted(data.Keys()), Complete: data.KeysKnown()},
+				},
 			)
 		}
 	}
@@ -476,8 +482,14 @@ func (p *substitutionResolution) resolveValue(
 	if !known && parent.PostBuild != nil {
 		for _, ref := range parent.PostBuild.SubstituteFrom {
 			id := manifest.NamedResource{Kind: ref.Kind, Namespace: parent.Namespace, Name: ref.Name}
-			result, err := values.Classify(new(manifest.Reference{NamedResource: id}), new(p.provider.Lookup(id)))
-			p.needsInputs = p.needsInputs || err == nil && result.State() == values.Absent
+			result := values.Resolve(
+				&values.ResolveRequest{
+					Reference:  manifest.Reference{NamedResource: id, Use: substitutionReferenceUse},
+					Facts:      p.provider.Lookup(id),
+					Permission: l.Options.Missing,
+				},
+			)
+			p.needsInputs = p.needsInputs || result.NeedsInput()
 		}
 	}
 	return resolved, known
@@ -559,7 +571,22 @@ func (p *substitutionResolution) projectSubstitutions(
 	}
 	prepared := new(*child)
 	prepared.PostBuild = new(*child.PostBuild)
-	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider, l.Options.Missing); err != nil {
+	var inputs []values.Result
+	for ref := range manifest.References(prepared, manifest.ReferenceRelations) {
+		if ref.Use == substitutionReferenceUse {
+			inputs = append(
+				inputs,
+				values.Resolve(
+					&values.ResolveRequest{
+						Reference:  ref,
+						Facts:      p.provider.Lookup(ref.NamedResource),
+						Permission: l.Options.Missing,
+					},
+				),
+			)
+		}
+	}
+	if err := values.ExpandPostBuildSubstituteReference(prepared, inputs); err != nil {
 		return nil //nolint:nilerr // Reconciliation MUST report substitution errors; incomplete bindings cannot certify content.
 	}
 	roots := record.ContentRoots

@@ -56,7 +56,6 @@ func refineGenerated(idx map[pairKey]int, entries []pair, docs [2][]Doc) {
 		}
 		old, current := group.pairs[0], group.pairs[1]
 		current.Old, current.OldChart, current.OldPos = old.Old, old.OldChart, old.OldPos
-		current.Output[0] = old.Output[0]
 		delete(idx, pairKey{parent: k.parent, resource: old.Resource})
 	}
 }

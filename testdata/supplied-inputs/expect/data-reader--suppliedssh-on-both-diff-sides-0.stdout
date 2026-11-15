@@ -7,7 +7,8 @@ metadata:
     kustomize.toolkit.fluxcd.io/namespace: flux-system
   name: ursa-major-ssh
   namespace: flux-system
-stringData: {}
+stringData:
+  identity: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]
 ---
 apiVersion: v1
 data:

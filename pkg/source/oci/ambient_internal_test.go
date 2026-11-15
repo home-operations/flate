@@ -312,6 +312,9 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 			APIVersion: "external-secrets.io/v1",
 			Name:       "auth",
 			Namespace:  repo.Namespace,
+			Spec: map[string]any{
+				"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "registry"}}},
+			},
 		}
 		s.RecordEmitted(
 			owner.Named(),
@@ -427,7 +430,7 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 	if !ok || missing.RetryAmbient == nil || lookups.Load() != 1 {
 		t.Fatalf("Helm eligibility: lookups=%d error=%v", lookups.Load(), err)
 	}
-	first, err := fetchtest.Machine(t.Context(), missing, nil)
+	first, err := fetchtest.Machine(t.Context(), missing)
 	assert.NoError(t, err)
 	if (*mode) == "removed" {
 		expected.Store("")
@@ -446,7 +449,7 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 		)
 	})
 	missing, _ = errors.AsType[*source.MissingSecretError](err)
-	got, err := fetchtest.Machine(t.Context(), missing, nil)
+	got, err := fetchtest.Machine(t.Context(), missing)
 	if (*mode) == "removed" {
 		assert.FatalIf(
 			t,
@@ -586,7 +589,7 @@ func testFetcherAmbientAcquisitionErrorsCaseCompletion(
 		)
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
-		art, err = fetchtest.Machine((*captures.ctx), missing, captures.reads)
+		art, err = fetchtest.Machine((*captures.ctx), missing)
 		assert.FatalIf(t, ((*(*captures.stage)) == "producer" || (*(*captures.stage)) == "unavailable") &&
 			!errors.Is(err, missing), "%s", "unavailable selection changed missing identity")
 	} else {

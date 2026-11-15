@@ -113,16 +113,18 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	assert.FatalIf(t, provider.Lookup(target).Data != offline, "%s", "offline candidate unavailable")
 
 	assert.Equal(t, len(st.Warnings()), 0)
-	classified, err := Classify(&manifest.Reference{NamedResource: target}, new(provider.Lookup(target)))
+	classified := Resolve(
+		&ResolveRequest{
+			Reference: manifest.Reference{NamedResource: target, Use: "substituteFrom"},
+			Facts:     provider.Lookup(target),
+		},
+	)
+	err = classified.Err()
 	assert.NoError(t, err)
 	classified.ReportWarnings(&reads)
 	reads.Accept(store.AssessmentReconciled)
-	advisories := st.Warnings()
-	assert.FatalIf(t, len(advisories) != 1 || advisories[0].Category != manifest.WarnSOPSUnreadable ||
-		advisories[0].Resource != target ||
-		advisories[0].Count != 1 ||
-		!slices.Equal(advisories[0].Detail, []string{"ALPHA", "ZULU"}),
-		"accepted offline warnings: %+v", advisories)
+	assert.Equal(t, len(st.Warnings()), 0)
+	assert.Diff(t, classified.UnreadableKeys(), []string{"ALPHA", "ZULU"})
 
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Content: "new-source"})
 	assert.FatalIf(t, reads.Valid(), "%s", "source arrival did not invalidate offline data")

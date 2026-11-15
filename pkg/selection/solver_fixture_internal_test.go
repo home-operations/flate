@@ -23,16 +23,12 @@ func (p *solverMissingPolicy) Admission(ref *manifest.Reference, input *store.Re
 		}
 		return RequiredInput
 	}
-	result, err := values.Classify(ref, input)
-	if err == nil {
-		switch result.State() {
-		case values.Readable, values.Encrypted, values.MissingKey:
-			return AvailableInput
-		case values.Absent, values.Produced:
-			if result.AdmitMissing(p) || result.State() == values.Produced {
-				return OptionalInput
-			}
-		}
+	result := values.Resolve(&values.ResolveRequest{Reference: *ref, Facts: *input, Permission: p})
+	if result.Present() {
+		return AvailableInput
+	}
+	if result.Admitted() {
+		return OptionalInput
 	}
 	return RequiredInput
 }

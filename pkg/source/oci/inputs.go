@@ -33,7 +33,7 @@ func (f *Fetcher) FetchInputs(
 			"provider does not supply registry inputs",
 		)
 	}
-	op := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), allowAnonymousDenied: true}
+	op := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
 	op.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {
 		inputPolicy := *policyValue
 

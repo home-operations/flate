@@ -682,7 +682,7 @@ spec:
 		prepared, localErr := helm.Prepare(
 			hr,
 			helm.NewSources(reads).Declaration,
-			values.NewStoreProvider(reads),
+			resolveHistoryInputs(hr, values.NewStoreProvider(reads), warm.cfg.missing),
 			warm.hrc.Helm.ValuesCache(),
 		)
 		assert.NoError(t, localErr)

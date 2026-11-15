@@ -58,7 +58,7 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 			t.Context(), new(repo.RegistryAccess()),
 		)
 	default:
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(
+		_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(
 			t.Context(), new(repo.RegistryAccess()), "ghcr.io",
 		)
 	}
@@ -70,6 +70,7 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 			wantMissing, tt.
 			wantText)
 
+	assert.Equal(t, strings.Contains(err.Error(), "ENC["), false)
 	if tt.wantOwner {
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "expected MissingSecretError; got %T", err)
@@ -86,9 +87,9 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 		assert.Equal(
 			t,
 			missing.Secret,
-			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"},
+			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tt.secret},
 		)
-		assert.Equal(t, err.Error(), "secret ns/missing not found")
+		assert.Equal(t, err.Error(), "secret ns/"+tt.secret+" not found")
 	}
 }
 

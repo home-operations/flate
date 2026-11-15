@@ -36,6 +36,7 @@ func TestE2E_SOPSOutputMembership(t *testing.T) {
 		"sops-output-mixed",
 		"sops-output-diff",
 		"sops-output-shallow",
+		"sops-ciphertext-shallow-history",
 		"sops-output-absent-side",
 		"sops-output-partial-failure",
 		"sops-output-internal-namespace",

@@ -308,9 +308,11 @@ func TestResolveTransport_CapturedSupply(t *testing.T) {
 		malformed bool
 	}{
 		{name: "malformed CA fallback", data: map[string]any{"ca.crt": ca}, raw: map[string]any{"caFile": "!"}, malformed: true, input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}},
+		{name: "encrypted unused CA fallback", data: map[string]any{"ca.crt": ca}, encrypted: "caFile", wantCA: ca, input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}},
 		{name: "auth only", data: map[string]any{"username": "user", "password": "pass"}, input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}},
 		{name: "address only", data: map[string]any{"address": "http://proxy.invalid:8080"}, input: TransportInput{Use: TransportProxy}},
 		{name: "encrypted CA fallback", data: map[string]any{"username": "user"}, encrypted: "caFile", input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}, missing: true},
+		{name: "encrypted proxy address", data: map[string]any{"unused": "readable"}, encrypted: "address", input: TransportInput{Use: TransportProxy}, missing: true},
 		{name: "encrypted pair half", data: map[string]any{"tls.key": "key"}, encrypted: "tls.crt", input: TransportInput{Use: TransportCert}, missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -318,9 +320,8 @@ func TestResolveTransport_CapturedSupply(t *testing.T) {
 			secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: tc.data, Data: tc.raw}
 			facts := store.ReferenceFacts{Data: secret, Generated: true}
 			if tc.encrypted != "" {
-				facts.Warnings = []manifest.Warning{
-					{Category: manifest.WarnSOPSUnreadable, Detail: []string{tc.encrypted}},
-				}
+				secret.StringData = manifest.DeepCopyMap(secret.StringData)
+				secret.StringData[tc.encrypted] = "ENC[AES256_GCM,data:fixture,iv:fixture,tag:fixture,type:str]"
 			}
 			getter := func(string, string) store.ReferenceFacts { return facts }
 			input := tc.input

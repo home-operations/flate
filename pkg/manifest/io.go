@@ -44,10 +44,11 @@ func ReleaseDoc(m map[string]any) {
 
 // DocOccurrence retains a constructed document or failure at its original stream ordinal.
 type DocOccurrence struct {
-	Document map[string]any `json:"Document"`
-	Ordinal  int            `json:"Ordinal"`
-	Err      error          `json:"Err"`
-	Warnings []Warning      `json:"-"`
+	Document           map[string]any `json:"Document"`
+	Ordinal            int            `json:"Ordinal"`
+	Err                error          `json:"Err"`
+	Warnings           []Warning      `json:"-"`
+	ConsumedUnreadable []Reference    `json:"-"`
 }
 
 // DocumentRole determines whether nonmapping documents are required manifests.

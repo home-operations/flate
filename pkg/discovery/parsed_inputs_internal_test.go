@@ -201,7 +201,11 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 				assert.FatalIf(t, !ok || st.GetObject(secretID) != nil,
 					"prepared secret = %+v, published=%v", secret, st.GetObject(secretID))
 
-				assert.Equal(t, secret.HasKeys(), false)
+				assert.Equal(t, secret.HasKeys(), true)
+				value, lookupErr := secret.Value("KEY")
+				assert.NoError(t, lookupErr)
+				assert.Equal(t, value.Found && value.Encrypted, true)
+				assert.Equal(t, value.Value, "")
 			}
 		})
 	}

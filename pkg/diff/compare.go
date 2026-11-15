@@ -39,8 +39,6 @@ type GroupResult struct {
 	Warnings   []manifest.Warning
 	Suppressed []Suppression
 	Subjects   []manifest.NamedResource
-	// Output preserves original/current side boundaries independently of display subjects.
-	Output [2][]manifest.NamedResource
 }
 
 // Comparison retains prepared output so repeated writes never normalize inputs again.
@@ -77,7 +75,7 @@ func Compare(groups []Group, opts Options) (*Comparison, error) {
 		var err error
 		var inventory GroupResult
 		c.output[i], inventory, err = prepareOutput(p, c.format)
-		c.Groups[i].Subjects, c.Groups[i].Output = inventory.Subjects, inventory.Output
+		c.Groups[i].Subjects = inventory.Subjects
 		c.output[i].cluster, c.output[i].added, c.output[i].removed = group.Cluster, group.Added, group.Removed
 		resultErr = errors.Join(resultErr, preparationErr, err, group.SelectedErr)
 	}
@@ -95,20 +93,10 @@ func prepareOutput(p prepared, format Format) (preparedGroup, GroupResult, error
 		inventory = lineInventory(out.lines, format)
 	case FormatJSON:
 		out.changes = publicChanges(p)
-		for pair := range p.changes() {
-			for side, doc := range [2]map[string]any{pair.Old, pair.New} {
-				if doc != nil {
-					inventory.Output[side] = append(inventory.Output[side], pair.Output[side])
-				}
-			}
-		}
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
 		out.native, err = p.native()
 		if err == nil {
 			inventory = nativeDiffInventory(&p, &out.native)
-			if format == FormatBrief {
-				inventory.Output = [2][]manifest.NamedResource{}
-			}
 		}
 	default:
 		err = fmt.Errorf("unsupported diff format %q", format)
@@ -210,7 +198,6 @@ func renderPrepared(p prepared, opts *Options) ([]byte, error) {
 				Warnings:   p.Warnings,
 				Suppressed: slices.Clone(opts.Suppressed),
 				Subjects:   inventory.Subjects,
-				Output:     inventory.Output,
 			},
 		},
 	}
@@ -307,11 +294,6 @@ func nativeDiffInventory(prepared *prepared, report *dyff.Report) GroupResult {
 		}
 		pair := pairs[side][delta.Path.DocumentIdx]
 		inventory.Subjects = append(inventory.Subjects, pair.Resource)
-		for side, doc := range [2]map[string]any{pair.Old, pair.New} {
-			if doc != nil && !slices.Contains(inventory.Output[side], pair.Output[side]) {
-				inventory.Output[side] = append(inventory.Output[side], pair.Output[side])
-			}
-		}
 	}
 	return inventory
 }

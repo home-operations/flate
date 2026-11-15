@@ -25,14 +25,12 @@ type Warning struct {
 	// a WarnStaleValues advisory lists.
 	Detail []string
 	// Count is the number of current origins contributing this complete payload.
-	// SOPSUnreadable groups keys per object with Count=1. Incoming Count is ignored.
+	// Incoming Count is ignored.
 	Count int
 }
 
 // Warning category codes. Stable identifiers a consumer filters on.
 const (
-	// WarnSOPSUnreadable reports unreadable encrypted keys on a core data object.
-	WarnSOPSUnreadable = "SOPSUnreadable"
 	// WarnConflictingProducers: unequal accepted contributions share an identity.
 	// Detail lists every contributor in deterministic settlement order.
 	WarnConflictingProducers = "ConflictingProducers"

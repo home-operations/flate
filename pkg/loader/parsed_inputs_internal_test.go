@@ -252,7 +252,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 	planner.documents.cache[file].objects[0].outcome.Err = errors.New("planner mutation")
 	l := load(input, inputs)
 	obj := l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.(*manifest.Secret)
-	assert.Equal(t, obj.HasKeys(), false)
+	assert.Equal(t, obj.HasKeys(), true)
 	failed := l.documents.cache[filepath.Join(root, "broken.yaml")].objects
 	assert.FatalIf(
 		t,
@@ -381,8 +381,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	compact := planner.documents.cache[filepath.Join(root, "shared", "objects.yaml")].objects
 	assert.Equal(t, len(compact), 1)
 	assert.Equal(t, compact[0].Doc == nil && compact[0].outcome.Document == nil, true)
-	assert.Equal(t, len(compact[0].Warnings), 1)
-	assert.Diff(t, compact[0].Warnings[0].Detail, []string{"HIDDEN"})
+	assert.Equal(t, len(compact[0].Warnings), 0)
 	assert.Equal(t, len(planner.Store.Warnings()), 0)
 	before := map[string]int64{}
 	for name, count := range reads {
@@ -436,13 +435,12 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		assert.NoError(t, errInner)
 		child, errInner := l.OccurrenceObject(t.Context(), new(occurrences[0]), nil)
 		assert.NoError(t, errInner)
-		assert.Equal(t, len(child.Warnings), 1)
-		assert.Equal(t, child.Warnings[0].Resource, occurrences[0].Identity)
-		assert.Diff(t, child.Warnings[0].Detail, []string{"HIDDEN"})
+		assert.Equal(t, len(child.Warnings), 0)
 		result1, errInner := child.Obj.(manifest.Data).Value("HIDDEN")
 		value, present := result1.Value, result1.Found
 		assert.NoError(t, errInner)
-		assert.Equal(t, present, false)
+		assert.Equal(t, present, true)
+		assert.Equal(t, result1.Encrypted, true)
 		assert.Equal(t, value, "")
 		result2, errInner := child.Obj.(manifest.Data).Value("KEY")
 		value, present = result2.Value, result2.Found
@@ -504,9 +502,9 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 					func(object parsedObject) {
 						assert.NoError(t, object.outcome.Err)
 						_, present := object.Doc["data"].(map[string]any)["KEY"]
-						assert.Equal(t, present, false)
+						assert.Equal(t, present, true)
 						assert.FatalIf(t, object.declared == "" ||
-							object.declared == manifest.Fingerprint(
+							object.declared != manifest.Fingerprint(
 								manifest.WithoutOwnershipLabels(object.Doc),
 							), "%s", "preparation lost the original declaration fingerprint")
 					},

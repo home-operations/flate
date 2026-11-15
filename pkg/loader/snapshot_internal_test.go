@@ -38,7 +38,7 @@ func TestSnapshotDiff_CompleteRecords(t *testing.T) {
 		{name: "declaration", record: manifest.DiscoveryRecord{Declaration: &manifest.ConfigMap{Name: "values"}}},
 		{name: "declared", record: manifest.DiscoveryRecord{Declared: "fingerprint"}},
 		{name: "builder owner", record: manifest.DiscoveryRecord{BuilderOwner: manifest.BootstrapSourceID}},
-		{name: "reference data", record: manifest.DiscoveryRecord{ReferenceData: []manifest.ReferenceData{{DeclaredKeys: []string{"key"}}}}},
+		{name: "reference data", record: manifest.DiscoveryRecord{ReferenceData: []manifest.ReferenceData{{Keys: manifest.KeySet{Names: []string{"key"}, Complete: true}}}}},
 		{name: "origin", record: manifest.DiscoveryRecord{Origin: manifest.SuppliedDeclaration}},
 		{name: "content roots", record: manifest.DiscoveryRecord{ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"app"}}}},
 		{name: "nil reference data", record: manifest.DiscoveryRecord{ReferenceData: []manifest.ReferenceData{}}},

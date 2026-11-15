@@ -2,9 +2,11 @@ package depwait
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/pkg/selection"
 
@@ -47,7 +49,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-			for _, state := range []string{"absent", "explicit namespace", "object", "supplied", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
+			for _, state := range []string{"absent", "explicit namespace", "foreign group", "object", "supplied", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
 					t.Parallel()
 					testClassifyMissingCRDsCase(
@@ -58,6 +60,54 @@ func TestClassify_MissingCRDs(t *testing.T) {
 				)
 			}
 		}
+	}
+	for _, tc := range []struct {
+		name    string
+		level   manifest.DrainLevel
+		content bool
+		want    schedule.Kind
+		wantErr error
+	}{
+		{name: "missing artifact before cascade", want: schedule.Blocked},
+		{name: "missing artifact at cascade", level: manifest.DrainCascade, want: schedule.Terminal, wantErr: manifest.ErrObjectNotFound},
+		{name: "required declaration stale content before cascade", content: true, want: schedule.Blocked},
+		{name: "required declaration stale content at cascade", content: true, level: manifest.DrainCascade, want: schedule.Terminal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			ref := manifest.DependencyRef{
+				Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com",
+				Artifact: true, RequiresDeclaration: tc.content,
+			}
+			if tc.content {
+				s.SetArtifact(ref.NamedResource, &store.SourceArtifact{FS: fstest.MapFS{}})
+			}
+			reads := captureState(t, s)
+			promotion := &crdPromotion{store: s}
+			w := Waiter{
+				Store: reads, Admission: selection.PrepareRequest{Reads: reads},
+				Missing: crdMissingPolicy(true), Existence: promotion,
+			}
+			got := w.Classify(t.Context(), ref, tc.level)
+			assert.Equal(t, got.Kind, tc.want)
+			assert.Equal(t, got.Message, "")
+			if tc.wantErr != nil {
+				assert.Equal(t, errors.Is(got.Err, tc.wantErr), true)
+				assert.Equal(t, errors.Is(got.Err, manifest.ErrFlux), true)
+				assert.FatalIf(t, got.Err == nil, "missing artifact error: %+v", got)
+				assert.Equal(t, got.Err.Error(),
+					"source CustomResourceDefinition.apiextensions.k8s.io/widgets.example.com artifact not found",
+				)
+			} else {
+				assert.NoError(t, got.Err)
+			}
+			assert.Diff(t, promotion.calls, []manifest.NamedResource{ref.NamedResource})
+			assert.Equal(t, s.GetObject(ref.NamedResource) == nil, true)
+			_, status := s.GetStatus(ref.NamedResource)
+			assert.Equal(t, status, false)
+			assert.Equal(t, s.GetArtifact(ref.NamedResource, store.ArtifactContent) != nil, tc.content)
+		})
 	}
 }
 
@@ -94,18 +144,23 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 		Kind:  manifest.KindCustomResourceDefinition,
 		Name:  "widgets.example.com",
 	}
-	want := schedule.Blocked
+	want := schedule.Terminal
 	msg := ""
-	if (*testCaseInput.drain) >= manifest.DrainCascade {
+	switch {
+	case (*testCaseInput.drain) < manifest.DrainCascade:
+		want = schedule.Blocked
+	case !*testCaseInput.enabled:
 		want = schedule.DependencyFailed
 		msg = "dependency not found"
-		if *testCaseInput.enabled {
-			want = schedule.Terminal
-			msg = ""
-		}
 	}
 	var e *crdPromotion
 	switch *testCaseInput.state {
+	case "foreign group":
+		ref.Group = "example.test"
+		if (*testCaseInput.drain) >= manifest.DrainCascade {
+			want = schedule.DependencyFailed
+			msg = "dependency not found"
+		}
 	case "valid expression":
 		ref.ReadyExpr = new("false")
 	case "explicit namespace":
@@ -168,6 +223,7 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 	}
 	got := w.Classify(t.Context(), ref, (*testCaseInput.drain))
 	assert.Equal(t, got.Kind, want)
+	assert.NoError(t, got.Err)
 	if (*testCaseInput.state) == "invalid expression" {
 		assert.FatalIf(
 			t,
@@ -182,7 +238,8 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 		assert.Diff(t, e.calls, []manifest.NamedResource{ref.NamedResource})
 		assert.Equal(t, s.GetObject(ref.NamedResource) != nil, e.materialize)
 	}
-	if (*testCaseInput.state) == "absent" || (*testCaseInput.state) == "explicit namespace" {
+	if (*testCaseInput.state) == "absent" || (*testCaseInput.state) == "explicit namespace" ||
+		(*testCaseInput.state) == "foreign group" {
 		assert.Equal(t, s.GetObject(ref.NamedResource) == nil, true)
 		_, ok := s.GetStatus(ref.NamedResource)
 		assert.Equal(t, ok, false)

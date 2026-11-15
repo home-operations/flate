@@ -124,9 +124,7 @@ type BuiltInput struct {
 	Support *store.ReadSet
 }
 
-// RegisterBuilt requires sanitized immutable build output.
-//
-//nolint:funlen,gocognit // Support MUST retire in publication order even when admission is canceled.
+// RegisterBuilt MUST receive sanitized immutable build output and retire support in publication order.
 func (l *Loader) RegisterBuilt(
 	ctx context.Context,
 	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
@@ -138,27 +136,25 @@ func (l *Loader) RegisterBuilt(
 			l.Store.Retire(input.Support)
 		}
 	}()
-	if err := ctx.Err(); err != nil {
+	switch err := ctx.Err(); {
+	case err != nil:
 		return err
-	}
-	if l.frozen || input.Support == nil || !input.Support.Valid() {
+	case l.frozen || input.Support == nil || !input.Support.Valid():
 		return nil
 	}
-	root := input.Root
+	root, selected := input.Root, map[string]bool{}
 	sourceRoot, admitted, err := l.admitBuiltRoot(ctx, root)
 	if err != nil || !admitted {
 		return err
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
-	selected := map[string]bool{}
 	inputs := l.selectBuiltInputs(sourceRoot, rel, &input, selected)
 	slices.Sort(inputs.inputs)
 	slices.Sort(inputs.shared)
 	inputs.inputs, inputs.shared = slices.Compact(inputs.inputs), slices.Compact(inputs.shared)
 	builder := l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
-	records := make([]manifest.DiscoveryRecord, len(docs))
-	locations := make([]authoredOccurrence, len(docs))
-	authored := map[manifest.NamedResource]store.Child{}
+	records, locations, authored := make([]manifest.DiscoveryRecord, len(docs)),
+		make([]authoredOccurrence, len(docs)), map[manifest.NamedResource]store.Child{}
 	for i := range docs {
 		record, original := l.builtRecord(&input, docs[i].Obj, &inputs, builder)
 		records[i] = record
@@ -175,15 +171,14 @@ func (l *Loader) RegisterBuilt(
 	}
 	cached := l.documents.cache[root]
 	previous := cached.builtInput
-	cached.built = append([]store.Child{}, docs...)
-	input.Reads = maps.Clone(input.Reads)
+	cached.built, cached.builtInput, input.Reads = append([]store.Child{}, docs...), &input, maps.Clone(input.Reads)
 	// Directory membership and node-kind probes MUST NOT claim descendant content.
 	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
-	cached.builtInput = &input
 	l.documents.cache[root] = cached
 	for i, facts := range l.scopes.rootFacts {
-		if filepath.Join(l.SourceRoot, filepath.FromSlash(facts.Path)) == root &&
-			(facts.Built != (cached.built != nil) || facts.Selected != cached.selected || facts.Excluded != cached.buildExcluded) {
+		unchanged := facts.Built == (cached.built != nil) &&
+			facts.Selected == cached.selected && facts.Excluded == cached.buildExcluded
+		if filepath.Join(l.SourceRoot, filepath.FromSlash(facts.Path)) == root && !unchanged {
 			l.scopes.rootFacts = slices.Clone(l.scopes.rootFacts)
 			l.scopes.rootFacts[i].Built, l.scopes.rootFacts[i].Selected, l.scopes.rootFacts[i].Excluded =
 				cached.built != nil, cached.selected, cached.buildExcluded

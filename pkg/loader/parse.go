@@ -170,7 +170,7 @@ func (r documentReader) decodeFileObjects(
 	return nil
 }
 
-//nolint:gocritic,gocognit // The immutable census MUST transfer each document and its payload under one retention decision.
+//nolint:gocritic // The immutable census MUST transfer each document and its payload under one retention decision.
 func (r documentReader) censusFile(
 	ctx context.Context,
 	path string,
@@ -181,31 +181,34 @@ func (r documentReader) censusFile(
 	eager := !r.eager || !slices.ContainsFunc(previous.objects, func(child parsedObject) bool {
 		return child.fact != nil && child.fact.object == nil
 	})
-	if (previous.objects != nil || previous.decodeErr != nil) && covers(previous.coverage, r.intent) && eager {
+	switch {
+	case previous.objects == nil && previous.decodeErr == nil:
+	case !covers(previous.coverage, r.intent), !eager:
+	default:
 		return applicationView(previous.objects, previous.coverage, r.intent), previous.decodeErr
 	}
 	facts := []parsedObject{}
 	var projectionErr error
 	err := r.decodeFileObjects(path, opts, true, func(child parsedObject) {
-		if child.outcome.Err != nil {
+		switch {
+		case child.outcome.Err != nil:
 			facts = append(facts, child)
 			return
-		}
-		if application.Contains([]byte(child.version)) {
+		case application.Contains([]byte(child.version)):
 			cached := r.cache[path]
 			cached.sourceRoot = new(r).mountedRoot(path)
 			cached.possible = true
 			r.cache[path] = cached
 		}
 		var projection manifest.TemplateProjection
+		var err error
 		if r.intent != manifest.ApplicationDocuments {
-			var err error
 			projection, err = r.projections.Project(ctx, child.Obj)
-			if err != nil {
-				projectionErr = err
-				manifest.ReleaseDoc(child.Doc)
-				return
-			}
+		}
+		if err != nil {
+			projectionErr = err
+			manifest.ReleaseDoc(child.Doc)
+			return
 		}
 		o := compactOccurrence(child.Obj, projection)
 		o.requiresBuild = child.collection
@@ -233,9 +236,10 @@ func (r documentReader) censusFile(
 			)
 		}
 		var retained map[string]any
-		if r.eager {
+		switch r.eager {
+		case true:
 			o.object, retained = child.Obj, child.Doc
-		} else {
+		case false:
 			manifest.ReleaseDoc(child.Doc)
 		}
 		outcome := child.outcome

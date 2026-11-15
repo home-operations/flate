@@ -85,7 +85,6 @@ type objectProduction struct {
 	substituteDisabled bool
 }
 
-//nolint:gocognit // Physical and contextual declarations MUST retain one producer publication decision.
 func (pr *productionRecorder) projectObject(
 	b *selfProduceBuilder,
 	l *Loader,
@@ -93,14 +92,14 @@ func (pr *productionRecorder) projectObject(
 	version string,
 ) (objectProduction, bool) {
 	child := *childArg
-	if pr.projectionErr != nil || child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
+	switch {
+	case pr.projectionErr != nil, child.outcome.Err != nil, child.Obj == nil && child.fact == nil:
 		return objectProduction{}, false
-	}
-	obj, info := child.Obj, manifest.KindOf(child.Obj)
-	if child.fact != nil {
+	case child.fact != nil:
 		pr.recordFact(b, l, child.fact, version)
 		return objectProduction{}, false
 	}
+	obj, info := child.Obj, manifest.KindOf(child.Obj)
 	_, _, hasPath := obj.SourcePath()
 	if !info.Tracked && !hasPath && b.reader.cache[pr.visit.file].loaded && len(manifest.ProducerTargets(obj)) == 0 {
 		return objectProduction{}, false
@@ -110,32 +109,24 @@ func (pr *productionRecorder) projectObject(
 		object: obj, kind: info, resolved: resolved, identity: resolved,
 		substituteDisabled: child.substituteDisabled,
 	}
-	if occurrence, known := l.authoredOccurrence(
-		pr.visit.file,
-		obj.Named(),
-	); known &&
-		l.contextualDeclaration(pr.visit.file, obj.Named()) {
+	occurrence, known := l.authoredOccurrence(pr.visit.file, obj.Named())
+	contextual := known && l.contextualDeclaration(pr.visit.file, obj.Named())
+	if contextual {
 		projected, err := l.projectOccurrence(occurrence.fact, &pr.visit, version)
 		if err != nil {
 			pr.projectionErr = err
 			return objectProduction{}, false
 		}
-		if projected.facts.uncertain {
-			if !pr.visit.deferMaterialization {
-				b.recordProducer(
-					&producerDeclaration{
-						fact:     &projected,
-						visit:    pr.visit,
-						identity: projected.Identity,
-						authored: projected.Authored,
-					},
-					nil,
-				)
-			}
-			return objectProduction{}, false
+		if !projected.facts.uncertain {
+			production.fact, production.identity = &projected, projected.Identity
+			return production, true
 		}
-		production.fact, production.identity = &projected, projected.Identity
-		return production, true
+		if !pr.visit.deferMaterialization {
+			b.recordProducer(&producerDeclaration{
+				fact: &projected, visit: pr.visit, identity: projected.Identity, authored: projected.Authored,
+			}, nil)
+		}
+		return objectProduction{}, false
 	}
 	if owner, _ := b.idx.Lookup(pr.visit.owner); pr.visit.owner == obj.Named() || owner.Authored == obj.Named() {
 		production.identity = pr.visit.owner

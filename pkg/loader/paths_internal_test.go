@@ -20,16 +20,22 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-//nolint:gocognit // Context identity, convergence, and uncertainty MUST share the same duplicate-visit assertions.
 func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, expression, value string
-		published, uncertain    bool
+		name, expression, value, childName string
+		published, uncertain               bool
+		from                               []manifest.SubstituteReference
+		visits, publications               int
 	}{
-		{name: "changed", expression: "${VALUE}", value: "work", published: true},
-		{name: "unchanged", expression: "${VALUE}", value: "${VALUE}"},
-		{name: "uncertain", expression: "${UNKNOWN}", value: "work", published: true, uncertain: true},
+		{name: "changed", expression: "${VALUE}", value: "work", childName: "child", published: true, visits: 4, publications: 5},
+		{name: "unchanged", expression: "${VALUE}", value: "${VALUE}", childName: "child", visits: 1},
+		{
+			name: "uncertain", expression: "${UNKNOWN}", value: "work", childName: "${UNKNOWN}", published: true,
+			uncertain: true, visits: 4, publications: 5, from: []manifest.SubstituteReference{
+				{Kind: manifest.KindConfigMap, Name: "unread", Optional: true},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -38,43 +44,29 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 			l.scopes = &scopeConstruction{}
 			l.documents.compact = true
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			owner.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": tc.value}}
-			if tc.uncertain {
-				owner.PostBuild.SubstituteFrom = []manifest.SubstituteReference{
-					{Kind: manifest.KindConfigMap, Name: "unread", Optional: true},
-				}
+			owner.PostBuild = &kustomizev1.PostBuild{
+				Substitute: map[string]string{"VALUE": tc.value}, SubstituteFrom: tc.from,
 			}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
-			child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
-			child.Path = tc.expression
-			if tc.uncertain {
-				child.Name = tc.expression
-			}
+			child := &manifest.Kustomization{Name: tc.childName, Namespace: "apps", Path: tc.expression}
 			fact := compactOccurrence(child, manifest.TemplateProjection{})
 			fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "child.yaml"}
 			file := filepath.Join(l.SourceRoot, "child.yaml")
 			visit := graphVisit{file: file, owner: owner.Named(), source: manifest.BootstrapSourceID}
-			visits := []graphVisit{visit}
-			if tc.published {
-				qualified := visit
-				qualified.source.Name = "another-source"
-				transformed := visit
-				transformed.namePrefix = "pre-"
-				anotherFile := visit
-				anotherFile.file = filepath.Join(l.SourceRoot, "copy.yaml")
-				visits = append(visits, qualified, transformed, anotherFile)
-			}
+			qualified, transformed, anotherFile := visit, visit, visit
+			qualified.source.Name = "another-source"
+			transformed.namePrefix = "pre-"
+			anotherFile.file = filepath.Join(l.SourceRoot, "copy.yaml")
+			visits := []graphVisit{visit, qualified, transformed, anotherFile}[:tc.visits]
 			anotherDeclaration := fact
 			anotherDeclaration.Declaration.Document++
-			for i := range visits {
-				objects := []parsedObject{{fact: &fact, version: manifest.FluxKustomizeDomain + "/v1"}}
-				if i == len(visits)-1 {
-					objects = append(objects, parsedObject{
-						fact: &anotherDeclaration, version: manifest.FluxKustomizeDomain + "/v1",
-					})
-				}
-				l.documents.cache[visits[i].file] = document{objects: objects}
-			}
+			l.documents.cache[file] = document{objects: []parsedObject{
+				{fact: &fact, version: manifest.FluxKustomizeDomain + "/v1"},
+			}}
+			l.documents.cache[visits[len(visits)-1].file] = document{objects: []parsedObject{
+				{fact: &fact, version: manifest.FluxKustomizeDomain + "/v1"},
+				{fact: &anotherDeclaration, version: manifest.FluxKustomizeDomain + "/v1"},
+			}}
 			for pass := range 2 {
 				resolution := substitutionResolution{loader: l}
 				for i := range visits {
@@ -82,11 +74,7 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 					assert.NoError(t, resolution.resolveVisit(t.Context(), &visits[i]))
 				}
 				assert.Equal(t, len(resolution.visited), len(visits))
-				wantPublished := 0
-				if tc.published {
-					wantPublished = len(visits) + 1
-				}
-				assert.Equal(t, len(resolution.contextual), wantPublished)
+				assert.Equal(t, len(resolution.contextual), tc.publications)
 				assert.Equal(t, resolution.contextualChanged, tc.published && pass == 0)
 				for key, projected := range resolution.contextual {
 					assert.Equal(t, projected.facts.uncertain, tc.uncertain)
@@ -94,10 +82,11 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 					assert.Equal(t, projected.Declaration, key.declaration)
 					assert.Equal(t, key.declaration.Source, fact.Declaration.Source)
 					assert.Equal(t, key.declaration.File, fact.Declaration.File)
-					if !tc.uncertain {
-						assert.Equal(t, projected.Identity.Name, key.context.namePrefix+"child")
-						assert.Equal(t, projected.facts.path, "work")
+					if tc.uncertain {
+						continue
 					}
+					assert.Equal(t, projected.Identity.Name, key.context.namePrefix+"child")
+					assert.Equal(t, projected.facts.path, "work")
 				}
 				l.scopes.contextual = resolution.contextual
 			}

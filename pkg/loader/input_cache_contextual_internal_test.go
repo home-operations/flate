@@ -100,9 +100,7 @@ spec: {type: Static}
 			assert.Equal(t, want.Refs[0].Selector.MatchExpressions[0].Key, "role")
 			assert.Equal(t, string(want.Refs[0].Selector.MatchExpressions[0].Operator), "NotIn")
 			assert.Diff(t, want.Refs[0].Selector.MatchExpressions[0].Values, []string{"x"})
-			if diff := cmp.Diff(want.Refs, got.Refs, cmp.AllowUnexported(manifest.Reference{})); diff != "" {
-				t.Error(diff)
-			}
+			assert.Equal(t, cmp.Diff(want.Refs, got.Refs, cmp.AllowUnexported(manifest.Reference{})), "")
 			var selected [2][]manifest.NamedResource
 			for i, l := range []*Loader{fresh, restored} {
 				proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
@@ -116,7 +114,6 @@ spec: {type: Static}
 	}
 }
 
-//nolint:gocognit // Accepted external frames MUST preserve both diff sides and remove stale declarations during reuse.
 func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 	t.Parallel()
 	for _, transition := range []string{"addition", "removal", "replacement"} {
@@ -134,7 +131,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 					hr := testutil.HelmReleaseID("default", "demo")
 					parent := testutil.KustomizationID("flux-system", "parent")
 					files := externalFileHelmReleaseFiles(t)
-					load := func(files fstest.MapFS, cached bool, accepted bool) *Loader {
+					load := func(files fstest.MapFS, inputCache *cache.Cache, accepted bool) *Loader {
 						view, _, viewErr := gittree.New(t.Context(), nil, plumbing.ZeroHash,
 							gittree.ViewOptions{Mode: gittree.Direct, Current: files})
 						assert.NoError(t, viewErr)
@@ -143,15 +140,15 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						l := New(st)
 						t.Cleanup(l.Close)
 						l.SourceRoot = root
-						if cached {
-							l.Options.Cache = owner
-						}
+						l.Options.Cache = inputCache
 						configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{hr}, Changed: true})
 						l.Options.Changes = change.NewSet([]string{"layer/common/child.yaml"})
 						l.documents.compact = true
 						l.mountSources()
 						assert.NoError(t, l.restoreCachedInputs(t.Context()))
-						if accepted && persistent {
+						switch {
+						case !accepted:
+						case persistent:
 							file := filepath.Join(root, "layer", "common", "child.yaml")
 							doc, known := l.documents.cache[file]
 							assert.FatalIf(
@@ -166,8 +163,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 							assert.Equal(t, objects[0].fact.Authored, testutil.KustomizationID("flux-system", "child"))
 							assert.Equal(t, objects[0].fact.facts.path, "./payload/one")
 							t.Log("accepted external declaration frame before authored resolution")
-						}
-						if accepted && !persistent {
+						default:
 							_, known := l.documents.cache[filepath.Join(root, "layer", "common", "child.yaml")]
 							assert.Equal(t, known, false)
 						}
@@ -185,31 +181,39 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 					}
 					snapshot := func(l *Loader, name string) closure {
 						var result closure
-						for _, candidate := range []string{"child", "other"} {
-							id := testutil.KustomizationID("flux-system", candidate)
-							_, known := l.Index.Lookup(id)
-							assert.Equal(t, known, candidate == name)
-							assert.Equal(t, l.Store.GetObject(id) == nil, true)
-						}
+						childID := testutil.KustomizationID("flux-system", "child")
+						otherID := testutil.KustomizationID("flux-system", "other")
+						_, childKnown := l.Index.Lookup(childID)
+						_, otherKnown := l.Index.Lookup(otherID)
+						assert.Equal(t, childKnown, name == "child")
+						assert.Equal(t, otherKnown, name == "other")
+						assert.Equal(t, l.Store.GetObject(childID) == nil, true)
+						assert.Equal(t, l.Store.GetObject(otherID) == nil, true)
 						payload, known := l.Index.Lookup(hr)
 						assert.Equal(t, known, name != "")
-						if name != "" {
-							id := testutil.KustomizationID("flux-system", name)
-							child, found := l.Occurrence(id)
-							assert.FatalIf(t, !found, "child occurrence is absent: %s", id)
-							assert.Equal(t, child.Identity, id)
-							assert.Equal(t, child.Authored, id)
-							assert.Equal(t, child.Path, "./payload/one")
-							assert.Equal(t, child.Declaration.File, "layer/common/child.yaml")
-							record, _ := l.Index.Lookup(id)
-							assert.Equal(t, record.Parent, parent)
-							assert.Equal(t, slices.Contains(testutil.Owners(record.Productions), parent), true)
-							assert.Equal(t, slices.Contains(l.Index.Claims["payload/one/"], id), true)
-							assert.Equal(t, slices.Contains(testutil.Owners(payload.Productions), id), true)
-							result.Identity, result.Authored, result.Path = child.Identity, child.Authored, child.Path
-							result.ChildProductions = slices.Clone(record.Productions)
-							result.PayloadProductions = slices.Clone(payload.Productions)
-						}
+						want := map[string]struct {
+							id         manifest.NamedResource
+							path, file string
+							parent     manifest.NamedResource
+						}{
+							"child": {childID, "./payload/one", "layer/common/child.yaml", parent},
+							"other": {otherID, "./payload/one", "layer/common/child.yaml", parent},
+						}[name]
+						id := testutil.KustomizationID("flux-system", name)
+						child, found := l.Occurrence(id)
+						assert.FatalIf(t, found != (name != ""), "child occurrence availability: %s", id)
+						assert.Equal(t, child.Identity, id)
+						assert.Equal(t, child.Authored, want.id)
+						assert.Equal(t, child.Path, want.path)
+						assert.Equal(t, child.Declaration.File, want.file)
+						record, _ := l.Index.Lookup(id)
+						assert.Equal(t, record.Parent, want.parent)
+						assert.Equal(t, slices.Contains(testutil.Owners(record.Productions), parent), name != "")
+						assert.Equal(t, slices.Contains(l.Index.Claims["payload/one/"], id), name != "")
+						assert.Equal(t, slices.Contains(testutil.Owners(payload.Productions), id), name != "")
+						result.Identity, result.Authored, result.Path = want.id, child.Authored, child.Path
+						result.ChildProductions = slices.Clone(record.Productions)
+						result.PayloadProductions = slices.Clone(payload.Productions)
 						proposal, prepareErr := prepareSelection(
 							t.Context(),
 							t,
@@ -222,7 +226,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						proposal.Retire()
 						return result
 					}
-					first := load(files, true, false)
+					first := load(files, owner, false)
 					original := snapshot(first, "child")
 					assert.NoError(t, first.PersistInputs(t.Context()))
 					first.Close()
@@ -230,35 +234,32 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 					owner, err = cache.New(t.Context(), cacheDir)
 					assert.NoError(t, err)
 					assert.Equal(t, owner.CanPersistRenders(), persistent)
-					restored := load(files, true, true)
+					restored := load(files, owner, true)
 					assert.Diff(t, snapshot(restored, "child"), original)
 					before, after := externalFileHelmReleaseFiles(t), externalFileHelmReleaseFiles(t)
-					beforeName, afterName := "child", "child"
 					const declaration = "layer/common/child.yaml"
-					absent := []byte(
+					absent := &fstest.MapFile{Data: []byte(
 						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker, namespace: flux-system}\n",
-					)
-					switch transition {
-					case "addition":
-						before[declaration] = &fstest.MapFile{Data: absent}
-						beforeName = ""
-					case "removal":
-						after[declaration] = &fstest.MapFile{Data: absent}
-						afterName = ""
-					case "replacement":
-						data := strings.Replace(string(after[declaration].Data), "name: child", "name: other", 1)
-						assert.Equal(t, len(data), len(before[declaration].Data))
-						after[declaration] = &fstest.MapFile{Data: []byte(data)}
-						afterName = "other"
-					}
-					if direction == "reverse" {
-						before, after = after, before
-						beforeName, afterName = afterName, beforeName
-					}
-					for _, side := range []struct {
+					)}
+					replacement := strings.Replace(string(after[declaration].Data), "name: child", "name: other", 1)
+					assert.Equal(t, len(replacement), len(before[declaration].Data))
+					type side struct {
 						files fstest.MapFS
 						name  string
-					}{{before, beforeName}, {after, afterName}} {
+					}
+					type declarationSide struct {
+						name string
+						file *fstest.MapFile
+					}
+					declarations := map[string][2]declarationSide{
+						"addition":    {{"", absent}, {"child", after[declaration]}},
+						"removal":     {{"child", before[declaration]}, {"", absent}},
+						"replacement": {{"child", before[declaration]}, {"other", &fstest.MapFile{Data: []byte(replacement)}}},
+					}[transition]
+					before[declaration], after[declaration] = declarations[0].file, declarations[1].file
+					pair := [2]side{{before, declarations[0].name}, {after, declarations[1].name}}
+					sides := map[string][2]side{"forward": pair, "reverse": {pair[1], pair[0]}}[direction]
+					for _, side := range sides {
 						view, _, viewErr := gittree.New(t.Context(), nil, plumbing.ZeroHash,
 							gittree.ViewOptions{Mode: gittree.Direct, Current: side.files})
 						assert.NoError(t, viewErr)
@@ -274,7 +275,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						)
 						assert.NoError(t, loadErr)
 						assert.NoError(t, restored.FinalizeIndex(t.Context(), root, false))
-						fresh := load(side.files, false, false)
+						fresh := load(side.files, nil, false)
 						assert.Diff(t, snapshot(restored, side.name), snapshot(fresh, side.name))
 						construction := restored.construction
 						assert.NoError(t, restored.FinalizeIndex(t.Context(), root, false))

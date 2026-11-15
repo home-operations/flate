@@ -23,7 +23,6 @@ func (l *Loader) Admit(ctx context.Context, repoRoot string) error {
 	return l.admit(ctx, repoRoot, nil)
 }
 
-//nolint:gocognit // Admission MUST preserve round and publication order while returning cancellation.
 func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[string]nsResolution) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -43,16 +42,9 @@ func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[stri
 	}
 	if repoRoot == "" {
 		l.refreshClaims(repoRoot, kss)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		l.scopes.complete = true
-		return nil
 	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	for repeat := repoRoot != ""; repeat && ctx.Err() == nil; {
+		repeat = false
 		l.refreshClaims(repoRoot, kss)
 		for file, visits := range l.scopes.visits {
 			clear(visits)
@@ -73,26 +65,20 @@ func (l *Loader) admit(ctx context.Context, repoRoot string, prediction map[stri
 			l.documents.read(dir)
 		}
 		// ReduceStatic yields only context errors, which MUST persist after iteration.
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		changed := l.projectAuthored(repoRoot, prediction)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !changed {
-			l.scopes.complete = true
-			return nil
-		}
-		kss = l.kustomizations()
-		if l.scopesMatch(kss, repoRoot) {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			l.scopes.complete = true
-			return nil
+		switch err := ctx.Err(); {
+		case err != nil:
+		case !l.projectAuthored(repoRoot, prediction):
+		case ctx.Err() != nil:
+		default:
+			kss = l.kustomizations()
+			repeat = !l.scopesMatch(kss, repoRoot)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.scopes.complete = true
+	return nil
 }
 
 func (l *Loader) anchorRoot(repoRoot, dir string) bool {

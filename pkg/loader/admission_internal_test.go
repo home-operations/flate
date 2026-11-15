@@ -423,7 +423,6 @@ func TestAdmission_IncomingChildPublicationPreservesProof(t *testing.T) {
 	)
 }
 
-//nolint:gocognit // The same assertions cover unrestricted and scoped session lifecycles.
 func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
 	t.Parallel()
 	for _, scope := range []string{"namespace", "named", "all"} {
@@ -440,15 +439,13 @@ func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
 			st.AddObjects([]manifest.BaseManifest{parent, selected})
 			l := New(st)
 
-			root := parent.Named()
 			switch scope {
 			case "namespace":
+				root := parent.Named()
 				root.Name = ""
-			case "all":
-				root = manifest.NamedResource{}
-			}
-			if scope != "all" {
 				configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{root}})
+			case "named":
+				configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{parent.Named()}})
 			}
 			allChildren := scope != "namespace"
 			if l.Options.Session != nil {

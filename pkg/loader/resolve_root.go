@@ -3,6 +3,7 @@ package loader
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -53,9 +54,9 @@ func (v *sourcePathView) Lstat(name string) (fs.FileInfo, error) {
 		} else {
 			v.valid = false
 		}
+		return info, fmt.Errorf("source path lstat: %w", err)
 	}
-	//nolint:wrapcheck // SecureJoinVFS requires the original filesystem error and path contract.
-	return info, err
+	return info, nil
 }
 
 func (v *sourcePathView) Readlink(name string) (string, error) {
@@ -64,8 +65,10 @@ func (v *sourcePathView) Readlink(name string) (string, error) {
 	if err != nil || path.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
 		v.valid = false
 	}
-	//nolint:wrapcheck // SecureJoinVFS requires the original filesystem error and path contract.
-	return target, err
+	if err != nil {
+		return target, fmt.Errorf("source path readlink: %w", err)
+	}
+	return target, nil
 }
 
 func resolveRoot(objects sourceStore, source manifest.NamedResource, root string) (string, bool) {

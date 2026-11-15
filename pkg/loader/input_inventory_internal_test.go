@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -335,12 +334,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			assert.Equal(t, occurrences[0].Object.Named().Name, "mounted")
 			repeated, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
-			assert.Equal(
-				t,
-				//nolint:govet // Snapshot equality must include immutable unexported facts.
-				reflect.DeepEqual(repeated, occurrences),
-				true,
-			)
+			assert.Equal(t, snapshotDiff(occurrences, repeated), "")
 			assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 			repeated[0].Declaration.File = "caller-owned"
 			assert.Equal(t, occurrences[0].Declaration.File, wantFile)

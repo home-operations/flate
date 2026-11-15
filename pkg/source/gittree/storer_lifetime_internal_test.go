@@ -1,16 +1,70 @@
 package gittree
 
 import (
+	"errors"
+	"io"
+	"io/fs"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"weak"
 
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/storer"
 	"github.com/go-git/go-git/v6/storage/memory"
 
 	"github.com/home-operations/flate/internal/assert"
 )
+
+type blobReaderStorer struct {
+	storer.EncodedObjectStorer
+
+	object plumbing.EncodedObject
+}
+
+func (s blobReaderStorer) EncodedObject(plumbing.ObjectType, plumbing.Hash) (plumbing.EncodedObject, error) {
+	return s.object, nil
+}
+
+type blobReaderObject struct {
+	*plumbing.MemoryObject
+
+	reader io.ReadCloser
+	err    error
+}
+
+func (o blobReaderObject) Reader() (io.ReadCloser, error) { return o.reader, o.err }
+
+func TestGitView_BlobErrors(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"lookup", "reader"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			var expected io.ReadCloser
+			var storage storer.EncodedObjectStorer = memory.NewStorage()
+			want, operation := plumbing.ErrObjectNotFound, "read blob "
+			if failure == "reader" {
+				expected = io.NopCloser(strings.NewReader("retained reader"))
+				object := &plumbing.MemoryObject{}
+				object.SetType(plumbing.BlobObject)
+				storage = blobReaderStorer{object: blobReaderObject{
+					MemoryObject: object, reader: expected, err: fs.ErrPermission,
+				}}
+				want, operation = fs.ErrPermission, "open blob reader "
+			}
+			view := &gitView{newStorer: func() storer.EncodedObjectStorer { return storage }}
+			reader, err := view.openBlob(plumbing.ZeroHash)
+			assert.Equal(t, reader, expected)
+			assert.Equal(t, errors.Is(err, want), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), operation), true)
+			assert.Equal(t, view.storer.Load() != nil, true)
+			if reader != nil {
+				assert.NoError(t, reader.Close())
+			}
+		})
+	}
+}
 
 func TestGitView_StorerLifetime(t *testing.T) {
 	t.Parallel()

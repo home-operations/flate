@@ -4,18 +4,67 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
+
+func TestFS_IdentifyFileErrors(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"index", "parent listing"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "nested/file", "content")
+			location, err := gitrepo.Locate(t.Context(), root, root)
+			assert.NoError(t, err)
+			input := newLocal(root, false, &localPolicy{})
+			input.location = location
+			operation := "read fingerprint index:"
+			if failure == "index" {
+				location.Repository.Storer = &membershipIndexStorer{
+					Storer: location.Repository.Storer, err: fs.ErrPermission,
+				}
+			} else {
+				operation = "list fingerprint parent \"nested\":"
+				directory := filepath.Join(root, "nested")
+				assert.NoError(t, os.Chmod(directory, 0))
+				t.Cleanup(func() { assert.NoError(t, os.Chmod(directory, 0o755)) })
+				if _, readErr := os.ReadDir(directory); !errors.Is(readErr, fs.ErrPermission) {
+					t.Skipf("filesystem cannot enforce directory permission fixture: %v", readErr)
+				}
+			}
+			err = input.identifyFiles(
+				t.Context(), fingerprintInventory{files: map[string]string{"nested/file": ""}}, false,
+			)
+			assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), operation), true)
+			if failure == "parent listing" {
+				pathErr, ok := errors.AsType[*fs.PathError](err)
+				assert.FatalIf(t, !ok, "fingerprint listing error = %v", err)
+				_, backingErr := osfs.New(root, osfs.WithBoundOS()).ReadDir("nested")
+				backingPathErr, ok := errors.AsType[*fs.PathError](backingErr)
+				assert.FatalIf(t, !ok, "backing listing error = %v", backingErr)
+				assert.Equal(t, pathErr.Op, backingPathErr.Op)
+				assert.Equal(t, pathErr.Path, backingPathErr.Path)
+				assert.Equal(t, errors.Is(pathErr.Err, fs.ErrPermission), true)
+			}
+		})
+	}
+}
 
 func testFSContentFingerprintCase(t *testing.T, mode *string,
 ) {

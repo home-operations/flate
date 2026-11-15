@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/format/gitignore"
 	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
@@ -111,6 +112,7 @@ func testNewEntryPolicyGitIgnoredMembership(t *testing.T) {
 		assert.Equal(t, listed[0].Name(), "tracked.yaml")
 		_, listErr = directory.(fs.ReadDirFile).ReadDir(1)
 		assert.Equal(t, errors.Is(listErr, io.EOF), true)
+		assert.Equal(t, listErr, io.EOF)
 		assert.NoError(t, directory.Close())
 	}
 	sub, err := Sub(input, "nested")
@@ -127,7 +129,6 @@ func testNewEntryPolicyGitIgnoredMembership(t *testing.T) {
 	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 }
 
-//nolint:gocognit // Each observation case retains its backing-I/O and upstream protection assertions.
 func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 	t.Helper()
 	t.Run("shared traversals", func(t *testing.T) {
@@ -182,12 +183,11 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, backing.payloadOpens, 0)
 		assert.Equal(t, backing.lstats, 0)
-		if diff := cmp.Diff(
+		diff := cmp.Diff(
 			map[string]int{".": 1, "empty": 1, "nested": 1, "pruned": 1, filepath.Join("pruned", "deep"): 1},
 			backing.reads,
-		); diff != "" {
-			t.Fatalf("directory reads (-want +got):\n%s", diff)
-		}
+		)
+		assert.FatalIf(t, diff != "", "directory reads (-want +got):\n%s", diff)
 		entries, err := observed.ReadDir("")
 		assert.NoError(t, err)
 		assert.Equal(
@@ -223,9 +223,23 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		_, err = worktree.Filesystem().Open("alias/tracked")
 		assert.Equal(t, err != nil, true)
 	})
-	for _, mode := range []string{"root", "empty", "error", "canceled", "canceled unread", "canceled open", "canceled open after observation", "canceled lstat"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tt := range []struct {
+		mode      string
+		directory string
+		err       error
+	}{
+		{mode: "root"},
+		{mode: "empty", directory: "empty"},
+		{mode: "error", directory: "empty", err: fs.ErrPermission},
+		{mode: "canceled"},
+		{mode: "canceled unread"},
+		{mode: "canceled open"},
+		{mode: "canceled open after observation"},
+		{mode: "canceled lstat"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
 			t.Parallel()
+			mode, name := tt.mode, tt.directory
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "z", "z")
 			testutil.WriteFile(t, root, "a", "a")
@@ -233,6 +247,7 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 			backing := &membershipCountingFS{
 				Filesystem: newMembershipRoot(t, root),
 				reads:      make(map[string]int),
+				err:        tt.err,
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -241,7 +256,8 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 				ctx:         ctx,
 				directories: make(map[string]membershipDirectory),
 			}
-			if mode == "canceled open after observation" {
+			switch mode {
+			case "canceled open after observation":
 				testutil.WriteFile(t, root, "empty/kept", "kept")
 				_, err := observed.ReadDir(".")
 				assert.NoError(t, err)
@@ -252,8 +268,7 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 				assert.Equal(t, backing.reads["."], 1)
 				assert.Equal(t, backing.reads["empty"], 1)
 				return
-			}
-			if mode == "canceled lstat" {
+			case "canceled lstat":
 				_, err := observed.ReadDir(".")
 				assert.NoError(t, err)
 				cancel()
@@ -261,31 +276,22 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				assert.Equal(t, backing.lstats, 0)
 				return
-			}
-			if mode == "canceled unread" {
+			case "canceled unread":
 				cancel()
 				_, err := observed.ReadDir("empty")
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				assert.Equal(t, len(backing.reads), 0)
 				return
-			}
-			if mode == "canceled open" {
+			case "canceled open":
 				cancel()
 				_, err := observed.Open("a")
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				assert.Equal(t, backing.payloadOpens, 0)
 				return
 			}
-			name := ""
-			if mode == "empty" || mode == "error" {
-				name = "empty"
-			}
-			if mode == "error" {
-				backing.err = fs.ErrPermission
-			}
 			entries, err := observed.ReadDir(name)
 			assert.Equal(t, errors.Is(err, fs.ErrPermission), mode == "error")
-			if mode == "empty" || mode == "error" {
+			if name == "empty" {
 				_, statErr := observed.Lstat("empty/missing")
 				assert.Equal(t, errors.Is(statErr, fs.ErrPermission), mode == "error")
 				assert.Equal(t, errors.Is(statErr, fs.ErrNotExist), mode == "empty")
@@ -303,11 +309,9 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 			default:
 				assert.NoError(t, err)
 				assert.Equal(t, len(again), len(entries))
-				if mode == "root" {
-					for i, entry := range entries {
-						assert.Equal(t, again[i].Name(), entry.Name())
-					}
-				}
+			}
+			for i, entry := range again {
+				assert.Equal(t, entry.Name(), entries[i].Name())
 			}
 			assert.Equal(t, backing.reads[observed.Join(".", name)], 1)
 		})
@@ -407,7 +411,12 @@ func (f *membershipCountingFS) OpenFile(name string, flag int, mode fs.FileMode)
 
 func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 	t.Helper()
-	for _, mode := range []string{"no_rules", "index_error", "rule_reader_error", "canceled_before", "canceled_during", "canceled_index_error", "canceled_after"} {
+	const modules = "[submodule \"module\"]\n\tpath = module\n\turl = https://example.com/module.git\n"
+	for _, mode := range []string{
+		"no_rules", "index_error", "rule_reader_error", "rule_enumeration_error", "repository_error",
+		"submodules_error", "submodule_status_error", "comparison_error",
+		"canceled_before", "canceled_during", "canceled_index_error", "canceled_after",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -425,6 +434,18 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 			switch mode {
 			case "rule_reader_error":
 				location.RepositoryRoot = filepath.Join(root, "missing")
+			case "repository_error":
+				index.err, index.configErr = nil, fs.ErrPermission
+			case "submodules_error":
+				index.err = nil
+				assert.NoError(t, os.Symlink("missing", filepath.Join(root, ".gitmodules")))
+			case "submodule_status_error":
+				index.errAt = 2
+				testutil.WriteFile(t, root, ".gitmodules", modules)
+			case "comparison_error":
+				index.err = nil
+				index.cancel, index.cancelAt = cancel, 2
+				testutil.WriteFile(t, root, ".gitmodules", modules)
 			case "canceled_before":
 				cancel()
 			case "canceled_during":
@@ -433,9 +454,18 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 				index.cancel = cancel
 			case "canceled_after":
 				index.err = nil
-			case "no_rules", "index_error":
+			case "no_rules", "index_error", "rule_enumeration_error":
 			}
-			directory, err := OpenDirectory(ctx, location)
+			var directory *Directory
+			switch mode {
+			case "rule_enumeration_error":
+				backing := &membershipCountingFS{
+					Filesystem: osfs.New(root, osfs.WithBoundOS()), reads: make(map[string]int), err: fs.ErrPermission,
+				}
+				directory, err = openDirectory(ctx, location, backing, "")
+			default:
+				directory, err = OpenDirectory(ctx, location)
+			}
 			var input *store.SourceArtifact
 			if err == nil {
 				input = directory.Artifact()
@@ -450,11 +480,41 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 				assert.Equal(t, string(data), "untracked")
 			case "index_error", "canceled_index_error":
 				assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+				assert.Equal(t, strings.Contains(err.Error(), "read git index:"), true)
 				assert.Equal(t, errors.Is(err, context.Canceled), false)
 				assert.Equal(t, index.calls, 1)
 			case "rule_reader_error":
 				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "open repository root "), true)
+				pathErr, ok := errors.AsType[*fs.PathError](err)
+				assert.FatalIf(t, !ok, "repository root error = %v", err)
+				assert.Equal(t, pathErr.Path, location.RepositoryRoot)
 				assert.Equal(t, index.calls, 0)
+			case "rule_enumeration_error":
+				assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "read git ignore patterns:"), true)
+				pathErr, ok := errors.AsType[*fs.PathError](err)
+				assert.FatalIf(t, !ok, "ignore reader error = %v", err)
+				assert.Equal(t, pathErr.Op, "readdir")
+				assert.Equal(t, pathErr.Path, ".")
+				assert.Equal(t, pathErr.Err, fs.ErrPermission)
+				assert.Equal(t, index.calls, 0)
+			case "repository_error":
+				assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "open membership repository:"), true)
+				assert.Equal(t, index.calls, 1)
+			case "submodules_error":
+				assert.Equal(t, errors.Is(err, git.ErrGitModulesSymlink), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "read membership submodules:"), true)
+				assert.Equal(t, index.calls, 1)
+			case "submodule_status_error":
+				assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "read membership submodule status:"), true)
+				assert.Equal(t, index.calls, 2)
+			case "comparison_error":
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+				assert.Equal(t, strings.HasPrefix(err.Error(), "compare git membership:"), true)
+				assert.Equal(t, index.calls, 2)
 			case "canceled_before", "canceled_during":
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 			case "canceled_after":
@@ -472,20 +532,30 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 type membershipIndexStorer struct {
 	storage.Storer
 
-	err    error
-	cancel context.CancelFunc
-	calls  int
+	err       error
+	configErr error
+	cancel    context.CancelFunc
+	calls     int
+	errAt     int
+	cancelAt  int
 }
 
 func (s *membershipIndexStorer) Index() (*gitindex.Index, error) {
 	s.calls++
-	if s.cancel != nil {
+	if s.cancel != nil && s.calls >= max(1, s.cancelAt) {
 		s.cancel()
 	}
-	if s.err != nil {
+	if s.err != nil && s.calls >= max(1, s.errAt) {
 		return nil, s.err
 	}
 	return s.Storer.Index()
+}
+
+func (s *membershipIndexStorer) Config() (*config.Config, error) {
+	if s.configErr != nil {
+		return nil, s.configErr
+	}
+	return s.Storer.Config()
 }
 
 func testNewEntryPolicyGitAndFluxPolicy(t *testing.T) {
@@ -524,18 +594,18 @@ func testNewEntryPolicyGitAndFluxPolicy(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // The route table retains plain, live, and linked admission assertions together.
 func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 	t.Helper()
 	for _, tt := range []struct {
-		name string
-		mode ViewMode
-		live bool
+		name       string
+		mode       ViewMode
+		live       bool
+		indexCalls int
 	}{
 		{name: "plain"},
-		{name: "live_direct", mode: Direct, live: true},
-		{name: "live_source", mode: Source, live: true},
-		{name: "linked"},
+		{name: "live_direct", mode: Direct, live: true, indexCalls: 1},
+		{name: "live_source", mode: Source, live: true, indexCalls: 1},
+		{name: "linked", indexCalls: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -565,18 +635,16 @@ func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 			testutil.WriteFile(t, root, "noise", "untracked")
 			location, err := gitrepo.Locate(t.Context(), root, root)
 			assert.NoError(t, err)
-			var index *membershipIndexStorer
+			index := &membershipIndexStorer{}
 			if repo != nil {
-				index = &membershipIndexStorer{Storer: location.Repository.Storer}
+				index.Storer = location.Repository.Storer
 				location.Repository.Storer = index
 			}
 			artifactDirectory3, err := OpenDirectory(t.Context(), location)
 			assert.NoError(t, err)
 			artifact := artifactDirectory3.Artifact()
 			assert.NoError(t, artifactDirectory3.Close())
-			if index != nil {
-				assert.Equal(t, index.calls, 1)
-			}
+			assert.Equal(t, index.calls, tt.indexCalls)
 			input := artifact.FS.(*FS)
 			if tt.live {
 				input, _, err = New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), plumbing.ZeroHash,
@@ -589,13 +657,6 @@ func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), tt.name != "plain")
 			if tt.live {
 				assert.Equal(t, index.calls, 0)
-			}
-			if tt.name == "linked" {
-				data, readErr := input.ReadFile("common-only")
-				assert.NoError(t, readErr)
-				assert.Equal(t, string(data), "approved linked-worktree limit")
-			}
-			if tt.live {
 				testutil.WriteFile(t, root, ".gitignore", "later\n")
 				testutil.WriteFile(t, root, "later", "new ignored file")
 				observed, observeErr := input.FreshInputs(t.Context(), nil, nil)
@@ -606,6 +667,11 @@ func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 				_, readErr := input.ReadFile("noise")
 				assert.Equal(t, errors.Is(readErr, fs.ErrNotExist), true)
 				assert.Equal(t, index.calls, 1)
+			}
+			if tt.name == "linked" {
+				data, readErr := input.ReadFile("common-only")
+				assert.NoError(t, readErr)
+				assert.Equal(t, string(data), "approved linked-worktree limit")
 			}
 		})
 	}

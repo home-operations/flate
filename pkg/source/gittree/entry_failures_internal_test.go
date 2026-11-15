@@ -9,10 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/storer"
 	"github.com/go-git/go-git/v6/storage/filesystem"
+	"github.com/go-git/go-git/v6/storage/memory"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -64,6 +67,68 @@ func testNewEntryPolicyErrorClassification(t *testing.T) {
 		ViewOptions{Mode: Source, Current: admissionErrorFS{err: fs.ErrPermission}},
 	)
 	assert.Equal(t, err, context.Canceled)
+	t.Run("size errors", func(t *testing.T) {
+		t.Parallel()
+		testNewEntryPolicySizeErrors(t)
+	})
+}
+
+type statErrorFS struct {
+	fs.FS
+
+	err error
+}
+
+func (f statErrorFS) Stat(string) (fs.FileInfo, error) { return nil, f.err }
+
+func testNewEntryPolicySizeErrors(t *testing.T) {
+	t.Helper()
+	pathErr := &fs.PathError{Op: "current-size", Path: "physical-file", Err: fs.ErrPermission}
+	for _, tt := range []struct {
+		name    string
+		current fs.FS
+		want    error
+	}{
+		{name: "current filesystem", current: statErrorFS{err: pathErr}, want: fs.ErrPermission},
+		{name: "missing stored blob", want: plumbing.ErrObjectNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			view := &gitView{
+				backing: memfs.New(), current: tt.current,
+				nodes:     map[string]*gitNode{"file": {name: "file"}},
+				newStorer: func() storer.EncodedObjectStorer { return memory.NewStorage() },
+			}
+			_, err := view.Lstat("file")
+			assert.Equal(t, errors.Is(err, tt.want), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), "size \"file\": "), true)
+			if tt.current != nil {
+				got, ok := errors.AsType[*fs.PathError](err)
+				assert.FatalIf(t, !ok, "current size error = %v", err)
+				assert.Equal(t, got, pathErr)
+				assert.Equal(t, got.Op, "current-size")
+				assert.Equal(t, got.Path, "physical-file")
+				assert.Equal(t, got.Err, fs.ErrPermission)
+				_, err = view.Stat("file")
+				got, ok = errors.AsType[*fs.PathError](err)
+				assert.FatalIf(t, !ok, "stat size error = %v", err)
+				assert.Equal(t, got.Op, statOperation)
+				assert.Equal(t, got.Path, pathErr.Path)
+				assert.Equal(t, got.Err, pathErr.Err)
+				assert.Equal(t, pathErr.Op, "current-size")
+				assert.Equal(t, errors.Is(err, tt.want), true)
+			}
+		})
+	}
+}
+
+func TestGitView_MissingCommit(t *testing.T) {
+	t.Parallel()
+	view := &gitView{newStorer: func() storer.EncodedObjectStorer { return memory.NewStorage() }}
+	_, err := view.walk(t.Context(), plumbing.ZeroHash)
+	assert.Equal(t, errors.Is(err, plumbing.ErrObjectNotFound), true)
+	assert.Equal(t, strings.HasPrefix(err.Error(), "read commit "), true)
+	assert.Equal(t, view.storer.Load() != nil, true)
 }
 
 func testNewEntryPolicyLocalPermissionDiagnostic(t *testing.T) {

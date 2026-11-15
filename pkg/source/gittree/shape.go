@@ -132,7 +132,7 @@ func (g *FS) selectNodes(
 	matcher *sourceignore.Matcher,
 	links *tree.Builder,
 ) (map[string]bool, error) {
-	v := g.view.(*gitView) //nolint:errcheck // Only native Git views select their own nodes.
+	v := g.view.(*gitView) //nolint:errcheck // finishGitView selects nodes only after New constructs *gitView; corruption MUST panic.
 	selectVisible := visible
 	switch opts.Mode {
 	case Direct:

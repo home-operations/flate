@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason

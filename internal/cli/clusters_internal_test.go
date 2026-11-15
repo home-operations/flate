@@ -165,7 +165,7 @@ spec:
 	return root
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"omega": "second", "alpha": "first"})
 	args := []string{"build", "all", "--path", root, "-o", "json", "--concurrency", "2"}
@@ -334,7 +334,7 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"alpha": "first", "omega": "second"})
 	appendScopeSpec(t, root, "alpha/flux.yaml", "  dependsOn: [{name: missing}]\n")
@@ -371,7 +371,7 @@ func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "old", "omega": "old"})
 	for _, scenario := range []string{"removed", "failed"} {
@@ -387,7 +387,7 @@ func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ClusterReport_NativeAggregateInputs(t *testing.T) {
 	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "old", "omega": "old"})
 	current := writeClusterGroupsFixture(t, map[string]string{"alpha": "new", "omega": "old"})

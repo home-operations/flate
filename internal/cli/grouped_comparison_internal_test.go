@@ -18,7 +18,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // Native diff output changes process-wide color settings.
+//nolint:paralleltest // Native diff output calls bunt.SetColorSettings, which changes process color state.
 func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 	for _, format := range diff.Formats() {
 		t.Run(string(format), func(t *testing.T) {

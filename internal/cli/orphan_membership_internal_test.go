@@ -57,7 +57,7 @@ type membershipResult struct {
 	Suppressed []membershipSuppression `json:"Suppressed"`
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_OrphanMembership_FullBuildDelta(t *testing.T) {
 	for _, scenario := range []string{
 		"indexed winner", "indexed loser", "indexed document", "namespace siblings", "standalone Secret", "Secret siblings",
@@ -71,7 +71,7 @@ func TestE2E_OrphanMembership_FullBuildDelta(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_OrphanMembership_SecretProducerPrecedence(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	membershipFixture(t, before, "preexisting producer", false)
@@ -93,7 +93,7 @@ func TestE2E_OrphanMembership_SecretProducerPrecedence(t *testing.T) {
 	membershipCompare(t, membershipDelta(oldDocs, newDocs), result.Changes)
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_OrphanMembership_UnreadableInput(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	membershipFixture(t, before, "bare encrypted input", false)
@@ -115,7 +115,7 @@ func TestE2E_OrphanMembership_UnreadableInput(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_OrphanMembership_UnavailableProducer(t *testing.T) {
 	for _, side := range []string{"orig", "current"} {
 		t.Run(side, func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestE2E_OrphanMembership_UnavailableProducer(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI invocations replace process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestE2E_OrphanMembership_RequiredInputAcrossScope(t *testing.T) {
 	before, after, invalid := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, side := range []struct{ root, value string }{{before, "before"}, {after, "after"}, {invalid, "after, bad-key: invalid"}} {

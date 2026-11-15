@@ -277,7 +277,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 	}
 }
 
-//nolint:paralleltest // test changes process-wide logging.
+//nolint:paralleltest // testReviewNestedWarningsCase uses log.SetOutput to capture Helm warnings.
 func TestReview_NestedWarnings(t *testing.T) {
 	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	for _, name := range []string{"requirements.yaml", "requirements.lock"} {

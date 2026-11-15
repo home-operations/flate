@@ -28,9 +28,6 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:gochecknoglobals // Cache fixtures share one immutable manifest identity.
-var demoSpec = &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
-
 func testEncodeFrame(tb testing.TB, header *renderHeader, output []byte) ([]byte, error) {
 	tb.Helper()
 	frame, err := sourcecache.NewFrame(frameDomain, header, output)
@@ -61,19 +58,19 @@ func testDecodeFrame(tb testing.TB, wire []byte) (renderFrame, error) {
 	return frame, err
 }
 
-func testAcceptedFrame(
+func (f *renderFrame) testAcceptedFrame(
 	tb testing.TB,
 	owner manifest.NamedResource,
-	frame *renderFrame,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+	content any,
 ) ([]byte, error) {
 	tb.Helper()
-	stored, err := sourcecache.NewFrame(frameDomain, frame.header, frame.output)
+	stored, err := sourcecache.NewFrame(frameDomain, f.header, f.output)
 	if err != nil {
 		return nil, err
 	}
 	publication, err := stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{
-		Owner: owner, Content: acceptedInput, Records: records, Complete: true,
+		Owner: owner, Content: content, Records: records, Complete: true,
 	})
 	if err != nil {
 		return nil, err
@@ -160,6 +157,7 @@ func testRenderFrame(tb testing.TB, snap *readSetSnapshot, output []byte) []byte
 
 func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	t.Run("empty stream", func(t *testing.T) {
 		t.Parallel()
 		renderCacheHitMissInvalidateEmptyStream(t)
@@ -186,7 +184,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 				Label:       root,
 				ApplyIgnore: false,
 				SubPath:     "selected",
-				Spec:        demoSpec,
+				Spec:        spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -195,7 +193,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt2},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -215,7 +213,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -223,7 +221,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt3},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -232,7 +230,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Diff(t, out1, want)
 
-	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	assert.FatalIf(t, !ok, "%s", "owner did not retain completed render")
@@ -259,7 +257,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 				Label:       root,
 				ApplyIgnore: false,
 				SubPath:     "selected",
-				Spec:        demoSpec,
+				Spec:        spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -268,7 +266,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt4},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -299,7 +297,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 				Label:       root,
 				ApplyIgnore: false,
 				SubPath:     "selected",
-				Spec:        demoSpec,
+				Spec:        spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -308,7 +306,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt5},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -332,7 +330,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -340,7 +338,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt6},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt6},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -364,7 +362,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -372,7 +370,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt7},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt7},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -392,7 +390,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec},
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -400,7 +398,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt8},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt8},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -435,6 +433,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 // changes invalidate persisted renders after re-admission.
 func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	root := testutil.WriteTree(t, map[string]string{
 		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
 		"b.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
@@ -443,7 +442,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	ctx := t.Context()
-	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec}
 	input, err := cache.sourceRootFor(ctx, req.Source, root)
 	assert.NoError(t, err)
 	key := renderKey(&req, root, input.ignore)
@@ -453,7 +452,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt11},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt11},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -483,7 +482,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt12},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt12},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -517,7 +516,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		{
 			recordErr := cache.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt13},
+				RenderAcceptance{Owner: spec.Named(), Receipt: receipt13},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -535,6 +534,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 // TestRender_MemoryOwnerUnchanged pins output parity across backing choices.
 func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	files := map[string]string{
 		"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
@@ -556,7 +556,7 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		closeCaches = append(closeCaches, second.Close)
 		var builds atomic.Int64
 		lower := &pausedRenderFS{FS: os.DirFS(root), builds: &builds}
-		req := RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}
+		req := RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: spec}
 		var outputs [2][]map[string]any
 		var wg sync.WaitGroup
 		start := make(chan struct{})
@@ -634,10 +634,11 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 
 func testRenderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": "resources: []\n"})
 	storage := t.TempDir()
-	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
 	for range 2 {
 		c := newTestTreeCache(t, storage)
 		docs, receipt1, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
@@ -645,7 +646,7 @@ func testRenderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 			{
 				recordErr := c.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt1},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -681,7 +682,7 @@ type renderCacheTypedEditsInputs struct {
 
 func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *renderCacheTypedEditsInputs) {
 	t.Helper()
-	spec := demoSpec.Clone()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	for _, tc := range []struct {
 		name, want string
 		edit       func()
@@ -699,7 +700,7 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 			{
 				recordErr := (*inputs.cache).RecordRender(
 					ctx,
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt9},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt9},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -713,7 +714,7 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 			{
 				recordErr := (*inputs.cache).RecordRender(
 					ctx,
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt10},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt10},
 				)
 				assert.NoError(t, recordErr)
 			}

@@ -48,6 +48,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 		},
 		SubPath: ".", Label: root,
 	}
+	content := PrepareShape(&req, nil).Content()
 	owner := req.Spec.Named()
 	for _, tc := range []struct {
 		name   string
@@ -74,10 +75,10 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				Owner:   owner,
 				Receipt: receipt,
 				Records: emptyRenderInventory,
-				Content: acceptedInput,
+				Content: content,
 			}))
 			{
-				_, complete := previousHistory(t.Context(), renderer, &req, owner)
+				_, complete := renderer.previousHistory(t.Context(), &req, owner, content)
 				assert.Equal(t, complete, persistent)
 			}
 			changed := req
@@ -95,7 +96,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			stored, err := testDecodeFrame(t, wire)
 			assert.NoError(t, err)
-			accepted, err := testAcceptedFrame(t, owner, &stored, emptyRenderInventory)
+			accepted, err := stored.testAcceptedFrame(t, owner, emptyRenderInventory, content)
 			assert.NoError(t, err)
 			_, _, _, err = renderer.owner.Blob(
 				t.Context(),
@@ -112,7 +113,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 
 			{
-				_, complete := previousHistory(t.Context(), renderer, &changed, owner)
+				_, complete := renderer.previousHistory(t.Context(), &changed, owner, content)
 				assert.FatalIf(t, complete, "%s", "foreign source coordinate borrowed history")
 			}
 		})
@@ -120,12 +121,12 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 	for _, field := range []string{"revision", "url"} {
 		t.Run("reuse_"+field, func(t *testing.T) {
 			t.Parallel()
-			testPreviousRenderSourceBindingReuse(t, &req, field)
+			testPreviousRenderSourceBindingReuse(t, &req, field, content)
 		})
 	}
 }
 
-func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, field string) {
+func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, field string, content any) {
 	t.Helper()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	owner := req.Spec.Named()
@@ -150,9 +151,9 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			priorOutput := bytes.Clone(prior.output)
 			binding, key := preparation.binding, preparation.key
 			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-				Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput,
+				Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
 			}))
-			history, complete := previousHistory(t.Context(), renderer, &current, owner)
+			history, complete := renderer.previousHistory(t.Context(), &current, owner, content)
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			if lifetime == "transferred" {
@@ -167,7 +168,7 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 				replacement.URL = "https://example.test/after"
 			}
 			current.Source = &replacement
-			_, complete = previousHistory(t.Context(), renderer, &current, owner)
+			_, complete = renderer.previousHistory(t.Context(), &current, owner, content)
 			assert.Equal(t, complete, false)
 			changed, rebound, err := Render(t.Context(), renderer, current, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
@@ -181,9 +182,9 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			assert.Equal(t, current.Preparation.key, key)
 			assert.Equal(t, current.Preparation.source, &replacement)
 			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-				Owner: owner, Receipt: rebound, Records: emptyRenderInventory, Content: acceptedInput,
+				Owner: owner, Receipt: rebound, Records: emptyRenderInventory, Content: content,
 			}))
-			history, complete = previousHistory(t.Context(), renderer, &current, owner)
+			history, complete = renderer.previousHistory(t.Context(), &current, owner, content)
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			unchanged := receipt.Value().(renderFrame)
@@ -206,6 +207,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 
 func TestRecordRender_AcceptedLimit(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	content := PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec}, nil).Content()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	renderer := newTestTreeCache(t, t.TempDir())
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
@@ -217,10 +220,10 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 		owner: {File: string(bytes.Repeat([]byte{'x'}, (16<<20)+1))},
 	}
 	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput,
+		Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
 	}))
 	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: maps.All(records), Content: acceptedInput,
+		Owner: owner, Receipt: receipt, Records: maps.All(records), Content: content,
 	}))
 	generation, _, _, err := renderer.owner.Blob(t.Context(),
 		sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted},
@@ -235,7 +238,7 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, valid, true)
 	assert.Equal(t, bytes.Equal(stored.output, payload), true)
-	history, complete := stored.stored.History(owner, acceptedInput)
+	history, complete := stored.stored.History(owner, content)
 	assert.Equal(t, complete, true)
 	assert.Diff(t, maps.Collect(history), map[manifest.NamedResource]manifest.DiscoveryRecord{})
 }
@@ -390,11 +393,11 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.Equal(t, original.binding.equal(&before.binding), true)
 	assert.Equal(t, original.header.Binding, before.header.Binding)
 	originalPublication, err := original.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
-		Owner: spec.Named(), Content: acceptedInput, Records: emptyRenderInventory, Complete: true,
+		Owner: spec.Named(), Content: initialContent, Records: emptyRenderInventory, Complete: true,
 	})
 	assert.NoError(t, err)
 	beforePublication, err := before.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
-		Owner: spec.Named(), Content: acceptedInput, Records: emptyRenderInventory, Complete: true,
+		Owner: spec.Named(), Content: initialContent, Records: emptyRenderInventory, Complete: true,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, originalPublication.Identity(), beforePublication.Identity())
@@ -444,6 +447,8 @@ func (f *preparationReadFS) Open(name string) (fs.File, error) {
 
 func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	content := PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec}, nil).Content()
 	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root := testutil.WriteTree(
 		t,
@@ -458,7 +463,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 		Preparation: &preparation,
 		Source:      &store.SourceArtifact{LocalPath: root, FS: input},
 		SubPath:     ".",
-		Spec:        demoSpec,
+		Spec:        spec,
 	}
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
@@ -469,7 +474,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 		docs,
 	)
 	assert.NoError(t, c.RecordRender(t.Context(), acceptanceForEmission(
-		demoSpec.Named(), acceptedEmission(t, demoSpec.Named(), receipt, nil),
+		spec.Named(), acceptedEmission(t, spec.Named(), receipt, content), content,
 	)))
 	input.prepared.Store(0)
 	fresh := newTestTreeCache(t, cacheDir)
@@ -502,29 +507,31 @@ func TestRecordRender_AcceptanceRequired(t *testing.T) {
 func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	content := PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec}, nil).Content()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("rendered"),
 	})
 	cache := newTestTreeCache(t, t.TempDir())
-	request := RenderRequest{Source: localSource(t, root), Spec: demoSpec, SubPath: "."}
+	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
 	_, receipt, err := Render(t.Context(), cache, request, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	st := store.New()
-	st.AddObject(demoSpec)
+	st.AddObject(spec)
 	provider := &manifest.ConfigMap{
 		Name:      "provider",
-		Namespace: demoSpec.Namespace,
+		Namespace: spec.Namespace,
 		Data:      map[string]any{"VALUE": "first"},
 	}
 	st.AddObject(provider)
 	reads := &store.ReadSet{}
-	reads.Init(st, demoSpec.Named(), nil)
+	reads.Init(st, spec.Named(), nil)
 	defer reads.Close()
 	reads.GetObject(provider.Named())
 	emission := &store.Emission{
-		Fingerprint: manifest.Fingerprint(acceptedInput),
+		Fingerprint: manifest.Fingerprint(content),
 		Render:      receipt,
 		Complete:    (*testCaseInput) != "incomplete",
 	}
@@ -535,11 +542,11 @@ func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 		cancel()
 		assert.Equal(
 			t,
-			errors.Is(controllertest.Emit(ctx, controller, demoSpec.Named(), emission), context.Canceled),
+			errors.Is(controllertest.Emit(ctx, controller, spec.Named(), emission), context.Canceled),
 			true,
 		)
 	} else if (*testCaseInput) != "unemitted" {
-		assert.NoError(t, controllertest.Emit(t.Context(), controller, demoSpec.Named(), emission))
+		assert.NoError(t, controllertest.Emit(t.Context(), controller, spec.Named(), emission))
 	}
 	if (*testCaseInput) == "stale" {
 		next := *provider
@@ -550,7 +557,13 @@ func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "missing fingerprint" {
 		emission.Fingerprint = ""
 	}
-	assert.NoError(t, cache.RecordRender(t.Context(), acceptanceForEmission(demoSpec.Named(), emission)))
-	_, complete := previousHistory(t.Context(), cache, &request, demoSpec.Named())
+	acceptance := acceptanceForEmission(spec.Named(), emission, content)
+	assert.Equal(
+		t,
+		acceptance.Content == nil,
+		(*testCaseInput) == "missing fingerprint" || (*testCaseInput) == "incomplete",
+	)
+	assert.NoError(t, cache.RecordRender(t.Context(), acceptance))
+	_, complete := cache.previousHistory(t.Context(), &request, spec.Named(), content)
 	assert.Equal(t, complete, persistent && (*testCaseInput) == "accepted")
 }

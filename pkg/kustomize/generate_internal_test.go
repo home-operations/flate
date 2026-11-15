@@ -14,7 +14,6 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
@@ -37,16 +36,14 @@ func localSource(tb testing.TB, root string) *store.SourceArtifact {
 	return &store.SourceArtifact{LocalPath: root, FS: admitted.FS}
 }
 
-//nolint:ireturn // The upstream interface contract requires this return type.
-func testTreeFS(t *testing.T, root string) filesys.FileSystem {
+func testTreeFS(t *testing.T, root string) *treeFS {
 	t.Helper()
 	input, _, err := source.OperationView(t.Context(), localSource(t, root).FS)
 	assert.NoError(t, err)
 	return newTreeFS(input, root, nil)
 }
 
-//nolint:ireturn // The upstream interface contract requires this return type.
-func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
+func testIgnoreTreeFS(t *testing.T, root string) *treeFS {
 	t.Helper()
 	input, _, err := gittree.New(
 		t.Context(),

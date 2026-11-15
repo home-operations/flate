@@ -31,6 +31,7 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(
@@ -40,14 +41,14 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
-	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
 	if (*testCaseInput) == "lookup" || (*testCaseInput) == "read" {
 		_, receipt26, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
 				recordErr := cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt26},
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt26},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -82,7 +83,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	for range 2 {
 		out, receipt27, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
-			err = cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt27})
+			err = cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: receipt27})
 		}
 
 		if !persistent {

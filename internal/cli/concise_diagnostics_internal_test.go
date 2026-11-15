@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ConciseFailureDiagnostics(t *testing.T) {
 	current, orig := writeFixture(t), writeFixture(t)
 	testutil.WriteFile(
@@ -26,7 +26,7 @@ func TestRun_ConciseFailureDiagnostics(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [missing.yaml]\n")

@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // Profile fixtures change process-wide environment variables.
+//nolint:paralleltest // Profile subtests use t.Setenv for FLATE_PROFILE and FLATE_PROFILE_OUT.
 func TestStartProfile_EnvironmentCleanupOnError(t *testing.T) {
 	for _, mode := range []string{"cpu", "mem", "block", "mutex", "trace"} {
 		for _, verb := range []string{"build", "test", "diff", "get"} {

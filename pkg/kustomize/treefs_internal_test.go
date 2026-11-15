@@ -175,6 +175,7 @@ func TestTreeFS_MountConversion(t *testing.T) {
 
 func TestRender_NoConsumerDiskReads(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	label := testutil.WriteTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	lower := memoryTree(t, map[string]string{"cm.yaml": cmYAML("tree")})
 	source := &store.SourceArtifact{LocalPath: label, FS: lower, Key: "pinned"}
@@ -187,7 +188,7 @@ func TestRender_NoConsumerDiskReads(t *testing.T) {
 		Render(
 			t.Context(),
 			cache,
-			RenderRequest{Source: source, Label: label, SubPath: ".", Spec: demoSpec},
+			RenderRequest{Source: source, Label: label, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -196,6 +197,7 @@ func TestRender_NoConsumerDiskReads(t *testing.T) {
 
 func TestRender_AutoGenerateEscape(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	for _, target := range []string{"../present", "../absent", "/virtual/base"} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
@@ -225,7 +227,7 @@ func TestRender_AutoGenerateEscape(t *testing.T) {
 				Render(
 					t.Context(),
 					newTestTreeCache(t, ""),
-					RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: ".", Spec: demoSpec},
+					RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: ".", Spec: spec},
 					sourcecache.RetryConfig{},
 				),
 			)
@@ -236,6 +238,7 @@ func TestRender_AutoGenerateEscape(t *testing.T) {
 
 func TestRender_ExoticNames(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	var want []map[string]any
 	for _, name := range []string{"plain.yaml", "a b+c.yaml", "@x.yaml", "é.yaml"} {
 		files := map[string]string{
@@ -248,7 +251,7 @@ func TestRender_ExoticNames(t *testing.T) {
 			Render(
 				t.Context(),
 				newTestTreeCache(t, ""),
-				RenderRequest{Source: treeRef(lower, "pin"), Label: "/absent", SubPath: "app", Spec: demoSpec},
+				RenderRequest{Source: treeRef(lower, "pin"), Label: "/absent", SubPath: "app", Spec: spec},
 				sourcecache.RetryConfig{},
 			),
 		)
@@ -262,6 +265,7 @@ func TestRender_ExoticNames(t *testing.T) {
 
 func TestRender_SubPathResolvesLinksBeforeParents(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	b := tree.NewBuilder(memoryTree(t, map[string]string{
 		"base/cm.yaml": cmYAML("wrong"), "deep/base/cm.yaml": cmYAML("correct"), "deep/inner/file": "inner",
 		"escape/kustomization.yaml": existingKustomization("../../../../../../../../etc/passwd"),
@@ -295,7 +299,7 @@ func TestRender_SubPathResolvesLinksBeforeParents(t *testing.T) {
 						Source:  treeRef(lower, "pin"),
 						Label:   "/virtual",
 						SubPath: tc.subPath,
-						Spec:    demoSpec,
+						Spec:    spec,
 					},
 					sourcecache.RetryConfig{},
 				),
@@ -366,6 +370,7 @@ func TestRender_InputOrigins(t *testing.T) {
 
 func TestRender_ArtifactIdentity(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	cache := newTestTreeCache(t, t.TempDir())
 	for _, pin := range []struct{ key, revision, digest, name string }{
 		{key: "first", name: "first"},
@@ -385,7 +390,7 @@ func TestRender_ArtifactIdentity(t *testing.T) {
 			Render(
 				t.Context(),
 				cache,
-				RenderRequest{Source: source, SubPath: ".", Spec: demoSpec},
+				RenderRequest{Source: source, SubPath: ".", Spec: spec},
 				sourcecache.RetryConfig{},
 			),
 		)
@@ -401,13 +406,14 @@ func TestRender_ArtifactIdentity(t *testing.T) {
 
 func TestRender_SubPathLeadingSlash(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	files := map[string]string{"app/cm.yaml": cmYAML("x"), "app/kustomization.yaml": existingKustomization("./cm.yaml")}
 	root := testutil.WriteTree(t, files)
 	want, _, err := testutil.RenderMaps(
 		Render(
 			t.Context(),
 			newTestTreeCache(t, ""),
-			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoSpec},
+			RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -419,7 +425,7 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 				Render(
 					t.Context(),
 					newTestTreeCache(t, ""),
-					RenderRequest{Source: localSource(t, root), Label: root, SubPath: subPath, Spec: demoSpec},
+					RenderRequest{Source: localSource(t, root), Label: root, SubPath: subPath, Spec: spec},
 					sourcecache.RetryConfig{},
 				),
 			)
@@ -429,7 +435,7 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 				Render(
 					t.Context(),
 					newTestTreeCache(t, ""),
-					RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: demoSpec},
+					RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: spec},
 					sourcecache.RetryConfig{},
 				),
 			)
@@ -440,11 +446,12 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 
 func TestRender_SubPathMustBeDirectory(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	files := map[string]string{"app/cm.yaml": cmYAML("x"), "app/kustomization.yaml": existingKustomization("./cm.yaml")}
 	root := testutil.WriteTree(t, files)
 	for name, req := range map[string]RenderRequest{
-		"disk":   {Source: localSource(t, root), Label: root, SubPath: "app/cm.yaml", Spec: demoSpec},
-		"memory": {Source: treeRef(memoryTree(t, files), "pin"), Label: "/virtual", SubPath: "app/cm.yaml", Spec: demoSpec},
+		"disk":   {Source: localSource(t, root), Label: root, SubPath: "app/cm.yaml", Spec: spec},
+		"memory": {Source: treeRef(memoryTree(t, files), "pin"), Label: "/virtual", SubPath: "app/cm.yaml", Spec: spec},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -463,13 +470,14 @@ func TestRender_SubPathMustBeDirectory(t *testing.T) {
 
 func TestRender_ReleasedPinRejectsHostContent(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	label := testutil.WriteTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	artifact := &store.SourceArtifact{LocalPath: label, Key: "pin"}
 	out, _, err := testutil.RenderMaps(
 		Render(
 			t.Context(),
 			newTestTreeCache(t, ""),
-			RenderRequest{Source: artifact, Label: label, SubPath: ".", Spec: demoSpec},
+			RenderRequest{Source: artifact, Label: label, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)

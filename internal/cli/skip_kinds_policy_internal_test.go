@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SkipKindsPolicy(t *testing.T) {
 	for _, kind := range []string{"helm", "kustomize"} {
 		t.Run(kind, func(t *testing.T) {

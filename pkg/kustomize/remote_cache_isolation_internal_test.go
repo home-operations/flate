@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -26,6 +28,7 @@ type remoteIsolationResult struct {
 
 func TestRender_RemoteCacheIsolation(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	t.Logf("persisted isolation assertions executed=%v; concurrent snapshot assertions always execute", eligible)
 	var shared, distinct atomic.Int32
@@ -52,7 +55,7 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 			"kustomization.yaml": "resources: [" + name + ".yaml]\nconfigMapGenerator: [{name: generated, files: ['first=" + srv.URL + "/shared', 'second=" + srv.URL + "/shared', 'distinct=" + srv.URL + "/" + name + "']}]\n",
 			name + ".yaml":       cmYAML(name),
 		})
-		requests[i] = RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}
+		requests[i] = RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
 	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -80,7 +83,7 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 				{
 					recordErr := c.RecordRender(
 						t.Context(),
-						RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt32},
+						RenderAcceptance{Owner: spec.Named(), Receipt: receipt32},
 					)
 					assert.NoError(t, recordErr)
 				}

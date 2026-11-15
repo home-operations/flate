@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -16,6 +18,8 @@ import (
 
 func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	content := PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec}, nil).Content()
 	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	renderer := newTestTreeCache(t, t.TempDir())
 	released := func() <-chan struct{} {
@@ -34,7 +38,7 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 			t,
 			renderer.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput},
+				RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: content},
 			),
 		)
 		renderer.Close()

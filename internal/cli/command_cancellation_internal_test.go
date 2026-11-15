@@ -13,7 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_CommandContext(t *testing.T) {
 	for _, command := range []string{"build all", "get all", "get hr", "get images", "test all", "diff all", "diff images"} {
 		for _, embedded := range []bool{false, true} {

@@ -78,7 +78,7 @@ func TestEnvKey(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_RemovedFlagsRejected(t *testing.T) {
 	for _, verb := range []string{"build", "test", "diff", "get"} {
 		flags := []string{
@@ -133,7 +133,7 @@ func TestRun_RemovedFlagsRejected(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_RemovedShorthandRejected(t *testing.T) {
 	cli := runCLI(t, "build", "all", "-s", "templates/main.yaml")
 	stderr, code := cli.stderr, cli.code
@@ -146,7 +146,7 @@ func TestRun_RemovedShorthandRejected(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // t.Setenv supplies the removed FLATE_* variables for runCLI.
 func TestEnv_RemovedOptionsIgnored(t *testing.T) {
 	path := writeFixture(t)
 	for _, key := range []string{"SUBSTITUTE", "NO_HOOKS", "SHOW_ONLY", "FORCE_GENERIC_PROVIDER", "IS_UPGRADE", "ALLOW_MISSING_SECRETS", "ALLOW_MISSING_CRDS", "STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER", "HELM_TEMPLATE_CACHE_MB", "HELM_RENDER_CACHE_MB", "KUSTOMIZE_RENDER_CACHE_MB"} {

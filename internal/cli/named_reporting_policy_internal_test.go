@@ -84,7 +84,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason

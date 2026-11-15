@@ -17,7 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffSelfSourceBranch(t *testing.T) {
 	for _, checkout := range []string{"dirty", "branch", "detached", "nested"} {
 		t.Run(checkout, func(t *testing.T) {
@@ -149,7 +149,7 @@ spec:
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffSelfSourceGeneratedMembership(t *testing.T) {
 	for _, status := range []string{"added", "removed"} {
 		t.Run(status, func(t *testing.T) {

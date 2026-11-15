@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_GetAll_ChangedOnly(t *testing.T) {
 	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "same", "omega": "same"})
 	head := writeClusterGroupsFixture(t, map[string]string{"alpha": "same", "omega": "same"})

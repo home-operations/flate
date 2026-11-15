@@ -13,7 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 	for _, workers := range []string{"2", "4"} {
 		for _, mode := range []string{"both-failed", "both-suspended", "path-only", "path-content"} {

@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiffKS_NamedExternalSourceDisclosure(t *testing.T) {
 	fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
 	current, orig := fixture.current, fixture.orig

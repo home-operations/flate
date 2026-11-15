@@ -14,7 +14,7 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 	h := newAcceptedHistoryCase(t)
 	persistent := h.persistent
 	assert.NoError(t, h.cache.RecordRender(t.Context(), RenderAcceptance{
-		Owner: h.req.Spec.Named(), Receipt: h.receipt, Records: maps.All(h.records), Content: acceptedInput,
+		Owner: h.req.Spec.Named(), Receipt: h.receipt, Records: maps.All(h.records), Content: h.content,
 	}))
 	recorder := &manifest.WorkRecorder{
 		Key: manifest.WorkKey{Owner: h.req.Spec.Named(), Source: manifest.BootstrapSourceID},
@@ -25,7 +25,7 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 	defer cell.Retire()
 	h.req.Preparation = &cell
 	_, receipt, available := h.cache.PreviousRender(t.Context(), h.req)
-	_, complete := h.cache.RenderHistory(h.req.Spec.Named(), receipt, acceptedInput)
+	_, complete := h.cache.RenderHistory(h.req.Spec.Named(), receipt, h.content)
 	assert.Equal(t, available && complete, persistent)
 	var preparation, service manifest.WorkCounts
 	for _, record := range scope.Snapshot(0) {

@@ -177,7 +177,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		"omitted values warning missing: %s", stderr)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DataProducerFailure_ConsumerScope(t *testing.T) {
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		write := func(revision string) string {

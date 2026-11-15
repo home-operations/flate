@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 	root := writeFixture(t)
 	repo := testutil.GitInit(t, root)

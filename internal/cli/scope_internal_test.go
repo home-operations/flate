@@ -71,7 +71,7 @@ spec:
 	return root
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 	for _, kind := range []string{"hr", "ks"} {
 		t.Run(kind, func(t *testing.T) {
@@ -122,7 +122,7 @@ func appendScopeSpec(t *testing.T, root, file, spec string) {
 	testutil.WriteFile(t, root, file, string(body)+spec)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 	for _, tc := range []struct{ kind, verb string }{
 		{"ks", "get"},
@@ -178,7 +178,7 @@ func TestRun_NamedScope_CommandsAndNamespace(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	for _, args := range [][]string{
@@ -219,7 +219,7 @@ func TestRun_NamedScope_UnnamedAndNoMatch(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 	var selectedYAML string
 	for _, tc := range []struct {
@@ -238,7 +238,7 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 	for _, tc := range []struct {
 		name                                   string
@@ -255,7 +255,7 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	body, err := os.ReadFile(filepath.Join(root, "cluster", "hr.yaml"))
@@ -295,7 +295,7 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_ParentChain(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	testutil.WriteFile(
@@ -411,7 +411,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 	for _, verb := range []string{"build", "diff"} {
 		t.Run(verb, func(t *testing.T) {
@@ -454,7 +454,7 @@ func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_Descendants(t *testing.T) {
 	for _, shape := range []string{"direct", "nested", "resourceset"} {
 		t.Run(shape, func(t *testing.T) {
@@ -521,7 +521,7 @@ spec:
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_PrerequisiteSiblings(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	testutil.WriteFile(

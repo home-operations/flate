@@ -12,7 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	for _, side := range []string{"orig", "current"} {
 		t.Run(side, func(t *testing.T) {

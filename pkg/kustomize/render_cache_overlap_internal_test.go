@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -20,6 +22,7 @@ import (
 
 func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	for _, disk := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disk_%t", disk), func(t *testing.T) {
 			t.Parallel()
@@ -59,7 +62,7 @@ func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 								Source:  &store.SourceArtifact{FS: input},
 								Label:   root,
 								SubPath: ".",
-								Spec:    demoSpec,
+								Spec:    spec,
 							},
 							sourcecache.RetryConfig{},
 						),

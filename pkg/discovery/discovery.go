@@ -316,21 +316,18 @@ func newDiscoverer(config *Config) *Session {
 	return d
 }
 
-//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool) error {
 	l := d.loader
 	defer func() { l.PreferExisting = false }()
 	l.SourceRoot = repoRoot
 
-	total := 0
+	total, rounds := 0, 0
 	if err := d.loadEntryInput(ctx, l, &total); err != nil {
 		return err
 	}
-	// Projection may introduce a new effective source reference. Resolve it
-	// before Load admits its spec.path edge to scope construction.
+	// Projection can change a source reference, which MUST resolve before its path enters scope construction.
 	l.PreferExisting = true
 	var pending []sourceExpansion
-	rounds := 0
 	for prepared := true; prepared; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -340,10 +337,10 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			return err
 		}
 		_, sourceErr := d.resolveEntrySources(ctx, false)
-		if sourceErr != nil {
+		switch {
+		case sourceErr != nil:
 			return sourceErr
-		}
-		if d.hasPins {
+		case d.hasPins:
 			if err := d.discardPinnedWorkingTreeFiles(ctx, repoRoot); err != nil {
 				return err
 			}
@@ -351,35 +348,34 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		kustomizations := d.loader.Kustomizations()
 		pending = d.enqueueExpansions(kustomizations, pending[:0])
 		next, added, loadErr := d.loadExpansions(ctx, repoRoot, pending, &total)
-		if loadErr != nil {
-			return loadErr
-		}
 		pending = next
-		if added != 0 {
+		switch {
+		case loadErr != nil:
+			return loadErr
+		case added != 0:
 			continue
 		}
 		if err := l.Admit(ctx, repoRoot); err != nil {
 			return err
 		}
 		missing, err := d.resolveEntrySources(ctx, true)
-		if err != nil {
+		switch {
+		case err != nil:
 			return err
-		}
-		if missing != 0 || !slices.EqualFunc(kustomizations, l.Kustomizations(), func(a, b store.Child) bool {
+		case missing != 0, !slices.EqualFunc(kustomizations, l.Kustomizations(), func(a, b store.Child) bool {
 			return manifest.Equal(a.Obj, b.Obj)
-		}) {
+		}):
 			continue
-		}
-		if !build {
-			break
+		case !build:
+			prepared = false
+			continue
 		}
 		prepared, err = d.prepareStandaloneEntry(ctx, repoRoot, l)
 		if err != nil {
 			return err
 		}
 	}
-	d.loading = false
-	l.PreferExisting = false
+	d.loading, l.PreferExisting = false, false
 	if warning := d.resolvedSources.aliasWarning(); warning != nil {
 		d.cfg.Store.AddWarning(*warning)
 	}
@@ -470,7 +466,6 @@ type Binding struct {
 	support               *store.ReadSet
 }
 
-//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
 func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomization, error) {
 	progressed := false
 	defer func() { d.entryState.changed = progressed }()
@@ -484,14 +479,14 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 			return nil, err
 		}
 		root, binding, err := admission.BindEntry(ctx, d.cfg.Store)
-		progressed = progressed || admission.qualification != nil && admission.qualification.changed
-		if err != nil {
+		changed := admission.qualification != nil && admission.qualification.changed
+		progressed = progressed || changed
+		switch {
+		case err != nil:
 			return nil, err
-		}
-		if binding.Reads == nil {
-			if admission.qualification != nil && admission.qualification.changed {
-				continue
-			}
+		case binding.Reads == nil && changed:
+			continue
+		case binding.Reads == nil:
 			previous, _ := d.cfg.Store.GetObject(d.binding.Producer).(*manifest.Kustomization)
 			return previous, nil
 		}

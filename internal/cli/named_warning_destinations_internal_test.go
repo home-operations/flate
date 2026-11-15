@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // test changes the process environment or working directory.
+//nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.
 func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason

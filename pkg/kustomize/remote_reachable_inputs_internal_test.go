@@ -526,9 +526,8 @@ func testPreflightRemoteResourcesReachableInputsCase(
 		cache **TreeCache
 	}{testCaseInput: &testCaseInput, url: &url, cache: &cache})
 
-	spec := demoSpec
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	if testCaseInput.name == "generated-component" {
-		spec = demoSpec.Clone()
 		spec.Components = []string{"../component"}
 	}
 	before := manifest.Fingerprint(spec)

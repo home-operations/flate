@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -22,7 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest // stubHTTPTransport replaces http.DefaultTransport for the slot witnesses.
 func TestRender_RemoteValidationSlots(t *testing.T) {
 	for _, mode := range []string{"validation", "miss", "standalone"} {
 		t.Run(mode, func(t *testing.T) {
@@ -32,7 +34,7 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // allocation measurements require serial execution.
+//nolint:paralleltest // testing.AllocsPerRun changes process-global state.
 func TestReadSet_NoRemotesNoAlloc(t *testing.T) {
 	ctx, input := t.Context(), &treeFS{}
 	var snap readSetSnapshot
@@ -241,6 +243,7 @@ type remoteSlotRenderInputs struct {
 
 func executeRemoteSlotRender(ctx context.Context, t *testing.T, inputs *remoteSlotRenderInputs) {
 	t.Helper()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	*inputs.ready <- struct{}{}
 	<-*inputs.begin
@@ -270,7 +273,7 @@ func executeRemoteSlotRender(ctx context.Context, t *testing.T, inputs *remoteSl
 		Source: &store.SourceArtifact{
 			FS: input,
 		},
-		Spec:     demoSpec,
+		Spec:     spec,
 		HeldSlot: held,
 		Label:    fmt.Sprintf("/source-%d", *inputs.index),
 	}, sourcecache.RetryConfig{}))

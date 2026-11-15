@@ -7,7 +7,6 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
-	"helm.sh/helm/v4/pkg/postrenderer"
 	"sigs.k8s.io/kustomize/api/resmap"
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -26,11 +25,7 @@ type kustomizePostRenderer struct {
 	work      *manifest.WorkRecord
 }
 
-// newPostRenderer returns nil when rs has no usable entries — callers
-// pass nil to action.Install.PostRenderer to mean "no post-render".
-//
-//nolint:ireturn // The interface result preserves a nil renderer when rendering is disabled.
-func newPostRenderer(rs []helmv2.PostRenderer) postrenderer.PostRenderer {
+func newPostRenderer(rs []helmv2.PostRenderer) *kustomizePostRenderer {
 	for _, r := range rs {
 		if r.Kustomize != nil {
 			return &kustomizePostRenderer{renderers: rs}

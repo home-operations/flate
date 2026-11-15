@@ -15,7 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BasePathDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
@@ -67,7 +67,7 @@ func TestRun_BasePathDiagnostics(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BaseLinkExclusion(t *testing.T) {
 	for _, route := range []string{"base", "path orig", "referenced link"} {
 		t.Run(route, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_BaseFailureIsolation(t *testing.T) {
 	root := writeFixture(t)
 	const url = "git://fixture.invalid/cluster"
@@ -206,7 +206,7 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 		), "failed producer lost isolation: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_EntryIgnoreDenial(t *testing.T) {
 	root := writeFixture(t)
 	assert.NoError(t, os.Symlink("apps/cm.yaml", filepath.Join(root, ".krmignore")))
@@ -222,7 +222,7 @@ func TestRun_EntryIgnoreDenial(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_PathOrigSameDirectory(t *testing.T) {
 	root := writeFixture(t)
 	alias := filepath.Join(t.TempDir(), "same")

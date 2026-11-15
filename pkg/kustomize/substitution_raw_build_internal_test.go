@@ -61,7 +61,7 @@ func testRenderSubstitutionRetainsRawBuildCase(
 	var builds atomic.Int64
 	source := localSource(t, root)
 	source.FS = &pausedRenderFS{FS: source.FS, builds: &builds}
-	spec := demoSpec.Clone()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 	req := RenderRequest{Source: source, Spec: spec, SubPath: "."}
 	content := func(request RenderRequest, docs []manifest.DocOccurrence) any {
 		private := slices.Clone(docs)

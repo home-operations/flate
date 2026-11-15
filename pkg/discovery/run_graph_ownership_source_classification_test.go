@@ -476,7 +476,6 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 	}
 }
 
-//nolint:gocognit // Sequential source replacements and repeated discovery share one assertion history.
 func testRunSourceValuesReadersCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
@@ -544,39 +543,39 @@ spec:
 		assert.FatalIf(t, err != nil, "%v", err)
 		return result, st
 	}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "cluster",
+	}
+	want := []manifest.FileReader{{Reader: demo, Source: source, Exact: true}}
+	if (*testCaseInput) == "chartRef" {
+		want = append(
+			want,
+			manifest.FileReader{
+				Reader: manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindHelmChart,
+					Namespace: "apps",
+					Name:      "chart",
+				},
+				Source: source,
+				Exact:  true,
+			},
+		)
+	}
+	slices.SortFunc(want, func(a, b manifest.FileReader) int { return a.Reader.Compare(b.Reader) })
 	var previous *manifest.DiscoveryIndex
 	for _, state := range []string{"absent", "present", "deleted"} {
-		if state == "present" {
+		switch state {
+		case "present":
 			testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
-		}
-		if state == "deleted" {
+		case "deleted":
 			assert.NoError(t, os.Remove(filepath.Join(root, "config", "prod.yaml")))
 		}
 		for range 2 {
 			result, st := discover("flux")
-			source := manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      manifest.KindGitRepository,
-				Namespace: "apps",
-				Name:      "cluster",
-			}
-			want := []manifest.FileReader{{Reader: demo, Source: source, Exact: true}}
-			if (*testCaseInput) == "chartRef" {
-				want = append(
-					want,
-					manifest.FileReader{
-						Reader: manifest.NamedResource{
-							Group:     manifest.SourceDomain,
-							Kind:      manifest.KindHelmChart,
-							Namespace: "apps",
-							Name:      "chart",
-						},
-						Source: source,
-						Exact:  true,
-					},
-				)
-			}
-			slices.SortFunc(want, func(a, b manifest.FileReader) int { return a.Reader.Compare(b.Reader) })
 			assert.Diff(t, result.Index.Readers["config/prod.yaml"], want)
 			record, ok := result.Index.Lookup(demo)
 			assert.Equal(t, ok, true)
@@ -607,12 +606,7 @@ spec:
 				}}, Reads: nil, History: nil, Invocation: true},
 			)
 			assert.NoError(t, err)
-			var added []manifest.NamedResource
-			for _, id := range proposal.Needed {
-				if !filter.Reconcile(id) {
-					added = append(added, id)
-				}
-			}
+			added := slices.DeleteFunc(slices.Clone(proposal.Needed), filter.Reconcile)
 			committed, err := commitSelection(t.Context(), candidate, proposal, selection.Execution)
 			assert.NoError(t, err)
 			retry := !committed
@@ -622,33 +616,17 @@ spec:
 			assert.Equal(t, filter.Reconcile(sibling), false)
 			assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 			if previous != nil {
-				{
-					diff := cmp.Diff(
-						previous.Records,
-						result.Index.Records,
-						cmp.Comparer(manifest.Equal),
-					)
-					assert.FatalIf(t, diff != "", "records changed (-want +got):\n%s", diff)
-				}
+				diff := cmp.Diff(previous.Records, result.Index.Records, cmp.Comparer(manifest.Equal))
+				assert.FatalIf(t, diff != "", "records changed (-want +got):\n%s", diff)
 			}
 			previous = result.Index
 		}
 	}
+	file, content := "workloads/demo/chart.yaml", chart
 	if (*testCaseInput) == "inline" {
-		testutil.WriteFile(
-			t,
-			root,
-			"workloads/demo/hr.yaml",
-			strings.ReplaceAll(hr, "./config/prod.yaml", "./config/next.yaml"),
-		)
-	} else {
-		testutil.WriteFile(
-			t,
-			root,
-			"workloads/demo/chart.yaml",
-			strings.ReplaceAll(chart, "./config/prod.yaml", "./config/next.yaml"),
-		)
+		file, content = "workloads/demo/hr.yaml", hr
 	}
+	testutil.WriteFile(t, root, file, strings.ReplaceAll(content, "./config/prod.yaml", "./config/next.yaml"))
 	next, _ := discover("flux")
 	assert.Equal(
 		t,

@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ConventionalIgnore(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/cluster.yaml]\n")

@@ -29,7 +29,7 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 	called := false
 	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error) {
 		called = true
-		//nolint:nilnil // The fixture explicitly models an absent successful result.
+		//nolint:nilnil // The wiring witness invokes the fetcher without requiring an artifact.
 		return nil, nil
 	})
 

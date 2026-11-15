@@ -9,13 +9,15 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // Prediction must precede the leaf's first render so children receive the
 // overlay's target namespace even without a structural parent.
 //
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestOrchestrator_TransformerTargetNamespace(t *testing.T) {
+	assert.Diff(t, hrIDs(&Orchestrator{store: store.New()}), []string(nil))
 	dir := t.TempDir()
 
 	testutil.WriteFile(t, dir, "transformers/kustomization.yaml", "resources:\n  - ./transformer.yaml\n")
@@ -98,6 +100,7 @@ spec:
 	)
 
 	namespaced := testutil.HelmReleaseID("myns", "myapp")
+	assert.Diff(t, hrIDs(o), []string{namespaced.String()})
 	assert.ErrorIf(t, o.store.GetObject(namespaced) == nil,
 		"expected HelmRelease at myns/myapp; HR objects in store: %v",
 		hrIDs(o))
@@ -148,6 +151,10 @@ spec:
 	assert.FatalIf(t, len(res.Failed) != 0,
 		"shared-context failures: %v", res.Failed)
 
+	assert.Diff(t, hrIDs(o), []string{
+		testutil.HelmReleaseID("myns", "myapp").String(),
+		testutil.HelmReleaseID("other", "myapp").String(),
+	})
 	for _, ns := range []string{"myns", "other"} {
 		for _, info := range reconcilableKinds {
 			kind := info.Kind
@@ -166,9 +173,13 @@ spec:
 }
 
 func hrIDs(o *Orchestrator) []string {
-	var out []string //nolint:prealloc // An empty ID result must retain its nil slice.
-	for _, obj := range o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease) {
-		out = append(out, obj.Named().String())
+	objects := o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)
+	if len(objects) == 0 {
+		return nil
+	}
+	out := make([]string, len(objects))
+	for i, obj := range objects {
+		out[i] = obj.Named().String()
 	}
 	return out
 }

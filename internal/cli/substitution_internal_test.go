@@ -87,7 +87,7 @@ const (
 	externalSecret = "apiVersion: v1\nkind: Secret\nmetadata: {name: external, namespace: apps}\nstringData: {VALUE: supplied}\n"
 )
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ExternalSubstitution(t *testing.T) {
 	cases := []struct {
 		name, postBuild, input, want string
@@ -219,7 +219,7 @@ func testRunExternalSubstitutionCase1(t *testing.T, tc *struct {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ProducerBackedSubstitution(t *testing.T) {
 	reason := sourcecache.RenderPersistenceDisabledReason()
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
@@ -352,7 +352,7 @@ func TestSupplyEnv_EmptyPath(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_StrictSubstitutions(t *testing.T) {
 	for _, tc := range []struct {
 		name, expression, postBuild, disabled, want string
@@ -397,7 +397,7 @@ func TestRun_StrictSubstitutions(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
 	input := substitutionInput(t,
@@ -418,7 +418,7 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 	t.Run("stdin", testRunSupplyStdin)
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SuppliedReaderValidation(t *testing.T) {
 	for _, ref := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
 		t.Run(ref, func(t *testing.T) {
@@ -543,7 +543,7 @@ func TestRun_StrictSubstitutionEnvironmentPrecedence(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, producer.yaml]\n")
@@ -594,7 +594,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // CLI execution changes process-wide logging.
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
 	migratedResult9 := runCLI(

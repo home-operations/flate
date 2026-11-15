@@ -61,15 +61,15 @@ type ProducerInput struct {
 // It retains no open reader and MUST only be called during production.
 func (p ProducerInput) Previous(ctx context.Context) (*ocispec.Descriptor, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	s := p.payload
 	if s == nil {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // Without a payload, Previous supplies no prior metadata to the producer.
 	}
 	e := s.previous
 	if e == nil || e.outcome != nil {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // Absent or failed prior content requires fresh production.
 	}
 	if !s.verified {
 		prior, err := p.restorePrevious(ctx)
@@ -98,20 +98,20 @@ func (p ProducerInput) restorePrevious(ctx context.Context) (*entry, error) {
 	upstream, at, valid := decode(&e.stored, s.key.required)
 	if !valid {
 		s.previous = nil
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // Invalid stored metadata clears the prior payload and requires fresh production.
 	}
 	info, err := p.cache.root.Stat(blobPath(e.stored.Digest))
 	if errors.Is(err, fs.ErrNotExist) || err == nil && info.Size() != e.stored.Size {
 		s.previous = nil
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // Missing or truncated prior content requires fresh production.
 	}
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	prior.descriptor, prior.resolved = upstream, at
 	if prior.fs == nil {
 		if err := s.key.producer.restore(ctx, p.cache, e.stored, prior); err != nil {
-			return nil, &CacheError{err}
+			return nil, &Error{err}
 		}
 	}
 	return prior, nil
@@ -128,19 +128,19 @@ type ProducerResult struct {
 func (s *payload) Write(data []byte) (int, error) {
 	if s.writer == nil {
 		if err := s.stage(); err != nil {
-			return 0, &CacheError{err}
+			return 0, &Error{err}
 		}
 	}
 	n, err := s.writer.Write(data)
 	s.written += int64(n)
-	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+	return n, err //nolint:wrapcheck // payload.Write forwards the staging writer error and byte count to its producer.
 }
 
 func (s *payload) stage() error {
 	name := acquirePath(uuid.NewString())
 	file, err := s.disk.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, privateFileMode)
 	if err != nil {
-		return err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return err //nolint:wrapcheck // payload.stage forwards the staging OpenFile PathError.
 	}
 	s.file, s.name = file, name
 	s.hash = digest.SHA256.Digester()
@@ -262,7 +262,7 @@ func (p archiveProducer) produce(
 //nolint:gocritic // A value descriptor preserves its snapshot without allocating through the dynamic producer interface.
 func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
 	if e.fs != nil {
-		index := e.fs.(*tarFS) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		index := e.fs.(*tarFS) //nolint:errcheck // archiveProducer restores *tarFS generations; corruption must panic.
 		index.digest = stored.Digest
 		if err := pruneArchive(index, index.nodes, p.key); err != nil {
 			return err
@@ -274,7 +274,7 @@ func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Des
 	index.identify(stored.Digest, p.key)
 	file, err := c.root.Open(blobPath(stored.Digest))
 	if err != nil {
-		return err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return err //nolint:wrapcheck // archiveProducer.restore forwards the rooted blob Open PathError.
 	}
 	loaded, err := readArchive(file, p.key, index)
 	err = errors.Join(err, file.Close())

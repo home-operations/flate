@@ -81,13 +81,13 @@ type blobRoot struct {
 func (r *blobRoot) current(owner *os.Root) (*os.Root, bool, error) {
 	info, err := owner.Stat(r.path)
 	if err != nil {
-		return nil, false, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return nil, false, err //nolint:wrapcheck // blobRoot.current forwards the Stat PathError with its cache path and operation.
 	}
 	if os.SameFile(info, r.info) {
 		return r.Root, false, nil
 	}
 	current, err := owner.OpenRoot(r.path)
-	return current, true, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	return current, true, err //nolint:wrapcheck // blobRoot.current forwards the OpenRoot PathError with its cache path and operation.
 }
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
@@ -120,11 +120,11 @@ type entry struct {
 	waveErr    error
 }
 
-// CacheError identifies a cache operation failure, including failed persistence.
-type CacheError struct{ Err error } //nolint:revive // The public acquisition contract names CacheError.
+// Error MUST retain manifest.ErrFlux and the underlying cause.
+type Error struct{ Err error }
 
-func (e *CacheError) Error() string   { return "cache: " + e.Err.Error() }
-func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
+func (e *Error) Error() string   { return "cache: " + e.Err.Error() }
+func (e *Error) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
 
 type acquireKey struct {
 	lookup     *manifest.WorkRecord
@@ -167,7 +167,7 @@ func (c *Cache) Acquire(
 	switch key.Policy {
 	case "", "source", fixedPolicy, extractPolicy:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{
+		return nil, ocispec.Descriptor{}, "", &Error{
 			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy)),
 		}
 	}
@@ -184,11 +184,11 @@ func (c *Cache) Acquire(
 	descriptor := e.descriptor
 	descriptor.Annotations = maps.Clone(descriptor.Annotations)
 	if key.Policy == fixedPolicy {
-		fingerprint, err := e.fs.(*tarFS).treeIdentity( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		fingerprint, err := e.fs.(*tarFS).treeIdentity( //nolint:errcheck // archiveProducer publishes *tarFS for archive acquisition; corruption must panic.
 			ctx,
 		)
 		if err != nil {
-			return nil, ocispec.Descriptor{}, "", &CacheError{err}
+			return nil, ocispec.Descriptor{}, "", &Error{err}
 		}
 		if descriptor.Annotations == nil {
 			descriptor.Annotations = make(map[string]string)
@@ -217,7 +217,7 @@ func (c *Cache) Blob(
 	switch key.Render {
 	case 0, RenderPending, RenderAccepted:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{
+		return nil, ocispec.Descriptor{}, "", &Error{
 			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render)),
 		}
 	}
@@ -237,7 +237,7 @@ func (c *Cache) Blob(
 		render:     key.Render != 0,
 	}
 	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
-		request.accepted = key.Content.(string) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		request.accepted = key.Content.(string) //nolint:errcheck // RenderPending callers supply string content identities for accepted history.
 	}
 	var validate func(context.Context, *entry) (bool, error)
 	if key.Validate != nil {
@@ -261,9 +261,9 @@ func (c *Cache) Blob(
 	}
 	if c.store != nil && !request.memoryOnly {
 		if _, err := c.root.Stat(
-			e.fs.(fileFS).backingPath, //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			e.fs.(fileFS).backingPath, //nolint:errcheck // blobProducer publishes fileFS for persisted blobs; corruption must panic.
 		); err != nil {
-			return nil, ocispec.Descriptor{}, "", &CacheError{err}
+			return nil, ocispec.Descriptor{}, "", &Error{err}
 		}
 	}
 	return e.fs, e.descriptor, id, nil
@@ -300,22 +300,18 @@ func (c *Cache) RenderMetadata(
 		return RenderMetadata{Enabled: enabled}, err
 	}
 	if errErr := ctx.Err(); errErr != nil {
-		return RenderMetadata{Enabled: true}, &CacheError{errErr}
+		return RenderMetadata{Enabled: true}, &Error{errErr}
 	}
 	var e *entry
 	var memory *manifest.WorkRecord
 	if lookup != "" {
-		if current, ok := c.entries.Load(
-			lookup,
-		); ok && current.(*entry).ready.Load() && //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-			time.Now().
-				UnixNano()-
-				current.(*entry).touched.Load() < int64( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-				accessInterval,
-			) {
-			e = current.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-			memory = work.Lookup(lookup)
-			memory.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
+		if value, ok := c.entries.Load(lookup); ok {
+			current := value.(*entry) //nolint:errcheck // Cache.entries writers publish only *entry; corruption must panic.
+			if current.ready.Load() && time.Now().UnixNano()-current.touched.Load() < int64(accessInterval) {
+				e = current
+				memory = work.Lookup(lookup)
+				memory.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
+			}
 		}
 	}
 	if e == nil {
@@ -348,17 +344,17 @@ func (c *Cache) renderDescriptor(e *entry) (RenderMetadata, error) {
 	root := &c.blobRoots[slices.Index(blobAlgorithms[:], e.stored.Digest.Algorithm())]
 	current, temporary, err := root.current(c.root)
 	if err != nil {
-		return RenderMetadata{Enabled: true}, &CacheError{err}
+		return RenderMetadata{Enabled: true}, &Error{err}
 	}
 	if temporary {
 		defer func() { _ = current.Close() }()
 	}
 	info, err := current.Stat(e.stored.Digest.Encoded())
 	if err != nil {
-		return RenderMetadata{Enabled: true}, &CacheError{err}
+		return RenderMetadata{Enabled: true}, &Error{err}
 	}
 	if !info.Mode().IsRegular() {
-		return RenderMetadata{Enabled: true}, &CacheError{
+		return RenderMetadata{Enabled: true}, &Error{
 			fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid),
 		}
 	}
@@ -367,13 +363,13 @@ func (c *Cache) renderDescriptor(e *entry) (RenderMetadata, error) {
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
 	if content == "" {
-		return false, &CacheError{
+		return false, &Error{
 			manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
 		}
 	}
 	if !c.CanPersistRenders() {
 		if err := ctx.Err(); err != nil {
-			return false, &CacheError{err}
+			return false, &Error{err}
 		}
 	}
 	return c.CanPersistRenders(), nil
@@ -388,7 +384,7 @@ func (c *Cache) acquireOnce(ctx context.Context, key *acquireKey, callbacks acqu
 		var handled bool
 		handled, err = callbacks.observe(ctx, result)
 		if err == nil && ctx.Err() != nil {
-			err = &CacheError{ctx.Err()}
+			err = &Error{ctx.Err()}
 		}
 		if handled || err != nil {
 			result = nil
@@ -413,16 +409,14 @@ func (c *Cache) acquireCandidate(
 	if !key.memoryOnly {
 		c.prepareSnapshot()
 	}
-	var observed *entry
-	if v, ok := c.entries.Load(key.id); ok {
-		observed = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	} else {
-		v, _ := c.entries.LoadOrStore(key.id, &entry{unloaded: c.store != nil && !key.memoryOnly})
-		observed = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	value, ok := c.entries.Load(key.id)
+	if !ok {
+		value, _ = c.entries.LoadOrStore(key.id, &entry{unloaded: c.store != nil && !key.memoryOnly})
 	}
+	observed := value.(*entry) //nolint:errcheck // Cache.entries writers publish only *entry; corruption must panic.
 	release, err := c.locks.Acquire(ctx, key.id)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	defer release()
 	candidate, err := c.acceptedCandidate(ctx, &key, callbacks.validate)
@@ -437,7 +431,7 @@ func (c *Cache) acquireCandidate(
 
 	var e *entry
 	if v, ok := c.entries.Load(key.id); ok {
-		e = v.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		e = v.(*entry) //nolint:errcheck // Cache.entries may publish another *entry before this lock is acquired; corruption must panic.
 	} else {
 		e = observed
 		c.entries.Store(key.id, e)
@@ -479,7 +473,7 @@ func (c *Cache) validCandidate(
 	valid, err := validate(ctx, e)
 	record.Finish(err)
 	if err != nil {
-		return false, &CacheError{err}
+		return false, &Error{err}
 	}
 	return valid, nil
 }
@@ -492,7 +486,7 @@ func (c *Cache) loadEntry(ctx context.Context, keyValue *acquireKey, maxAge time
 		return nil
 	}
 	if err != nil {
-		return &CacheError{err}
+		return &Error{err}
 	}
 	if desc.MediaType == ocispec.MediaTypeImageManifest {
 		o, err := c.readOutcome(ctx, &desc)
@@ -512,7 +506,7 @@ func (c *Cache) loadEntry(ctx context.Context, keyValue *acquireKey, maxAge time
 	if valid && fresh(at, maxAge) {
 		e.descriptor, e.resolved = upstream, at
 		if err := key.producer.restore(ctx, c, desc, e); err != nil {
-			return &CacheError{err}
+			return &Error{err}
 		}
 	}
 	e.unloaded = valid && e.resolved.IsZero()
@@ -528,7 +522,7 @@ func (c *Cache) touch(keyValue *acquireKey, e *entry) error {
 	if touched == 0 {
 		info, err := c.root.Stat(blobPath(e.stored.Digest))
 		if err != nil {
-			return &CacheError{err}
+			return &Error{err}
 		}
 		touched = info.ModTime().UnixNano()
 		e.touched.Store(touched)
@@ -539,7 +533,7 @@ func (c *Cache) touch(keyValue *acquireKey, e *entry) error {
 		return nil
 	}
 	if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
-		return &CacheError{err}
+		return &Error{err}
 	}
 	e.touched.Store(now.UnixNano())
 	return nil
@@ -703,7 +697,7 @@ func (c *Cache) restoreCandidate(ctx context.Context, key *acquireKey, e *entry)
 func (c *Cache) prepareRenderBlob(ctx context.Context, key *BlobKey, lookupOnly bool) (fs.FS, string, error) {
 	id, ok := key.Content.(string)
 	if !ok || id == "" {
-		return nil, "", &CacheError{
+		return nil, "", &Error{
 			manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity"),
 		}
 	}
@@ -714,7 +708,7 @@ func (c *Cache) prepareRenderBlob(ctx context.Context, key *BlobKey, lookupOnly 
 		}
 		if !enabled {
 			if lookupOnly {
-				return nil, "", &CacheError{errdef.ErrNotFound}
+				return nil, "", &Error{errdef.ErrNotFound}
 			}
 			return fileFS{
 				name: payloadName,
@@ -744,7 +738,7 @@ func (c *Cache) missingGeneration(key *acquireKey, e *entry) error {
 	if e != nil && e.stored.Digest == "" && e.resolved.IsZero() {
 		c.entries.CompareAndDelete(key.id, e)
 	}
-	return &CacheError{errdef.ErrNotFound}
+	return &Error{errdef.ErrNotFound}
 }
 
 // RenderMetadata identifies the accepted generation without opening its payload.

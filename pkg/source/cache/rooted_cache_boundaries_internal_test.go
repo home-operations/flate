@@ -144,7 +144,7 @@ func testCacheRootedWritesRejectEscapeCase(t *testing.T, sink *string,
 			err,
 		)
 	} else {
-		_, ok := errors.AsType[*CacheError](err)
+		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(
 			t,
 			!ok || called || !errors.Is(err, manifest.ErrFlux),
@@ -283,7 +283,7 @@ func testGitFailedCleanupRejectsEscapingParentCase(
 	)
 	if (*phase) == "publication" {
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.FatalIf(t, !ok, "publication error = %v", err)
 		}
 	} else {

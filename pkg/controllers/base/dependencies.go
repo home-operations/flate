@@ -187,7 +187,7 @@ type pendingDataError struct {
 }
 
 func (p *pendingDataError) Error() string { return "waiting for values inputs" }
-func (p *pendingDataError) Unwrap() error { return &depwait.ErrBlocked{Deps: p.blocked} }
+func (p *pendingDataError) Unwrap() error { return &depwait.BlockedError{Deps: p.blocked} }
 func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel) error {
 	e := p.execution
 	gateErr := e.classify(ctx, level)
@@ -196,7 +196,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	p.omitted = p.omitted[:0]
 	p.failed, _ = errors.AsType[*manifest.DependencyFailedError](gateErr)
 	p.blocked = p.blocked[:0]
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](gateErr); ok {
+	if blocked, ok := errors.AsType[*depwait.BlockedError](gateErr); ok {
 		p.blocked = append(p.blocked, blocked.Deps...)
 	}
 	for i := range p.wait.Inputs {

@@ -300,7 +300,7 @@ func TestRemoteInput_HTTPFailureIdentity(t *testing.T) {
 		{name: "network", err: &net.OpError{Op: "dial", Net: "tcp", Err: independent}},
 		{name: "canceled", err: errors.Join(notFound, context.Canceled)},
 		{name: "deadline", err: errors.Join(context.DeadlineExceeded, notFound)},
-		{name: "cache", err: &sourcecache.CacheError{Err: notFound}},
+		{name: "cache", err: &sourcecache.Error{Err: notFound}},
 		{name: "independent-last", err: errors.Join(notFound, independent)},
 		{name: "independent-first", err: errors.Join(independent, notFound)},
 		{name: "conflicting-status-last", err: errors.Join(notFound, &fetcherr.ResponseError{StatusCode: http.StatusForbidden})},

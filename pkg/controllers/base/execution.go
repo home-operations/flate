@@ -224,7 +224,7 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	if err != nil && e.Disposition == store.AssessmentQualificationSettled {
 		e.Disposition = store.AssessmentReconciled
 	}
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+	if blocked, ok := errors.AsType[*depwait.BlockedError](err); ok {
 		e.Blocked = blocked.Deps
 		e.kind = schedule.Blocked
 	} else {
@@ -238,7 +238,7 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	id := e.Reads.ID()
 	e.Blocked = nil
 	e.kind = schedule.Terminal
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+	if blocked, ok := errors.AsType[*depwait.BlockedError](err); ok {
 		e.pending = err
 		e.kind = schedule.Blocked
 		e.Blocked = blocked.Deps
@@ -370,7 +370,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	err := e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
 		return reconcile(state, ctx, obj, level)
 	})
-	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+	if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 		e.resume = func(ctx context.Context, level manifest.DrainLevel) error {
 			return e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
 				return reconcile(state, ctx, obj, level)
@@ -475,7 +475,7 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 		e.Reads.RequireMaterializer(owner)
 	}
 	err := e.classify(ctx, level)
-	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+	if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 		e.SetPendingUnlessReady(id, "waiting for declaration")
 		return err
 	}

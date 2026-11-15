@@ -85,7 +85,7 @@ func testAcquireGenerationsAndFreshnessCase(t *testing.T, disk *bool,
 		!errors.Is(acquireErr, manifest.ErrInput) {
 		t.Fatalf("invalid archive projection: id=%q, %v", acquireInvalidID, acquireErr)
 	} else {
-		_, ok := errors.AsType[*CacheError](
+		_, ok := errors.AsType[*Error](
 			acquireErr,
 		)
 		assert.FatalIf(t, !ok, "invalid projection error: %v", acquireErr)
@@ -316,7 +316,7 @@ func testAcquireGenerationsAndFreshnessCaseCorruptReopen(
 			(*testCaseInput.unexpected),
 		)
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.FatalIf(
 				t,
 				!ok || !errors.Is(err, io.ErrUnexpectedEOF),

@@ -158,7 +158,7 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 			assert.FatalIf(t, got != want || canonical.Chart.Source.Kind != manifest.KindHelmRepository ||
 				prepared.Chart.Source.Kind != manifest.KindHelmChart, "canonical=%v prepared=%v returned=%v", canonical, prepared, got)
 			{
-				blocked, ok := errors.AsType[*depwait.ErrBlocked](
+				blocked, ok := errors.AsType[*depwait.BlockedError](
 					err,
 				)
 				assert.FatalIf(t, !ok ||
@@ -528,7 +528,7 @@ func TestRequireRefresh_FailedParentRetainsInputFailures(t *testing.T) {
 			missing.Name = "missing"
 			if level == manifest.DrainNone {
 				{
-					blocked, ok := errors.AsType[*depwait.ErrBlocked](
+					blocked, ok := errors.AsType[*depwait.BlockedError](
 						err,
 					)
 					assert.FatalIf(t, !ok ||
@@ -599,7 +599,7 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				first := gateExecution(c, obj.Named())
 				defer first.Close()
 				_, localErr := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
-				blocked, ok := errors.AsType[*depwait.ErrBlocked](localErr)
+				blocked, ok := errors.AsType[*depwait.BlockedError](localErr)
 				assert.FatalIf(
 					t,
 					!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{parent.Named()}),
@@ -618,7 +618,7 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 			defer first.Close()
 			canonical, err := first.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)
 			assert.Equal(t, canonical, obj)
-			blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+			blocked, ok := errors.AsType[*depwait.BlockedError](err)
 			assert.FatalIf(
 				t,
 				!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{tc.dependency.Named()}),

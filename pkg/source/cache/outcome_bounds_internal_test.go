@@ -124,7 +124,7 @@ func testOutcomeReadBoundsAndIntegrityCase(t *testing.T, scenario *string,
 	case "config one over", "manifest one over", "negative size":
 		assert.FatalIf(t, err != nil || got != nil, "out-of-bounds read: %+v, %v", got, err)
 	default:
-		_, ok := errors.AsType[*CacheError](err)
+		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(
 			t,
 			!ok || got != nil || !errors.Is(err, manifest.ErrFlux),

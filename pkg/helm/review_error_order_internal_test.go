@@ -269,7 +269,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
 		assert.Equal(t, r == nil, true)
 	case (*testCaseInput) == "chart lookup":
-		_, ok := errors.AsType[*cache.CacheError](
+		_, ok := errors.AsType[*cache.Error](
 			err,
 		)
 		assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrFlux) ||

@@ -56,7 +56,7 @@ type tarFile struct {
 func (f *tarFile) Stat() (fs.FileInfo, error) { return f.tarNode, nil }
 func (f *tarFile) Close() error {
 	if f.file != nil {
-		return f.file.Close() //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return f.file.Close() //nolint:wrapcheck // tarFile.Close forwards the backing file Close PathError.
 	}
 	return nil
 }
@@ -112,14 +112,14 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 	var err error
 	f.file, err = t.root.Open(blobPath(t.digest))
 	if err != nil {
-		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return nil, err //nolint:wrapcheck // tarFS.Open forwards the rooted blob Open PathError.
 	}
 	f.Reader = io.NewSectionReader(f.file, node.offset, node.Size())
 	if node.sparse {
 		tr := tar.NewReader(io.NewSectionReader(f.file, node.header, 1<<63-1-node.header))
 		if _, err := tr.Next(); err != nil {
 			_ = f.file.Close()
-			return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+			return nil, err //nolint:wrapcheck // tarFS.Open forwards tar.Reader.Next failure for acquisition error classification.
 		}
 		f.Reader = tr
 	}
@@ -135,7 +135,7 @@ type positionReader struct {
 func (r *positionReader) Read(p []byte) (int, error) {
 	n, err := r.Reader.Read(p)
 	r.offset += int64(n)
-	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+	return n, err //nolint:wrapcheck // positionReader.Read must return direct io.EOF for io.Copy and io.ReadAll.
 }
 
 func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
@@ -147,7 +147,7 @@ func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 	if err == nil {
 		r.offset = n
 	}
-	return n, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+	return n, err //nolint:wrapcheck // positionReader.Seek forwards the underlying seeker result and error.
 }
 
 func alignNext(offset int64) int64 { return (offset + tarBlockSize - 1) / tarBlockSize * tarBlockSize }

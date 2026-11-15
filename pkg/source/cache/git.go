@@ -101,7 +101,7 @@ func (p gitProducer) produce(
 		prefix + "revision": hash.String(), prefix + "git-ref": p.key.Ref, prefix + "git-generation": g.id,
 	}}
 	if _, err := io.WriteString(staged.writer, g.id); err != nil {
-		return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+		return nil, err //nolint:wrapcheck // gitProducer.produce forwards the generation marker write error for cache classification.
 	}
 	return e, nil
 }
@@ -124,14 +124,14 @@ func (p gitProducer) prepareGeneration(c *Cache, staged *payload) (*entry, error
 	}
 	g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
 	if err := c.root.MkdirAll(gitObjectsPath(g.id), cacheDirectoryMode); err != nil {
-		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return nil, err //nolint:wrapcheck // gitProducer.prepareGeneration forwards the object directory MkdirAll PathError.
 	}
 	if !p.key.RecurseSubmodules {
 		return e, nil
 	}
 	g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
 	if err := c.root.MkdirAll(gitWorktreePath(g.id), cacheDirectoryMode); err != nil {
-		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return nil, err //nolint:wrapcheck // gitProducer.prepareGeneration forwards the worktree MkdirAll PathError.
 	}
 	return e, nil
 }
@@ -158,7 +158,7 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 		if errors.Is(statErr, fs.ErrNotExist) {
 			return nil
 		}
-		return statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		return statErr //nolint:wrapcheck // gitProducer.restore forwards the object data Stat PathError.
 	}
 	if p.key.RecurseSubmodules {
 		g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(id)))
@@ -166,7 +166,7 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 			if errors.Is(statErr2, fs.ErrNotExist) {
 				return nil
 			}
-			return statErr2 //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+			return statErr2 //nolint:wrapcheck // gitProducer.restore forwards the worktree Stat PathError.
 		}
 	}
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
@@ -176,7 +176,7 @@ func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descripto
 	}
 	closeErr := storer.Close()
 	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, io.EOF) {
-		return closeErr //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+		return closeErr //nolint:wrapcheck // gitProducer.restore discards the missing object error but retains storer.Close failure.
 	}
 	if joinErr := errors.Join(err, closeErr); joinErr != nil {
 		return joinErr

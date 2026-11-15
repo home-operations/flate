@@ -12,7 +12,7 @@ import (
 
 // NameBlob gives an acquired Blob generation a filename and shaping identity.
 func NameBlob(name string, generation fs.FS) fs.FS {
-	input := generation.(fileFS) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	input := generation.(fileFS) //nolint:errcheck // NameBlob requires a Blob generation, which blobProducer publishes as fileFS.
 	input.name = name
 	input.identity = manifest.Fingerprint([2]string{input.identity, name})
 	return input
@@ -49,7 +49,7 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	}
 	r, err := f.open()
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	file := &blobFile{
 		ReadCloser: r,
@@ -73,7 +73,7 @@ func (f fileFS) ReadFile(name string) ([]byte, error) {
 		r, err = f.Open(name)
 	}
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	var data bytes.Buffer
 	data.Grow(int(f.size) + bytes.MinRead)

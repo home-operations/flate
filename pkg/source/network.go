@@ -46,7 +46,7 @@ func (n *Network) RoundTrip(r *http.Request) (*http.Response, error) {
 	n.defaultOnce.Do(func() {
 		n.defaultHTTP, _ = n.HTTPTransport(HTTPTransportConfig{})
 	})
-	//nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
+	//nolint:wrapcheck // Network forwards the selected default transport response and error without changing its RoundTripper contract.
 	return n.defaultHTTP.RoundTrip(
 		r,
 	)
@@ -79,14 +79,14 @@ type networkTransport struct {
 	proxy     func(*http.Request) (*url.URL, error)
 }
 
-func (n *Network) wrapHTTPTransport(tr *http.Transport) http.RoundTripper {
+func (n *Network) wrapHTTPTransport(tr *http.Transport) *networkTransport {
 	t := &networkTransport{Cache: auth.NewCache(), network: n, transport: tr, proxy: tr.Proxy}
 	tr.Proxy = func(r *http.Request) (*url.URL, error) {
-		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil //nolint:errcheck // networkTransport.RoundTrip installs *networkRequest before Transport calls Proxy or DialContext.
 	}
 	dial := tr.DialContext
 	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		request := ctx.Value(networkRequestKey{}).(*networkRequest) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		request := ctx.Value(networkRequestKey{}).(*networkRequest) //nolint:errcheck // networkTransport.RoundTrip installs *networkRequest before Transport calls Proxy or DialContext.
 		key := request.endpoint
 		key.authority = networkAuthority(address)
 		cause := n.endpoint(key)
@@ -140,7 +140,7 @@ func (t *networkTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := t.network.endpoint(request.endpoint).Load(); err != nil {
 		return nil, &cache.TerminalError{Err: *err}
 	}
-	//nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
+	//nolint:wrapcheck // networkTransport forwards the wrapped http.Transport response and error without changing its RoundTripper contract.
 	return t.transport.RoundTrip(
 		r.WithContext(context.WithValue(r.Context(), networkRequestKey{}, request)),
 	)

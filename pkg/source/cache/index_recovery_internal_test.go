@@ -136,7 +136,7 @@ func testNewIndexRecoveryRejectsEscapingParentCase(
 	recovered, err := New(t.Context(), c.root.Name())
 	if (*component) == "parent" {
 		{
-			_, ok := errors.AsType[*CacheError](
+			_, ok := errors.AsType[*Error](
 				err,
 			)
 			assert.FatalIf(t, !ok || recovered != nil ||

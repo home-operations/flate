@@ -2,10 +2,9 @@ package depwait
 
 import "github.com/home-operations/flate/pkg/manifest"
 
-// ErrBlocked retains unresolved dependency identities for structural classification.
-// It MUST remain separate from user-facing failure sentinels.
-type ErrBlocked struct { //nolint:errname // The exported error type retains its SDK name.
+// BlockedError MUST remain separate from user-facing failure sentinels.
+type BlockedError struct {
 	Deps []manifest.NamedResource
 }
 
-func (e *ErrBlocked) Error() string { return "blocked on dependencies" }
+func (e *BlockedError) Error() string { return "blocked on dependencies" }

@@ -70,7 +70,7 @@ func testGitFailedAttemptRemovesDirectoriesCase(
 	}
 	if (*scenario) == "publication" {
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.FatalIf(t, !ok, "publication error = %v", err)
 		}
 	} else {

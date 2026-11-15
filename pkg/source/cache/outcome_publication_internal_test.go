@@ -79,9 +79,9 @@ func testOutcomePublicationFailureCase(t *testing.T, scenario *string,
 		!errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("publication lost live failure: %v", err)
 	} else {
-		_, ok := errors.AsType[*CacheError](
+		_, ok := errors.AsType[*Error](
 			err,
 		)
-		assert.FatalIf(t, !ok, "publication not CacheError: %v", err)
+		assert.FatalIf(t, !ok, "publication not Error: %v", err)
 	}
 }

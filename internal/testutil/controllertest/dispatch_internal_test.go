@@ -76,7 +76,7 @@ func TestReconcile_TaskFailures(t *testing.T) {
 						execution,
 						func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 							if len(tc.dependencies) != 0 {
-								return &depwait.ErrBlocked{Deps: tc.dependencies}
+								return &depwait.BlockedError{Deps: tc.dependencies}
 							}
 							return nil
 						},

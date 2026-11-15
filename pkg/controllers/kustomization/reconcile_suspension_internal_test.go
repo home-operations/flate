@@ -67,7 +67,7 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})
 	_, err := c.newExecution(ks.Named()).run.RequireRefresh(t.Context(), ks, manifest.GateArtifacts, manifest.DrainNone)
 	{
-		blocked, ok := errors.AsType[*depwait.ErrBlocked](
+		blocked, ok := errors.AsType[*depwait.BlockedError](
 			err,
 		)
 		assert.FatalIf(t, !ok || len(blocked.Deps) != 1 ||

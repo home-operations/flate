@@ -112,7 +112,7 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 					store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"},
 				)
 			case "blocked":
-				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
+				return &depwait.BlockedError{Deps: []manifest.NamedResource{fresh}}
 			case "new dependency failure":
 				return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
 			}

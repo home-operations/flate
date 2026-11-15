@@ -541,7 +541,7 @@ func testRequireClassificationsCase(t *testing.T, testCaseInput *string,
 	case "ready":
 		assert.FatalIf(t, err != nil, "%v", err)
 	case "blocked", "mixed":
-		blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+		blocked, ok := errors.AsType[*depwait.BlockedError](err)
 		assert.FatalIf(
 			t,
 			!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{pending.NamedResource}) ||
@@ -617,7 +617,7 @@ func testRequireMultiplePredicatesCase(t *testing.T, testCaseInput *struct {
 			}
 			reason = failed.Reasons[obj.Named()].Message
 		case schedule.Blocked:
-			blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+			blocked, ok := errors.AsType[*depwait.BlockedError](err)
 			assert.FatalIf(
 				t,
 				!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{obj.Named()}),
@@ -657,7 +657,7 @@ func testExecutionSettleInvalidReadsCase(t *testing.T, testCaseInput *bool,
 	)
 	execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
 	t.Cleanup(execution.Close)
-	pending := &countingSettlerError{error: &depwait.ErrBlocked{Deps: []manifest.NamedResource{input.Named()}}}
+	pending := &countingSettlerError{error: &depwait.BlockedError{Deps: []manifest.NamedResource{input.Named()}}}
 	execution.Dispatch(
 		t.Context(),
 		manifest.DrainNone,

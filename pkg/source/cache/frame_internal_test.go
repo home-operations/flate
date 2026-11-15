@@ -426,7 +426,7 @@ func TestFrame_Cancellation(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = acquired.Payload(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	_, storage := errors.AsType[*CacheError](err)
+	_, storage := errors.AsType[*Error](err)
 	assert.Equal(t, storage, true)
 }
 
@@ -451,7 +451,7 @@ func TestFrame_StorageErrors(t *testing.T) {
 				assert.NoError(t, os.Remove(file))
 				_, err = acquired.Payload(t.Context())
 			}
-			_, storage := errors.AsType[*CacheError](err)
+			_, storage := errors.AsType[*Error](err)
 			_, pathError := errors.AsType[*fs.PathError](err)
 			assert.Equal(t, storage, true)
 			assert.Equal(t, pathError, true)

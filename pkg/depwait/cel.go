@@ -21,7 +21,7 @@ const (
 	statusField  = "status"
 )
 
-var celCache sync.Map //nolint:gochecknoglobals // All waiters share compiled expressions.
+var celCache sync.Map //nolint:gochecknoglobals // compileReadyExpr shares compiled programs and compilation failures across waiters.
 
 type celCacheEntry struct {
 	prog       cel.Program
@@ -37,7 +37,7 @@ type celCacheEntry struct {
 // (DynType) rather than typed Kubernetes proto descriptors so user
 // expressions remain stable across Kind changes and avoid pulling in
 // k8s.io/api OpenAPI schemas.
-var celEnv = mustCELEnv() //nolint:gochecknoglobals // All waiters share the immutable CEL environment.
+var celEnv = mustCELEnv() //nolint:gochecknoglobals // mustCELEnv initializes one immutable environment for every readyExpr compilation.
 
 func mustCELEnv() *cel.Env {
 	env, err := cel.NewEnv(
@@ -109,7 +109,7 @@ func compileReadyExpr(expr string) (celCacheEntry, error) {
 	if !ok {
 		v, _ = celCache.LoadOrStore(expr, buildCacheEntry(expr))
 	}
-	e := v.(celCacheEntry) //nolint:errcheck // The cache stores only celCacheEntry values.
+	e := v.(celCacheEntry) //nolint:errcheck // compileReadyExpr publishes only buildCacheEntry results of type celCacheEntry in celCache.
 	return e, e.err
 }
 
@@ -195,7 +195,7 @@ func projectObject(id manifest.NamedResource, obj manifest.BaseManifest, conds [
 		condsAny = append(condsAny, conditionToMap(&conds[i]))
 	}
 	// Offline snapshots have no apiserver generation; normalize both sides together.
-	doc["metadata"].(map[string]any)["generation"] = int64( //nolint:errcheck // ObjectDocument always creates metadata as a map.
+	doc["metadata"].(map[string]any)["generation"] = int64( //nolint:errcheck // manifest.ObjectDocument creates metadata as map[string]any on every successful projection.
 		1,
 	)
 	doc[statusField] = map[string]any{

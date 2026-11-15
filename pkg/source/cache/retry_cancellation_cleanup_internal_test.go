@@ -132,7 +132,7 @@ func testAcquireCleanupFailureStopsRetryCase(
 	close(release)
 	for range *concurrency {
 		err := <-done
-		cacheErr, ok := errors.AsType[*CacheError](err)
+		cacheErr, ok := errors.AsType[*Error](err)
 		if !ok || !errors.Is(err, failure) || !errors.Is(err, os.ErrClosed) ||
 			!errors.Is(err, manifest.ErrFlux) {
 			t.Errorf("cleanup error=%v", err)
@@ -198,7 +198,7 @@ func testAcquireReaderFailureCancelsAttemptCaseCallback(
 	for range (*(*testCaseInput.concurrency)) - completed {
 		err := <-done
 		{
-			_, ok := errors.AsType[*CacheError](err)
+			_, ok := errors.AsType[*Error](err)
 			assert.ErrorIf(t, !ok || !errors.Is(err, tar.ErrHeader), "reader error=%v", err)
 		}
 	}

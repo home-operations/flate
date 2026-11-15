@@ -654,14 +654,14 @@ func (r *templateRequest) cachedRecord(ctx context.Context, generation fs.FS, id
 	if record == nil || record.key != r.key || record.identity != identity {
 		var frame renderFrame
 		stored, err := cache.OpenFrame(ctx, frameDomain, generation, &frame.header)
-		if _, storage := errors.AsType[*cache.CacheError](err); storage {
+		if _, storage := errors.AsType[*cache.Error](err); storage {
 			return nil, err
 		}
 		if err != nil || frame.header.Key != r.key || frame.header.Analysis == nil {
 			return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 		}
 		frame.output, err = stored.Payload(ctx)
-		if _, storage := errors.AsType[*cache.CacheError](err); storage {
+		if _, storage := errors.AsType[*cache.Error](err); storage {
 			return nil, err
 		}
 		if err != nil {

@@ -24,41 +24,65 @@ import (
 )
 
 type stubTypedFetcher struct {
-	called   *manifest.GitRepository
-	policy   sourcecache.Policy
-	reads    *store.ReadSet
-	artifact *store.SourceArtifact
+	called         *manifest.GitRepository
+	policy         sourcecache.Policy
+	reads          *store.ReadSet
+	artifact       *store.SourceArtifact
+	prepareContext func(context.Context)
+	fetchContext   func(context.Context)
+	policyInput    *sourcecache.Policy
+	inputs         []manifest.DependencyRef
+	closed         bool
 }
 
 func (s *stubTypedFetcher) Fetch(
-	_ context.Context,
+	ctx context.Context,
 	obj *manifest.GitRepository,
 	reads *store.ReadSet,
 	policyValue *sourcecache.Policy,
 ) (PreparedFetch, error) {
 	policy := *policyValue
 	s.called = obj
+	s.prepareContext(ctx)
+	s.policyInput = policyValue
 	s.reads = reads
 	s.policy = policy
-	return PreparedFetch{Fetch: func(_ context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
-		s.artifact = local
-		return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
-	}}, nil
+	return PreparedFetch{
+		Inputs: s.inputs,
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			s.fetchContext(ctx)
+			s.artifact = local
+			return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
+		},
+		Close: func() { s.closed = true },
+	}, nil
 }
 
 func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	t.Parallel()
-	inner := &stubTypedFetcher{}
-	f := Wrap(manifest.KindGitRepository, inner)
+	var f Adapter[*manifest.GitRepository]
+	input := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "auth"}
+	inner := &stubTypedFetcher{inputs: []manifest.DependencyRef{
+		{NamedResource: input},
+	}}
+	f = Wrap(manifest.KindGitRepository, inner)
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
 	repo.URL = "https://example.com/repo.git"
 
 	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
 	reads := testReadSet(repo)
 	admitted := &store.SourceArtifact{InputAlias: true}
-	prepared, err := f.Fetch(t.Context(), repo, reads, &policy)
+	prepareCtx, cancelPrepare := context.WithCancel(t.Context())
+	defer cancelPrepare()
+	fetchCtx, cancelFetch := context.WithCancel(t.Context())
+	defer cancelFetch()
+	inner.prepareContext = func(ctx context.Context) { assert.Equal(t, ctx, prepareCtx) }
+	inner.fetchContext = func(ctx context.Context) { assert.Equal(t, ctx, fetchCtx) }
+	prepared, err := f.Fetch(prepareCtx, repo, reads, &policy)
 	assert.NoError(t, err)
-	art, err := prepared.Fetch(t.Context(), admitted)
+	assert.Equal(t, inner.policyInput, &policy)
+	assert.Diff(t, prepared.Inputs, inner.inputs)
+	art, err := prepared.Fetch(fetchCtx, admitted)
 	assert.Equal(t, inner.artifact, admitted)
 	assert.FatalIf(t, inner.reads != reads, "%s", "ReadSet was not forwarded")
 
@@ -72,6 +96,9 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	if art.URL != repo.URL {
 		t.Errorf("art.URL = %q, want %q", art.URL, repo.URL)
 	}
+	assert.Equal(t, inner.closed, false)
+	prepared.Close()
+	assert.Equal(t, inner.closed, true)
 }
 
 func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
@@ -86,6 +113,7 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 		testReadSet(wrong), &sourcecache.Policy{},
 	)
 	assert.FatalIf(t, err == nil, "%s", "expected ErrInput on mismatched payload")
+	assert.Equal(t, err.Error(), "GitRepository fetcher: unexpected payload *manifest.OCIRepository")
 
 	assert.ErrorIf(t, !errors.Is(err, manifest.ErrInput), "expected wrapped ErrInput; got %v", err)
 	assert.ErrorIf(t, inner.called != nil, "inner Fetch was invoked on mismatched payload")

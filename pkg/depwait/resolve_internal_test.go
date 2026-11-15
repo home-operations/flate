@@ -74,8 +74,8 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	assert.Equal(t, provider.Lookup(data.Named()).Data, captured)
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun changes process-wide GOMAXPROCS.
+//nolint:paralleltest // Allocation measurements require serial execution while testing.AllocsPerRun sets GOMAXPROCS.
 func TestClassify_RepeatedInputAllocations(t *testing.T) {
 	st := store.New()
 	data := &manifest.ConfigMap{Name: "input", Data: map[string]any{"VALUE": "first"}}

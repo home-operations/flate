@@ -61,8 +61,8 @@ func TestClassify_MissingCRDs(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testing.AllocsPerRun changes process-wide GOMAXPROCS.
+//nolint:paralleltest // Allocation measurements require serial execution while testing.AllocsPerRun sets GOMAXPROCS.
 func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	s := store.New()
 	ref := manifest.DependencyRef{

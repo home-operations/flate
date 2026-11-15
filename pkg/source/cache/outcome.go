@@ -502,18 +502,18 @@ func (c *Cache) publishOutcome(ctx context.Context, id string, o *outcome, remot
 		return ocispec.Descriptor{}, nil
 	}
 	if _, err := c.pushOutcomeBlob(ctx, outcomeConfig, blobs.config); err != nil {
-		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
+		return ocispec.Descriptor{}, &Error{errors.Join(remote, err)}
 	}
 	desc, err := c.pushOutcomeBlob(ctx, ocispec.MediaTypeImageManifest, blobs.manifest)
 	if err != nil {
-		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
+		return ocispec.Descriptor{}, &Error{errors.Join(remote, err)}
 	}
 	c.snapshotDirty.Store(true)
 	if err := c.store.Tag(ctx, desc, id); err != nil {
 		if snapshot := c.snapshot.Load(); snapshot != nil {
 			snapshot.failed.Store(true)
 		}
-		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
+		return ocispec.Descriptor{}, &Error{errors.Join(remote, err)}
 	}
 	return desc, nil
 }
@@ -536,7 +536,7 @@ func (c *Cache) pushOutcomeBlob(ctx context.Context, mediaType string, data []by
 func (c *Cache) readOutcome(ctx context.Context, descValue *ocispec.Descriptor) (*outcome, error) {
 	desc := *descValue
 	if desc.MediaType != ocispec.MediaTypeImageManifest || desc.Size < 0 || desc.Size > outcomeManifestLimit {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // An unsupported outcome descriptor permits ordinary acquisition.
 	}
 	data, err := c.readOutcomeBlob(ctx, &desc)
 	if err != nil {
@@ -550,7 +550,7 @@ func (c *Cache) readOutcome(ctx context.Context, descValue *ocispec.Descriptor) 
 		m.Config.Size < 0 ||
 		m.Config.Size > outcomeConfigLimit ||
 		m.Subject != nil {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // An invalid outcome manifest permits ordinary acquisition.
 	}
 	config, err := c.readOutcomeBlob(ctx, &m.Config)
 	if err != nil {
@@ -558,23 +558,23 @@ func (c *Cache) readOutcome(ctx context.Context, descValue *ocispec.Descriptor) 
 	}
 	o := &outcome{}
 	if !outcomeJSON(config, &o.record) || o.record.Version != 1 {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // An unsupported outcome record permits ordinary acquisition.
 	}
 	if _, valid := outcomeDeadline(o.record.Completed, o.record.Count); !valid {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // An invalid outcome deadline permits ordinary acquisition.
 	}
 	codec := outcomeCodecState{}
 	if _, ok := codec.decode(&o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // An unreplayable remote cause permits ordinary acquisition.
 	}
 	if len(m.Layers) == 1 {
 		var ok bool
 		o.lastGood, ok = outcomeLayer(&m.Layers[0])
 		if !ok || o.lastGood.Digest == "" {
-			return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+			return nil, nil //nolint:nilnil // An invalid retained payload permits ordinary acquisition.
 		}
 		if _, err := c.root.Stat(blobPath(o.lastGood.Digest)); err != nil {
-			return nil, &CacheError{err}
+			return nil, &Error{err}
 		}
 	}
 	return o, nil
@@ -589,18 +589,18 @@ func outcomeJSON(data []byte, target any) bool {
 func (c *Cache) readOutcomeBlob(ctx context.Context, descValue *ocispec.Descriptor) ([]byte, error) {
 	desc := *descValue
 	if err := ctx.Err(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	if err := desc.Digest.Validate(); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	r, err := c.root.Open(blobPath(desc.Digest))
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	data, readErr := content.ReadAll(r, desc)
 	if err := errors.Join(readErr, r.Close()); err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	return data, nil
 }
@@ -626,13 +626,13 @@ func wrappedOutcomeNode(err error) (outcomeCause, []error, bool) {
 		return outcomeCause{
 			Kind: wrapOutcome,
 		}, []error{
-			err.(interface{ Unwrap() error }).Unwrap(), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			err.(interface{ Unwrap() error }).Unwrap(), //nolint:errcheck // The exact fmt.wrapError type guard guarantees Unwrap() error.
 		}, true
 	}
 	if reflect.TypeOf(err) == fmtWrapsType || reflect.TypeOf(err) == joinType {
 		return outcomeCause{
 			Kind: joinOutcome,
-		}, err.(interface{ Unwrap() []error }).Unwrap(), true //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		}, err.(interface{ Unwrap() []error }).Unwrap(), true //nolint:errcheck // The exact fmt.wrapErrors or errors.joinError guard guarantees Unwrap() []error.
 	}
 	return outcomeCause{}, nil, false
 }

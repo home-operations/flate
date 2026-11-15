@@ -81,7 +81,7 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	c, err := o.open(ctx, disk, snapshot)
 	owners.mu.Lock()
 	if err != nil {
-		o.err = &CacheError{err}
+		o.err = &Error{err}
 		delete(owners.stores, root)
 	} else {
 		o.cache = c
@@ -143,22 +143,22 @@ func (c *Cache) Directory() string {
 func openCacheRoot(root string) (*os.Root, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	resolved, err := filepath.EvalSymlinks(root)
 	if errors.Is(err, os.ErrNotExist) {
 		if mkdirAllErr := os.MkdirAll(root, cacheDirectoryMode); mkdirAllErr != nil {
-			return nil, &CacheError{mkdirAllErr}
+			return nil, &Error{mkdirAllErr}
 		}
 		resolved, err = filepath.EvalSymlinks(root)
 	}
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	root = resolved
 	disk, err := os.OpenRoot(root)
 	if err != nil {
-		return nil, &CacheError{err}
+		return nil, &Error{err}
 	}
 	return disk, nil
 }
@@ -219,7 +219,7 @@ func (c *Cache) Close() error {
 
 	c.entries.Clear()
 	if err := errors.Join(o.lock.Close(), c.closeRoots()); err != nil {
-		return &CacheError{err}
+		return &Error{err}
 	}
 	return nil
 }
@@ -229,7 +229,7 @@ func (c *Cache) saveSnapshot(snapshot *storeSnapshot) {
 		snapshot.layout, _ = os.ReadFile(filepath.Join(c.root.Name(), ociDir, ocispec.ImageLayoutFile))
 		snapshot.index = data
 		c.entries.Range(func(_, value any) bool {
-			entry := value.(*entry) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+			entry := value.(*entry) //nolint:errcheck // Cache.entries writers publish only *entry; snapshot corruption must panic.
 			if entry.inventoryKey != "" {
 				if snapshot.histories == nil {
 					snapshot.histories = map[string]*historyRecord{}

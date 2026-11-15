@@ -364,7 +364,7 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 		want schedule.Kind
 	}{
 		{name: "terminal", want: schedule.Terminal},
-		{name: "blocked", err: &depwait.ErrBlocked{Deps: []manifest.NamedResource{dependency}}, want: schedule.Blocked},
+		{name: "blocked", err: &depwait.BlockedError{Deps: []manifest.NamedResource{dependency}}, want: schedule.Blocked},
 		{name: "failed", err: &manifest.DependencyFailedError{Failed: []manifest.NamedResource{dependency}}, want: schedule.DependencyFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -518,7 +518,7 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 					}, level)
 				}
 				if level == manifest.DrainNone {
-					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{gate}}
+					return &depwait.BlockedError{Deps: []manifest.NamedResource{gate}}
 				}
 				return finish(s, got)
 			},

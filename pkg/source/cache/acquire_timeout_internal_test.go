@@ -183,7 +183,7 @@ func TestAcquire_OperationTimeoutReaderFailure(t *testing.T) {
 			},
 		)
 		{
-			_, ok := errors.AsType[*CacheError](
+			_, ok := errors.AsType[*Error](
 				err,
 			)
 			assert.FatalIf(t, !ok || !errors.Is(err, tar.ErrHeader) ||
@@ -448,7 +448,7 @@ func testAcquireOperationTimeoutCleanupFailureCase(
 			},
 		)
 		{
-			_, ok := errors.AsType[*CacheError](
+			_, ok := errors.AsType[*Error](
 				err,
 			)
 			assert.FatalIf(

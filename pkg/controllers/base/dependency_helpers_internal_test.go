@@ -56,7 +56,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		},
 		manifest.DrainNone,
 	)
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+	if blocked, ok := errors.AsType[*depwait.BlockedError](err); ok {
 		for _, id := range blocked.Deps {
 			if !slices.ContainsFunc(deps, func(dep manifest.DependencyRef) bool { return dep.NamedResource == id }) {
 				deps = append(deps, manifest.DependencyRef{NamedResource: id})

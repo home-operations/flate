@@ -91,7 +91,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 				run,
 				func(run *base.Execution, _ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 					if level == manifest.DrainNone {
-						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
+						return &depwait.BlockedError{Deps: []manifest.NamedResource{consumer}}
 					}
 					assert.ErrorIf(
 						t,

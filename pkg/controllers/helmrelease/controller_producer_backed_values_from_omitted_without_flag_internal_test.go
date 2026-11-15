@@ -506,7 +506,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "released"})
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
 	{
-		blocked, ok := errors.AsType[*depwait.ErrBlocked](
+		blocked, ok := errors.AsType[*depwait.BlockedError](
 			c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
 		)
 		assert.FatalIf(t, !ok || len(blocked.Deps) != 1 ||
@@ -544,7 +544,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 		},
 		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"},
 	)
-	_, blocked := errors.AsType[*depwait.ErrBlocked](
+	_, blocked := errors.AsType[*depwait.BlockedError](
 		c.newExecution(hr.Named()).requireChartForTest(t.Context(), hr, manifest.DrainNone),
 	)
 	assert.Equal(t, blocked, true)
@@ -555,7 +555,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	}
 	st.AddObject(hr.Clone())
 	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
-	blockedChart, ok := errors.AsType[*depwait.ErrBlocked](err)
+	blockedChart, ok := errors.AsType[*depwait.BlockedError](err)
 	assert.FatalIf(t, !ok, "pre-render gate=%v", err)
 	assert.Diff(
 		t,
@@ -581,7 +581,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 		store.StatusInfo{Status: store.StatusReady},
 	)
 	err = c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainNone)
-	blockedValues, ok := errors.AsType[*depwait.ErrBlocked](err)
+	blockedValues, ok := errors.AsType[*depwait.BlockedError](err)
 	assert.FatalIf(t, !ok, "values gate=%v", err)
 	assert.Diff(
 		t,

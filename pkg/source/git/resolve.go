@@ -155,7 +155,6 @@ func readCommit(repo *git.Repository, hash plumbing.Hash) (*object.Commit, error
 	return commit, nil
 }
 
-// resolveSemver picks the highest tag in repo satisfying expr.
 func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 	constraint, err := semver.NewConstraint(expr)
 	if err != nil {
@@ -171,14 +170,11 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 	if err := tags.ForEach(func(ref *plumbing.Reference) error {
 		name := ref.Name().Short()
 		v, verr := semver.NewVersion(name)
-		if verr != nil {
-			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
-		}
-		if !constraint.Check(v) {
-			return nil
-		}
-		if best == nil || v.GreaterThan(best) || (v.Equal(best) && name < bestName) {
-			best, bestHash, bestName = v, ref.Hash(), name
+		eligible := verr == nil && constraint.Check(v)
+		if eligible {
+			if best == nil || v.GreaterThan(best) || (v.Equal(best) && name < bestName) {
+				best, bestHash, bestName = v, ref.Hash(), name
+			}
 		}
 		return nil
 	}); err != nil {

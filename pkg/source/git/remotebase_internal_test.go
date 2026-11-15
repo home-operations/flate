@@ -332,6 +332,27 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 	})
 }
 
+func TestFetchRemoteBase_FetchContextOnce(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	failure := errors.New("second command rejected")
+	calls := 0
+	routes := commandTransports(func(context.Context) error {
+		calls++
+		if calls == 2 {
+			return failure
+		}
+		return nil
+	})
+	f := newRemoteBaseFetcher(t)
+	f.GitTransports = routes
+	_, err := f.FetchRemoteBase(t.Context(), &RemoteBaseRequest{URL: "commands://" + src}, &sourcecache.Policy{})
+	assert.FatalIf(t, !errors.Is(err, failure), "lost failure after %d commands: %v", calls, err)
+	assert.Equal(t, calls, 2)
+	assert.Equal(t, err.Error(), "fetch revision: second command rejected")
+}
+
 func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

@@ -34,8 +34,8 @@ func localGitSSH(t *testing.T, root string, allowed ssh.PublicKey) (string, *ato
 	return "ssh://git@" + address + root, &fixture.Authenticated
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // localGitSSH sets HOME and testFetcherLocalAgentSSHCase sets SSH_AUTH_SOCK.
+//nolint:paralleltest // acquisitionAgent changes SSH_AUTH_SOCK and the working directory with t.Chdir.
 func TestFetcher_LocalAgentSSH(t *testing.T) {
 	for _, shape := range []string{"accepted", "rejected", "absent", "explicit rejected"} {
 		t.Run(

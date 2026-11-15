@@ -30,7 +30,7 @@ func (f *operation) resolveAuth(
 				"SSH credentials unavailable",
 			)
 		}
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil //nolint:nilnil // Without SecretRef on a non-SSH endpoint, newClient omits credentials for anonymous acquisition.
 	}
 	if f.secrets == nil {
 		return nil, errors.New("secretRef requires a SecretGetter")

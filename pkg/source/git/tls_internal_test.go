@@ -198,8 +198,8 @@ func TestFetcher_TLSOperations(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test changes the process egress policy.
-//nolint:paralleltest // The test changes process egress policy.
+//nolint:paralleltest // TestFetcher_RestrictEgress changes the process egress policy through ssrfguard.Restrict.
+//nolint:paralleltest // TestFetcher_RestrictEgress restores ssrfguard.Restrict after each ordered subtest.
 func TestFetcher_RestrictEgress(t *testing.T) {
 	t.Run("custom-ca", func(t *testing.T) {
 		srv := httptest.NewTLSServer(http.NotFoundHandler())
@@ -638,8 +638,8 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // TestFetcher_HTTPSBasicAuth_SnapshotRotation clears HTTP_PROXY, NO_PROXY, and no_proxy with t.Setenv.
+//nolint:paralleltest // Subtests rotate credentials on one repository and cacheRoot in first, password, certificate, proxy, and direct order.
 func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 	root := t.TempDir()
 	mustInitRepo(t, root)

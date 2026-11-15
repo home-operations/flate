@@ -297,7 +297,7 @@ func newConfiguredController(
 	return c, st
 }
 
-//nolint:paralleltest,tparallel // Subtests observe sequential revisions on one source controller.
+//nolint:paralleltest,tparallel // Subtests advance one fakeFetcher and controller through initial, revised, digested, and reacquired artifacts.
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	t.Parallel()
 

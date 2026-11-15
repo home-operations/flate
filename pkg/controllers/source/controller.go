@@ -39,6 +39,7 @@ type localSources interface {
 }
 
 type sourceFacts interface {
+	manifest.BaseManifest
 	ExistenceOnly() bool
 	SourceInterval() time.Duration
 	Composition() manifest.ArtifactComposition
@@ -163,7 +164,7 @@ func (c *Controller) ReconcileNode(
 
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
-	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
+	facts := obj.(sourceFacts) //nolint:errcheck // Owns admits registered source kinds; a manifest without sourceFacts MUST panic.
 	if facts.ExistenceOnly() {
 		_, err := c.run.RequireRefresh(ctx, obj, manifest.GateParents, level)
 		return err
@@ -184,27 +185,26 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 			return selected != nil, err
 		},
 		Resolve: func(ctx context.Context, level manifest.DrainLevel) (*store.SourceArtifact, error) {
-			return c.resolve(ctx, obj, selected, level)
+			return c.resolve(ctx, facts, selected, level)
 		},
 		Complete: func(fetchCtx context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
 			return c.completeFetch(
 				fetchCtx,
-				obj,
+				facts,
 				fetchCompletion{artifact: artifact, unavailable: unavailable, level: level},
 			)
 		},
 	}, level)
 }
 
-//nolint:nilnil // Acquisition requires a nil artifact and nil error to continue to fetching.
+//nolint:nilnil // Base acquisition calls PreparedFetch.Fetch with nil when resolve finds no reusable artifact.
 func (c *execution) resolve(
 	ctx context.Context,
-	obj manifest.BaseManifest,
+	facts sourceFacts,
 	resolved *store.SourceArtifact,
 	level manifest.DrainLevel,
 ) (*store.SourceArtifact, error) {
-	id := obj.Named()
-	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
+	id := facts.Named()
 	composed := len(facts.Composition().Includes) != 0
 	if composed && c.acquisition == nil {
 		c.acquisition = new(store.ReadSet)
@@ -214,7 +214,7 @@ func (c *execution) resolve(
 		}
 	}
 	if composed {
-		if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateArtifacts, level); err != nil {
+		if _, err := c.run.RequireRefresh(ctx, facts, manifest.GateArtifacts, level); err != nil {
 			return nil, err
 		}
 	}
@@ -232,7 +232,7 @@ func (c *execution) resolve(
 		return resolved, nil
 	}
 	// Declaration and input gates MUST follow credential settlement.
-	if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+	if _, err := c.run.RequireRefresh(ctx, facts, manifest.GateParents, level); err != nil {
 		return nil, err
 	}
 	if level == manifest.DrainNone {
@@ -245,7 +245,7 @@ func (c *execution) resolve(
 		c.acquired = nil
 		return artifact, nil
 	}
-	if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateInputs, level); err != nil {
+	if _, err := c.run.RequireRefresh(ctx, facts, manifest.GateInputs, level); err != nil {
 		return nil, err
 	}
 	c.SetPendingUnlessReady(id, "fetching")
@@ -260,7 +260,7 @@ type fetchCompletion struct {
 
 func (c *execution) completeFetch(
 	ctx context.Context,
-	obj manifest.BaseManifest,
+	facts sourceFacts,
 	completion fetchCompletion,
 ) error {
 	artifact := completion.artifact
@@ -283,7 +283,7 @@ func (c *execution) completeFetch(
 			c.acquired = artifact
 			return nil
 		}
-		completed, err := c.compose(ctx, obj, artifact, completion.level)
+		completed, err := c.compose(ctx, facts, artifact, completion.level)
 		if err != nil {
 			return err
 		}
@@ -294,7 +294,7 @@ func (c *execution) completeFetch(
 		c.publish(completed)
 	}
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		slog.DebugContext(ctx, "source: fetch complete", "id", manifest.DiagnosticFor(obj.Named(), obj).String())
+		slog.DebugContext(ctx, "source: fetch complete", "id", manifest.DiagnosticFor(facts.Named(), facts).String())
 	}
 	return nil
 }
@@ -309,16 +309,15 @@ func (c *execution) publish(artifact *store.SourceArtifact) {
 
 func (c *execution) compose(
 	ctx context.Context,
-	obj manifest.BaseManifest,
+	facts sourceFacts,
 	artifact *store.SourceArtifact,
 	level manifest.DrainLevel,
 ) (*store.SourceArtifact, error) {
-	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
 	composition := facts.Composition()
 	if len(composition.Includes) == 0 {
 		return artifact, nil
 	}
-	if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateArtifacts, level); err != nil {
+	if _, err := c.run.RequireRefresh(ctx, facts, manifest.GateArtifacts, level); err != nil {
 		return nil, err
 	}
 	request := cache.Composition{
@@ -364,7 +363,7 @@ func (c *execution) compose(
 			gittree.LabelOptions{
 				Root:    root,
 				Mode:    gittree.Source,
-				Source:  obj.Named(),
+				Source:  facts.Named(),
 				Content: struct{ Kind, URL, Root string }{artifact.Kind, artifact.URL, root},
 			},
 		)

@@ -28,8 +28,8 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testControllerRenderedSecretWinsOverRegistryConfigCase sets DOCKER_CONFIG and HELM_REGISTRY_CONFIG with t.Setenv.
+//nolint:paralleltest // testControllerRenderedSecretWinsOverRegistryConfigCaseTail replaces HELM_REGISTRY_CONFIG for Helm credential cases.
 func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 	for _, name := range []string{"stale global credentials", "unrelated global credentials", "corrupt global config", "stale Helm credentials", "corrupt Helm config"} {
 		t.Run(name, func(t *testing.T) {

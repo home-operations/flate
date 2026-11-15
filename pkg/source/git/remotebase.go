@@ -175,7 +175,7 @@ func (f *Fetcher) produceRemoteGitBase(
 			},
 		)
 		if fetchContextErr != nil && !errors.Is(fetchContextErr, git.NoErrAlreadyUpToDate) {
-			return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)
+			return plumbing.ZeroHash, fetchContextErr
 		}
 	}
 	hash, err := resolveRefHash(cloned, scope.repo.Reference, true)
@@ -205,7 +205,7 @@ func (f *Fetcher) produceRemoteGitBase(
 	}
 	*scope.input, *scope.identity, err = gittree.New(
 		ctx,
-		storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // cache.gitProducer.produce passes filesystem.Storage to this callback; a mismatched storage intentionally panics.
 		hash,
 		gittree.ViewOptions{Content: scope.content, Mode: gittree.RemoteBase, Worktree: worktree},
 	)

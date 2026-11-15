@@ -24,8 +24,8 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // testControllerBucketMachineFailuresCase sets AWS_WEB_IDENTITY_TOKEN_FILE and AWS_ROLE_ARN and clears AWS credential and proxy variables.
+//nolint:paralleltest // testControllerBucketMachineFailuresCase replaces http.DefaultTransport and restores it in cleanup.
 func TestController_BucketMachineFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

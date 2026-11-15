@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-git/v6"
@@ -49,7 +51,7 @@ func TestDefaultClientIsBounded(t *testing.T) {
 	assert.FatalIf(t, tr.ResponseHeaderTimeout != 0, "transport overrides operation deadline")
 }
 
-//nolint:paralleltest // The test changes process egress policy.
+//nolint:paralleltest // testDefaultClientPerCallControlsCase changes the process egress policy through ssrfguard.Restrict.
 func TestDefaultClient_PerCallControls(t *testing.T) {
 	for _, name := range []string{"ca-cancel", "insecure-cancel", "restricted"} {
 		t.Run(name, func(t *testing.T) {
@@ -260,6 +262,23 @@ func TestClient_FetchCloseErrors(t *testing.T) {
 				RefSpecs: []config.RefSpec{"+refs/heads/main:refs/remotes/origin/main"}, Tags: git.NoTags,
 			})
 			assert.Equal(t, fixture.closed, 1)
+			assert.Equal(t, strings.HasPrefix(err.Error(), "fetch remote references: "), true)
+			assert.Equal(t, errors.Is(err, responseErr), tc.primary != nil)
+			assert.Equal(t, errors.Is(err, sessionErr), tc.wantSession)
+			fixture.closed = 0
+			repo, err := git.Init(memory.NewStorage())
+			assert.NoError(t, err)
+			_, err = repo.CreateRemote(&config.RemoteConfig{
+				Name: "origin", URLs: []string{"close://fixture/repository"},
+			})
+			assert.NoError(t, err)
+			acquisition := &gitAcquisition{}
+			err = acquisition.fetchRevision(t.Context(), repo, &git.FetchOptions{
+				RefSpecs: []config.RefSpec{"+refs/heads/main:refs/remotes/origin/main"},
+				Tags:     git.NoTags, ClientOptions: c.options,
+			})
+			assert.Equal(t, fixture.closed, 1)
+			assert.Equal(t, strings.HasPrefix(err.Error(), "fetch revision: "), true)
 			assert.Equal(t, errors.Is(err, responseErr), tc.primary != nil)
 			assert.Equal(t, errors.Is(err, sessionErr), tc.wantSession)
 		})
@@ -300,4 +319,35 @@ func (s *clientCloseSession) Fetch(context.Context, storage.Storer, *transport.F
 func (s *clientCloseSession) Close() error {
 	s.fixture.closed++
 	return s.fixture.sessionErr
+}
+
+func TestClient_ListNegotiationErrorContext(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("advertisement read failed")
+	conn := &failedNegotiationConnection{err: failure}
+	c, err := NewClient(ClientConfig{
+		Network: networktest.New(t),
+		Transports: Transports{"failure": func(context.Context, TransportRequest) (Connection, error) {
+			return conn, nil
+		}},
+	})
+	assert.NoError(t, err)
+	refs, err := c.List(t.Context(), "failure://fixture/repository")
+	assert.Equal(t, len(refs), 0)
+	assert.Equal(t, conn.closed, 1)
+	assert.Equal(t, errors.Is(err, failure), true)
+	assert.Equal(t, strings.HasPrefix(err.Error(), "list remote references: "), true)
+	assert.Equal(t, strings.Contains(err.Error(), "negotiate git session: "), true)
+}
+
+type failedNegotiationConnection struct {
+	err    error
+	closed int
+}
+
+func (c *failedNegotiationConnection) Reader() io.Reader    { return iotest.ErrReader(c.err) }
+func (*failedNegotiationConnection) Writer() io.WriteCloser { return nil }
+func (c *failedNegotiationConnection) Close() error {
+	c.closed++
+	return nil
 }

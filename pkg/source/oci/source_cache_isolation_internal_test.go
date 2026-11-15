@@ -13,7 +13,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest,tparallel // Children update shared acquisition identities before their parent advances source content.
+//nolint:paralleltest,tparallel // Children update the shared identities map before the parent advances from first to second source content.
 func TestFetcher_CacheIsolatesSources(t *testing.T) {
 	t.Parallel()
 

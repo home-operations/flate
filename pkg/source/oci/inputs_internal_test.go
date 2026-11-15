@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/adler32"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,6 +389,23 @@ func testFetcherInputsSelectionAndRefreshCase(
 	assert.NoError(t, err)
 	assert.Equal(t, mustReadFile(t, artifact.FS, "inputs.json"), "[]\n")
 	assert.Equal(t, heads.Load(), int32(6))
+
+	plan, err := provider.InputPlan()
+	assert.NoError(t, err)
+	op := &operation{Fetcher: f}
+	request, err := op.resolvedRepository(t.Context(), plan.Registry)
+	assert.NoError(t, err)
+	assert.NoError(t, op.configure(plan.Registry, &request, request.credential))
+	request.client.PlainHTTP = *plainHTTP
+	reader, writer := io.Pipe()
+	cause := errors.New("input writer failed")
+	assert.NoError(t, reader.CloseWithError(cause))
+	defer writer.Close()
+	result, err := produceRegistryInputs(t.Context(), &request, provider, cache.ProducerInput{Writer: writer})
+	assert.Diff(t, result, cache.ProducerResult{})
+	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "encode registry inputs: "),
+		"lost encoding context: %v", err)
+	assert.FatalIf(t, !errors.Is(err, cause), "lost writer cause: %v", err)
 }
 
 func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {

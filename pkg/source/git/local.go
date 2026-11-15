@@ -177,7 +177,7 @@ func (r *localResolver) committed(
 	work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
 	input, key, err := gittree.New(
 		ctx,
-		r.repo.Storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The admitted repository uses the filesystem storage selected by discovery.
+		r.repo.Storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // Local source admission opens filesystem-backed repositories; a mismatched storage intentionally panics.
 		hash,
 		gittree.ViewOptions{
 			Mode:     mode,

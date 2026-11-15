@@ -71,8 +71,8 @@ func (f *ambientObserver) Fetch(
 	return artifact, err
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // testFetcherLateProducerInvalidatesAmbientCase replaces DOCKER_CONFIG.
+//nolint:paralleltest // testFetcherLateProducerInvalidatesAmbientCase replaces HELM_REGISTRY_CONFIG.
 func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 	for _, timing := range []string{"before_settlement", "during_acquisition"} {
 		t.Run(timing, func(t *testing.T) {
@@ -124,8 +124,8 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // testFetcherHelmAmbientReloadCase replaces DOCKER_CONFIG.
+//nolint:paralleltest // testFetcherHelmAmbientReloadCase replaces HELM_REGISTRY_CONFIG.
 func TestFetcher_HelmAmbientReload(t *testing.T) {
 	for _, mode := range []string{"rotated", "removed"} {
 		t.Run(mode, func(t *testing.T) {
@@ -205,8 +205,8 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // The test changes the process logging destination.
-//nolint:paralleltest // The test changes process logging state.
+//nolint:paralleltest // slog.SetDefault installs a diagnostic logger and cleanup restores the previous logger.
+//nolint:paralleltest // testFetcherAmbientAcquisitionErrorsCase changes PATH and FLATE_HELPER_MARKER.
 func TestFetcher_AmbientAcquisitionErrors(t *testing.T) {
 	var diagnostic bytes.Buffer
 	previous := slog.Default()

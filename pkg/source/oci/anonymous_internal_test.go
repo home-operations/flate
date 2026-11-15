@@ -22,7 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // Credential configuration and helper lookup use the process environment.
+//nolint:paralleltest // The test replaces PATH, DOCKER_CONFIG, and HELM_REGISTRY_CONFIG.
 func TestFetcher_AnonymousPreparation(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
@@ -71,8 +71,8 @@ func TestFetcher_AnonymousPreparation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest // The parent replaces PATH before either provider case starts.
+//nolint:paralleltest // Both provider cases inherit the parent's PATH replacement.
 func TestFetcher_ProviderAnonymous(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	for _, private := range []bool{false, true} {

@@ -214,12 +214,15 @@ func (l *selectedLayer) write(ctx context.Context, client *remote.Repository, w 
 		return orasError(copyErr)
 	}
 	if closeErr != nil {
-		return closeErr //nolint:wrapcheck // The layer adapter preserves the upstream compression error contract.
+		return fmt.Errorf("close layer decompression: %w", closeErr)
 	}
 	if _, err := io.Copy(io.Discard, verified); err != nil {
 		return fmt.Errorf("copy source content: %w", err)
 	}
-	return verified.Verify() //nolint:wrapcheck // Preserve the verifier's upstream error contract.
+	if err := verified.Verify(); err != nil {
+		return fmt.Errorf("verify layer content: %w", err)
+	}
+	return nil
 }
 
 func orasError(err error) error {

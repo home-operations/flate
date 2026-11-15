@@ -366,7 +366,7 @@ func testEndpoint(t *testing.T, url string) *neturl.URL {
 	return endpoint
 }
 
-//nolint:ireturn // The upstream SSH key parser exposes only its signer interface.
+//nolint:ireturn // ssh.ParsePrivateKey returns ssh.Signer for several concrete key types.
 func testSSHIdentity(t *testing.T) (string, ssh.Signer) {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(nil)

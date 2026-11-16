@@ -165,7 +165,7 @@ func TestCompose_ExtractionWorkAndPolicy(t *testing.T) {
 	admissions, releases := 0, 0
 	timeout := time.Hour
 	policy := Policy{
-		MaxAge: Forever, Work: &work, HistoryWork: &history, Machine: true,
+		MaxAge: Forever, Work: &work, HistoryWork: &history,
 		Retry: RetryConfig{Attempts: 3}, Timeout: &timeout,
 		Admit: func(context.Context) (func(), error) {
 			admissions++
@@ -211,7 +211,6 @@ func TestCompose_ExtractionWorkAndPolicy(t *testing.T) {
 	assert.Equal(t, policy.Timeout, &timeout)
 	assert.Equal(t, policy.MaxAge, Forever)
 	assert.Equal(t, policy.Retry.Attempts, 3)
-	assert.Equal(t, policy.Machine, true)
 	byKey := map[string]manifest.WorkSummary{}
 	for _, record := range recorder.Scope().Snapshot(0) {
 		assert.Equal(t, record.Key.Owner, recorder.Key.Owner)

@@ -153,10 +153,9 @@ func (f *Fetcher) fetchIndex(
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
 	key := cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}
 	indexPolicy := cache.Policy{
-		MaxAge:  r.Interval.Duration,
-		Retry:   policy.Retry,
-		Machine: policy.Machine,
-		Work:    indexWork,
+		MaxAge: r.Interval.Duration,
+		Retry:  policy.Retry,
+		Work:   indexWork,
 	}
 	generation, desc, _, err := f.cache.Blob(ctx, key, &indexPolicy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {

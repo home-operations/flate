@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -226,7 +227,7 @@ func TestFetcher_MachineProviders(t *testing.T) {
 
 func TestFetcher_MachineAcquisitionFailures(t *testing.T) {
 	t.Parallel()
-	for _, stage := range []string{"listing", "download", "publication"} {
+	for _, stage := range []string{"listing", "download", "listing transport", "download transport", "publication"} {
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
 			testFetcherMachineAcquisitionFailuresCase(t, &stage)
@@ -748,7 +749,11 @@ func testFetcherMachineAcquisitionFailuresCase(
 			},
 		},
 	}
+	cause := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
 	request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
+		if *stage == "listing transport" || *stage == "download transport" && r.URL.Query().Get("list-type") == "" {
+			return nil, cause
+		}
 		if (*stage) == "listing" || r.URL.Query().Get("list-type") == "" {
 			return bucketReply(
 				r,
@@ -777,7 +782,11 @@ func testFetcherMachineAcquisitionFailuresCase(
 		"failed acquisition published or exposed credentials: %v",
 		err,
 	)
-	if (*stage) != "publication" {
+	if strings.HasSuffix(*stage, "transport") {
+		assert.Equal(t, errors.Is(err, cause), true)
+		assert.Equal(t, cache.CredentialsUnavailable(err), false)
+		assert.ErrorIf(t, !strings.Contains(err.Error(), cause.Error()), "bucket transport cause masked: %v", err)
+	} else if (*stage) != "publication" {
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(
 			t,

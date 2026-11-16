@@ -289,10 +289,14 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 func TestAcquireMachine_Lifecycle(t *testing.T) {
 	t.Parallel()
 	cause := &fs.PathError{Op: "open", Path: "credential-canary", Err: fs.ErrPermission}
-	for _, phase := range []string{"pre-canceled", "unavailable", "prepare failure", "expired preparation", "success", "unbounded", "acquire failure"} {
+	for _, phase := range []string{"pre-canceled", "unavailable", "prepare failure", "expired preparation", "success", "unbounded", "acquire failure", "prepare cache failure", "acquire cache failure"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
-			testAcquireMachineLifecycleCase(t, &cause, &phase)
+			testCause := *cause
+			if phase == "acquire failure" || strings.HasSuffix(phase, "cache failure") {
+				testCause.Path = "artifact"
+			}
+			testAcquireMachineLifecycleCase(t, new(&testCause), &phase)
 		},
 		)
 	}
@@ -426,17 +430,23 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 		if (*phase) == "prepare failure" {
 			return (*cause)
 		}
+		if *phase == "prepare cache failure" {
+			return &cache.Error{Err: *cause}
+		}
 		return nil
 	}, func(got context.Context, pValue *cache.Policy, _ *store.SourceArtifact) (*store.SourceArtifact, error) {
 		p := *pValue
 		acquired++
-		assert.FatalIf(t, got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine ||
-			p.Timeout != policy.Timeout ||
-			p.MaxAge != policy.MaxAge ||
+		assert.FatalIf(t, got != ctx || got.Err() != nil || preparation.Err() == nil ||
+			p.Timeout != policy.Timeout, "%s", "preparation cancellation or timeout changed")
+		assert.FatalIf(t, p.MaxAge != policy.MaxAge ||
 			p.Retry != policy.Retry, "%s", "preparation cancellation or acquisition policy changed")
 
 		if (*phase) == "acquire failure" {
 			return partial, (*cause)
+		}
+		if *phase == "acquire cache failure" {
+			return partial, &cache.Error{Err: *cause}
 		}
 		return partial, nil
 	})
@@ -588,12 +598,29 @@ func testAcquireMachineLifecycleResult(t *testing.T, captures *machineLifecycleR
 			"late success admitted acquisition: %v",
 			err,
 		)
+	case "prepare cache failure", "acquire cache failure":
+		cached, ok := errors.AsType[*cache.Error](err)
+		assert.FatalIf(t, !ok || !errors.Is(err, *cause) || !errors.Is(err, manifest.ErrFlux),
+			"cache failure changed: %v", err)
+		assert.Equal(t, err, error(cached))
+		assert.Equal(t, err.Error(), "cache: "+(*cause).Error())
+		if *phase == "prepare cache failure" {
+			assert.Equal(t, acquired, 0)
+		} else {
+			assert.Equal(t, artifact, partial)
+		}
 	case "prepare failure", "acquire failure":
 		assert.FatalIf(t, !errors.Is(err, (*cause)) || !errors.Is(err, manifest.ErrFlux) ||
 			strings.Contains(err.Error(), "canary"), "classification lost cause or exposed material: %v", err)
 		assert.FatalIf(t, (*phase) == "prepare failure" && acquired != 0 ||
 			(*phase) == "acquire failure" &&
 				artifact != partial, "%s", "changed partial result or acquired after preparation failure")
+
+		if *phase == "prepare failure" {
+			assert.Equal(t, err.Error(), "machine credential acquisition failed")
+		} else {
+			assert.Equal(t, err.Error(), (*cause).Error())
+		}
 
 	case "success", "unbounded":
 		assert.FatalIf(

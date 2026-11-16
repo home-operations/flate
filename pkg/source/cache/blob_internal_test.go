@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -381,6 +383,8 @@ func TestBlob_CredentialsUnavailable(t *testing.T) {
 			unavailable bool
 		}{
 			{"denied", auth.ErrBasicCredentialNotFound, true},
+			{"unauthorized", &fetcherr.ResponseError{StatusCode: http.StatusUnauthorized}, true},
+			{"forbidden", &fetcherr.ResponseError{StatusCode: http.StatusForbidden}, true},
 			{"unrelated", fs.ErrPermission, false},
 		} {
 			t.Run(fmt.Sprintf("disk=%t/%s", disk, tc.name), func(t *testing.T) {
@@ -392,7 +396,7 @@ func TestBlob_CredentialsUnavailable(t *testing.T) {
 				c := cachetest.New(t, root, New)
 				key := BlobKey{Content: "automatic-credential-classification"}
 				cause := fmt.Errorf("credential-canary: %w", tc.cause)
-				r, descriptor, id, err := c.Blob(t.Context(), key, &Policy{Machine: false},
+				r, descriptor, id, err := c.Blob(t.Context(), key, &Policy{},
 					func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 						_, writeErr := io.WriteString(w, "partial")
 						assert.NoError(t, writeErr)
@@ -407,6 +411,11 @@ func TestBlob_CredentialsUnavailable(t *testing.T) {
 					err,
 				)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.unavailable)
+				if tc.unavailable {
+					assert.Equal(t, err.Error(), "machine credential acquisition failed")
+				} else {
+					assert.Equal(t, err.Error(), cause.Error())
+				}
 				assert.Equal(t, strings.Contains(err.Error(), "credential-canary"), !tc.unavailable)
 				replayed, _, replayID, replayErr := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 				assert.FatalIf(t, replayed != nil || replayID != "" || replayErr == nil,

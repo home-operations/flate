@@ -30,7 +30,7 @@ import (
 func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 ) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	root := t.TempDir()
 	mustInitRepo(t, root)

@@ -131,6 +131,10 @@ func testFetcherProviderAnonymousCase(t *testing.T, private *bool,
 		t.Fatalf("challenge sequences=%d token exchanges=%d: %v", challenges.Load(), tokens.Load(), err)
 	}
 	if *private {
+		t.Logf("display=%q flux=%t missingSecret=%t unavailable=%t",
+			err.Error(), errors.Is(err, manifest.ErrFlux), errors.Is(err, manifest.ErrMissingSecret),
+			cache.CredentialsUnavailable(err))
+		assert.Equal(t, err.Error(), "machine credential acquisition failed")
 		assert.FatalIf(t, got != nil || !errors.Is(err, manifest.ErrMissingSecret) || manifests.Load() != 0 ||
 			!strings.Contains(
 				err.Error(),

@@ -527,18 +527,26 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		)
 	}
 
+	if *stage == "malformed index" {
+		assert.ErrorIf(t, !strings.HasPrefix(err.Error(), "parse https://charts.invalid/index.yaml:"),
+			"malformed index cause masked: %v", err)
+		assert.Equal(t, cache.CredentialsUnavailable(err), false)
+	}
 	if (*stage) == "retry index" {
+		assert.ErrorIf(t, !strings.HasPrefix(err.Error(), "fetch https://charts.invalid/index.yaml:"),
+			"nested index cause masked: %v", err)
+		assert.Equal(t, cache.CredentialsUnavailable(err), false)
 		terminal, ok := errors.AsType[*cache.TerminalError](err)
 		response, typed := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(
 			t,
-			!ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
-				requests.Load() != 2,
+			!ok || !terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable,
 			"nested retry budget/cause: requests=%d %v",
 			requests.Load(),
 			err,
 		)
 
+		assert.Equal(t, requests.Load(), int32(2))
 		assert.NoError(t, c.Close())
 		reopened := cachetest.New(t, root, cache.New)
 		replay := New(nil, Config{Cache: reopened, Network: newTestNetwork(t)})
@@ -549,9 +557,10 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		_, err = fetchtest.Machine(ctx, pending)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		response, typed = errors.AsType[*fetcherr.ResponseError](err)
-		assert.FatalIf(t, !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
-			requests.Load() != 2,
+		assert.FatalIf(t, !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable,
 			"nested replay lost cause or repeated HTTP: requests=%d %v", requests.Load(), err)
+		assert.Equal(t, requests.Load(), int32(2))
+		assert.Equal(t, cache.CredentialsUnavailable(err), false)
 	}
 	assert.NoError(t, c.Close())
 	assert.FatalIf(

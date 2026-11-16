@@ -1631,6 +1631,9 @@ The Git package retains HEAD, index, status, and file-byte observations. Low-lev
 | `artifact-copy/bootstrap-generator-failure-isolation-missing` | bootstrap generator failure isolation missing | Reset on replay. |
 | `artifact-copy/bootstrap-generator-failure-isolation-outside` | bootstrap generator failure isolation outside | Reset on replay. |
 | `chart-inputs/source-ref--last-owner-local-chart` | source ref  last owner local chart | Reset on replay. |
+| `source-errors/oci-missing-tag` | Missing OCI tag, cold and warm with one explicit cache. | Reset on replay. |
+| `source-errors/oci-transport` | Controlled OCI connection reset. | Reset on replay. |
+| `source-errors/oci-changed-consumer-diff` | Changed consumer reaches failure on each diff side. | Reset on replay. |
 | `source-errors/source-ref--held-error-across-namespaces-external-source` | source ref  held error across namespaces external source | Reset on replay. |
 | `source-errors/source-ref--held-error-across-namespaces-working-tree-source` | source ref  held error across namespaces working tree source | Reset on replay. |
 | `source-errors/source-ref--held-error-survives-namespace-inheritance-explicit-source-namespace` | source ref  held error survives namespace inheritance explicit source namespace | Reset on replay. |

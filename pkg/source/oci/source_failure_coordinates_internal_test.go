@@ -210,6 +210,15 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 			ok || !errors.Is((*captures.err), errdef.ErrNotFound),
 			"ORAS not-found mapping changed: %v", (*captures.err),
 		)
+		before := captures.requests.Load()
+		original := (*captures.err).Error()
+		_, err := (&operation{Fetcher: *captures.f}).fetchLayer(
+			*captures.ctx, *captures.repo, new(*captures.request),
+			&sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: *captures.retry},
+		)
+		assert.Equal(t, err.Error(), original)
+		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+		assert.ErrorIf(t, captures.requests.Load() <= before, "permanent failure did not reacquire")
 		return
 	}
 	if (*(*captures.stage)) == "canceled body" {

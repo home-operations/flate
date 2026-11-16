@@ -1,0 +1,12 @@
+
+  ✗  current snapshot: OCIRepository  flux-system/bundle  resolve missing: registry.fixture.invalid/bundle:missing: not found
+         current snapshot: blocks flux-system/load
+<PERSISTENCE:
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/load: 1 object not rendered on the current side; diff suppressed (dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/bundle: resolve missing: registry.fixture.invalid/bundle:missing: not found)
+|
+  ⚠ warnings (2)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+    [DiffSuppressed] Kustomization flux-system/load: 1 object not rendered on the current side; diff suppressed (dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/bundle: resolve missing: registry.fixture.invalid/bundle:missing: not found)
+>
+  ✗ 1 failed · 1 blocked

@@ -17,6 +17,15 @@
           "url": "git://fixture.invalid/cluster"
         }
       ]
+    },
+    {
+      "name": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://fixture.invalid/cluster"
+        }
+      ]
     }
   ],
   "commits": [
@@ -209,6 +218,35 @@
       "time": "2000-01-01T00:00:00Z",
       "parents": [],
       "overlay": "u2-scope-two-held-path-order-base"
+    },
+    {
+      "repository": "repo",
+      "name": "oci-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "oci-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "oci-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "oci-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "oci-local",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "oci-repo"
+      ],
+      "overlay": "oci-local"
     }
   ],
   "overlays": [
@@ -632,6 +670,30 @@
     {
       "name": "u2-scope-two-held-path-order-dirty",
       "directory": "overlays/u2-scope-two-held-path-order-dirty"
+    },
+    {
+      "name": "oci-repo",
+      "directory": "overlays/oci-repo",
+      "operations": [
+        {
+          "delete": "repo/flux"
+        },
+        {
+          "delete": "repo/sources"
+        },
+        {
+          "delete": "repo/broken"
+        }
+      ]
+    },
+    {
+      "name": "oci-baseline",
+      "directory": "overlays/oci-baseline",
+      "operations": []
+    },
+    {
+      "name": "oci-local",
+      "directory": "overlays/oci-local"
     }
   ],
   "cases": [
@@ -1423,6 +1485,182 @@
             "expect": {
               "stdout": "expect/held-scope-two-held-path-order.stdout",
               "stderr": "expect/held-scope-two-held-path-order.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "oci-missing-tag",
+      "description": "Missing OCI tag retains the same complete failure output with a warm cache.",
+      "setup": [
+        {
+          "commit": "oci-repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "cold",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/clusters/a",
+              "--output",
+              "name",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/oci-get.stdout",
+              "stderr": "expect/oci-missing-tag.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/clusters/a",
+              "--output",
+              "name",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/oci-get.stdout",
+              "stderr": "expect/oci-missing-tag.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "oci-transport",
+      "description": "Controlled OCI transport failure retains its cause.",
+      "setup": [
+        {
+          "commit": "oci-repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "transport",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/clusters/a",
+              "--output",
+              "name",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "transport": [
+              {
+                "host": "registry.fixture.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/manifests/missing",
+                "error": "connection-reset"
+              }
+            ],
+            "expect": {
+              "stdout": "expect/oci-get.stdout",
+              "stderr": "expect/oci-transport.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "oci-changed-consumer-diff",
+      "description": "A changed consumer reaches an OCI failure on either side of an explicit baseline.",
+      "setup": [
+        {
+          "commit": "oci-local"
+        },
+        {
+          "commit": "oci-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/clusters/a",
+              "--path-orig",
+              "@@baseline@@/clusters/a",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/oci-diff-orig.stdout",
+              "stderr": "expect/oci-diff-orig.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@baseline@@/clusters/a",
+              "--path-orig",
+              "@@repo@@/clusters/a",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/oci-diff-current.stdout",
+              "stderr": "expect/oci-diff-current.stderr",
               "code": 1
             }
           }
@@ -6237,6 +6475,178 @@
         "source-ref--held-error-scope-two-held-path-order"
       ],
       "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/oci-repo/repo/clusters/a/sync.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-repo/repo/apps/a/bundle.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-repo/repo/apps/a/load.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-repo/repo/x/kustomization.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-baseline/baseline/clusters/a/sync.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-baseline/baseline/apps/a/bundle.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-baseline/baseline/apps/a/load.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-baseline/baseline/x/kustomization.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "overlays/oci-local/repo/apps/a/load.yaml",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Committed OCI failure topology and its changed consumer."
+    },
+    {
+      "path": "expect/oci-get.stdout",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete CLI stdout."
+    },
+    {
+      "path": "expect/oci-missing-tag.stderr",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete CLI failure output."
+    },
+    {
+      "path": "expect/oci-transport.stderr",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete CLI failure output."
+    },
+    {
+      "path": "expect/oci-diff-orig.stderr",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete CLI failure output for the specified diff side."
+    },
+    {
+      "path": "expect/oci-diff-current.stderr",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete CLI failure output for the specified diff side."
+    },
+    {
+      "path": "responses/not-found",
+      "cases": [
+        "oci-missing-tag",
+        "oci-transport",
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Declared missing-tag registry response."
+    },
+    {
+      "path": "expect/oci-diff-orig.stdout",
+      "cases": [
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete consumer source-reference diff."
+    },
+    {
+      "path": "expect/oci-diff-current.stdout",
+      "cases": [
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Reviewed complete consumer source-reference diff."
+    },
+    {
+      "path": "overlays/oci-repo/repo/x/cm.yaml",
+      "cases": [
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Nonempty local output for the healthy changed consumer."
+    },
+    {
+      "path": "overlays/oci-baseline/baseline/x/cm.yaml",
+      "cases": [
+        "oci-changed-consumer-diff"
+      ],
+      "purpose": "Nonempty local output for the healthy changed consumer."
+    }
+  ],
+  "transport": [
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/bundle/manifests/missing",
+      "status": 404,
+      "body": "responses/not-found"
     }
   ]
 }

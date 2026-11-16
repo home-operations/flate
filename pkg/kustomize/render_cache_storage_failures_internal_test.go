@@ -31,7 +31,6 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Storage faults MUST retain normal-render and publication assertions in both persistence modes.
 func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
@@ -81,17 +80,16 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		})
 	}
 
-	if (*testCaseInput) == "lookup" || (*testCaseInput) == "read" {
+	if (*testCaseInput) != "publication" {
 		docs, receipt26, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			{
-				recordErr := publish(docs, receipt26)
-				assert.NoError(t, recordErr)
-			}
+			recordErr := publish(docs, receipt26)
+			assert.NoError(t, recordErr)
 		}
 		assert.NoError(t, err)
 	}
-	if (*testCaseInput) == "read" {
+	switch *testCaseInput {
+	case "read":
 		key := sourcecache.BlobKey{Content: renderKey(&req, root, nil), Render: sourcecache.RenderAccepted}
 		reader, _, _, err := cache.owner.Blob(
 			t.Context(),
@@ -102,8 +100,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		if !persistent {
 			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
 			assert.Equal(t, reader == nil, true)
-		}
-		if persistent {
+		} else {
 			assert.NoError(t, err)
 			data, err := fs.ReadFile(reader, "content")
 			assert.NoError(t, err)
@@ -113,9 +110,14 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			assert.NoError(t, os.Remove(blob))
 			assert.NoError(t, os.Mkdir(blob, 0o750))
 		}
-	} else {
+	default:
 		assert.NoError(t, os.RemoveAll(cacheDir))
 	}
+	wantDocuments := 0
+	if !persistent || (*testCaseInput) == "publication" {
+		wantDocuments = 1
+	}
+	wantReadError := persistent && (*testCaseInput) == "read"
 	for range 2 {
 		docs, receipt27, renderErr := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 		out, _, err := testutil.RenderMaps(docs, receipt27, renderErr)
@@ -129,20 +131,14 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			assert.Equal(t, hasRenderField(out, "name", "fresh"), true)
 			continue
 		}
-		if (*testCaseInput) == "read" {
-			{
-				pathErr, ok := errors.AsType[*fs.PathError](err)
-				assert.FatalIf(
-					t,
-					!ok || pathErr.Op != "read",
-					"read fault did not precede frame decoding: %v",
-					err,
-				)
-			}
-		}
-		wantDocuments := 0
-		if (*testCaseInput) == "publication" {
-			wantDocuments = 1
+		if wantReadError {
+			pathErr, ok := errors.AsType[*fs.PathError](err)
+			assert.FatalIf(
+				t,
+				!ok || pathErr.Op != "read",
+				"read fault did not precede frame decoding: %v",
+				err,
+			)
 		}
 		assert.FatalIf(t, len(out) != wantDocuments || !errors.Is(err, manifest.ErrFlux) ||
 			errors.Is(

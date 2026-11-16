@@ -359,26 +359,72 @@ func testReadSetBoundDeclarationAuthorityCase(
 
 func TestReadSet_MatchesContentDeclaration(t *testing.T) {
 	t.Parallel()
-	st := New()
-	first := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "before"}
-	st.AddObject(first)
-	var previous, objectOnly, current ReadSet
-	previous.Init(st, ownerID("before"), nil)
-	objectOnly.Init(st, ownerID("object-only"), nil)
-	current.Init(st, ownerID("current"), nil)
-	t.Cleanup(previous.Retire)
-	t.Cleanup(objectOnly.Retire)
-	t.Cleanup(current.Retire)
-	id := first.Named()
-	previous.GetDeclaration(id)
-	objectOnly.GetObject(id)
-	assert.Equal(t, compareCapturedContent(t, &previous, &objectOnly, id), false)
-	assert.Equal(t, compareCapturedContent(t, &objectOnly, &previous, id), true)
-	second := first.Clone()
-	second.Path = "after"
-	st.AddObject(second)
-	current.GetDeclaration(id)
-	assert.Equal(t, compareCapturedContent(t, &current, &previous, id), false)
+	t.Run("coverage and specification", func(t *testing.T) {
+		t.Parallel()
+		st := New()
+		first := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "before"}
+		st.AddObject(first)
+		var previous, objectOnly, current ReadSet
+		previous.Init(st, ownerID("before"), nil)
+		objectOnly.Init(st, ownerID("object-only"), nil)
+		current.Init(st, ownerID("current"), nil)
+		t.Cleanup(previous.Retire)
+		t.Cleanup(objectOnly.Retire)
+		t.Cleanup(current.Retire)
+		id := first.Named()
+		previous.GetDeclaration(id)
+		objectOnly.GetObject(id)
+		assert.Equal(t, compareCapturedContent(t, &previous, &objectOnly, id), false)
+		assert.Equal(t, compareCapturedContent(t, &objectOnly, &previous, id), true)
+		second := first.Clone()
+		second.Path = "after"
+		st.AddObject(second)
+		current.GetDeclaration(id)
+		assert.Equal(t, compareCapturedContent(t, &current, &previous, id), false)
+	})
+	for _, test := range []struct {
+		name        string
+		labels      map[string]string
+		annotations map[string]string
+		url         string
+		matches     bool
+	}{
+		{
+			name: "ownership publication",
+			labels: map[string]string{
+				"kustomize.toolkit.fluxcd.io/name":      "sync",
+				"kustomize.toolkit.fluxcd.io/namespace": "apps",
+			},
+			matches: true,
+		},
+		{name: "custom label", labels: map[string]string{"custom": "changed"}},
+		{name: "custom annotation", annotations: map[string]string{"custom": "changed"}},
+		{name: "source specification", url: "https://changed.example/repo.git"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			first := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://example.com/repo.git"}
+			st.AddObject(first)
+			var previous, current ReadSet
+			previous.Init(st, ownerID("before"), nil)
+			current.Init(st, ownerID("current"), nil)
+			t.Cleanup(previous.Retire)
+			t.Cleanup(current.Retire)
+			id := first.Named()
+			assert.Equal(t, previous.GetDeclaration(id), manifest.BaseManifest(first))
+			second := new(*first)
+			second.Labels, second.Annotations = test.labels, test.annotations
+			if test.url != "" {
+				second.URL = test.url
+			}
+			st.AddObject(second)
+			assert.Equal(t, current.GetDeclaration(id), manifest.BaseManifest(second))
+			assert.Equal(t, current.Matches(&previous), test.matches)
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), test.matches)
+			assert.Equal(t, compareCapturedContent(t, &previous, &current, id), test.matches)
+		})
+	}
 }
 
 func TestReadSet_MatchesContentRetired(t *testing.T) {

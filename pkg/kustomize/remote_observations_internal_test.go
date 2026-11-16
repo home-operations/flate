@@ -100,7 +100,10 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 			snap.Remotes[1].Parents,
 		)
 	}
-	frame, err := testEncodeFrame(t, &renderHeader{Reads: snap}, nil)
+	frame, err := testEncodeFrame(
+		t,
+		&renderFrame{Output: nil, header: renderHeader{Reads: snap}},
+	)
 	assert.NoError(t, err)
 	decodedFrame, err := testDecodeFrame(t, frame)
 	decoded := decodedFrame.header.Reads
@@ -260,7 +263,10 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 			"capture acquisitions for %s=%d, want 1", descriptor.URL, calls[descriptor.URL])
 	}
 	mu.Unlock()
-	frame, err := testEncodeFrame(t, &renderHeader{Reads: snap}, nil)
+	frame, err := testEncodeFrame(
+		t,
+		&renderFrame{Output: nil, header: renderHeader{Reads: snap}},
+	)
 	assert.NoError(t, err)
 	snapFrame, decodeErr := testDecodeFrame(t, frame)
 	snap, err = snapFrame.header.Reads, decodeErr

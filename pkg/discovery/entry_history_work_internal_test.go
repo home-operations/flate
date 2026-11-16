@@ -26,7 +26,7 @@ func TestEntryReceipt_RecordsHistory(t *testing.T) {
 	scope := recorder.Scope()
 	d := Session{loader: &loader.Loader{}, cfg: Config{
 		Path: root, Input: &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root, LocalRoot: root},
-		Trees: kustomize.NewTreeCache(owner, nil, nil), Work: scope,
+		Cache: owner, Trees: kustomize.NewTreeCache(owner, nil, nil), Work: scope,
 	}}
 	admission := &Admission{qualification: &entryQualification{}}
 	d.entryReceipt(t.Context(), admission, d.cfg.Input)

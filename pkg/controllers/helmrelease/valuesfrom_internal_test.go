@@ -334,7 +334,8 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	c, st := newTestController(t, nil)
 	var err error
-	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+	c.Helm = helm.NewClient(c.Cache)
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
@@ -388,9 +389,9 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(
 		t,
-		c.Helm.RecordRender(
+		c.Cache.RecordRender(
 			t.Context(),
-			helm.RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Sources: []manifest.SourceEvidence{},
@@ -513,7 +514,8 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			c, st := newTestControllerWithOptions(t, &base.Options{Missing: depwait.NewMissingPolicy([]string{kind})})
-			c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+			c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+			c.Helm = helm.NewClient(c.Cache)
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 			testutil.WriteFile(
@@ -569,9 +571,9 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(
 				t,
-				c.Helm.RecordRender(
+				c.Cache.RecordRender(
 					t.Context(),
-					helm.RenderAcceptance{
+					sourcecache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt,
 						Sources: []manifest.SourceEvidence{},

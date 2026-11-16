@@ -329,7 +329,8 @@ func testReconcileUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, t
 
 	c, st := newTestController(t, nil)
 	cacheDir := t.TempDir()
-	c.Helm = helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
+	c.Cache = cachetest.New(t, cacheDir, sourcecache.New)
+	c.Helm = helm.NewClient(c.Cache)
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(

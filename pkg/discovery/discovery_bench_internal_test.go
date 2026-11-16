@@ -237,9 +237,10 @@ func benchmarkRunBuiltPackage(b *testing.B, existing *bool) {
 			),
 		},
 	}
-	trees := kustomize.NewTreeCache(cachetest.New(b, "", cache.New), nil, task.NewBounded(2))
+	cacheOwner := cachetest.New(b, "", cache.New)
+	trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
 	b.Cleanup(trees.Close)
-	cfg := Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Trees: trees}
+	cfg := Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Cache: cacheOwner, Trees: trees}
 	secret := &manifest.Secret{
 		Name:       "credentials",
 		Namespace:  "apps",

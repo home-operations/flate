@@ -28,16 +28,18 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func testEncodeFrame(tb testing.TB, header *renderHeader, output []byte) ([]byte, error) {
+func testEncodeFrame(tb testing.TB, frame *renderFrame) ([]byte, error) {
 	tb.Helper()
-	frame, err := sourcecache.NewFrame(frameDomain, header, output)
+	shared := frame.RenderFrame
+	shared.Stored = nil
+	stored, err := shared.Encode(frameDomain, frame.header)
 	if err != nil {
 		return nil, err
 	}
-	if frame == nil {
+	if stored == nil {
 		return nil, errors.New("render metadata exceeds optional persistence limit")
 	}
-	publication, err := frame.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{})
+	publication, err := stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{})
 	if err != nil {
 		return nil, err
 	}
@@ -50,22 +52,20 @@ func testDecodeFrame(tb testing.TB, wire []byte) (renderFrame, error) {
 	tb.Helper()
 	var frame renderFrame
 	var err error
-	frame.stored, err = sourcecache.OpenFrame(tb.Context(), frameDomain,
+	frame.RenderFrame, err = sourcecache.OpenRenderFrame(tb.Context(), frameDomain,
 		fstest.MapFS{"content": &fstest.MapFile{Data: wire}}, &frame.header)
-	if err == nil {
-		frame.output, err = frame.stored.Payload(tb.Context())
-	}
 	return frame, err
 }
 
-func (f *renderFrame) testAcceptedFrame(
+//nolint:gocritic // Fixture encoding must preserve the receipt frame snapshot.
+func (f renderFrame) testAcceptedFrame(
 	tb testing.TB,
 	owner manifest.NamedResource,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 	content any,
 ) ([]byte, error) {
 	tb.Helper()
-	stored, err := sourcecache.NewFrame(frameDomain, f.header, f.output)
+	stored, err := f.Encode(frameDomain, f.header)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 	}
 	snapFrame, err := testDecodeFrame(tb, raw)
 	snap := snapFrame.header.Reads
-	out := snapFrame.output
+	out := snapFrame.Output
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -120,14 +120,12 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 
 func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	tb.Helper()
-	if key.Render == sourcecache.RenderPending && owner.CanPersistRenders() {
-		key.Render = sourcecache.RenderAccepted
-	}
 	if frame, err := testDecodeFrame(tb, raw); err == nil {
 		if render, ok := key.Content.(string); ok {
-			frame.header.Key = render
+			frame.Key = render
 		}
-		raw, err = testEncodeFrame(tb, &frame.header, frame.output)
+		frame.Stored = nil
+		raw, err = testEncodeFrame(tb, &frame)
 		if err != nil {
 			tb.Fatal(err)
 		}
@@ -148,7 +146,10 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 
 func testRenderFrame(tb testing.TB, snap *readSetSnapshot, output []byte) []byte {
 	tb.Helper()
-	frame, err := testEncodeFrame(tb, &renderHeader{Reads: *snap}, output)
+	frame, err := testEncodeFrame(
+		tb,
+		&renderFrame{Output: output, header: renderHeader{Reads: *snap}},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -191,10 +192,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt2},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt2)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -219,10 +217,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt3},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt3)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -242,12 +237,9 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			testRenderFrame(t, new(snap), testRenderPayload(t, "SENTINEL")),
 		)
 	}
+	retained := cache.owner
 	cache.Close()
-	{
-		closeErr := cache.owner.Close()
-		assert.NoError(t, closeErr)
-	}
-	cache = newTestTreeCache(t, cacheDir)
+	cache = newTestTreeCacheWithTasks(t, retained, task.NewBounded(2))
 	out2, receipt4, err := testutil.RenderMaps(
 		Render(
 			ctx,
@@ -264,10 +256,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt4},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt4)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -304,10 +293,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt5},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt5)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -336,10 +322,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt6},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt6)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -368,10 +351,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt7},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt7)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -396,10 +376,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt8},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt8)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -411,21 +388,22 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		out4,
 		err,
 	)
+	retained = cache.owner
 	cache.Close()
-	{
-		err := cache.owner.Close()
-		assert.NoError(t, err)
-	}
-	cache = newTestTreeCache(t, cacheDir)
+	cache = newTestTreeCacheWithTasks(t, retained, task.NewBounded(2))
 	_, persisted, hit := readTestRenderFrame(t, cache, key)
 	assert.FatalIf(
 		t,
-		hit != eligible || hit && !reflect.DeepEqual(persisted, out4),
-		"replacement after reopen = %s, %v; eligible = %v",
+		!hit || !reflect.DeepEqual(persisted, out4),
+		"replacement after renderer recreation = %s, %v; eligible = %v",
 		persisted,
 		hit,
 		eligible,
 	)
+	closeTestTreeCache(t, cache)
+	cache = newTestTreeCache(t, cacheDir)
+	_, _, hit = readTestRenderFrame(t, cache, key)
+	assert.Equal(t, hit, false)
 	testRenderCacheTypedEdits(ctx, t, &renderCacheTypedEditsInputs{root: &root, cache: &cache, output: &out4})
 }
 
@@ -450,10 +428,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt11},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt11)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -480,10 +455,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	out2, receipt12, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt12},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt12)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -514,10 +486,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	out3, receipt13, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt13},
-			)
+			recordErr := recordPendingRender(ctx, cache.owner, receipt13)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -607,7 +576,7 @@ func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
 			assert.Equal(t, RenderInputs(receipt)[tc.resource+".yaml"], true)
 			content := PrepareShape(&req, docs).Content()
 			emission := acceptedEmission(t, req.Spec.Named(), receipt, content)
-			assert.NoError(t, cache.RecordRender(
+			assert.NoError(t, cache.owner.RecordRender(
 				t.Context(), acceptanceForEmission(req.Spec.Named(), emission, content),
 			))
 			history, complete := cache.previousHistory(t.Context(), &req, req.Spec.Named(), content)
@@ -682,11 +651,17 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	for _, output := range []string{"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n", ""} {
 		t.Run(fmt.Sprintf("output-bytes-%d", len(output)), func(t *testing.T) {
 			t.Parallel()
-			frame, err := testEncodeFrame(t, &renderHeader{Reads: snap}, []byte(output))
+			frame, err := testEncodeFrame(
+				t,
+				&renderFrame{
+					Output: []byte(output),
+					header: renderHeader{Reads: snap},
+				},
+			)
 			assert.FatalIf(t, err != nil, "new frame: %v", err)
 			gotSnapFrame, err := testDecodeFrame(t, frame)
 			gotSnap := gotSnapFrame.header.Reads
-			gotOut := gotSnapFrame.output
+			gotOut := gotSnapFrame.Output
 			assert.FatalIf(t, err != nil, "open frame: %v", err)
 			assert.ErrorIf(t, string(gotOut) != output, "output mismatch: want %q, got %q", output, gotOut)
 			assert.ErrorIf(
@@ -732,10 +707,7 @@ func testRenderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 		docs, receipt1, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
-				recordErr := c.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt1},
-				)
+				recordErr := recordPendingRender(t.Context(), c.owner, receipt1)
 				assert.NoError(t, recordErr)
 			}
 		}
@@ -786,10 +758,7 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 		out, receipt9, err := testutil.RenderMaps(Render(ctx, *inputs.cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
-				recordErr := (*inputs.cache).RecordRender(
-					ctx,
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt9},
-				)
+				recordErr := recordPendingRender(ctx, (*inputs.cache).owner, receipt9)
 				assert.NoError(t, recordErr)
 			}
 		}
@@ -800,10 +769,7 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 		repeated, receipt10, err := testutil.RenderMaps(Render(ctx, *inputs.cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
-				recordErr := (*inputs.cache).RecordRender(
-					ctx,
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt10},
-				)
+				recordErr := recordPendingRender(ctx, (*inputs.cache).owner, receipt10)
 				assert.NoError(t, recordErr)
 			}
 		}

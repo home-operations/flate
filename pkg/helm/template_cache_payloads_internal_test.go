@@ -53,9 +53,9 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	)
 	if (*recovery.renderMapsErr) == nil {
 		{
-			recordErr := (*inputs.cli).RecordRender(
+			recordErr := (*inputs.cli).cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt23,
 					Records: emptyRenderInventory,
@@ -105,9 +105,9 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	)
 	if (*recovery.renderMapsErr) == nil {
 		{
-			recordErr := (*inputs.cli).RecordRender(
+			recordErr := (*inputs.cli).cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt24,
 					Records: emptyRenderInventory,
@@ -127,9 +127,9 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	)
 	if (*recovery.renderMapsErr) == nil {
 		{
-			recordErr := reopened.RecordRender(
+			recordErr := reopened.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt25,
 					Records: emptyRenderInventory,

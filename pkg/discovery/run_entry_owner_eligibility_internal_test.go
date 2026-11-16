@@ -51,9 +51,9 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	st := store.New()
 	cacheDir := t.TempDir()
 	testReceiptTreesResult1 := testReceiptTrees(t, cacheDir, persistent)
-	trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
+	cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	source := &store.SourceArtifact{LocalPath: root, FS: input}
-	cfg := Config{Input: source, Path: root + "/app", Store: st, Trees: trees}
+	cfg := Config{Input: source, Path: root + "/app", Store: st, Cache: cacheOwner, Trees: trees}
 	result, err := Run(t.Context(), cfg)
 	assert.NoError(t, err)
 	if !result.Binding.Producer.ReportHidden() {
@@ -132,7 +132,10 @@ spec:
 			}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
-			d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+			d := Session{
+				cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+				loader: loader.New(st),
+			}
 			d.loader.SourceRoot = root
 			{
 				_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
@@ -188,7 +191,7 @@ spec:
 			closeCache()
 			assert.NoError(t, cacheOwner.Close())
 			testReceiptTreesResult3 := testReceiptTrees(t, cacheDir, persistent)
-			trees, closeCache = testReceiptTreesResult3.trees, testReceiptTreesResult3.close
+			cacheOwner, trees, closeCache = testReceiptTreesResult3.owner, testReceiptTreesResult3.trees, testReceiptTreesResult3.close
 			req := preparedRequest(t, &d.cfg, owner, source)
 			assert.FatalIf(
 				t,
@@ -206,7 +209,10 @@ spec:
 			)
 			st = store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
-			d = Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+			d = Session{
+				cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+				loader: loader.New(st),
+			}
 			d.loader.SourceRoot = root
 			_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -235,11 +241,14 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: accepted}\n")
 	cacheDir := t.TempDir()
 	testReceiptTreesResult5 := testReceiptTrees(t, cacheDir, persistent)
-	trees, closeCache := testReceiptTreesResult5.trees, testReceiptTreesResult5.close
+	cacheOwner, trees, closeCache := testReceiptTreesResult5.owner, testReceiptTreesResult5.trees, testReceiptTreesResult5.close
 	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, source)
-	d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+	d := Session{
+		cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+		loader: loader.New(st),
+	}
 	d.loader.SourceRoot = root
 	_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -287,7 +296,7 @@ func TestAdmitEntry_BuildFailurePreservesRawErrors(t *testing.T) {
 	st := store.New()
 	result, err := Run(
 		t.Context(),
-		Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t)},
+		testConfig(t, Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st}),
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -332,10 +341,10 @@ func TestRun_UnappliedPackage(t *testing.T) {
 		},
 	}
 	st := store.New()
-	result, err := Run(t.Context(), Config{
+	result, err := Run(t.Context(), testConfig(t, Config{
 		Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: filepath.Join(root, "entry"),
-		Store: st, Trees: testTrees(t), SelfURLs: []string{"https://fixture.invalid/self"},
-	})
+		Store: st, SelfURLs: []string{"https://fixture.invalid/self"},
+	}))
 	assert.NoError(t, err)
 	assert.FatalIf(t, result.Binding != (Binding{}), "%v", "unrendered application qualified the entry")
 	assert.FatalIf(
@@ -364,10 +373,10 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	input := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
 	cacheDir := t.TempDir()
 	testReceiptTreesResult7 := testReceiptTrees(t, cacheDir, persistent)
-	trees, closeCache := testReceiptTreesResult7.trees, testReceiptTreesResult7.close
+	cacheOwner, trees, closeCache := testReceiptTreesResult7.owner, testReceiptTreesResult7.trees, testReceiptTreesResult7.close
 	st := store.New()
 	source := &store.SourceArtifact{LocalPath: root, FS: input}
-	result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Trees: trees})
+	result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Cache: cacheOwner, Trees: trees})
 	assert.NoError(t, err)
 	owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
 	req := preparedRequest(t, &Config{}, owner, source)
@@ -391,7 +400,7 @@ func TestRun_DiscoveryOnlyEntry(t *testing.T) {
 	observed := &entryGeneratorFS{FS: input}
 	result, err := Run(
 		t.Context(),
-		Config{Input: &store.SourceArtifact{LocalPath: root, FS: observed}, Path: root, Store: st, Trees: testTrees(t)},
+		testConfig(t, Config{Input: &store.SourceArtifact{LocalPath: root, FS: observed}, Path: root, Store: st}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, result.Binding, Binding{})
@@ -438,12 +447,11 @@ func testRunEntryOwnerEligibilityIndependent(t *testing.T) {
 	st.AddObject(&manifest.Kustomization{Name: "ready", Namespace: "apps", Path: "./ready"})
 	result, err := Run(
 		t.Context(),
-		Config{
+		testConfig(t, Config{
 			Store: st,
-			Trees: testTrees(t),
 			Input: &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:  root + "/entry",
-		},
+		}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, result.Binding.Producer, testutil.KustomizationID("apps", "owner"))
@@ -517,12 +525,11 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 		st.AddObject(ready)
 	}
 	d := newDiscoverer(
-		&Config{
+		new(testConfig(t, Config{
 			Store: st,
-			Trees: testTrees(t),
 			Input: &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:  root + "/entry",
-		},
+		})),
 	)
 	_, err = d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
@@ -668,4 +675,18 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), projected)
 		assert.Equal(t, (*tailCaseInput.d).prepared[projected.Named()].source, &replacement)
 	}
+}
+
+func previousPackageHistory(
+	t *testing.T,
+	trees *kustomize.TreeCache,
+	req *kustomize.RenderRequest,
+) kustomize.EntryEvidence {
+	t.Helper()
+	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
+	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
+	if !available || !complete {
+		return kustomize.EntryEvidence{}
+	}
+	return kustomize.EntryEvidence{Owner: req.Spec.Named(), Records: records}
 }

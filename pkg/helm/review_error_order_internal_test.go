@@ -86,9 +86,9 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt11,
 						Records: emptyRenderInventory,
@@ -124,9 +124,9 @@ func testReviewErrorPrecedenceChartBeforeCapabilityAndValues(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt8,
 					Records: emptyRenderInventory,
@@ -172,9 +172,9 @@ func testReviewErrorPrecedenceCase(t *testing.T, testCaseInput *bool,
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt9,
 					Records: emptyRenderInventory,
@@ -291,9 +291,9 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt10,
 					Records: emptyRenderInventory,

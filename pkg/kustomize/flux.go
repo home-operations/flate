@@ -114,7 +114,7 @@ type Preparation struct {
 	complete       bool
 	lower          fs.FS
 	root, key      string
-	binding        renderBinding
+	binding        sourcecache.RenderBinding[renderPolicy]
 }
 
 // Retire MUST follow the final consumer and clears retained input references.
@@ -138,7 +138,8 @@ func (p *Preparation) Take(previous *Preparation, cache *TreeCache, request *Ren
 
 func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) bool {
 	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
-	policy := p.binding.Strict == request.StrictSubstitutions && slices.Equal(p.binding.Skip, request.SkipKinds)
+	policy := p.binding.Policy.Strict == request.StrictSubstitutions &&
+		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
 	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
 	return p.cache == cache && owner && policy && location
 }
@@ -226,25 +227,12 @@ func (p *Preparation) bindSource(req *RenderRequest) {
 	if req.Spec != nil {
 		source = req.Spec.EffectiveSourceID()
 	}
-	skip := p.binding.Skip
+	skip := p.binding.Policy.Skip
 	if !p.complete {
 		skip = slices.Clone(req.SkipKinds)
 	}
-	p.binding = renderBinding{
-		p.key,
-		source,
-		req.Source.Kind,
-		req.Source.URL,
-		req.Source.LocalPath,
-		req.Source.LocalRoot,
-		req.Source.Key,
-		req.Source.Revision,
-		req.Source.Digest,
-		req.Source.InputAlias,
-
-		req.StrictSubstitutions,
-		skip,
-	}
+	p.binding.Policy = renderPolicy{Strict: req.StrictSubstitutions, Skip: skip}
+	p.binding.Refresh(p.key, source, req.Source)
 	p.source = req.Source
 	p.complete = true
 }
@@ -348,7 +336,7 @@ func (r *renderRequest) validate(
 ) (bool, error) {
 	result.receipt = nil
 	frame, decoded, readFileErr := r.request.Preparation.readFrame(ctx, generation)
-	if readFileErr != nil || !decoded || frame.header.Key != r.key {
+	if readFileErr != nil || !decoded || frame.Key != r.key {
 		return false, readFileErr
 	}
 	valid, readFileErr := frame.header.Reads.stillValid(
@@ -360,16 +348,14 @@ func (r *renderRequest) validate(
 	if readFileErr != nil || !valid {
 		return false, readFileErr
 	}
-	result.docs, readFileErr = manifest.DecodeRender(frame.output)
+	result.docs, readFileErr = manifest.DecodeRender(frame.Output)
 	if readFileErr != nil {
 		//nolint:nilerr // Incomplete render output must reject cache publication without failing the local result.
 		return false, nil
 	}
 	frame.binding = r.binding
-	binding := manifest.Fingerprint(r.binding)
-	if frame.header.Binding != binding {
-		frame.header.Binding, frame.stored = binding, nil
-	}
+	binding := r.binding.Fingerprint()
+	frame.Rebind(binding)
 	result.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 	return true, nil
 }
@@ -429,11 +415,8 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	frame, cleanedAbsErr := sourcecache.NewFrame(
-		frameDomain,
-		renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
-		payload,
-	)
+	shared := sourcecache.RenderFrame{Key: r.key, Binding: r.binding.Fingerprint(), Output: payload}
+	frame, cleanedAbsErr := shared.Encode(frameDomain, renderHeader{Reads: rec.snapshot()})
 	if cleanedAbsErr != nil || frame == nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}

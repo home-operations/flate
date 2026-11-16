@@ -1,8 +1,6 @@
 package store
 
 import (
-	"archive/tar"
-	"context"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -10,27 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
-
-func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name                string
-		reverse, persistent bool
-	}{
-		{name: "memory/a-first"},
-		{name: "memory/z-first", reverse: true},
-		{name: "persistent/a-first", persistent: true},
-		{name: "persistent/z-first", persistent: true, reverse: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testRecordEmittedPayloadPrecedenceCase(t, &tc)
-		},
-		)
-	}
-}
 
 func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 	t.Parallel()
@@ -251,114 +229,4 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 			assert.Equal(t, s.GetArtifact(target, ArtifactContent), Artifact(last))
 		})
 	}
-}
-
-func testRecordEmittedPayloadPrecedenceCase(t *testing.T, testCaseInput *struct {
-	name       string
-	reverse    bool
-	persistent bool
-},
-) {
-	t.Helper()
-
-	s := New()
-	a, z, zz := ownerID("a"), ownerID("z"), ownerID("zz")
-	for _, id := range []manifest.NamedResource{a, z, zz} {
-		s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-	}
-	firstChild, lastChild, declaration := emissionChild(
-		"generated",
-		"a",
-	), emissionChild(
-		"generated",
-		"z",
-	), emissionChild(
-		"generated",
-		"zz",
-	)
-	target := declaration.Obj.Named()
-	root := ""
-	if testCaseInput.persistent {
-		root = t.TempDir()
-	}
-	cache, err := sourcecache.New(t.Context(), root)
-	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, cache.Close()) })
-	acquire := func(value string) *SourceArtifact {
-		t.Helper()
-		input, descriptor, key, acquireErr := cache.Acquire(
-			t.Context(),
-			sourcecache.ArchiveKey{Content: value, Policy: "fixed"},
-			&sourcecache.Policy{MaxAge: sourcecache.Forever},
-			func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-				writer := tar.NewWriter(target)
-				if addFSErr := writer.AddFS(fstest.MapFS{"file": {Data: []byte(value)}}); addFSErr != nil {
-					return sourcecache.ProducerResult{}, addFSErr
-				}
-				return sourcecache.ProducerResult{}, writer.Close()
-			},
-		)
-		assert.NoError(t, acquireErr)
-		return &SourceArtifact{
-			Kind:      target.Kind,
-			URL:       "https://" + value + ".test",
-			LocalPath: "/" + value,
-			LocalRoot: "/root-" + value,
-			Key:       key,
-			Digest:    descriptor.Annotations["flate.tree-digest"],
-			Revision:  "revision-" + value,
-			Metadata:  map[string]string{"origin": value},
-			FS:        input,
-		}
-	}
-	first, last := acquire("a"), acquire("z")
-	first.Size, last.Size, last.InputAlias = 1, 2, true
-	peer := New()
-	peer.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
-	peer.RecordEmitted(
-		a,
-		&Emission{Children: []Child{firstChild}, Complete: true},
-		map[manifest.NamedResource]*SourceArtifact{target: first},
-	)
-	owners, payloads := []manifest.NamedResource{a, z}, []*SourceArtifact{first, last}
-	children := []Child{firstChild, lastChild}
-	if testCaseInput.reverse {
-		slices.Reverse(owners)
-		slices.Reverse(payloads)
-		slices.Reverse(children)
-	}
-	testRecordEmittedPayloadPrecedenceCaseCompletion(
-		t,
-		&testRecordEmittedPayloadPrecedenceCaseCompletionState{
-			s:           &s,
-			a:           &a,
-			z:           &z,
-			zz:          &zz,
-			declaration: &declaration,
-			target:      &target,
-			err:         &err,
-			first:       &first,
-			last:        &last,
-			peer:        &peer,
-			owners:      &owners,
-			payloads:    &payloads,
-			children:    &children,
-		},
-	)
-}
-
-type testRecordEmittedPayloadPrecedenceCaseCompletionState struct {
-	s           **Store
-	a           *manifest.NamedResource
-	z           *manifest.NamedResource
-	zz          *manifest.NamedResource
-	declaration *Child
-	target      *manifest.NamedResource
-	err         *error
-	first       **SourceArtifact
-	last        **SourceArtifact
-	peer        **Store
-	owners      *[]manifest.NamedResource
-	payloads    *[]*SourceArtifact
-	children    *[]Child
 }

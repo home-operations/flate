@@ -307,7 +307,10 @@ func testReconcileUnresolvedWarningReplayCase(
 	fixture, s, _ := newControllerWithFixture(t)
 	freezeSourceForTest(t, s)
 	c := New(s, fixture.Tasks, fixture.Trees)
-	c.Configure(Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret})}, sourcecache.RetryConfig{})
+	c.Configure(Options{
+		Cache:   fixture.Cache,
+		Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret}),
+	}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	consumers := make([]*manifest.Kustomization, 2)
 	for i := range consumers {

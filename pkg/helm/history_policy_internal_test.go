@@ -62,9 +62,9 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	}
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Sources: []manifest.SourceEvidence{},
@@ -242,9 +242,9 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
 		assert.NoError(
 			t,
-			renderer.RecordRender(
+			renderer.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt,
 					Sources: []manifest.SourceEvidence{},
@@ -285,7 +285,11 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 				changed.TargetNamespace, changed.HelmReleaseSpec.ReleaseName = tc.target, tc.release
 				prepared, prepareErr := renderer.prepareTemplate(t.Context(), changed, nil, &input)
 				assert.NoError(t, prepareErr)
-				assert.Equal(t, prepared.key == frame.header.Key && frame.binding.same(&prepared.binding), tc.complete)
+				assert.Equal(
+					t,
+					prepared.key == frame.Key && frame.binding.Equal(&prepared.binding, equalTemplatePolicy),
+					tc.complete,
+				)
 				previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
 				assert.Equal(t, complete, false)
 				assert.Equal(t, previous == nil, true)
@@ -335,9 +339,9 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Sources: []manifest.SourceEvidence{},
@@ -433,7 +437,7 @@ func testTemplateHistoryPolicyProjectionCase(
 	frame := testCaseInput.frame
 	assert.Equal(
 		t,
-		prepared.key == frame.header.Key && frame.binding.same(&prepared.binding),
+		prepared.key == frame.Key && frame.binding.Equal(&prepared.binding, equalTemplatePolicy),
 		testCaseInput.tc.complete,
 	)
 	previous, complete := (*testCaseInput.renderer).PreviousRender(t.Context(), changed, nil, (*testCaseInput.input))
@@ -492,13 +496,13 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	input := RenderOptions{Sources: testCaseInput.input.Sources}
 	_, first, err := renderer.Template(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
-	acceptance := RenderAcceptance{
+	acceptance := cache.RenderAcceptance{
 		Owner:   hr.Named(),
 		Receipt: first,
 		Sources: []manifest.SourceEvidence{},
 		Records: maps.All(*testCaseInput.records),
 	}
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.cache.RecordRender(t.Context(), acceptance))
 	changed := hr.Clone()
 	assert.NoError(
 		t,
@@ -507,19 +511,19 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	_, next, err := renderer.Template(t.Context(), changed, nil, input)
 	assert.NoError(t, err)
 	before, current := first.Value().(renderFrame), next.Value().(renderFrame)
-	assert.Equal(t, current.header.Key, before.header.Key)
-	assert.Diff(t, current.output, before.output)
+	assert.Equal(t, current.Key, before.Key)
+	assert.Diff(t, current.Output, before.Output)
 	assert.Equal(t, next.Equal(first), false)
 	_, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
 	assert.Equal(t, complete, false)
 	acceptance.Receipt = next
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.cache.RecordRender(t.Context(), acceptance))
 	_, complete = renderer.PreviousRender(t.Context(), changed, nil, input)
 	assert.Equal(t, complete, persistent)
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.cache.RecordRender(t.Context(), acceptance))
 	after, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
 	assert.Equal(t, bytes.Equal(index, after), true)

@@ -12,8 +12,12 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestRender_CacheStorageFailures(t *testing.T) {
@@ -42,14 +46,46 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
+	publish := func(docs []manifest.DocOccurrence, receipt *manifest.RenderReceipt) error {
+		t.Helper()
+		st := store.New()
+		st.AddObject(spec)
+		st.SetArtifact(spec.EffectiveSourceID(), req.Source)
+		controller := base.New(st, task.NewBounded(2))
+		execution := controllertest.NewExecution(controller, spec.Named())
+		defer execution.Retire()
+		shaping := PrepareShape(&req, docs)
+		defer shaping.Retire()
+		content := shaping.Content()
+		parsed := execution.ParseChildren(spec, docs, manifest.ParseDocOptions{})
+		emission := &store.Emission{
+			Children: parsed.Children, Manifests: parsed.Visible, Failures: parsed.Failures,
+			Fingerprint: manifest.Fingerprint(content), Complete: true, Render: receipt,
+		}
+		execution.Reads.Bind(emission)
+		assert.NoError(t, controllertest.Emit(t.Context(), controller, spec.Named(), emission))
+		records, sources := emission.Footprint(), emission.SourcePaths()
+		assert.Equal(t, len(emission.Children), 1)
+		assert.Equal(t, records != nil && sources != nil, true)
+		return cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+			Owner:   spec.Named(),
+			Receipt: receipt,
+			Records: records,
+			Sources: sources,
+			Content: content,
+			Source: req.Source.HistoryIdentity(
+				spec.EffectiveSourceID(),
+			),
+			Reads:       emission.Reads,
+			OutputReads: emission.OutputReads,
+		})
+	}
+
 	if (*testCaseInput) == "lookup" || (*testCaseInput) == "read" {
-		_, receipt26, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+		docs, receipt26, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 		if err == nil {
 			{
-				recordErr := cache.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt26},
-				)
+				recordErr := publish(docs, receipt26)
 				assert.NoError(t, recordErr)
 			}
 		}
@@ -81,9 +117,10 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		assert.NoError(t, os.RemoveAll(cacheDir))
 	}
 	for range 2 {
-		out, receipt27, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+		docs, receipt27, renderErr := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+		out, _, err := testutil.RenderMaps(docs, receipt27, renderErr)
 		if err == nil {
-			err = cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: receipt27})
+			err = publish(docs, receipt27)
 		}
 
 		if !persistent {

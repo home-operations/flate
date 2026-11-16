@@ -55,17 +55,17 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	assert.FatalIf(t, receipt == nil, "%s", "successful raw template supplied no receipt")
 
 	frame := receipt.Value().(renderFrame)
-	frame.header.Binding = manifest.Fingerprint(frame.binding)
+	frame.Rebind(frame.binding.Fingerprint())
 	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-	frame.stored, err = cache.NewFrame(frameDomain, frame.header, frame.output)
+	frame.Stored, err = frame.Encode(frameDomain, frame.header)
 	assert.NoError(t, err)
-	original := bytes.Clone(frame.output)
+	original := bytes.Clone(frame.Output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
-	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
-	raw, err := testutil.DecodeRender(frame.output)
+	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).Output, original), true)
+	raw, err := testutil.DecodeRender(frame.Output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
-	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
+	key := cache.BlobKey{Content: frame.Key, Render: cache.RenderAccepted}
 	{
 		_, _, _, blobErr := owner.Blob(
 			t.Context(),
@@ -80,16 +80,21 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	}
 	assert.NoError(
 		t,
-		client.RecordRender(
+		client.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Sources: []manifest.SourceEvidence{}, Records: nil},
+			cache.RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: nil,
+			},
 		),
 	)
 	assert.NoError(
 		t,
-		client.RecordRender(
+		client.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: nil,
 				Sources: []manifest.SourceEvidence{},
@@ -152,9 +157,9 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		},
 	}
 	assert.NoError(
-		t, (*testCaseInput.client).RecordRender(
+		t, (*testCaseInput.client).cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*testCaseInput.hr).Named(),
 				Receipt: (*testCaseInput.receipt),
 				Sources: []manifest.SourceEvidence{},
@@ -162,7 +167,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 			},
 		),
 	)
-	assert.NoError(t, (*testCaseInput.client).RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, (*testCaseInput.client).cache.RecordRender(t.Context(), cache.RenderAcceptance{
 		Owner: (*testCaseInput.hr).Named(), Receipt: *testCaseInput.receipt, Records: emptyRenderInventory,
 	}))
 	fresh := NewClient(cachetest.New(t, (*testCaseInput.root), cache.New))
@@ -186,12 +191,12 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	assert.Equal(t, changedComplete, false)
 	prepared, prepareErr := fresh.prepareTemplate(t.Context(), *testCaseInput.hr, nil, &changed)
 	assert.NoError(t, prepareErr)
-	assert.Equal(t, prepared.key, testCaseInput.frame.header.Key)
+	assert.Equal(t, prepared.key, testCaseInput.frame.Key)
 	observed := *testCaseInput.input
 	calls := 0
 	observed.Admit = func(admission RenderAdmission) (bool, error) {
 		calls++
-		assert.Equal(t, admission.Key, testCaseInput.frame.header.Key)
+		assert.Equal(t, admission.Key, testCaseInput.frame.Key)
 		assert.Equal(t, admission.Receipt != nil, true)
 		wantDocuments := 0
 		if persistent {
@@ -221,10 +226,10 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 
 	for _, tc := range []struct {
 		name   string
-		mutate func(*renderHeader)
+		mutate func(*renderFrame)
 	}{
-		{"request key", func(h *renderHeader) { h.Key = "foreign" }},
-		{"missing analysis", func(h *renderHeader) { h.Analysis = nil }},
+		{"request key", func(h *renderFrame) { h.Key = "foreign" }},
+		{"missing analysis", func(h *renderFrame) { h.header.Analysis = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -301,9 +306,9 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	{
-		err := (*testCaseInput.client).RecordRender(
+		err := (*testCaseInput.client).cache.RecordRender(
 			canceled,
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*testCaseInput.hr).Named(),
 				Receipt: (*testCaseInput.receipt),
 				Sources: []manifest.SourceEvidence{},
@@ -323,9 +328,9 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		}
 	}
 	assert.NoError(
-		t, (*testCaseInput.client).RecordRender(
+		t, (*testCaseInput.client).cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*testCaseInput.hr).Named(),
 				Receipt: (*testCaseInput.receipt),
 				Sources: []manifest.SourceEvidence{},
@@ -353,9 +358,9 @@ func testTemplateAcceptedHistoryDurableStaticOutput(
 	publisher := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	assert.NoError(
 		t,
-		publisher.RecordRender(
+		publisher.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
 				Records: maps.All(records),
@@ -390,9 +395,9 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 		publisher := NewClient(cachetest.New(t, directory, cache.New))
 		assert.NoError(
 			t,
-			publisher.RecordRender(
+			publisher.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   (*(*testCaseInput).hr).Named(),
 					Receipt: (*(*testCaseInput).receipt),
 					Records: maps.All(records),
@@ -445,9 +450,9 @@ func testTemplateAcceptedHistoryDurablePreparation(
 	assert.NoError(t, templateErr)
 	assert.NoError(
 		t,
-		publisher.RecordRender(
+		publisher.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -512,16 +517,17 @@ func testTemplateAcceptedHistoryDurableName(
 	testCaseInput **testTemplateAcceptedHistoryDurableInputs,
 	tc *struct {
 		name   string
-		mutate func(*renderHeader)
+		mutate func(*renderFrame)
 	},
 	records map[manifest.NamedResource]manifest.DiscoveryRecord,
 ) {
 	t.Helper()
 
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-	invalid := (*testCaseInput).frame.header
+	invalid := *(*testCaseInput).frame
+	invalid.Stored = nil
 	tc.mutate(&invalid)
-	invalidFrame, frameErr := cache.NewFrame(frameDomain, invalid, (*testCaseInput).frame.output)
+	invalidFrame, frameErr := invalid.Encode(frameDomain, invalid.header)
 	assert.NoError(t, frameErr)
 	accepted, frameErr := invalidFrame.PreparePublication(t.Context(), cache.FramePublicationInput{
 		Owner:    (*(*testCaseInput).hr).Named(),
@@ -586,9 +592,9 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	assert.NoError(
 		t,
-		isolated.RecordRender(
+		isolated.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
 				Sources: []manifest.SourceEvidence{},
@@ -686,9 +692,9 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 	current.DependsOn[0].Name, current.ValuesFrom[0].Name, current.HealthCheckExprs[0].Current = "after", "after", "false"
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -742,9 +748,9 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 	assert.NoError(t, renderMapsErr2)
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: first,
 				Sources: []manifest.SourceEvidence{},
@@ -795,9 +801,9 @@ func testTemplateAcceptedHistoryDurableName2(
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	assert.NoError(
 		t,
-		isolated.RecordRender(
+		isolated.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   (*(*testCaseInput).hr).Named(),
 				Receipt: (*(*testCaseInput).receipt),
 				Sources: []manifest.SourceEvidence{},

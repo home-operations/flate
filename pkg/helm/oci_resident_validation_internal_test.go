@@ -36,9 +36,9 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NoError(
 			t,
-			client.RecordRender(
+			client.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt,
 					Sources: []manifest.SourceEvidence{},
@@ -60,7 +60,9 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	analysis := *header.Analysis
 	analysis.Version = "invalid"
 	header.Analysis = &analysis
-	stored, err := cache.NewFrame(frameDomain, header, resident.Output)
+	shared := resident.frame.RenderFrame
+	shared.Stored = nil
+	stored, err := shared.Encode(frameDomain, header)
 	assert.NoError(t, err)
 	publication, err := stored.PreparePublication(t.Context(), cache.FramePublicationInput{})
 	assert.NoError(t, err)

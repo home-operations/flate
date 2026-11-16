@@ -47,7 +47,7 @@ spec:
 				st := store.New()
 				result, err := discovery.Run(
 					t.Context(),
-					discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, scan), RepoRoot: root, Store: st},
+					testConfig(t, discovery.Config{Path: filepath.Join(root, scan), RepoRoot: root, Store: st}),
 				)
 				assert.NoError(t, err)
 				assert.FatalIf(

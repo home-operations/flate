@@ -37,9 +37,9 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 
 		t,
 
-		client.RecordRender(
+		client.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Records: emptyRenderInventory,

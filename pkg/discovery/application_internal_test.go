@@ -51,10 +51,9 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 		Application: documents[0].Document,
 		Receipt:     manifest.NewRenderReceipt("entry", func(a, b any) bool { return a == b }),
 	}
-	result, err := Run(t.Context(), Config{
-		Input: input, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t),
-		Selection: selection.Request{Changed: true},
-	})
+	result, err := Run(t.Context(), testConfig(t, Config{
+		Input: input, Path: filepath.Join(root, "entry"), Store: st, Selection: selection.Request{Changed: true},
+	}))
 	assert.NoError(t, err)
 	a := result.Admission
 	q := a.qualification
@@ -183,13 +182,12 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			}
 			st := store.New()
 			l := loader.New(st)
-			cfg := Config{
+			cfg := testConfig(t, Config{
 				Store:  st,
 				Loader: l,
 				Input:  &store.SourceArtifact{LocalPath: root, FS: input},
 				Path:   filepath.Join(root, "entry"),
-				Trees:  testTrees(t),
-			}
+			})
 			if scenario == "unresolved changed-only" {
 				cfg.Selection = selection.Request{Changed: true}
 			}

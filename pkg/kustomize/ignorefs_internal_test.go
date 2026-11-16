@@ -412,7 +412,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 	)
 	assert.FatalIf(t, err != nil, "first render: %v", err)
 	{
-		recordRenderErr := cache.RecordRender(ctx, RenderAcceptance{Owner: spec.Named(), Receipt: receipt})
+		recordRenderErr := recordPendingRender(ctx, cache.owner, receipt)
 		assert.NoError(t, recordRenderErr)
 	}
 	assert.FatalIf(t, hasRenderField(out1, "name", "b"), "b.yaml should be excluded; got %s", out1)

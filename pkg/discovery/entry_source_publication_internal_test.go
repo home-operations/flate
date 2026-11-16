@@ -322,7 +322,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/file", "working tree")
 	st := store.New()
-	result, err := Run(t.Context(), Config{Path: root, Store: st, Trees: testTrees(t)})
+	result, err := Run(t.Context(), testConfig(t, Config{Path: root, Store: st}))
 	assert.NoError(t, err)
 	t.Cleanup(result.Close)
 	a := result.Admission

@@ -55,9 +55,9 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			)
 			if err == nil {
 				{
-					recordErr := warm.RecordRender(
+					recordErr := warm.cache.RecordRender(
 						t.Context(),
-						RenderAcceptance{
+						cache.RenderAcceptance{
 							Owner:   hr.Named(),
 							Receipt: receipt32,
 							Records: emptyRenderInventory,
@@ -82,9 +82,9 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			)
 			if err == nil {
 				{
-					recordErr := fresh.RecordRender(
+					recordErr := fresh.cache.RecordRender(
 						t.Context(),
-						RenderAcceptance{
+						cache.RenderAcceptance{
 							Owner:   freshHR.Named(),
 							Receipt: receipt33,
 							Records: emptyRenderInventory,

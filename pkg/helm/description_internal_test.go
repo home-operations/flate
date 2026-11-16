@@ -123,9 +123,9 @@ func TestDescription_SourceObservation(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt1,
 					Records: emptyRenderInventory,
@@ -224,9 +224,9 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt5,
 						Records: emptyRenderInventory,
@@ -360,9 +360,9 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt2,
 						Records: emptyRenderInventory,
@@ -406,9 +406,9 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			)
 			if err == nil {
 				{
-					recordErr := cli.RecordRender(
+					recordErr := cli.cache.RecordRender(
 						t.Context(),
-						RenderAcceptance{
+						cache.RenderAcceptance{
 							Owner:   hr.Named(),
 							Receipt: receipt3,
 							Records: emptyRenderInventory,
@@ -428,9 +428,9 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			)
 			if describeChartErr == nil {
 				{
-					recordErr := cli.RecordRender(
+					recordErr := cli.cache.RecordRender(
 						t.Context(),
-						RenderAcceptance{
+						cache.RenderAcceptance{
 							Owner:   hr.Named(),
 							Receipt: receipt4,
 							Records: emptyRenderInventory,
@@ -565,9 +565,9 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt6,
 						Records: emptyRenderInventory,
@@ -600,9 +600,9 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt7,
 						Records: emptyRenderInventory,

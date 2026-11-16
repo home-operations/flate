@@ -104,7 +104,7 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 	l.Options.Session, err = selection.New(st, facts, selection.Request{Changed: true})
 	assert.NoError(t, err)
 	d := newDiscoverer(
-		&Config{Input: input, Path: filepath.Join(root, "entry"), Store: st, Loader: l, Trees: testTrees(t)},
+		new(testConfig(t, Config{Input: input, Path: filepath.Join(root, "entry"), Store: st, Loader: l})),
 	)
 	defer d.Close()
 	beforeReceipt := &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "before"}

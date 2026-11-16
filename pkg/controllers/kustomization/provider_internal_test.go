@@ -167,7 +167,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	trees := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees)
-	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
+	c.Configure(Options{Cache: owner, StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := testutil.SplitDocs(
 		[]byte(
 			testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n"),

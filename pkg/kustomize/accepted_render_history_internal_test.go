@@ -91,16 +91,16 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	assert.FatalIf(t, receipt == nil, "%s", "successful raw render supplied no receipt")
 
 	frame := receipt.Value().(renderFrame)
-	frame.header.Binding = manifest.Fingerprint(frame.binding)
-	frame.stored, err = sourcecache.NewFrame(frameDomain, frame.header, frame.output)
+	frame.Binding = manifest.Fingerprint(frame.binding)
+	frame.Stored, err = frame.Encode(frameDomain, frame.header)
 	assert.NoError(t, err)
-	original := bytes.Clone(frame.output)
+	original := bytes.Clone(frame.Output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
-	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
-	raw, err := testutil.DecodeRender(frame.output)
+	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).Output, original), true)
+	raw, err := testutil.DecodeRender(frame.Output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
-	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
+	key := sourcecache.BlobKey{Content: frame.Key, Render: sourcecache.RenderAccepted}
 	child := owner
 	child.Name = "child"
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {
@@ -150,10 +150,12 @@ func (h *acceptedHistoryCase) unaccepted(t *testing.T) {
 
 	assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "standalone render wrote durable output: %v", err)
 
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: nil, Content: h.content,
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
+		Owner:   owner, Receipt: receipt, Records: nil, Content: h.content,
 	}))
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: nil,
 		Records: emptyRenderInventory,
@@ -170,7 +172,8 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 
 	cache, cacheDir, req, owner := h.cache, h.cacheDir, h.req, h.owner
 	receipt, records := h.receipt, h.records
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: receipt,
 		Records: maps.All(records),
@@ -228,7 +231,8 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	publisher := newTestTreeCache(t, directory)
 	_, pending, err := Render(t.Context(), publisher, input, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
-	assert.NoError(t, publisher.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, publisher.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: pending,
 		Records: maps.All(records),
@@ -267,9 +271,9 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	frame, key, owner, records := h.frame, h.key, h.owner, h.records
 	req := h.req
 	isolated := newTestTreeCache(t, t.TempDir())
-	foreign := frame.header
-	foreign.Key = "foreign"
-	foreignReceipt, err := testEncodeFrame(t, &foreign, frame.output)
+	foreign := frame
+	foreign.Key, foreign.Stored = "foreign", nil
+	foreignReceipt, err := testEncodeFrame(t, &foreign)
 	assert.NoError(t, err)
 	foreignFrame, err := testDecodeFrame(t, foreignReceipt)
 	assert.NoError(t, err)
@@ -304,7 +308,8 @@ func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
 	isolated := newTestTreeCache(t, t.TempDir())
 	_, current, err := testutil.RenderMaps(Render(t.Context(), isolated, mutable, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, isolated.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: current,
 		Records: maps.All(records),
@@ -338,7 +343,8 @@ func (h *acceptedHistoryCase) frozenPreparation(t *testing.T) {
 	_, pending, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	input.SkipKinds[0] = "Different"
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: pending,
 		Records: maps.All(records),
@@ -375,7 +381,8 @@ func (h *acceptedHistoryCase) incompatiblePolicies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			isolated := newTestTreeCache(t, t.TempDir())
-			assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, isolated.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
 				Owner:   owner,
 				Receipt: receipt,
 				Records: maps.All(records),
@@ -406,7 +413,8 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	{
-		err := cache.RecordRender(canceled, RenderAcceptance{
+		err := cache.owner.RecordRender(canceled, sourcecache.RenderAcceptance{
+			Sources: []manifest.SourceEvidence{},
 			Owner:   owner,
 			Receipt: receipt,
 			Records: emptyRenderInventory,
@@ -421,7 +429,8 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 			assert.Equal(t, id, child)
 		}
 	}
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
 		Receipt: receipt,
 		Records: emptyRenderInventory,
@@ -442,12 +451,20 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 	frame, cache, owner, records, req, key := h.frame, h.cache, h.owner, h.records, h.req, h.key
 	remote := frame.header
 	remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
-	remoteFrame, err := sourcecache.NewFrame(frameDomain, remote, frame.output)
+	shared := frame.RenderFrame
+	shared.Stored = nil
+	remoteFrame, err := shared.Encode(frameDomain, remote)
 	assert.NoError(t, err)
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner,
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
+		Owner:   owner,
 		Receipt: manifest.NewRenderReceipt(renderFrame{
-			header: remote, binding: frame.binding, output: frame.output, stored: remoteFrame,
+			Key:     frame.Key,
+			Binding: frame.Binding,
+			Output:  frame.Output,
+			Stored:  remoteFrame,
+			header:  remote,
+			binding: frame.binding,
 		}, equalRenderFrame),
 		Records: maps.All(records),
 		Content: h.content,

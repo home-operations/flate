@@ -7,6 +7,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -22,7 +23,7 @@ type Preparation struct {
 	caps          *common.Capabilities
 	capabilityErr error
 	key           string
-	binding       templateBinding
+	binding       cache.RenderBinding[templatePolicy]
 	values        map[string]any
 }
 
@@ -55,9 +56,9 @@ func (p *Preparation) matchesOwner(client *Client, declaration *manifest.HelmRel
 		return false
 	}
 	binding := p.binding
-	binding.Options = request.Options
-	binding.Policy = declaration.HistoryPolicy()
-	return p.binding.same(&binding)
+	binding.Policy.Options = request.Options
+	binding.Policy.Release = declaration.HistoryPolicy()
+	return p.binding.Equal(&binding, equalTemplatePolicy)
 }
 
 func (p *Preparation) matchesValues(current map[string]any) bool {
@@ -154,28 +155,20 @@ func (c *Client) prepareTemplate(
 }
 
 func (p *Preparation) bindSource(hr *manifest.HelmRelease, source *store.SourceArtifact, input *RenderOptions) {
-	binding := templateBinding{
-		Policy:   hr.HistoryPolicy(),
-		Source:   hr.ChartSource(),
-		Kind:     source.Kind,
-		URL:      source.URL,
-		Path:     source.LocalPath,
-		Root:     source.LocalRoot,
-		Key:      source.Key,
-		Revision: source.Revision,
-		Digest:   source.Digest,
-		Alias:    source.InputAlias,
-		Options:  input.Options,
+	binding := cache.RenderBinding[templatePolicy]{
+		Policy: templatePolicy{Release: hr.HistoryPolicy(), Options: input.Options},
 	}
+	binding.Refresh(p.key, hr.ChartSource(), source)
+
 	switch {
 	case p.complete:
-		binding.Options.SkipKinds = p.binding.Options.SkipKinds
-	case p.loaded.record != nil && p.loaded.record.key == p.key && p.loaded.record.binding.same(&binding):
+		binding.Policy.Options.SkipKinds = p.binding.Policy.Options.SkipKinds
+	case p.loaded.record != nil && p.loaded.record.key == p.key && p.loaded.record.binding.Equal(&binding, equalTemplatePolicy):
 		binding = p.loaded.record.binding
 	default:
-		binding.Options.SkipKinds = nil
+		binding.Policy.Options.SkipKinds = nil
 		if len(input.SkipKinds) > 0 {
-			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
+			binding.Policy.Options.SkipKinds = slices.Clone(input.SkipKinds)
 		}
 	}
 	p.source = source

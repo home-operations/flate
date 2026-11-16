@@ -80,16 +80,16 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	input := RenderRequest{Source: localSource(t, root), SubPath: "."}
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	acceptance := RenderAcceptance{
+	acceptance := sourcecache.RenderAcceptance{
 		Owner:   spec.Named(),
 		Receipt: receipt,
 		Content: content,
 		Records: emptyRenderInventory,
 		Sources: []manifest.SourceEvidence{},
 	}
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptance))
 	frame := receipt.Value().(renderFrame)
-	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
+	key := sourcecache.BlobKey{Content: frame.Key, Render: sourcecache.RenderAccepted}
 	prior, descriptor, _, err := renderer.owner.Blob(
 		t.Context(),
 		key,
@@ -106,10 +106,10 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		err = nil
 	}
 	assert.NoError(t, err)
-	frame.stored = nil
+	frame.Stored = nil
 	frame.header.Reads.Files = []localEntry{{Path: strings.Repeat("x", 16<<20)}}
 	acceptance.Receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptance))
 	current, next, _, err := renderer.owner.Blob(
 		t.Context(),
 		key,
@@ -126,16 +126,16 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
 		assert.Equal(t, current == nil, true)
 	}
-	decoded, err := testutil.DecodeRender(frame.output)
+	decoded, err := testutil.DecodeRender(frame.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, docs)
 	if !persistent {
 		return
 	}
 	var header renderHeader
-	stored, err := sourcecache.OpenFrame(t.Context(), frameDomain, current, &header)
+	stored, err := sourcecache.OpenRenderFrame(t.Context(), frameDomain, current, &header)
 	assert.NoError(t, err)
-	_, complete := stored.History(spec.Named(), content)
+	_, complete := stored.Stored.History(spec.Named(), content)
 	assert.Equal(t, complete, true)
 }
 

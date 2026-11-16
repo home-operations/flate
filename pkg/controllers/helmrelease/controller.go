@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -195,12 +196,13 @@ func (c *execution) render(
 }
 
 func (c *execution) recordRender(ctx context.Context, id manifest.NamedResource, attempt *store.Emission) error {
-	return c.Helm.RecordRender(
+	return c.Cache.RecordRender(
 		ctx,
-		helm.RenderAcceptance{
+		cache.RenderAcceptance{
 			Owner:   id,
 			Receipt: attempt.Render,
 			Records: attempt.Footprint(),
+			Reads:   attempt.Reads, OutputReads: attempt.OutputReads,
 			Sources: attempt.SourcePaths(),
 			Work:    c.run.Reads.Work().Scope().RenderWork(),
 		},

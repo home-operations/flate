@@ -181,7 +181,7 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 				tc.input = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: other}
 			}
 			st := store.New()
-			result, err := Run(t.Context(), Config{Input: tc.input, Entry: &entries[0], Store: st, Trees: testTrees(t)})
+			result, err := Run(t.Context(), testConfig(t, Config{Input: tc.input, Entry: &entries[0], Store: st}))
 			assert.NoError(t, err)
 			id := manifest.NamedResource{
 				Group:     manifest.FluxKustomizeDomain,

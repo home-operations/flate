@@ -77,15 +77,15 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	docs, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
-	acceptance := RenderAcceptance{
+	acceptance := cache.RenderAcceptance{
 		Owner:   hr.Named(),
 		Receipt: receipt,
 		Records: emptyRenderInventory,
 		Sources: []manifest.SourceEvidence{},
 	}
-	assert.NoError(t, client.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, client.cache.RecordRender(t.Context(), acceptance))
 	frame := receipt.Value().(renderFrame)
-	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
+	key := cache.BlobKey{Content: frame.Key, Render: cache.RenderAccepted}
 	prior, descriptor, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 	var before []byte
 	if persistent {
@@ -97,10 +97,10 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		err = nil
 	}
 	assert.NoError(t, err)
-	frame.stored = nil
+	frame.Stored = nil
 	frame.header.Analysis = &chartAnalysis{Version: "0.1.0", Templates: strings.Repeat("x", 16<<20)}
 	acceptance.Receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-	assert.NoError(t, client.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, client.cache.RecordRender(t.Context(), acceptance))
 	current, next, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 	if persistent {
 		assert.NoError(t, err)
@@ -113,7 +113,7 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		assert.Equal(t, current == nil, true)
 		assert.Equal(t, next.Digest, descriptor.Digest)
 	}
-	decoded, err := testutil.DecodeRender(frame.output)
+	decoded, err := testutil.DecodeRender(frame.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, docs)
 	_, complete := client.PreviousRender(t.Context(), hr, nil, input)

@@ -75,16 +75,16 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 			dir = ""
 		}
 		testReceiptTreesResult1 := testReceiptTrees(t, dir, persistent)
-		trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
+		cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 		st := store.New()
 		source := &store.SourceArtifact{LocalPath: root, FS: input}
 		st.SetArtifact(manifest.BootstrapSourceID, source)
 		d := newDiscoverer(
 			&Config{
-				Input:    source,
-				Path:     filepath.Join(root, (*testCaseInput)),
-				Store:    st,
-				Trees:    trees,
+				Input: source,
+				Path:  filepath.Join(root, (*testCaseInput)),
+				Store: st,
+				Cache: cacheOwner, Trees: trees,
 				SelfURLs: []string{"https://fixture.invalid/self"},
 			},
 		)

@@ -123,7 +123,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		)
 		assert.FatalIf(
 			t,
-			frame.chart != nil || frame.stored != nil,
+			frame.chart != nil || frame.Stored != nil,
 			"%s",
 			"fresh receipt retained noncompact backing",
 		)
@@ -137,7 +137,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 			"%s",
 			"cached render reconstructed canonical analysis",
 		)
-		assert.Diff(t, frame.output, cached.output)
+		assert.Diff(t, frame.Output, cached.Output)
 		docs[0]["data"].(map[string]any)["marker"] = "mutated"
 		assert.Equal(t, again[0]["data"].(map[string]any)["marker"].(string), marker)
 	}
@@ -179,9 +179,9 @@ func testTemplateCacheTemplateIntegrationCase(
 		assert.NoError(t, firstErr)
 		assert.NoError(
 			t,
-			cli.RecordRender(
+			cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt,
 					Records: emptyRenderInventory,
@@ -420,9 +420,9 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   newHR().Named(),
 						Receipt: receipt12,
 						Records: emptyRenderInventory,
@@ -520,9 +520,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt13,
 					Records: emptyRenderInventory,
@@ -547,9 +547,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt14,
 					Records: emptyRenderInventory,
@@ -576,9 +576,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt15,
 					Records: emptyRenderInventory,
@@ -609,9 +609,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt16,
 					Records: emptyRenderInventory,
@@ -664,9 +664,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt17,
 					Records: emptyRenderInventory,
@@ -709,9 +709,9 @@ extra: {sequence: [{value: original}]}
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt26,
 					Records: emptyRenderInventory,
@@ -762,9 +762,9 @@ func testTemplateCacheTemplateIntegrationCase3Loop(t *testing.T, loopInputs stru
 		)
 		if err == nil {
 			{
-				recordErr := (*loopInputs.cli).RecordRender(
+				recordErr := (*loopInputs.cli).cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   newHR().Named(),
 						Receipt: receipt27,
 						Records: emptyRenderInventory,

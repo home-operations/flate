@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"oras.land/oras-go/v2/errdef"
-
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -23,46 +21,40 @@ func (c *TreeCache) recordTestRender(
 	t *testing.T,
 	incoming *RenderRequest,
 	receipt *manifest.RenderReceipt,
-	persistent bool,
 ) {
 	t.Helper()
 	req := *incoming
 	assert.FatalIf(t, receipt == nil, "%v", "first render returned no receipt")
-	assert.NoError(t, c.RecordRender(t.Context(), RenderAcceptance{Owner: req.Spec.Named(), Receipt: receipt}))
+	assert.NoError(t, recordPendingRender(t.Context(), c.owner, receipt))
 	reader, _, _, lookupErr := c.owner.Blob(
 		t.Context(),
-		sourcecache.BlobKey{Content: receipt.Value().(renderFrame).header.Key, Render: sourcecache.RenderAccepted},
+		sourcecache.BlobKey{Content: receipt.Value().(renderFrame).Key, Render: sourcecache.RenderPending},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
-	assert.Equal(t, reader != nil, persistent)
-	if persistent {
-		assert.NoError(t, lookupErr)
-	} else {
-		assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
-	}
-	_, stored, hit := readTestRenderFrame(t, c, receipt.Value().(renderFrame).header.Key)
-	assert.FatalIf(t, !hit, "%v", "accepted render was not persisted")
+	assert.Equal(t, reader != nil, true)
+	assert.NoError(t, lookupErr)
+	_, stored, hit := readTestRenderFrame(t, c, receipt.Value().(renderFrame).Key)
+	assert.FatalIf(t, !hit, "%v", "pending render was not retained")
 	replayed, replayReceipt, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	assert.FatalIf(t, replayReceipt == nil, "%v", "unchanged input returned no receipt")
 	frame := replayReceipt.Value().(renderFrame)
-	publication, err := frame.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{})
+	publication, err := frame.Stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{})
 	assert.NoError(t, err)
-	assert.FatalIf(t, publication.Identity() == "", "%v", "unchanged input did not hit the accepted render cache")
+	assert.FatalIf(t, publication.Identity() == "", "%v", "unchanged input did not hit the pending render cache")
 	assert.Diff(t, replayed, stored)
 }
 
 func TestRender_CacheMissesOnDirectoryMembership(t *testing.T) {
 	t.Parallel()
 	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
-	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: spec}
 	first, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.FatalIf(t, err != nil || !hasRenderField(first, "name", "a"), "first = %q, %v", first, err)
-	cache.recordTestRender(t, &req, receipt, persistent)
+	cache.recordTestRender(t, &req, receipt)
 	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
 	second, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.FatalIf(
@@ -125,14 +117,13 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 	t.Parallel()
 	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
-	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	artifact := localSource(t, root)
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: artifact, SubPath: "app", Spec: spec}
 	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	cache.recordTestRender(t, &req, receipt, persistent)
+	cache.recordTestRender(t, &req, receipt)
 	assert.NoError(t, os.RemoveAll(filepath.Join(root, "app")))
 	testutil.WriteFile(t, root, "app", "file")
 	{
@@ -159,7 +150,6 @@ func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 
 func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 	t.Parallel()
-	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": "resources: [cm.yaml]\n",
 		"cm.yaml":            cmYAML("base"),
@@ -170,7 +160,7 @@ func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 	}))}
 	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	cache.recordTestRender(t, &req, receipt, persistent)
+	cache.recordTestRender(t, &req, receipt)
 	testutil.WriteFile(
 		t,
 		root,

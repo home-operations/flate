@@ -86,8 +86,10 @@ data:
 			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: input.Name, Optional: true}},
 		},
 	}
-	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+	c.Helm = helm.NewClient(c.Cache)
 	warm, warmStore := newTestController(t, nil)
+	warm.Cache = c.Cache
 	warm.Helm = c.Helm
 	warmStore.AddObject(source)
 	warmStore.SetArtifact(source.Named(), st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
@@ -234,7 +236,8 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	t.Parallel()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	c, st := newTestController(t, nil)
-	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+	c.Helm = helm.NewClient(c.Cache)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(

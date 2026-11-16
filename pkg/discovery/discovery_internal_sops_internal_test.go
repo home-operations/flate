@@ -8,13 +8,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
-	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
@@ -50,15 +46,14 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	l.Options.Changes = change.NewSet([]string{"flux/consumer.yaml"})
 	session, err := beginTest(
 		t.Context(),
-		Config{
+		testConfig(t, Config{
 			Path:      filepath.Join(root, "flux"),
 			RepoRoot:  root,
 			SelfURLs:  []string{"git://fixture.invalid/repo"},
 			Store:     st,
 			Loader:    l,
-			Trees:     kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
 			Selection: selection.Request{Changed: true},
-		},
+		}),
 	)
 	assert.NoError(t, err)
 	for range 3 {

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,8 +15,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -30,9 +33,9 @@ func TestRun_RejectedPreparationRetiresSupport(t *testing.T) {
 	testutil.WriteFile(t, root, "ready/kustomization.yaml", "resources: []\n")
 	st := store.New()
 	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
-	result, err := Run(t.Context(), Config{
-		Input: source, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t),
-	})
+	result, err := Run(t.Context(), testConfig(t, Config{
+		Input: source, Path: filepath.Join(root, "entry"), Store: st,
+	}))
 	assert.NoError(t, err)
 	assert.Equal(t, result.Binding.Producer.ReportHidden(), true)
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root + "-replacement", FS: source.FS})
@@ -49,7 +52,7 @@ func TestPrepareDocuments_ReplacementRetiresSupport(t *testing.T) {
 	owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "first"}
 	first := owner.SourceID()
 	st.SetArtifact(first, source)
-	d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+	d := Session{cfg: testConfig(t, Config{Store: st}), loader: loader.New(st)}
 	_, err := d.prepareDocuments(t.Context(), owner, source, nil)
 	assert.NoError(t, err)
 	replacement := *owner
@@ -92,7 +95,7 @@ func TestPrepareDocuments_ImplicitSourceIgnore(t *testing.T) {
 			st.AddObject(owner)
 			l := loader.New(st)
 			defer l.Close()
-			d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: l}
+			d := Session{cfg: testConfig(t, Config{Store: st}), loader: l}
 			defer d.Close()
 			prepared, err := d.prepareDocuments(t.Context(), owner, source, nil)
 			if tc.exclude {
@@ -140,7 +143,7 @@ func TestPreparePendingProducer_ReferencedSubstitutionSupport(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: l}
+	d := Session{cfg: testConfig(t, Config{Store: st}), loader: l}
 	defer d.Close()
 	for _, target := range []string{"one", "two"} {
 		st.AddObject(&manifest.ConfigMap{
@@ -175,7 +178,7 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 			l := loader.New(st)
 			defer l.Close()
 			l.SourceRoot = root
-			d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: l}
+			d := Session{cfg: testConfig(t, Config{Store: st}), loader: l}
 			defer d.Close()
 			failure := errors.New("retained binding failure")
 			d.binding.Producer, d.binding.Failure = owner.Named(), failure
@@ -213,5 +216,95 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 			)
 			assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), owner.Named()), false)
 		})
+	}
+}
+
+func TestAcceptPrepared_RetiredSupport(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{
+		"kustomization.yaml": "resources: [cm.yaml]\n",
+		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n",
+	})
+	fixture := testReceiptTrees(t, t.TempDir(), sourcecache.RenderPersistenceDisabledReason() == "")
+	st := store.New()
+	source := &store.SourceArtifact{
+		Kind:      manifest.KindGitRepository,
+		URL:       "https://fixture.invalid/first",
+		LocalPath: root,
+		LocalRoot: root,
+		FS:        os.DirFS(root),
+	}
+	st.SetArtifact(manifest.BootstrapSourceID, source)
+	owner := &manifest.Kustomization{Name: "renderer", Namespace: "apps", Path: "."}
+	st.AddObject(owner)
+	l := loader.New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	d := Session{cfg: Config{Path: root, Store: st, Cache: fixture.owner, Trees: fixture.trees}, loader: l}
+	defer d.Close()
+	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
+	initial := d.prepared[owner.Named()]
+	assert.Equal(t, kustomize.RenderInputs(initial.receipt)["cm.yaml"], true)
+	assert.NoError(t, d.acceptPrepared(t.Context()))
+	projection, err := initial.receipt.Value().(interface {
+		RenderPublication(context.Context, *sourcecache.RenderAcceptance) (sourcecache.RenderPublication, error)
+	}).RenderPublication(t.Context(), &sourcecache.RenderAcceptance{Content: initial.content, Sources: []manifest.SourceEvidence{}})
+	assert.NoError(t, err)
+	key := sourcecache.BlobKey{Content: projection.Frame.Key, Render: sourcecache.RenderAccepted}
+	var before []byte
+	if fixture.owner.CanPersistRenders() {
+		generation, _, _, lookupErr := fixture.owner.Blob(
+			t.Context(),
+			key,
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
+			nil,
+		)
+		assert.NoError(t, lookupErr)
+		before, err = fs.ReadFile(generation, "content")
+		assert.NoError(t, err)
+	}
+	priorSources := []manifest.SourceEvidence{{
+		Source: source.HistoryIdentity(manifest.BootstrapSourceID), Path: "cm.yaml",
+	}}
+	delete(d.prepared, owner.Named())
+	defer initial.retire(st)
+	replacement := *source
+	replacement.URL = "https://fixture.invalid/current"
+	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+	assert.NoError(t, d.prepareProducer(t.Context(), owner, &replacement, nil))
+	prepared := d.prepared[owner.Named()]
+	assert.Equal(t, prepared != initial, true)
+	assert.Equal(t, prepared.support.Valid(), true)
+	sources := append(slices.Clone(priorSources), st.ChildSourcePaths(owner.Named(), prepared.children, l.Index)...)
+	provenance, err := fixture.owner.ProducersForPaths(t.Context(), sources)
+	assert.NoError(t, err)
+	if fixture.owner.CanPersistRenders() {
+		assert.Equal(t, len(provenance[owner.Named()]) > 0, true)
+	}
+	prepared.retireSupport(st)
+	changed := replacement
+	changed.Content = "replacement"
+	st.SetArtifact(manifest.BootstrapSourceID, &changed)
+	assert.Equal(t, prepared.support.Valid(), false)
+	assert.NoError(t, d.acceptPrepared(t.Context()))
+	afterProvenance, err := fixture.owner.ProducersForPaths(t.Context(), sources)
+	assert.NoError(t, err)
+	assert.Diff(t, afterProvenance, provenance)
+	if fixture.owner.CanPersistRenders() {
+		generation, _, _, lookupErr := fixture.owner.Blob(
+			t.Context(),
+			key,
+			&sourcecache.Policy{MaxAge: sourcecache.Forever},
+			nil,
+		)
+		assert.NoError(t, lookupErr)
+		after, readErr := fs.ReadFile(generation, "content")
+		assert.NoError(t, readErr)
+		assert.Diff(t, after, before)
+		var metadata any
+		frame, openErr := sourcecache.OpenRenderFrame(t.Context(), "kustomize-render", generation, &metadata)
+		assert.NoError(t, openErr)
+		_, complete := frame.Stored.History(owner.Named(), initial.content)
+		assert.Equal(t, complete, true)
 	}
 }

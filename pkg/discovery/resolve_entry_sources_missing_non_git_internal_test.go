@@ -571,7 +571,7 @@ func TestRun_ProducedBootstrapOCI(t *testing.T) {
 			}
 			result, err := Run(
 				t.Context(),
-				Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st, Trees: testTrees(t)},
+				testConfig(t, Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}),
 			)
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)

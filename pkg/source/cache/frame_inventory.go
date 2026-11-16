@@ -145,42 +145,47 @@ func (f *Frame) PreparePublication(ctx context.Context, input FramePublicationIn
 	if err := ctx.Err(); err != nil {
 		return nil, &Error{err}
 	}
-	frame := Frame{
-		envelope: f.envelope, header: f.header, payload: f.payload,
-		generation: f.generation, available: f.available, raw: f.raw,
+	complete := input.Complete && input.Records != nil
+	if !complete && f.accepted != nil {
+		return nil, nil //nolint:nilnil // Incomplete evidence must not erase accepted history.
 	}
+	var fingerprint string
+	if complete {
+		fingerprint = manifest.Fingerprint(input.Content)
+	}
+	if complete && (fingerprint == "" || !f.available) {
+		return nil, nil //nolint:nilnil // Unavailable acceptance must not replace previously accepted evidence.
+	}
+	publication := &FramePublication{identity: f.raw}
+	if complete {
+		accepted, err := prepareAccepted(input.Owner, f, fingerprint, input.Records)
+		if err != nil {
+			return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("prepare accepted frame: %w", err), "")
+		}
+		if f.accepted.equal(&accepted) {
+			publication.frame = f
+			publication.tail, publication.identity = f.acceptedData, f.acceptedKey
+			return publication, nil
+		}
+		data, err := json.Marshal(accepted)
+		if err != nil {
+			return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted frame: %w", err), "")
+		}
+		if len(data) > frameHeaderLimit {
+			return nil, nil //nolint:nilnil // Oversized acceptance disables optional persistence without replacing prior evidence.
+		}
+		publication.tail, publication.identity = data, manifest.Fingerprint(accepted)
+		publication.frame = &Frame{accepted: &accepted, acceptedKey: publication.identity, acceptedData: data}
+	}
+	if publication.frame == nil {
+		publication.frame = new(Frame)
+	}
+	frame := publication.frame
+	frame.envelope, frame.header, frame.payload = f.envelope, f.header, f.payload
+	frame.generation, frame.available, frame.raw = f.generation, f.available, f.raw
 	if data := f.hydrated.Load(); data != nil {
 		frame.payload = *data
 	}
-	publication := &FramePublication{frame: &frame, identity: f.raw}
-	if !input.Complete || input.Records == nil {
-		if f.accepted != nil {
-			return nil, nil //nolint:nilnil // Incomplete evidence must not erase accepted history.
-		}
-		return publication, nil
-	}
-	fingerprint := manifest.Fingerprint(input.Content)
-	if fingerprint == "" || !f.available {
-		return nil, nil //nolint:nilnil // Unavailable acceptance must not replace previously accepted evidence.
-	}
-	accepted, err := prepareAccepted(input.Owner, f, fingerprint, input.Records)
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("prepare accepted frame: %w", err), "")
-	}
-	if f.accepted.equal(&accepted) {
-		publication.frame = f
-		publication.tail, publication.identity = f.acceptedData, f.acceptedKey
-		return publication, nil
-	}
-	data, err := json.Marshal(accepted)
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted frame: %w", err), "")
-	}
-	if len(data) > frameHeaderLimit {
-		return nil, nil //nolint:nilnil // Oversized acceptance disables optional persistence without replacing prior evidence.
-	}
-	publication.tail, publication.identity = data, manifest.Fingerprint(accepted)
-	frame.accepted, frame.acceptedKey, frame.acceptedData = &accepted, publication.identity, data
 	return publication, nil
 }
 

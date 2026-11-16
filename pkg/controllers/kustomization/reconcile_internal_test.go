@@ -67,7 +67,7 @@ data: {greeting: hi}
 	t.Cleanup(cache.Close)
 
 	c := New(s, tasks, cache)
-	c.Configure(Options{}, sourcecache.RetryConfig{})
+	c.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		cache.Close()
@@ -225,7 +225,7 @@ spec:
 		t.Cleanup(trees.Close)
 		c := New(s, tasks, trees)
 
-		c.Configure(Options{}, sourcecache.RetryConfig{})
+		c.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
 		c.StartLifecycle()
 		g := artifactgenerator.New(s, tasks, owner)
 

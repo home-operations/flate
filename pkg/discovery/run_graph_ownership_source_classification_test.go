@@ -62,7 +62,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			st := store.New()
 			res, err := discovery.Run(
 				t.Context(),
-				discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st},
+				testConfig(t, discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st}),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			filter := admissiontest.Decision(
@@ -101,7 +101,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			st := store.New()
 			res, err := discovery.Run(
 				t.Context(),
-				discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st},
+				testConfig(t, discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st}),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			filter := admissiontest.Decision(
@@ -133,11 +133,13 @@ func TestRun_SourceValuesReaders(t *testing.T) {
 	}
 }
 
-func testTrees(t *testing.T) *kustomize.TreeCache {
+//nolint:gocritic // Test configuration MUST share its cache owner with its renderer.
+func testConfig(t *testing.T, cfg discovery.Config) discovery.Config {
 	t.Helper()
-	trees := kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2))
-	t.Cleanup(trees.Close)
-	return trees
+	cfg.Cache = cachetest.New(t, "", cache.New)
+	cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
+	t.Cleanup(cfg.Trees.Close)
+	return cfg
 }
 
 func TestRun_ListOwnedChildren(t *testing.T) {
@@ -165,7 +167,7 @@ items:
 	st := store.New()
 	result, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st},
+		testConfig(t, discovery.Config{Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st}),
 	)
 	assert.NoError(t, err)
 	id := testutil.HelmReleaseID("apps", "demo")
@@ -224,7 +226,7 @@ func TestRun_StandaloneListPackage(t *testing.T) {
 			st := store.New()
 			result, err := discovery.Run(
 				t.Context(),
-				discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st},
+				testConfig(t, discovery.Config{Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st}),
 			)
 			if invalid {
 				assert.FatalIf(
@@ -335,12 +337,11 @@ kind: ConfigMap
 metadata: {name: config, namespace: flux-system}
 data: {value: fixture}
 `)
-	cfg := discovery.Config{
-		Trees:    testTrees(t),
+	cfg := testConfig(t, discovery.Config{
 		Path:     filepath.Join(dir, "flux"),
 		RepoRoot: dir,
 		Store:    store.New(),
-	}
+	})
 	var authored manifest.BaseManifest
 	if strings.HasPrefix((*testCaseInput), "declared_") {
 		spec := map[string]any{
@@ -531,11 +532,10 @@ spec:
 				URL:       "https://example.invalid/self.git",
 			},
 		)
-		result, err := discovery.Run(t.Context(), discovery.Config{
-			Trees: testTrees(t),
-			Path:  filepath.Join(root, scan), RepoRoot: root, Store: st,
+		result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
+			Path: filepath.Join(root, scan), RepoRoot: root, Store: st,
 			SelfURLs: []string{"https://example.invalid/self.git"},
-		})
+		}))
 		assert.FatalIf(t, err != nil, "%v", err)
 		return result, st
 	}

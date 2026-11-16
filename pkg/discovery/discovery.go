@@ -770,7 +770,8 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 		}
 		sourceID := ks.EffectiveSourceID()
 		input := prepared.source
-		if err := d.cfg.Trees.RecordRender(ctx, kustomize.RenderAcceptance{
+		if err := d.cfg.Cache.RecordRender(ctx, cache.RenderAcceptance{
+			Reads: &prepared.support,
 			Work:  prepared.work,
 			Owner: ks.Named(), Receipt: prepared.receipt, Content: prepared.content,
 			Source:  input.HistoryIdentity(sourceID),

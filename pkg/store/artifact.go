@@ -117,6 +117,22 @@ type ArtifactInput struct {
 	OriginPresent bool   `json:"OriginPresent"`
 }
 
+// ArtifactHistory MUST exclude execution registrations and mutable acquisition state.
+type ArtifactHistory struct {
+	ArtifactInput
+
+	URL string `json:"URL"`
+}
+
+// HistoryInput MUST keep URL outside material identity and raw render keys.
+func (a *SourceArtifact) HistoryInput() ArtifactHistory {
+	history := ArtifactHistory{ArtifactInput: a.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)}
+	if a != nil {
+		history.URL = a.URL
+	}
+	return history
+}
+
 // Input returns the selected facts without retaining filesystem handles or metadata maps.
 func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	if a == nil {

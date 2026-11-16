@@ -18,7 +18,10 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 	var previous *byte
 	for _, value := range []string{"first", "second"} {
 		output := testRenderEncoding(t, []map[string]any{{"value": value}})
-		wire, err := testEncodeFrame(t, &renderHeader{Key: "render"}, output)
+		wire, err := testEncodeFrame(
+			t,
+			&renderFrame{Key: "render", Output: output},
+		)
 		assert.NoError(t, err)
 		generation, _, _, err := cache.owner.Blob(
 			t.Context(),
@@ -36,12 +39,12 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 		second, valid, err := preparation.readFrame(t.Context(), generation)
 		assert.NoError(t, err)
 		assert.Equal(t, valid, true)
-		assert.Equal(t, &first.output[0] == &second.output[0], true)
-		assert.Equal(t, &first.output[0] == previous, false)
-		previous = &first.output[0]
-		left, err := manifest.DecodeRender(first.output)
+		assert.Equal(t, &first.Output[0] == &second.Output[0], true)
+		assert.Equal(t, &first.Output[0] == previous, false)
+		previous = &first.Output[0]
+		left, err := manifest.DecodeRender(first.Output)
 		assert.NoError(t, err)
-		right, err := manifest.DecodeRender(second.output)
+		right, err := manifest.DecodeRender(second.Output)
 		assert.NoError(t, err)
 		left[0].Document["value"] = "changed"
 		assert.Equal(t, right[0].Document["value"], any(value))
@@ -49,13 +52,13 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 		independent, valid, err := preparation.readFrame(t.Context(), anonymous)
 		assert.NoError(t, err)
 		assert.Equal(t, valid, true)
-		assert.Equal(t, &independent.output[0] == &first.output[0], false)
+		assert.Equal(t, &independent.Output[0] == &first.Output[0], false)
 	}
 	preparation.cache, preparation.complete = cache, true
 	var next Preparation
 	assert.Equal(t, next.Take(&preparation, cache, &RenderRequest{}), true)
 	assert.Equal(t, preparation.decoded == nil, true)
-	assert.Equal(t, &next.decoded.frame.output[0] == previous, true)
+	assert.Equal(t, &next.decoded.frame.Output[0] == previous, true)
 	next.Retire()
 	assert.Equal(t, next.decoded == nil, true)
 }

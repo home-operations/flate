@@ -48,10 +48,9 @@ func TestRun_SmallTree(t *testing.T) {
 `)
 
 	st := store.New()
-	res, err := discovery.Run(context.Background(), discovery.Config{
-		Trees: testTrees(t),
-		Path:  dir, Store: st,
-	})
+	res, err := discovery.Run(context.Background(), testConfig(t, discovery.Config{
+		Path: dir, Store: st,
+	}))
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 	wantRoot, _ := filepath.EvalSymlinks(dir)
 	assert.ErrorIf(t, res.RepoRoot != wantRoot,
@@ -141,7 +140,7 @@ spec: {target: {name: values}}
 	st.AddObject(foreign)
 	res, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: dir, Store: st},
+		testConfig(t, discovery.Config{Path: dir, Store: st}),
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	hr := testutil.HelmReleaseID("apps", "demo")
@@ -217,10 +216,9 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 
 	st := store.New()
 	{
-		_, err := discovery.Run(context.Background(), discovery.Config{
-			Trees: testTrees(t),
-			Path:  dir, Store: st,
-		})
+		_, err := discovery.Run(context.Background(), testConfig(t, discovery.Config{
+			Path: dir, Store: st,
+		}))
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 
@@ -262,10 +260,9 @@ func TestRun_AdmittedScanCoordinates(t *testing.T) {
 		root := filepath.Join(parent, "virtual")
 		input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
 		{
-			_, err := discovery.Run(t.Context(), discovery.Config{
-				Trees: testTrees(t),
+			_, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
 				Input: input, Path: filepath.Join(parent, "outside"), Store: store.New(),
-			})
+			}))
 			assert.FatalIf(t, err == nil, "%v", "scan outside admitted root succeeded")
 		}
 		{
@@ -321,7 +318,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		st := store.New()
 		result, err := discovery.Run(
 			t.Context(),
-			discovery.Config{Trees: testTrees(t), Input: input, Path: scan, Store: st},
+			testConfig(t, discovery.Config{Input: input, Path: scan, Store: st}),
 		)
 		assert.FatalIf(t, err != nil, "Run with Path %q: %v", scan, err)
 		assert.FatalIf(
@@ -438,12 +435,11 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 			st := store.New()
 			res, err := discovery.Run(
 				t.Context(),
-				discovery.Config{
-					Trees:    testTrees(t),
+				testConfig(t, discovery.Config{
 					Path:     filepath.Join(dir, "entry"),
 					RepoRoot: dir,
 					Store:    st,
-				},
+				}),
 			)
 			assert.NoError(t, err)
 			source := manifest.NamedResource{
@@ -540,10 +536,9 @@ spec:
 `)
 
 	st := store.New()
-	res, err := discovery.Run(context.Background(), discovery.Config{
-		Trees: testTrees(t),
-		Path:  dir, Store: st,
-	})
+	res, err := discovery.Run(context.Background(), testConfig(t, discovery.Config{
+		Path: dir, Store: st,
+	}))
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 
 	// The RS itself is loaded into the store as a node for the run phase.
@@ -585,7 +580,7 @@ func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	{
 		_, err := discovery.Run(
 			context.Background(),
-			discovery.Config{Trees: testTrees(t), Path: t.TempDir()},
+			testConfig(t, discovery.Config{Path: t.TempDir()}),
 		)
 		assert.ErrorIf(t, err == nil, "%v", "Run with nil Store/Loader: want error, got nil")
 	}
@@ -668,11 +663,10 @@ spec:
 		)
 	}
 	st := store.New()
-	result, err := discovery.Run(t.Context(), discovery.Config{
-		Trees: testTrees(t),
-		Path:  filepath.Join(root, "flux"), Store: st,
+	result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
+		Path: filepath.Join(root, "flux"), Store: st,
 		SelfURLs: []string{"https://example.invalid/self.git"},
-	})
+	}))
 	assert.FatalIf(t, err != nil, "%v", err)
 	admitted := map[manifest.NamedResource]struct{}{}
 	for _, ks := range st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {

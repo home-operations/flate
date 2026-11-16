@@ -75,9 +75,10 @@ func testRenderSubstitutionRetainsRawBuildCase(
 	assert.Equal(t, builds.Load(), int64(1))
 	assert.NoError(
 		t,
-		cache.RecordRender(
+		cache.owner.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
 				Owner:   spec.Named(),
 				Receipt: receipt,
 				Records: emptyRenderInventory,
@@ -104,16 +105,17 @@ func testRenderSubstitutionRetainsRawBuildCase(
 	assert.Equal(t, builds.Load(), int64(1))
 	beforeFrame := receipt.Value().(renderFrame)
 	afterFrame := next.Value().(renderFrame)
-	assert.Equal(t, beforeFrame.header.Key, afterFrame.header.Key)
+	assert.Equal(t, beforeFrame.Key, afterFrame.Key)
 	assert.Equal(t, manifest.ValueEqual(content(req, docs), content(changed, again)), false)
 	_, accepted := cache.RenderHistory(spec.Named(), next, content(changed, again))
 	assert.Equal(t, accepted, false)
 	assert.Equal(t, spec.PostBuild == nil, true)
 	assert.NoError(
 		t,
-		cache.RecordRender(
+		cache.owner.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
 				Owner:   spec.Named(),
 				Receipt: next,
 				Records: emptyRenderInventory,

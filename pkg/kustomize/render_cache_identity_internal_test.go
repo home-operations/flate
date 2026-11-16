@@ -32,10 +32,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	out, receipt20, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt20},
-			)
+			recordErr := recordPendingRender(t.Context(), cache.owner, receipt20)
 			assert.NoError(t, recordErr)
 		}
 	}

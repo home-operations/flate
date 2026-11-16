@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestRender_RemoteCacheDependencies(t *testing.T) {
@@ -50,7 +51,6 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	testCaseInput **testRenderRemoteCacheDependenciesCaseInputs,
 ) {
 	t.Helper()
-	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
 	var version atomic.Int64
 	var trace remoteHTTPTrace
@@ -61,8 +61,13 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	root, remoteFiles := newRemoteDependencyFixtureResult1.root, newRemoteDependencyFixtureResult1.files
 	cacheDir := t.TempDir()
 
-	newCache := func(storage string) *TreeCache {
-		c := newTestTreeCache(t, storage)
+	newCache := func(storage string, owner *sourcecache.Cache) *TreeCache {
+		var c *TreeCache
+		if owner == nil {
+			c = newTestTreeCache(t, storage)
+		} else {
+			c = newTestTreeCacheWithTasks(t, owner, task.NewBounded(2))
+		}
 		v := version.Load()
 		remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
 		remote := memoryTree(t, remoteFiles)
@@ -89,20 +94,10 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	}
 	version.Store(1)
 	initial := len(trace.snapshot())
-	cache := newCache(cacheDir)
+	cache := newCache(cacheDir, nil)
 	out1, receipt16, err := testutil.RenderMaps(
 		Render(t.Context(), cache, request(), sourcecache.RetryConfig{}),
 	)
-	if err == nil {
-		{
-			recordErr := cache.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt16},
-			)
-			assert.NoError(t, recordErr)
-		}
-	}
-
 	assert.FatalIf(
 		t,
 		err != nil || !hasRenderField(out1, "", "remote-v1"),
@@ -110,6 +105,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		out1,
 		err,
 	)
+	assert.NoError(t, recordPendingRender(t.Context(), cache.owner, receipt16))
 	inputRec := newReadSet(root)
 	inputRec.immutable = (*(*testCaseInput).immutable)
 	view := newTreeFS(request().Source.FS, root, inputRec)
@@ -159,7 +155,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	})
 	version.Store(2)
 	before = len(trace.snapshot())
-	cache = newCache(cacheDir)
+	cache = newCache(cacheDir, cache.owner)
 	{
 		valid, stillValidErr3 := recorded.stillValid(
 			t.Context(),
@@ -172,16 +168,6 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 	out3, receipt19, err := testutil.RenderMaps(
 		Render(t.Context(), cache, request(), sourcecache.RetryConfig{}),
 	)
-	if err == nil {
-		{
-			recordErr := cache.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt19},
-			)
-			assert.NoError(t, recordErr)
-		}
-	}
-
 	assert.FatalIf(
 		t,
 		err != nil || !hasRenderField(out3, "", "remote-v2") || reflect.DeepEqual(out3, out1),
@@ -189,6 +175,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		out3,
 		err,
 	)
+	assert.NoError(t, recordPendingRender(t.Context(), cache.owner, receipt19))
 	if (*origin) != "git" && (*origin) != "nested-mount" {
 		got := trace.snapshot()[before:]
 		t.Logf(
@@ -238,7 +225,7 @@ type remoteDependencyReplayInputs struct {
 	origin      **string
 	scenario    ***testRenderRemoteCacheDependenciesCaseInputs
 	trace       *remoteHTTPTrace
-	newCache    *func(string) *TreeCache
+	newCache    *func(string, *sourcecache.Cache) *TreeCache
 	request     *func() RenderRequest
 	firstOutput *[]map[string]any
 	stored      *[]map[string]any
@@ -254,9 +241,8 @@ type remoteDependencyReplayInputs struct {
 
 func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remoteDependencyReplayInputs) {
 	t.Helper()
-	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
 
-	fresh := (*inputs.newCache)("")
+	fresh := (*inputs.newCache)("", nil)
 	var want []map[string]any
 	var receipt17 *manifest.RenderReceipt
 	want, receipt17, *inputs.err = testutil.RenderMaps(
@@ -264,10 +250,7 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 	)
 	if *inputs.err == nil {
 		{
-			recordErr := fresh.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt17},
-			)
+			recordErr := recordPendingRender(ctx, fresh.owner, receipt17)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -282,17 +265,16 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		*inputs.err,
 	)
 	closeTestTreeCache(t, fresh)
-	if *(*(*inputs.scenario)).eligible {
-		publishTestFrame(
-			t,
-			(*inputs.cache).owner,
-			sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderPending},
-			testRenderFrame(t, new(*inputs.snapshot), testRenderPayload(t, "SENTINEL")),
-		)
-	}
-	closeTestTreeCache(t, (*inputs.cache))
+	publishTestFrame(
+		t,
+		(*inputs.cache).owner,
+		sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderPending},
+		testRenderFrame(t, new(*inputs.snapshot), testRenderPayload(t, "SENTINEL")),
+	)
+	(*inputs.cache).Close()
+	(*inputs.cache).remoteInputs.Close()
 	*inputs.before = len(inputs.trace.snapshot())
-	(*inputs.cache) = (*inputs.newCache)(*inputs.cacheDir)
+	(*inputs.cache) = (*inputs.newCache)(*inputs.cacheDir, (*inputs.cache).owner)
 	{
 		valid, stillValidErr2 := inputs.recorded.stillValid(
 			ctx,
@@ -309,20 +291,15 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 	)
 	if *inputs.err == nil {
 		{
-			recordErr := (*inputs.cache).RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt18},
-			)
+			recordErr := recordPendingRender(ctx, (*inputs.cache).owner, receipt18)
 			assert.NoError(t, recordErr)
 		}
 	}
 
 	assert.FatalIf(
 		t,
-		*inputs.err != nil || (*(*(*inputs.scenario)).eligible) && !hasRenderField(out2, "witness", "SENTINEL") ||
-			!(*(*(*inputs.scenario)).eligible) &&
-				!reflect.DeepEqual(out2, *inputs.firstOutput),
-		"unchanged fresh-owner render: %s, %v",
+		*inputs.err != nil || !hasRenderField(out2, "witness", "SENTINEL"),
+		"unchanged renderer reused pending output: %s, %v",
 		out2,
 		*inputs.err,
 	)
@@ -333,7 +310,8 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		testCaseInput ***testRenderRemoteCacheDependenciesCaseInputs
 		out2          *[]map[string]any
 	}{origin: inputs.origin, trace: inputs.trace, before: inputs.before, testCaseInput: inputs.scenario, out2: &out2})
-	closeTestTreeCache(t, (*inputs.cache))
+	(*inputs.cache).Close()
+	(*inputs.cache).remoteInputs.Close()
 }
 
 type remoteDependencyFixtureInputs struct {

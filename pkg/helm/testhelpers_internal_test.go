@@ -174,7 +174,8 @@ func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord)
 
 func writeTestRecord(ctx context.Context, w io.Writer, key cache.BlobKey, record *renderRecord) error {
 	identity := key.Content.(string)
-	frame, err := cache.NewFrame(frameDomain, renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
+	shared := cache.RenderFrame{Key: identity, Output: record.Output}
+	frame, err := shared.Encode(frameDomain, renderHeader{Analysis: record.Analysis})
 	if err != nil {
 		return err
 	}
@@ -188,16 +189,12 @@ func writeTestRecord(ctx context.Context, w io.Writer, key cache.BlobKey, record
 
 func readTestRecord(ctx context.Context, r fs.FS, record *renderRecord) error {
 	var frame renderFrame
-	stored, err := cache.OpenFrame(ctx, frameDomain, r, &frame.header)
+	var err error
+	frame.RenderFrame, err = cache.OpenRenderFrame(ctx, frameDomain, r, &frame.header)
 	if err != nil {
 		return err
 	}
-	frame.output, err = stored.Payload(ctx)
-	if err != nil {
-		return err
-	}
-	frame.stored = stored
-	record.Output, record.Analysis, record.frame = frame.output, frame.header.Analysis, frame
+	record.Output, record.Analysis, record.frame = frame.Output, frame.header.Analysis, frame
 	return nil
 }
 

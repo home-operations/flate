@@ -3,7 +3,6 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,13 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"oras.land/oras-go/v2/errdef"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestRender_RemoteSelectionTransition(t *testing.T) {
@@ -66,8 +64,13 @@ func testRenderRemoteSelectionTransitionCase(
 	url := srv.URL + "/org/repo/base"
 	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": "resources: ['" + url + "']\n"})
 	cacheDir := t.TempDir()
-	newCache := func() *TreeCache {
-		c := newTestTreeCache(t, cacheDir)
+	newCache := func(owner *sourcecache.Cache) *TreeCache {
+		var c *TreeCache
+		if owner == nil {
+			c = newTestTreeCache(t, cacheDir)
+		} else {
+			c = newTestTreeCacheWithTasks(t, owner, task.NewBounded(2))
+		}
 		c.SetGitBaseFetcher(
 			func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				name := "git-output"
@@ -90,7 +93,7 @@ func testRenderRemoteSelectionTransitionCase(
 		)
 		return c
 	}
-	c := newCache()
+	c := newCache(nil)
 	request := RenderRequest{Source: localSource(t, root), Label: root, Spec: spec}
 	out, receipt, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 	assert.FatalIf(
@@ -102,15 +105,12 @@ func testRenderRemoteSelectionTransitionCase(
 	)
 	realOutput := testRenderEncoding(t, out)
 	{
-		recordRenderErr := c.RecordRender(
-			t.Context(),
-			RenderAcceptance{Owner: spec.Named(), Receipt: receipt},
-		)
+		recordRenderErr := recordPendingRender(t.Context(), c.owner, receipt)
 		assert.NoError(t, recordRenderErr)
 	}
 	frame := receipt.Value().(renderFrame)
 	snap := frame.header.Reads
-	key := frame.header.Key
+	key := frame.Key
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	var persisted readSetSnapshot
 	assertRemoteSelectionObservations(t, &remoteSelectionObservationInputs{
@@ -118,8 +118,9 @@ func testRenderRemoteSelectionTransitionCase(
 		eligible: &eligible, encoded: &realOutput, snapshot: &snap,
 		persisted: &persisted, url: &url, hits: &hits,
 	})
-	closeTestTreeCache(t, c)
-	c = newCache()
+	c.Close()
+	c.remoteInputs.Close()
+	c = newCache(c.owner)
 	{
 		valid, stillValidErr := snap.stillValid(
 			t.Context(),
@@ -146,8 +147,9 @@ func testRenderRemoteSelectionTransitionCase(
 			testRenderFrame(t, new(persisted), testRenderPayload(t, "REMOTE-SELECTION")),
 		)
 	}
-	closeTestTreeCache(t, c)
-	c = newCache()
+	c.Close()
+	c.remoteInputs.Close()
+	c = newCache(c.owner)
 	out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 	witness := hasRenderField(out, "witness", "REMOTE-SELECTION")
 	assert.FatalIf(
@@ -165,9 +167,10 @@ func testRenderRemoteSelectionTransitionCase(
 		eligible,
 		witness,
 	)
-	closeTestTreeCache(t, c)
+	c.Close()
+	c.remoteInputs.Close()
 	changed.Store(true)
-	c = newCache()
+	c = newCache(c.owner)
 	{
 		valid, stillValidErr2 := snap.stillValid(
 			t.Context(),
@@ -217,16 +220,12 @@ func assertRemoteSelectionObservations(t *testing.T, inputs *remoteSelectionObse
 
 	accepted, _, _, acceptedErr := (*inputs.cache).owner.Blob(
 		t.Context(),
-		sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderAccepted},
+		sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderPending},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		nil,
 	)
-	assert.Equal(t, accepted != nil, *inputs.eligible)
-	if *inputs.eligible {
-		assert.NoError(t, acceptedErr)
-	} else {
-		assert.Equal(t, errors.Is(acceptedErr, errdef.ErrNotFound), true)
-	}
+	assert.Equal(t, accepted != nil, true)
+	assert.NoError(t, acceptedErr)
 	var saved []map[string]any
 	var hit bool
 	(*inputs.persisted), saved, hit = readTestRenderFrame(t, (*inputs.cache), (*inputs.key))

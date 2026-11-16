@@ -119,7 +119,10 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 		child:       &child,
 		independent: &independent,
 	})
-	frame, err := testEncodeFrame(t, &renderHeader{Reads: rec.snapshot()}, nil)
+	frame, err := testEncodeFrame(
+		t,
+		&renderFrame{Output: nil, header: renderHeader{Reads: rec.snapshot()}},
+	)
 	assert.NoError(t, err)
 	snapFrame, err := testDecodeFrame(t, frame)
 	snap := snapFrame.header.Reads

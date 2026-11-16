@@ -66,7 +66,9 @@ func newTestControllerWithOptions(t *testing.T, opts *base.Options) (*Controller
 	controller := base.New(st, ts)
 	c := New(controller, hc, helm.Options{})
 	assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
-	c.Configure(*opts)
+	configured := *opts
+	configured.Cache = owner
+	c.Configure(configured)
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		ts.BlockTillDone()

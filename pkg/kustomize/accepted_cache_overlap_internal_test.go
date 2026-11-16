@@ -93,10 +93,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 		)
 		if err == nil {
 			{
-				recordErr := cache.RecordRender(
-					ctx,
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt25},
-				)
+				recordErr := recordPendingRender(ctx, cache.owner, receipt25)
 				assert.NoError(t, recordErr)
 			}
 		}

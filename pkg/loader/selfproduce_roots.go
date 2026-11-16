@@ -91,7 +91,7 @@ func (l *Loader) filterClaimedPackageRoots(
 	view *sourceScope,
 ) {
 	root, pinned, external := view.root, view.pinned, view.external
-	if ks.IsFragment() {
+	if root == "" || ks.IsFragment() {
 		return
 	}
 	base := new(l.documents).claimBase(root, ks.Path)

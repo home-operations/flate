@@ -686,8 +686,10 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		st.AddObject(parent)
 	}
 	sourceRoot := SourceView(st, parent.SourceID(), root).Path
-	_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
-	assert.NoError(t, err)
+	if sourceRoot != "" {
+		_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
+		assert.NoError(t, err)
+	}
 	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
@@ -704,7 +706,7 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 			) != nil
 			assert.ErrorIf(
 				t,
-				got != (child.want && (testCaseInput.alias || testCaseInput.external)),
+				got != (child.want && testCaseInput.alias),
 				"Store admission for %s = %v, want %v",
 				child.name,
 				got,
@@ -713,7 +715,8 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		}
 		{
 			_, got := l.Index.Lookup(id)
-			assert.ErrorIf(t, got != child.want, "Index admission for %s = %v, want %v", child.name, got, child.want)
+			want := child.want && !testCaseInput.external
+			assert.ErrorIf(t, got != want, "Index admission for %s = %v, want %v", child.name, got, want)
 		}
 	}
 }

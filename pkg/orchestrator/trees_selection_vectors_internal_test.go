@@ -54,8 +54,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"full/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -104,8 +104,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"helmrelease/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -148,8 +148,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"kustomization/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -186,8 +186,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"namespace/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -248,8 +248,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"optional-key/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -292,8 +292,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"optional-object/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -336,8 +336,8 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		"targetPath/cold": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -406,8 +406,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"full/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -456,8 +456,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"helmrelease/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -500,8 +500,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"kustomization/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -538,8 +538,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"namespace/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -600,8 +600,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"optional-key/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -644,8 +644,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"optional-object/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
@@ -688,8 +688,8 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		"targetPath/hot": {
 			selectionPreparationKey(manifest.NamedResource{}, alias): preparationCounts(
 				0,
-				12,
-				8,
+				6,
+				4,
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(

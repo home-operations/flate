@@ -415,11 +415,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 	}
 	{
 		_, indexed := res.Index.Lookup(repository)
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"external_ancestor" && !indexed, "%v",
-			"source-qualified graph lost the nested repository namespace",
-		)
+		assert.Equal(t, indexed, !external)
 	}
 
 	if strings.HasPrefix(*testCaseInput, "missing_") {
@@ -441,14 +437,14 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 	child := testutil.KustomizationID("flux-system", "child")
 	assert.FatalIf(
 		t,
-		cfg.Store.GetObject(child) == nil,
+		(cfg.Store.GetObject(child) != nil) != !external,
 		"%v",
 		"entry path did not discover its child Kustomization",
 	)
 	release := testutil.HelmReleaseID("flux-system", "release")
 	{
 		got := cfg.Store.GetObject(release) != nil
-		assert.ErrorIf(t, got != external, "entry path HelmRelease promotion = %v, want %v", got, external)
+		assert.ErrorIf(t, got, "unavailable source promoted a local HelmRelease")
 	}
 	owners := ownersForTest(res.Index, "apps/cm.yaml")
 	if external {
@@ -458,7 +454,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "config"}
 	{
-		got, want := cfg.Store.GetObject(id) != nil, external
+		got, want := cfg.Store.GetObject(id) != nil, false
 		assert.ErrorIf(t, got != want, "standalone promotion = %v, want %v", got, want)
 	}
 	src := manifest.NamedResource{

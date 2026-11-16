@@ -1,0 +1,5 @@
+
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [ExternalSource] orig snapshot: Kustomization flux-system/load: external source OCIRepository.source.toolkit.fluxcd.io/flux-system/bundle is outside the local tree; not rendered
+    [ExternalSource] current snapshot: Kustomization flux-system/load: external source OCIRepository.source.toolkit.fluxcd.io/flux-system/bundle is outside the local tree; not rendered

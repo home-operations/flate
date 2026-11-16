@@ -74,9 +74,6 @@ func testSourceViewInputOriginCase(t *testing.T, testCaseInput *struct {
 	location := SourceView(st, source.Named(), repoRoot)
 	root, pinned, external := location.Path, location.Pinned, location.External
 	wantRoot := mount
-	if testCaseInput.external {
-		wantRoot = repoRoot
-	}
 	if root != wantRoot || pinned != testCaseInput.pinned || external != testCaseInput.external {
 		t.Fatalf(
 			"source view = (%q, %t, %t), want (%q, %t, %t)",

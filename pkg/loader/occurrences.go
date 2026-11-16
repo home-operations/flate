@@ -325,7 +325,7 @@ func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) (
 		repoRoot = root
 	}
 	location := sourceView(manifest.NamedResource{}, repoRoot, l.documents.artifacts[root], nil)
-	if !new(l.documents).scopeCoordinates(&visit, repoRoot, location.Pinned) {
+	if !new(l.documents).scopeCoordinates(&visit, repoRoot, location.Pinned, location.External) {
 		return nil, nil
 	}
 	visits := l.scopeWalk(&visit)

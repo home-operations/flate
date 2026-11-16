@@ -367,10 +367,14 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			}
 			sourceViewResult := SourceView(store.New(), ks.SourceID(), "/repo")
 			root, pinned, external := sourceViewResult.Path, sourceViewResult.Pinned, sourceViewResult.External
+			wantRoot := "/repo"
+			if tc.external {
+				wantRoot = ""
+			}
 
 			assert.FatalIf(
 				t,
-				root != "/repo" || pinned || external != tc.external,
+				root != wantRoot || pinned || external != tc.external,
 				"absent source: %q, %t, %t",
 				root,
 				pinned,
@@ -409,7 +413,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			if tc.unreadable {
 				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: "/repo", LocalRoot: "/repo"})
 			}
-			assert.Equal(t, SourceView(st, source.Named(), "/repo"), SourceLocation{Path: "/repo", External: true})
+			assert.Equal(t, SourceView(st, source.Named(), "/repo"), SourceLocation{External: true})
 		})
 	}
 	for _, tc := range []struct {
@@ -454,6 +458,11 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			external := sourceViewResult2.External
 
 			assert.FatalIf(t, external != tc.external, "external = %v, want %v", external, tc.external)
+			wantPath := artifact.LocalPath
+			if tc.unavailable {
+				wantPath = ""
+			}
+			assert.Equal(t, sourceViewResult2.Path, wantPath)
 		})
 	}
 }

@@ -519,7 +519,7 @@ func excludedOrderingPreparations(side Rendered, persistent bool) map[manifest.W
 			FileEntries:    246,
 			ReaderEdges:    46,
 		},
-		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 20, ReaderEdges: 14},
+		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 10, ReaderEdges: 7},
 		{
 			Tree:   side.ID,
 			Owner:  manifest.BootstrapSourceID,

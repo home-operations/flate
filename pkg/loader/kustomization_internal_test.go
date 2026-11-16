@@ -292,6 +292,10 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		"late_nested_source",
 		func(t *testing.T) { t.Parallel(); testDocumentReaderSourceViewsAndReuseLateNestedSource(t) },
 	)
+	t.Run("remote_lifetime", func(t *testing.T) {
+		t.Parallel()
+		testDocumentReaderSourceViewsAndReuseRemoteLifetime(t)
+	})
 }
 
 func testFinalizeIndexResourceMembershipCase(
@@ -650,4 +654,86 @@ func testDocumentReaderSourceViewsAndReuseNativeReaderOwnership(t *testing.T) {
 			manifest.BootstrapSourceID,
 			store.ArtifactContent,
 		) != artifact, "%s", "loader did not own its private view independently of the artifact")
+}
+
+func testDocumentReaderSourceViewsAndReuseRemoteLifetime(t *testing.T) {
+	t.Helper()
+	root, mount := t.TempDir(), t.TempDir()
+	st := store.New()
+	admitForTest(st, root)
+	source := &manifest.OCIRepository{Name: "bundle", Namespace: "apps"}
+	st.AddObject(source)
+	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("load", "apps",
+		"  path: ./apps/b\n  sourceRef: {kind: OCIRepository, name: bundle}\n"))
+	testutil.WriteFile(t, root, "apps/b/kustomization.yaml", "namespace: local\nresources: [child.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/b/child.yaml",
+		testutil.KustomizationYAML("local-only", "apps", "  path: ./payload\n"),
+	)
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	// Artifact transitions share one loader and MUST remain ordered.
+	for _, state := range []string{"unavailable", "fetched", "replaced", "withdrawn"} {
+		t.Run(
+			state,
+			func(t *testing.T) {
+				var artifact *store.SourceArtifact
+				if state == "fetched" || state == "replaced" {
+					artifact = &store.SourceArtifact{
+						LocalPath: mount,
+						Content:   manifest.Fingerprint([]byte(state)),
+						FS: fstest.MapFS{
+							"apps/b/kustomization.yaml": {
+								Data: []byte("namespace: " + state + "\nresources: [child.yaml]\n"),
+							},
+							"apps/b/child.yaml": {
+								Data: []byte(
+									testutil.KustomizationYAML(
+										state,
+										"apps",
+										"  path: ./payload\n  sourceRef: {kind: OCIRepository, name: bundle, namespace: apps}\n",
+									),
+								),
+							},
+						},
+					}
+				}
+				st.SetArtifact(source.Named(), artifact)
+				if artifact != nil {
+					_, err := l.Load(t.Context(), filepath.Join(mount, "apps", "b"), manifest.NamedResource{}, nil)
+					assert.NoError(t, err)
+					body := l.documents.read(filepath.Join(mount, "apps", "b")).body
+					assert.FatalIf(t, body == nil, "missing %s source document", state)
+					assert.Equal(t, body.Namespace, state)
+				}
+				assert.NoError(t, l.Admit(t.Context(), root))
+				location := SourceView(st, source.Named(), root)
+				assert.Equal(t, location.External, true)
+				wantPath := ""
+				if artifact != nil {
+					wantPath = mount
+				}
+				assert.Equal(t, location.Path, wantPath)
+				for _, name := range []string{"fetched", "replaced", "local-only"} {
+					present := slices.ContainsFunc(l.Kustomizations(), func(child store.Child) bool {
+						return child.Obj.Named().Name == name
+					})
+					assert.Equal(t, present, artifact != nil && name == state)
+				}
+				for visit := range l.scopes.fileVisits(filepath.Join(root, "apps", "b", "child.yaml")) {
+					assert.ErrorIf(
+						t,
+						visit.source == source.Named(),
+						"remote source borrowed local membership: %+v",
+						visit,
+					)
+				}
+				assert.Equal(t, len(l.Claims(root)), 0)
+			},
+		)
+	}
 }

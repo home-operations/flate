@@ -25,7 +25,7 @@ func (r *ReadSet) MatchesContent(previous *ReadSet, id manifest.NamedResource) b
 		return false
 	}
 	if current.declaration && (!before.declaration ||
-		!manifest.Equal(current.view.declaration(), before.view.declaration())) {
+		(current.view.declaration() == nil) != (before.view.declaration() == nil)) {
 		return false
 	}
 	details, previousDetails := current.details.Load(), before.details.Load()

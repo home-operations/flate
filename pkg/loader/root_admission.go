@@ -476,9 +476,7 @@ func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) []string
 			continue
 		}
 		location := SourceView(l.Store, source, l.SourceRoot)
-		declared := l.Index.IsFileIndexed(source) || l.Store.GetObject(source) != nil ||
-			l.Store.GetArtifact(source, store.ArtifactContent) != nil
-		if !location.Pinned && (!location.External || !declared) {
+		if !location.Pinned && !location.External {
 			claims = append(claims, filepath.Join(location.Path, manifest.NormalizeClaimBase(path)))
 		}
 	}

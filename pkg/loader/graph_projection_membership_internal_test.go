@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -48,7 +49,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		eligibility  selection.RootEligibility
 	}{
 		{"local", "", []string{"authored", "projected"}, selection.RootEligible},
-		{"external", "  sourceRef: {kind: GitRepository, name: external}\n", []string{"authored"}, selection.RootInactive},
+		{"external", "  sourceRef: {kind: GitRepository, name: external}\n", []string{"authored"}, selection.RootIndependent},
 	} {
 		t.Run("spec_components/"+tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -205,6 +206,69 @@ func TestAdmit_GraphProjection(t *testing.T) {
 	t.Run("subtree_availability", func(t *testing.T) { t.Parallel(); testAdmitGraphProjectionSubtreeAvailability(t) })
 
 	t.Run("stale_declaration", func(t *testing.T) { t.Parallel(); testAdmitGraphProjectionStaleDeclaration(t) })
+	t.Run("fetched_source_coordinates", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		mount := filepath.Join(root, ".inputs", "remote")
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml, ../apps/b]\n")
+		testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("load", "apps",
+			"  path: ./apps/b\n  targetNamespace: remote\n  sourceRef: {kind: OCIRepository, name: bundle}\n"))
+		testutil.WriteFile(t, root, "apps/b/kustomization.yaml", "namespace: local\nresources: [child.yaml]\n")
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/b/child.yaml",
+			testutil.KustomizationYAML("child", "apps", "  path: ./local\n"),
+		)
+		st := store.New()
+		admitForTest(st, root)
+		source := &manifest.OCIRepository{Name: "bundle", Namespace: "apps"}
+		st.AddObject(source)
+		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: mount, FS: fstest.MapFS{
+			"apps/b/kustomization.yaml": {Data: []byte("namespace: fetched\nresources: [child.yaml]\n")},
+			"apps/b/child.yaml": {
+				Data: []byte(
+					testutil.KustomizationYAML(
+						"child",
+						"apps",
+						"  path: ./remote\n  sourceRef: {kind: OCIRepository, name: bundle, namespace: apps}\n",
+					),
+				),
+			},
+		}})
+		l := New(st)
+		l.SourceRoot = root
+		for _, path := range []string{filepath.Join(root, "flux"), filepath.Join(mount, "apps", "b")} {
+			_, err := l.Load(t.Context(), path, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.Admit(t.Context(), root))
+		}
+		assert.NoError(t, l.Admit(t.Context(), root))
+		local := st.GetObject(testutil.KustomizationID("local", "child"))
+		remoteID := testutil.KustomizationID("remote", "child")
+		remote := l.CatalogObject(remoteID)
+		assert.Equal(t, st.GetObject(remoteID), manifest.BaseManifest(nil))
+		assert.ErrorIf(t, local == nil, "independently reached local package disappeared")
+		if local != nil {
+			assert.Equal(t, local.(*manifest.Kustomization).Path, "./local")
+		}
+		assert.ErrorIf(t, remote == nil, "fetched namespace identity disappeared")
+		if remote != nil {
+			assert.Equal(t, remote.(*manifest.Kustomization).Path, "./remote")
+		}
+		localFile := filepath.Join(root, "apps", "b", "child.yaml")
+		for visit := range l.scopes.fileVisits(localFile) {
+			assert.ErrorIf(t, visit.source == source.Named(), "fetched source overlaid local membership: %+v", visit)
+		}
+		remoteFile := filepath.Join(mount, "apps", "b", "child.yaml")
+		remoteVisit := false
+		for visit := range l.scopes.fileVisits(remoteFile) {
+			remoteVisit = remoteVisit || visit.source == source.Named()
+			assert.Equal(t, visit.localFile, "")
+		}
+		assert.Equal(t, remoteVisit, true)
+		assert.Equal(t, l.documents.cache[filepath.Join(root, "apps", "b")].buildExcluded, false)
+	})
 }
 
 func testAdmitGraphProjectionFirstEvaluatedTemplateChild(t *testing.T) {
@@ -434,15 +498,15 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 	sourceViewResult2 := SourceView(l.Store, ext, root)
 	external := sourceViewResult2.External
 	assert.Equal(t, external, true)
-	assert.Equal(t, slices.Contains(l.scopes.roots, entry), testCaseInput.listed)
-	assert.Equal(t, l.documents.cache[filepath.Join(root, entry)].buildExcluded, !testCaseInput.listed)
+	assert.Equal(t, slices.Contains(l.scopes.roots, entry), true)
+	assert.Equal(t, l.documents.cache[filepath.Join(root, entry)].buildExcluded, false)
 	names := make([]string, 0, len(l.Kustomizations()))
 	children := l.Kustomizations()
 	for i := range children {
 		child := &children[i]
 		names = append(names, child.Obj.Named().Name)
 	}
-	assert.Equal(t, slices.Contains(names, "app"), testCaseInput.listed)
+	assert.Equal(t, slices.Contains(names, "app"), testCaseInput.listed || !testCaseInput.local)
 	assert.Equal(t, slices.Contains(names, testCaseInput.localName), testCaseInput.listed)
 	for _, name := range []string{"app", "disabled"} {
 		id := testutil.KustomizationID("flux-system", name)
@@ -456,9 +520,9 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(
 			t,
 			selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)).Admitted,
-			name == "app" && testCaseInput.listed,
+			name == "app" && (testCaseInput.listed || !testCaseInput.local),
 		)
-		assert.Equal(t, l.Store.GetObject(id) != nil, name == "app" && testCaseInput.listed)
+		assert.Equal(t, l.Store.GetObject(id) != nil, name == "app" && (testCaseInput.listed || !testCaseInput.local))
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -318,4 +320,62 @@ func TestPartitionRoots_SourceConstruction(t *testing.T) {
 	_, acquired = d.resolvedSources.snapshot()[raw]
 	assert.Equal(t, acquired, false)
 	assert.Equal(t, st.GetArtifact(raw, store.ArtifactContent), nil)
+}
+
+func TestLoadExpansions_SourceContent(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{"./", "./apps/b"} {
+		for _, fetched := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fetched=%t", path, fetched), func(t *testing.T) {
+				t.Parallel()
+				root, mount := t.TempDir(), t.TempDir()
+				st := store.New()
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+					"apps/b/child.yaml": {
+						Data: []byte(testutil.KustomizationYAML("local-only", "apps", "  path: ./payload\n")),
+					},
+				}})
+				source := &manifest.OCIRepository{Name: "bundle", Namespace: "apps"}
+				st.AddObject(source)
+				ks := &manifest.Kustomization{
+					Name:      "load",
+					Namespace: "apps",
+					Path:      path,
+					SourceRef: kustomizev1.CrossNamespaceSourceReference{
+						Kind: manifest.KindOCIRepository,
+						Name: source.Name,
+					},
+				}
+				var artifact *store.SourceArtifact
+				if fetched {
+					artifact = &store.SourceArtifact{LocalPath: mount, FS: fstest.MapFS{
+						"apps/b/child.yaml": {
+							Data: []byte(testutil.KustomizationYAML("remote-only", "apps", "  path: ./payload\n")),
+						},
+					}}
+					st.SetArtifact(source.Named(), artifact)
+				}
+				d := newDiscoverer(&Config{Path: root, Store: st})
+				t.Cleanup(d.Close)
+				d.loader.SourceRoot = root
+				total := 0
+				pending, _, err := d.loadExpansions(
+					t.Context(),
+					root,
+					[]sourceExpansion{{ks: ks, source: artifact}},
+					&total,
+				)
+				assert.NoError(t, err)
+				_, local := d.loader.Index.Lookup(testutil.KustomizationID("apps", "local-only"))
+				_, remote := d.loader.Index.Lookup(testutil.KustomizationID("apps", "remote-only"))
+				assert.Equal(t, local, false)
+				assert.Equal(t, remote, fetched)
+				wantPending := 1
+				if fetched {
+					wantPending = 0
+				}
+				assert.Equal(t, len(pending), wantPending)
+			})
+		}
+	}
 }

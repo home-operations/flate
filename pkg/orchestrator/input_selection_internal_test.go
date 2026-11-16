@@ -475,11 +475,11 @@ func (f *selectedSelfFixture) assertPreparation(
 	}
 	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
 	files, readers := uint64(2066), uint64(2)
-	sourcePrepares, sourceEntries, sourceReaders := uint64(2), uint64(6), uint64(3)
+	sourcePrepares, sourceEntries, sourceReaders := uint64(2), uint64(4), uint64(2)
 	rootReaders, rootEntries := uint64(438), uint64(2503)
 	if side == 1 {
 		files, readers, rootReaders, rootEntries = 884, 1, 728, 1621
-		sourcePrepares, sourceEntries, sourceReaders = 1, 4, 2
+		sourcePrepares, sourceEntries, sourceReaders = 1, 2, 1
 	}
 	assertWitnessPreparations(
 		t,

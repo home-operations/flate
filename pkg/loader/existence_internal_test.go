@@ -611,7 +611,7 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 		root, pinned, external := location.Path, location.Pinned, location.External
 		admitted := version == "" || version == manifest.SourceDomain+"/v1"
 		wantRoot := repoRoot
-		if admitted {
+		if admitted || version == "foreign.example/v1" {
 			wantRoot = dir
 		}
 		assert.FatalIf(

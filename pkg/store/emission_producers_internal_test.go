@@ -204,44 +204,13 @@ func TestRecordEmitted_SharedChildArrival(t *testing.T) {
 	t.Parallel()
 
 	for _, workers := range []int{2, 4} {
-		t.Run(strconv.Itoa(workers), func(t *testing.T) {
-			t.Parallel()
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/reverse=%t", workers, reverse), func(t *testing.T) {
+				t.Parallel()
 
-			s := New()
-			child := &manifest.HelmChartSource{Name: "shared", Namespace: "apps", Chart: "app-template"}
-			var arrivals atomic.Int64
-			unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-				if id == child.Named() {
-					arrivals.Add(1)
-				}
-			}, false)
-			var wg sync.WaitGroup
-			start := make(chan struct{})
-			for i := range workers {
-				owner := ownerID(strconv.Itoa(i))
-				s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-				wg.Go(func() {
-					<-start
-					synthetic := *child
-					s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}}}, nil)
-					s.RecordEmitted(
-						owner,
-						&Emission{
-							Children: []Child{{Obj: &synthetic}, emissionChild(owner.Name, "complete")},
-							Complete: true,
-						},
-						nil,
-					)
-				})
-			}
-			close(start)
-			wg.Wait()
-			unsub()
-			{
-				got := arrivals.Load()
-				assert.FatalIf(t, got != 1, "identical shared child arrivals=%d want 1", got)
-			}
-		})
+				testRecordEmittedSharedChildArrivalCase(t, workers, reverse)
+			})
+		}
 	}
 }
 
@@ -306,6 +275,11 @@ func testRecordEmittedConflictingProducersCase(
 		checkEffectiveObject(t, s, id, &child)
 	}
 	check(winner, owners[(*testCaseInput.workers)-1])
+	for i, owner := range owners {
+		_, _, output := s.GetEmission(owner)
+		assert.Diff(t, testutil.DocumentMaps(output.Manifests), []map[string]any{children[i].Doc})
+		output.Finish()
+	}
 	warnings := s.Warnings()
 	want := make([]string, (*testCaseInput.workers))
 	for i, owner := range owners {
@@ -320,6 +294,15 @@ func testRecordEmittedConflictingProducersCase(
 		warnings,
 	)
 	assert.Equal(t, warnings[0].Message, "conflicting producers; using "+owners[(*testCaseInput.workers)-1].String())
+	assert.Diff(t, warnings, []manifest.Warning{{
+		Resource: id,
+		Subject:  manifest.DiagnosticFor(id, winner.Obj),
+		Related:  append(slices.Clone(owners), owners[(*testCaseInput.workers)-1]),
+		Category: manifest.WarnConflictingProducers,
+		Message:  "conflicting producers; using " + owners[(*testCaseInput.workers)-1].String(),
+		Detail:   want,
+		Count:    1,
+	}})
 	accept(t, s, owners[(*testCaseInput.workers)-1], &Emission{Complete: true})
 	check(children[(*testCaseInput.workers)-2], owners[(*testCaseInput.workers)-2])
 	warnings = s.Warnings()
@@ -349,5 +332,64 @@ func testRecordEmittedConflictingProducersCase(
 	{
 		warnings := s.Warnings()
 		assert.FatalIf(t, len(warnings) != 0, "equal content warned: %+v", warnings)
+	}
+}
+
+func testRecordEmittedSharedChildArrivalCase(t *testing.T, workers int, reverse bool) {
+	t.Helper()
+
+	s := New()
+	child := &manifest.HelmChartSource{Name: "shared", Namespace: "apps", Chart: "app-template"}
+	var arrivals atomic.Int64
+	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == child.Named() {
+			arrivals.Add(1)
+		}
+	}, false)
+	defer unsub()
+	var wg sync.WaitGroup
+	release := make([]chan struct{}, workers)
+	children := make([]*manifest.HelmChartSource, workers)
+	arrived, complete := make(chan struct{}), make(chan struct{})
+	for i := range workers {
+		owner := ownerID(strconv.Itoa(i))
+		s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+		release[i] = make(chan struct{})
+		wg.Go(func() {
+			<-release[i]
+			synthetic := *child
+			children[i] = &synthetic
+			s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}}}, nil)
+			arrived <- struct{}{}
+			<-complete
+			output := emissionChild(owner.Name, "complete")
+			s.RecordEmitted(owner, &Emission{
+				Children:  []Child{{Obj: &synthetic}, output},
+				Manifests: testutil.DocumentOccurrences([]map[string]any{output.Doc}),
+				Complete:  true,
+			}, nil)
+		})
+	}
+	for i := range workers {
+		if reverse {
+			i = workers - 1 - i
+		}
+		close(release[i])
+		<-arrived
+	}
+	assert.Equal(t, s.EmissionOwner(child.Named()), ownerID(strconv.Itoa(workers-1)))
+	close(complete)
+	wg.Wait()
+	assert.Equal(t, arrivals.Load(), int64(1))
+	assert.Equal[manifest.BaseManifest](t, s.GetObject(child.Named()), children[workers-1])
+	assert.Equal(t, s.EmissionOwner(child.Named()), ownerID(strconv.Itoa(workers-1)))
+	assert.Diff(t, s.Warnings(), []manifest.Warning(nil))
+	for i := range workers {
+		owner := ownerID(strconv.Itoa(i))
+		_, _, output := s.GetEmission(owner)
+		assert.Diff(t, testutil.DocumentMaps(output.Manifests), []map[string]any{
+			emissionChild(owner.Name, "complete").Doc,
+		})
+		output.Finish()
 	}
 }

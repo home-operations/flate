@@ -243,11 +243,9 @@ func (l *Loader) eachIndexedKustomization(yield func(store.Child)) {
 			continue
 		}
 		// Self-application MUST wait for preparation before claiming its construction inputs.
-		if l.kustomizationNeedsBuild(id) && safepath.Contains(
-			filepath.Join(
-				SourceView(l.Store, ks.EffectiveSourceID(), l.SourceRoot).Path,
-				manifest.NormalizeClaimBase(ks.Path),
-			),
+		root := SourceView(l.Store, ks.EffectiveSourceID(), l.SourceRoot).Path
+		if root != "" && l.kustomizationNeedsBuild(id) && safepath.Contains(
+			filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)),
 			r.Path,
 		) {
 			continue

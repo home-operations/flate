@@ -221,8 +221,9 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 		}
 		assert.FatalIf(
 			t,
-			st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil,
-			"inactive evidence published a source: %s",
+			(st.GetObject(id) != nil) != (name == "inactive-source") ||
+				st.GetArtifact(id, store.ArtifactContent) != nil,
+			"source admission lost its independent package boundary: %s",
 			id,
 		)
 	}

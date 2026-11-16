@@ -281,11 +281,12 @@ func sourceView(
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
 			return SourceLocation{Path: art.LocalPath, Pinned: art.Content != "" && !art.InputAlias, External: false}
 		}
+		return SourceLocation{Path: art.LocalPath, External: true}
 	}
-	if object != nil {
-		return SourceLocation{Path: repoRoot, Pinned: false, External: true}
+	if object != nil || ref.KindInfo().SourceArtifact {
+		return SourceLocation{External: true}
 	}
-	return SourceLocation{Path: repoRoot, Pinned: false, External: ref.KindInfo().SourceArtifact}
+	return SourceLocation{Path: repoRoot}
 }
 
 // Completed source coordinates MUST NOT project copied content onto physical input files.

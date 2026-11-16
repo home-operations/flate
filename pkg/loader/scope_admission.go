@@ -14,23 +14,11 @@ import (
 func (l *Loader) visitKustomizationScope(repoRoot string, ks *manifest.Kustomization, i int) {
 	input := l.scopes.inputs[i]
 	scope := l.scopes.sources[input.source]
-	ref := scope.id
 	root, pinned, external := scope.root, scope.pinned, scope.external
 	if input.scanRequired && !external && !scope.ready {
 		return
 	}
-	if ks.IsFragment() {
-		return
-	}
-	if external {
-		v := graphVisit{
-			root:   repoRoot,
-			dir:    new(l.documents).claimBase(repoRoot, ks.Path),
-			owner:  ks.Named(),
-			source: ref,
-			input:  i + 1,
-		}
-		l.visitScope(new(v), true)
+	if root == "" || ks.IsFragment() {
 		return
 	}
 	v := graphVisit{
@@ -42,13 +30,13 @@ func (l *Loader) visitKustomizationScope(repoRoot string, ks *manifest.Kustomiza
 		source:    ks.EffectiveSourceID(),
 		input:     i + 1,
 	}
-	if !new(l.documents).scopeCoordinates(&v, repoRoot, pinned) {
+	if !new(l.documents).scopeCoordinates(&v, repoRoot, pinned, external) {
 		return
 	}
 	l.visitScope(new(v), false)
 }
 
-func (r *documentReader) scopeCoordinates(visit *graphVisit, repoRoot string, pinned bool) bool {
+func (r *documentReader) scopeCoordinates(visit *graphVisit, repoRoot string, pinned, external bool) bool {
 	if visit.root == repoRoot {
 		return true
 	}
@@ -57,7 +45,7 @@ func (r *documentReader) scopeCoordinates(visit *graphVisit, repoRoot string, pi
 		return false
 	}
 	visit.prefix = filepath.ToSlash(prefix)
-	if !pinned {
+	if !pinned && !external {
 		visit.localBase = r.localBase(visit.root, repoRoot)
 	}
 	return true

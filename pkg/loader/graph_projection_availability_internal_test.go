@@ -43,14 +43,14 @@ func testAdmitGraphProjectionInactiveUnresolvedSource(t *testing.T) {
 	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	child := testutil.KustomizationID("apps", "child")
-	assert.FatalIf(t, l.Store.GetObject(child) != nil ||
-		selection.Root(
+	assert.FatalIf(t, l.Store.GetObject(child) == nil ||
+		!selection.Root(
 			rootAtForTest(
 				l,
 				l.IndexedObject(child, l.Index.Records[child]).Obj,
 				filepath.Join(root, "target", "child.yaml"),
 			),
-		).Admitted, "%s", "inactive unresolved owner enabled builder-free descendant")
+		).Admitted, "%s", "unavailable source excluded an independently reached descendant")
 }
 
 func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {

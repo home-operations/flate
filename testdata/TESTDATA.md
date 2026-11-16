@@ -16,6 +16,30 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`discovery-remote-source-walk/` covers issue #1583 through `cli.Run`.
+The committed repository contains two clusters and one remote OCI source.
+Only cluster A reaches the entry path.
+Fixed transport responses deny acquisition or supply a deterministic source archive without network access.
+The archive and working tree contain different ConfigMaps at `apps/b/cm.yaml`.
+Each case compares complete stdout, stderr, and exit codes twice with two workers.
+The second replay reuses its private caches.
+Expected streams follow the authored documents and report format, independently of command output.
+The build cases select ConfigMaps so that the shared identity has an exact output count.
+The diff cases omit Flux declarations from output and retain complete failure diagnostics.
+
+| Case | Behavior |
+| --- | --- |
+| `discovery-remote-source-walk/local-control` | The local source retains both producers and its ConfigMap without a remote reference. |
+| `discovery-remote-source-walk/root` | Remote `./` never discovers cluster B. |
+| `discovery-remote-source-walk/subpath` | Remote `./apps/b` never reads the local directory. |
+| `discovery-remote-source-walk/neighbor` | Remote `./x` retains the base result. |
+| `discovery-remote-source-walk/shared` | Cluster A emits one shared ConfigMap without a producer conflict. |
+| `discovery-remote-source-walk/fetched` | A successful artifact supplies different bytes at the same relative path. |
+| `discovery-remote-source-walk/fetched-root` | A successful root artifact never discovers working-tree cluster B. |
+| `discovery-remote-source-walk/both-changed` | Full and changed-only diffs exclude cluster B when both clusters change. |
+| `discovery-remote-source-walk/reference-added` | The current side adds the remote reference without admitting cluster B. |
+| `discovery-remote-source-walk/reference-removed` | The original side retains the remote reference without admitting cluster B. |
+
 `diff-generator-pairing/` covers issue #1560 through `cli.Run`.
 The bare cases generate a ConfigMap or a synthetic Secret.
 The Flux case generates both kinds and supplies them to a local Helm chart.
@@ -157,6 +181,7 @@ Two replays compare complete full-selection, changed-only, and diff output with 
 - `scope-orphans/` preserves namespace admission and orphan ownership.
   Its undiscovered-child case keeps one listed child and one unlisted declaration.
   Only the listed child renders.
+  Its external-parent case never reads an unlisted child through unavailable remote content.
 
 - `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, retained ciphertext with complete SOPS AES256_GCM framing, authored and explicit namespaces, and one tracked child render.
 

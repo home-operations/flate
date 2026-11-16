@@ -1,0 +1,1561 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "92acf2f1f06d34fdbb419af384aedd057753622d",
+    "paths": [
+      "pkg/discovery/expansion.go",
+      "pkg/loader/parent.go"
+    ],
+    "reductions": "Authored committed reproduction of issue #1583 from the owner request. Fixed OCI transport inputs replace the unreachable registry and successful artifact. Retain cluster identities, source references, paths, shared identity, and both comparison directions."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.com/repo.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "before"
+      ],
+      "overlay": "both-changed"
+    },
+    {
+      "repository": "repo",
+      "name": "absent",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "before"
+      ],
+      "overlay": "without-reference"
+    },
+    {
+      "repository": "repo",
+      "name": "added",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "absent"
+      ],
+      "overlay": "added"
+    },
+    {
+      "repository": "repo",
+      "name": "removed",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "before"
+      ],
+      "overlay": "removed"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "subpath",
+      "directory": "overlays/subpath"
+    },
+    {
+      "name": "neighbor",
+      "directory": "overlays/neighbor"
+    },
+    {
+      "name": "shared",
+      "directory": "overlays/shared"
+    },
+    {
+      "name": "both-changed",
+      "directory": "overlays/both-changed"
+    },
+    {
+      "name": "without-reference",
+      "directory": "overlays/without-reference",
+      "operations": [
+        {
+          "delete": "repo/apps/a/bundle.yaml"
+        }
+      ]
+    },
+    {
+      "name": "added",
+      "directory": "overlays/added",
+      "operations": []
+    },
+    {
+      "name": "removed",
+      "directory": "overlays/removed",
+      "operations": [
+        {
+          "delete": "repo/apps/a/bundle.yaml"
+        }
+      ]
+    }
+  ],
+  "inputs": "inputs",
+  "transport": [
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/bundle/manifests/latest",
+      "status": 403,
+      "body": "inputs/denied.txt"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/bundle/manifests/latest",
+      "status": 403,
+      "body": "inputs/denied.txt"
+    }
+  ],
+  "cases": [
+    {
+      "name": "local-control",
+      "description": "The local source keeps its listing and output without a remote reference.",
+      "setup": [
+        {
+          "commit": "absent"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list-local.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "root",
+      "description": "Remote root cannot discover another cluster.",
+      "setup": [
+        {
+          "commit": "before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "subpath",
+      "description": "Remote subpath cannot borrow same-path local content.",
+      "setup": [
+        {
+          "commit": "before"
+        },
+        {
+          "overlay": "subpath"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "neighbor",
+      "description": "Absent remote neighbor keeps the base result.",
+      "setup": [
+        {
+          "commit": "before"
+        },
+        {
+          "overlay": "neighbor"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared",
+      "description": "Unreachable cluster B cannot contribute the shared identity.",
+      "setup": [
+        {
+          "commit": "before"
+        },
+        {
+          "overlay": "shared"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/shared.stdout",
+              "stderr": "expect/failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "fetched",
+      "description": "Fetched same-path content supplies its own bytes.",
+      "setup": [
+        {
+          "commit": "before"
+        },
+        {
+          "overlay": "subpath"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            },
+            "transport": [
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/manifests/latest",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/manifests/sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/blobs/sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                  "Docker-Content-Digest": "sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7"
+                },
+                "body": "inputs/source.data"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.config.v1+json",
+                  "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                },
+                "body": "inputs/config.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/manifests/latest",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/manifests/sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/blobs/sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                  "Docker-Content-Digest": "sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7"
+                },
+                "body": "inputs/source.data"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.config.v1+json",
+                  "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                },
+                "body": "inputs/config.json"
+              }
+            ]
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/fetched.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "fetched-root",
+      "description": "Fetched root content cannot discover working-tree cluster B.",
+      "setup": [
+        {
+          "commit": "before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "list",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "name",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "list"
+            },
+            "expect": {
+              "stdout": "expect/list.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            },
+            "transport": [
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/manifests/latest",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/manifests/sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/blobs/sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                  "Docker-Content-Digest": "sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7"
+                },
+                "body": "inputs/source.data"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "HEAD",
+                "path": "/v2/bundle/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.config.v1+json",
+                  "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                },
+                "body": "inputs/config.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/manifests/latest",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/manifests/sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+                  "Docker-Content-Digest": "sha256:89bf635c93bf0f46a1a1df341dcbcf327149ae411539fecb757a0ca533e1972a"
+                },
+                "body": "inputs/manifest.json"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/blobs/sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                  "Docker-Content-Digest": "sha256:e54653753739249ec79975c0d821943f749d528dbbaf8e330372f3a9f63c47b7"
+                },
+                "body": "inputs/source.data"
+              },
+              {
+                "host": "registry.invalid",
+                "method": "GET",
+                "path": "/v2/bundle/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "status": 200,
+                "headers": {
+                  "Content-Type": "application/vnd.oci.image.config.v1+json",
+                  "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                },
+                "body": "inputs/config.json"
+              }
+            ]
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "build"
+            },
+            "expect": {
+              "stdout": "expect/fetched.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "both-changed",
+      "description": "Change both clusters across both-changed.",
+      "setup": [
+        {
+          "commit": "after"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "full"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/external.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "changed-only"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/external.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "reference-added",
+      "description": "Change both clusters across reference-added.",
+      "setup": [
+        {
+          "commit": "added"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "full"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/current-failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "changed-only"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/current-failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "reference-removed",
+      "description": "Change both clusters across reference-removed.",
+      "setup": [
+        {
+          "commit": "removed"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "full"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/orig-failure.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--base",
+              "HEAD~1",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,OCIRepository,Kustomization",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "changed-only"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/orig-failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "neighbor",
+        "root",
+        "subpath",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/current-failure.stderr",
+      "cases": [
+        "reference-added"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "both-changed",
+        "reference-added",
+        "reference-removed"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/failure.stderr",
+      "cases": [
+        "neighbor",
+        "root",
+        "shared",
+        "subpath"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/fetched.stdout",
+      "cases": [
+        "fetched",
+        "fetched-root"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/list.stdout",
+      "cases": [
+        "fetched",
+        "fetched-root",
+        "neighbor",
+        "root",
+        "shared",
+        "subpath"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/orig-failure.stderr",
+      "cases": [
+        "reference-removed"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "fetched",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/shared.stdout",
+      "cases": [
+        "shared"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "inputs/config.json",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "inputs/denied.txt",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "inputs/manifest.json",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "inputs/registry-config.json",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "inputs/source.data",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/added/repo/apps/a/bundle.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/added/repo/apps/a/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/added/repo/apps/a/kustomization.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/added/repo/apps/b/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/both-changed/repo/apps/a/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/both-changed/repo/apps/b/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/neighbor/repo/apps/a/bundle.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/removed/repo/apps/a/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/removed/repo/apps/a/kustomization.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/removed/repo/apps/b/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/shared/repo/apps/a/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/shared/repo/apps/b/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/subpath/repo/apps/a/bundle.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "overlays/without-reference/repo/apps/a/kustomization.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/apps/a/bundle.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/apps/a/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/apps/a/kustomization.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/apps/b/cm.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/apps/b/kustomization.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/clusters/a/sync.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "repo/clusters/b/apps.yaml",
+      "cases": [
+        "root",
+        "subpath",
+        "neighbor",
+        "shared",
+        "fetched",
+        "both-changed",
+        "reference-added",
+        "reference-removed",
+        "fetched-root",
+        "local-control"
+      ],
+      "purpose": "Authored source input, fixed transport bytes, or independently derived complete expected stream."
+    },
+    {
+      "path": "expect/external.stderr",
+      "cases": [
+        "both-changed"
+      ],
+      "purpose": "The selection owner discloses unchanged remote roots on both comparison sides."
+    },
+    {
+      "path": "expect/list-local.stdout",
+      "cases": [
+        "local-control"
+      ],
+      "purpose": "The local-only control lists the two reachable local producers."
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -78,6 +80,52 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, replacement.Input, after)
 			assert.Equal(t, replacement.InitialKnown, true)
 			assert.Equal(t, replacement.Initial, input)
+		})
+	}
+	for _, availableSide := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+		t.Run(fmt.Sprintf("available=%d", availableSide), func(t *testing.T) {
+			t.Parallel()
+			root, mount := t.TempDir(), t.TempDir()
+			source := &manifest.OCIRepository{Name: "bundle", Namespace: "apps"}
+			id := source.Named()
+			stores := [2]*store.Store{store.New(), store.New()}
+			input := &store.SourceArtifact{LocalPath: mount, Content: "remote", FS: fstest.MapFS{}}
+			stores[availableSide].SetArtifact(id, input)
+			for _, st := range stores {
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			}
+			changes, err := change.Qualify(
+				t.Context(),
+				change.NewSet([]string{"apps/b/cm.yaml"}),
+				stores,
+				manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			for side, st := range stores {
+				l := New(st)
+				l.SourceRoot, l.Options.Changes = root, changes
+				l.Index.Records[id] = manifest.DiscoveryRecord{
+					File: "source.yaml", Path: filepath.Join(root, "source.yaml"), Authored: id, Declaration: source,
+				}
+				l.seedSourceAuthority()
+				l.frozen = true
+				facts := l.SourceFacts(id, nil)
+				assert.Equal(t, facts.Context.SideKnown, true)
+				assert.Equal(t, facts.Context.Side, manifest.TreeSide(side))
+				assert.Equal(t, facts.External, true)
+				assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(nil))
+				assert.Equal(t, l.Index.IsFileIndexed(id), true)
+				assert.Equal(t, l.Index.Records[id].Declaration, manifest.BaseManifest(source))
+				if manifest.TreeSide(side) == availableSide {
+					assert.Equal(t, facts.Path, mount)
+					assert.Equal(t, facts.Input, input)
+				} else {
+					assert.Equal(t, facts.Path, "")
+					assert.Equal(t, facts.Input, (*store.SourceArtifact)(nil))
+					assert.Equal(t, facts.Delta, (*change.Set)(nil))
+					assert.Equal(t, len(facts.Files), 0)
+				}
+			}
 		})
 	}
 }

@@ -60,6 +60,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "platform-values"}
 	cache := &Cache{} // shared across all HRs, as in production (one per helm.Client)
+	var inputs [1]Result
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -69,7 +70,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 			ValuesFrom: []manifest.ValuesReference{ref},
 			Values:     map[string]any{"replicaCount": 2},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil, inputs[:]...), cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}
@@ -106,6 +107,7 @@ counts:
 	// pattern where M HRs sharing a platform-wide values CM parse
 	// exactly once.
 	cache := &Cache{}
+	var inputs [n]Result
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -117,7 +119,7 @@ counts:
 			ValuesFrom: refs,
 			Values:     map[string]any{"image": map[string]any{"repository": "nginx"}},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil, inputs[:]...), cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}
@@ -151,10 +153,15 @@ func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
 				)
 			}
 			cache := &Cache{}
+			inputs := make([]Result, 1+count)
 			b.ReportAllocs()
 			for b.Loop() {
 				hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: refs}
-				if err := ExpandValueReferences(hr, provider, cache); err != nil {
+				if err := ExpandValueReferences(
+					hr,
+					resolveInputsForTest(hr, provider, nil, inputs...),
+					cache,
+				); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -181,6 +188,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
 	cache := &Cache{}
+	var inputs [1]Result
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -189,7 +197,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 			Name: "app", Namespace: "default",
 			ValuesFrom: []manifest.ValuesReference{ref},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil, inputs[:]...), cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}
@@ -214,6 +222,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
 	missing := testPermissions(nil)
+	var inputs [1]Result
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -224,7 +233,10 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
 		ks.PostBuild = &postBuild
-		if err := ExpandPostBuildSubstituteReference(ks, provider, missing); err != nil {
+		if err := ExpandPostBuildSubstituteReference(
+			ks,
+			resolveInputsForTest(ks, provider, missing, inputs[:]...),
+		); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 		}
 	}
@@ -246,6 +258,7 @@ spec:
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}},
 	}
 	missing := testPermissions(nil)
+	var inputs [1]Result
 	b.ReportAllocs()
 	for b.Loop() {
 		docs, err := manifest.DecodeDocs(strings.NewReader(input), manifest.IncidentalDocuments)
@@ -258,7 +271,10 @@ spec:
 			b.Fatal(err)
 		}
 		ks := obj.(*manifest.Kustomization)
-		if err := ExpandPostBuildSubstituteReference(ks, provider, missing); err != nil {
+		if err := ExpandPostBuildSubstituteReference(
+			ks,
+			resolveInputsForTest(ks, provider, missing, inputs[:]...),
+		); err != nil {
 			b.Fatal(err)
 		}
 		if len(ks.PostBuild.Substitute) != len(data) || ks.PostBuild.Substitute["VAR_49"] != "value-49" {

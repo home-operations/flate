@@ -16,16 +16,13 @@ func resolveTLS(
 ) (tlsMaterial, error) {
 	owner := *ownerValue
 	ref := input.Reference
-	sec, err := resolveSecretRef(secrets, new(owner), input.Use.label(), ref)
-	if err != nil {
-		return tlsMaterial{}, err
-	}
+	sec := ResolveSecretRef(secrets, &owner, ref)
 	material, results, err := tlsFields(&sec, &owner, input)
 	if err != nil {
 		return tlsMaterial{}, err
 	}
 	resolved := tlsMaterial{material: material}
-	unavailableErr := resolved.unavailable(&owner, input, &results)
+	unavailableErr := resolved.unavailable(&owner, &sec, input, &results)
 	if unavailableErr != nil {
 		return tlsMaterial{}, unavailableErr
 	}
@@ -33,15 +30,9 @@ func resolveTLS(
 		if input.OptionalTLS {
 			return tlsMaterial{material: material}, nil
 		}
-		return tlsMaterial{
-			configuration: nil,
-			material:      material,
-			identity:      nil,
-		}, MissingSecretErr(
-			owner,
-			ref.Name,
-			"TLS material unavailable",
-		)
+		missing := UnavailableSecret(&owner, &sec, &results[0])
+		missing.Detail = "TLS material unavailable"
+		return tlsMaterial{}, missing
 	}
 	cfg, err := buildTLSConfig(material[0], material[1], material[2])
 	if err != nil {
@@ -125,7 +116,9 @@ func tlsFields(
 				valueErr2,
 			)
 		}
-		if material[2] == "" && (caFile.State() != values.MissingKey || results[2].State() == values.MissingKey) {
+		fallbackAbsent := caFile.KeysComplete() && !caFile.KnownKey()
+		currentAbsent := results[2].KeysComplete() && !results[2].KnownKey()
+		if material[2] == "" && (!fallbackAbsent || currentAbsent) {
 			results[2] = caFile
 		}
 		if material[2] == "" {
@@ -137,22 +130,24 @@ func tlsFields(
 
 func (m *tlsMaterial) unavailable(
 	owner *manifest.DiagnosticIdentity,
+	sec *store.ReferenceFacts,
 	input TransportInput,
 	results *[3]values.Result,
 ) error {
 	for i := range results {
 		result := &results[i]
 		pairRequired := i == 0 && m.material[1] != "" || i == 1 && m.material[0] != ""
-		if result.State() == values.Produced && !pairRequired && (input.OptionalTLS || m.material != [3]string{}) {
+		fieldRequired := pairRequired || !input.OptionalTLS && m.material == [3]string{}
+		if !result.KnownKey() && !result.KeysComplete() && result.Present() && !fieldRequired {
 			continue
 		}
-		if result.State() == values.Readable || result.State() == values.MissingKey {
+		if result.Effect() == values.Used || result.KeysComplete() && !result.KnownKey() {
 			continue
 		}
-		if input.OptionalTLS && result.State() == values.Absent {
+		if input.OptionalTLS && !result.Present() {
 			return nil
 		}
-		return UnavailableSecret(owner, input.Reference.Name, result)
+		return UnavailableSecret(owner, sec, result)
 	}
 	return nil
 }

@@ -23,7 +23,8 @@ metadata:
     retained: repository
   name: input
   namespace: apps
-stringData: {}
+stringData:
+  VALUE: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
 type: Opaque
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1

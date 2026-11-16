@@ -194,6 +194,13 @@ func TestSchemaError_Canonical(t *testing.T) {
 			} else {
 				assert.Equal(t, errors.Unwrap(got), error(original))
 			}
+			rendered := &RenderError{Err: got}
+			assert.Equal(t, rendered.Error(), "helm template: "+tc.want)
+			assert.Equal(t, errors.Unwrap(rendered), got)
+			assert.Equal(t, errors.Is(rendered, sentinel), true)
+			cause, ok = errors.AsType[*schemaCauseError](rendered)
+			assert.Equal(t, ok, true)
+			assert.Equal(t, cause, original)
 		})
 	}
 }

@@ -125,10 +125,7 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 	if b.SecretRef == nil {
 		return credentials.NewStaticV4("", "", ""), nil
 	}
-	if f.secrets == nil {
-		return nil, errors.New("secretRef requires a SecretGetter")
-	}
-	sec := f.secrets(b.Namespace, b.SecretRef.Name)
+	sec := source.ResolveSecretRef(f.secrets, new(manifest.DiagnosticFor(b.Named(), b)), b.SecretRef)
 	valueResult, err := source.SecretValue(
 		&sec,
 		new(manifest.DiagnosticFor(b.Named(), b)),
@@ -146,16 +143,14 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 	results := [2]values.Result{valueResult, value}
 	for i := range results {
 		result := &results[i]
-		if result.State() != values.Readable {
-			return nil, source.UnavailableSecret(new(manifest.DiagnosticFor(b.Named(), b)), b.SecretRef.Name, result)
+		if result.Effect() != values.Used {
+			return nil, source.UnavailableSecret(new(manifest.DiagnosticFor(b.Named(), b)), &sec, result)
 		}
 	}
 	if access == "" || value.Value() == "" {
-		return nil, source.MissingSecretErr(
-			manifest.DiagnosticFor(b.Named(), b),
-			b.SecretRef.Name,
-			"missing accesskey/secretkey",
-		)
+		missing := source.UnavailableSecret(new(manifest.DiagnosticFor(b.Named(), b)), &sec, &valueResult)
+		missing.Detail = "missing accesskey/secretkey"
+		return nil, missing
 	}
 	return credentials.NewStaticV4(access, value.Value(), ""), nil
 }

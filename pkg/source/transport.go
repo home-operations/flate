@@ -26,7 +26,7 @@ const (
 )
 
 func (u transportUse) label() string {
-	return [...]string{"certSecretRef", "secretRef", "proxySecretRef"}[u]
+	return [...]string{"certSecretRef", secretReferenceUse, "proxySecretRef"}[u]
 }
 
 // TransportInput selects an ordered TLS or proxy Secret reference.

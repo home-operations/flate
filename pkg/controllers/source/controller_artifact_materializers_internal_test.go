@@ -324,7 +324,7 @@ func TestController_SyntheticCredentialSkip(t *testing.T) {
 	controller, st := newConfiguredController(
 		t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: fetcher},
-		FetchOptions{AllowMissingSecrets: true},
+		FetchOptions{Missing: sourceMissingPolicy(true)},
 	)
 	st.AddObject(repo)
 	info := controllertest.DispatchToFixpoint(
@@ -369,14 +369,13 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 				}
 				return src.PreparedFetch{}, cause
 			}
-			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
+			controller, st := newConfiguredController(t, nil, FetchOptions{Missing: sourceMissingPolicy(true)})
 			st.AddObject(repo)
 			c := &execution{Controller: controller}
 			c.run.Init(controller.Controller, repo.Named())
 			defer c.run.Close()
 			acquisition := base.Acquisition{
-				AllowMissingSecrets: true,
-				Fetch:               func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, missing },
+				Fetch: func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, missing },
 				Complete: func(fetchCtx context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
 					return c.completeFetch(
 						fetchCtx,

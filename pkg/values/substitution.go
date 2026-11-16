@@ -2,8 +2,7 @@ package values
 
 import (
 	"math"
-	"slices"
-	"strings"
+	"unicode/utf8"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst/parse"
@@ -18,47 +17,153 @@ func SubstitutionActive(ks *manifest.Kustomization) bool {
 		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 }
 
-// NeedsSubstitution reports expansion syntax or scalars requiring the Flux JSON conversion.
-func NeedsSubstitution(v any) bool {
-	switch v := v.(type) {
-	case string:
-		return hasSubstitution(v)
-	case float64:
-		return math.IsNaN(v) || math.IsInf(v, 0) || v == 0 && math.Signbit(v)
-	case int:
-		return v < -(1<<floatMantissaBits) || v > 1<<floatMantissaBits
-	case uint64:
-		return v > 1<<floatMantissaBits
-	case map[string]any:
-		for k, vv := range v {
-			if hasSubstitution(k) || NeedsSubstitution(vv) {
-				return true
-			}
+// ResolvedSubstitutionActive MUST preserve evaluation when satisfied inputs have no readable names.
+func ResolvedSubstitutionActive(inputs []Result) bool {
+	for i := range inputs {
+		result := &inputs[i]
+		if result.ref.Use == substitutionUse && result.effect == Used && !result.certain {
+			return true
 		}
-	case []any:
-		return slices.ContainsFunc(v, NeedsSubstitution)
 	}
 	return false
 }
 
-func hasSubstitution(s string) bool {
-	for {
-		i := strings.IndexByte(s, '$')
-		if i < 0 || i+1 == len(s) {
-			return false
+// UnreadableSubstitutions MUST discard evidence replaced by later or inline values.
+func UnreadableSubstitutions(ks *manifest.Kustomization, inputs []Result) map[string]manifest.Reference {
+	var unreadable map[string]manifest.Reference
+	for i := range inputs {
+		result := &inputs[i]
+		if result.effect != Used || result.ref.Use != substitutionUse {
+			continue
 		}
-		if s[i+1] == '{' || s[i+1] == '$' {
-			return true
+		for name := range result.variables {
+			delete(unreadable, name)
 		}
-		s = s[i+1:]
+		for _, name := range result.unreadable {
+			if unreadable == nil {
+				unreadable = make(map[string]manifest.Reference)
+			}
+			ref := result.ref
+			ref.Key = name
+			unreadable[name] = ref
+		}
 	}
+	if ks.PostBuild != nil {
+		for name := range ks.PostBuild.Substitute {
+			delete(unreadable, name)
+		}
+	}
+	return unreadable
+}
+
+// UnreadableValueReferences excludes absent objects and keys proved missing.
+func UnreadableValueReferences(inputs []Result) []manifest.Reference {
+	var references []manifest.Reference
+	for i := range inputs {
+		result := &inputs[i]
+		omitted := result.ref.Use == "valuesFrom" && result.effect == Omitted
+		if !omitted || !result.present {
+			continue
+		}
+		unreadable := !result.materialized && (result.knownKey || !result.complete)
+		if unreadable {
+			references = append(references, result.ref)
+		}
+	}
+	return references
+}
+
+type substitutionClass uint8
+
+const (
+	substitutionLiteral substitutionClass = iota
+	substitutionInspect
+	substitutionRequired
+)
+
+// NeedsSubstitution reports expansion syntax or scalars requiring the Flux JSON conversion.
+func NeedsSubstitution(v any) bool {
+	return classifySubstitution(v) == substitutionRequired
+}
+
+func classifySubstitution(v any) substitutionClass {
+	var required bool
+	switch v := v.(type) {
+	case nil, bool:
+		return substitutionLiteral
+	case string:
+		return classifySubstitutionString(v)
+	case float64:
+		required = math.IsNaN(v) || math.IsInf(v, 0) || v == 0 && math.Signbit(v)
+	case int:
+		required = v < -(1<<floatMantissaBits) || v > 1<<floatMantissaBits
+	case uint64:
+		required = v > 1<<floatMantissaBits
+	case map[string]any:
+		class := substitutionLiteral
+		for k, vv := range v {
+			next := classifySubstitutionString(k)
+			if next == substitutionRequired {
+				return next
+			}
+			class |= next
+			next = classifySubstitution(vv)
+			if next == substitutionRequired {
+				return next
+			}
+			class |= next
+		}
+		return class
+	case []any:
+		class := substitutionLiteral
+		for _, vv := range v {
+			next := classifySubstitution(vv)
+			if next == substitutionRequired {
+				return next
+			}
+			class |= next
+		}
+		return class
+	default:
+		// Other representations MUST retain the projected conversion decision.
+		return substitutionInspect
+	}
+	if required {
+		return substitutionRequired
+	}
+	return substitutionLiteral
+}
+
+func classifySubstitutionString(value string) substitutionClass {
+	var highBits byte
+	for i := range len(value) {
+		c := value[i]
+		highBits |= c
+		if c == '$' && i+1 < len(value) && (value[i+1] == '{' || value[i+1] == '$') {
+			return substitutionRequired
+		}
+	}
+	if highBits >= utf8.RuneSelf && !utf8.ValidString(value) {
+		return substitutionInspect
+	}
+	return substitutionLiteral
 }
 
 // SubstitutionDocument keeps YAML framing and document exclusions identical across callers.
+//
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func SubstitutionDocument(occurrence manifest.DocOccurrence, active bool) ([]byte, error) {
 	doc := occurrence.Document
-	if !active || occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) || !NeedsSubstitution(doc) {
+	if !active || occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
 		return nil, nil //nolint:nilerr // Parse failures retain their existing outcome and never enter substitution.
+	}
+	class := classifySubstitution(doc)
+	if class == substitutionLiteral {
+		return nil, nil
+	}
+	doc = occurrence.SubstitutionDocument()
+	if class == substitutionInspect && !NeedsSubstitution(doc) {
+		return nil, nil
 	}
 	//nolint:wrapcheck // Shaping wraps this deferred error.
 	return yaml.Marshal(doc)

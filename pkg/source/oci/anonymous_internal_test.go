@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:paralleltest // The test replaces PATH, DOCKER_CONFIG, and HELM_REGISTRY_CONFIG.
@@ -58,7 +59,10 @@ func TestFetcher_AnonymousPreparation(t *testing.T) {
 				var ok bool
 				missing, ok = errors.AsType[*source.MissingSecretError](err)
 				assert.FatalIf(t, !ok, "missing credentials: %v", err)
-				prepared, err = missing.RetryMachine(t.Context(), reads)
+				request := missing.Input
+				request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+				assessment := values.Resolve(&request)
+				prepared, err = missing.RetryMachine(t.Context(), &assessment)
 			}
 			assert.NoError(t, err)
 			assert.Equal(t, prepared.LocalUnavailable, missing)

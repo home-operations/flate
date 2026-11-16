@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source"
@@ -76,6 +77,7 @@ func TestAcquire_UnavailableCredentialsLog(t *testing.T) {
 	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
 	st.AddObject(repo)
 	run := gateExecution(New(st, tasks), repo.Named())
+	run.Missing = depwait.NewMissingPolicy([]string{manifest.KindSecret})
 	defer run.Close()
 	missing := source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "unavailable-auth", "not found")
 	var got error
@@ -85,7 +87,6 @@ func TestAcquire_UnavailableCredentialsLog(t *testing.T) {
 			func(t *testing.T, ctx context.Context, current *manifest.GitRepository, level manifest.DrainLevel) error {
 				t.Helper()
 				got = run.Acquire(ctx, current, Acquisition{
-					AllowMissingSecrets: true,
 					Fetch: func(context.Context) (source.PreparedFetch, error) {
 						run.Reads.GetObject(repo.Named())
 						source.SecretLookup(&run.Reads)(repo.Namespace, "unavailable-auth")
@@ -147,7 +148,7 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 	acquisition := Acquisition{
 		Fetch: func(context.Context) (source.PreparedFetch, error) {
 			fetches++
-			source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
+			missing.Input.Facts = source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
 			return source.PreparedFetch{}, missing
 		},
 		Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
@@ -220,6 +221,7 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 			provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "registry"}
 			st.AddObjects([]manifest.BaseManifest{owner, provider})
 			run := gateExecution(New(st, tasks), owner.Named())
+			run.Missing = depwait.NewMissingPolicy([]string{manifest.KindSecret})
 			defer run.Close()
 			missing := &source.MissingSecretError{
 				Owner:  provider.Named(),
@@ -233,7 +235,6 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 					ctx,
 					provider,
 					Acquisition{
-						AllowMissingSecrets: true,
 						Fetch: func(context.Context) (source.PreparedFetch, error) {
 							return source.PreparedFetch{}, missing
 						},
@@ -314,6 +315,9 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 		failure = missing
 	}
 	run := gateExecution(New(st, tasks), owner.Named())
+	if testCaseInput.allow {
+		run.Missing = depwait.NewMissingPolicy([]string{manifest.KindSecret})
+	}
 	defer run.Close()
 	completed := 0
 	var got error
@@ -329,11 +333,15 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 					ctx,
 					provider,
 					Acquisition{
-						AllowMissingSecrets:  testCaseInput.allow,
-						AllowAnonymousDenied: testCaseInput.policy,
+						ProviderOnly: testCaseInput.policy,
 						Fetch: func(context.Context) (source.PreparedFetch, error) {
 							if testCaseInput.missing {
-								source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
+								missing.Input.Facts = source.SecretLookup(
+									&run.Reads,
+								)(
+									provider.Namespace,
+									missing.Secret.Name,
+								)
 							}
 							if failure != nil {
 								return source.PreparedFetch{}, failure
@@ -477,4 +485,83 @@ type testAcquireOutcomesCaseTailInputs struct {
 
 	owner **manifest.
 		ResourceSet
+}
+
+func TestAcquire_CapturedEvidence(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"unknown production", "encrypted production", "missing key production", "private preparation"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(2)
+			t.Cleanup(tasks.BlockTillDone)
+			owner := &manifest.GitRepository{Name: "repo", Namespace: "apps"}
+			st.AddObject(owner)
+			run := gateExecution(New(st, tasks), owner.Named())
+			defer run.Close()
+			facts := store.ReferenceFacts{Generated: true}
+			if name != "unknown production" {
+				secret := &manifest.Secret{StringData: map[string]any{"password": "readable"}}
+				if name == "encrypted production" {
+					secret.StringData["username"] = "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"
+				}
+				facts.Data, facts.Original = secret, secret
+			}
+			if name == "private preparation" {
+				facts.Private, facts.Prepared = true, true
+			}
+			_, _, err := source.BasicAuthFromSecret(facts, manifest.DiagnosticFor(owner.Named(), owner), "auth")
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			assert.FatalIf(t, !ok, "unavailable material: %v", err)
+			closed, retries, completions := 0, 0, 0
+			artifact := &store.SourceArtifact{}
+			missing.RetryAmbient = func(context.Context) (source.PreparedFetch, error) {
+				retries++
+				return fetchtest.Prepared(artifact, nil)
+			}
+			acquisition := Acquisition{
+				Fetch: func(context.Context) (source.PreparedFetch, error) {
+					return source.PreparedFetch{Close: func() { closed++ }}, missing
+				},
+				Complete: func(_ context.Context, got *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+					completions++
+					if name == "private preparation" {
+						assert.Equal(t, got, artifact)
+						assert.NoError(t, unavailable)
+					} else {
+						assert.Equal(t, got == nil, true)
+						assert.Equal(t, unavailable, error(missing))
+					}
+					return nil
+				},
+			}
+			tasks.Go(t.Context(), "acquire", func(ctx context.Context) {
+				run.Dispatch(
+					ctx,
+					manifest.DrainNone,
+					owner,
+					func(owner *manifest.GitRepository, ctx context.Context, _ manifest.BaseManifest, level manifest.DrainLevel) error {
+						return run.Acquire(ctx, owner, acquisition, level)
+					},
+				)
+			})
+			tasks.BlockTillDone()
+			assert.Equal(t, run.Outcome(), schedule.Blocked)
+			assert.Diff(t, run.Blocked, []manifest.NamedResource{missing.Secret})
+			assert.Equal(t, retries+closed+completions, 0)
+			tasks.Go(t.Context(), "settle", func(ctx context.Context) { run.Settle(ctx, manifest.DrainCascade) })
+			tasks.BlockTillDone()
+			assert.Equal(t, run.Outcome(), schedule.Terminal)
+			assert.Equal(t, completions, 1)
+			assert.Equal(t, closed, 1)
+			wantRetries, wantWarnings := 0, 1
+			if name == "private preparation" {
+				wantRetries, wantWarnings = 1, 0
+			}
+			assert.Equal(t, retries, wantRetries)
+			assert.Equal(t, len(st.Warnings()), wantWarnings)
+			run.Close()
+			assert.Equal(t, closed, 1)
+		})
+	}
 }

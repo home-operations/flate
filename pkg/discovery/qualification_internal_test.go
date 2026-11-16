@@ -52,14 +52,18 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 	}
 	assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent), nil)
 	for _, tc := range []struct {
-		name                          string
-		kind                          string
-		optional, generated, accepted bool
-		allowMissing, eligible        bool
+		name                                    string
+		kind                                    string
+		optional, generated, accepted, rendered bool
+		readable                                bool
+		allowMissing, eligible                  bool
 	}{
 		{name: "required selected ConfigMap", kind: manifest.KindConfigMap, allowMissing: true},
 		{name: "optional ConfigMap", kind: manifest.KindConfigMap, optional: true, eligible: true},
-		{name: "accepted generated Secret", kind: manifest.KindSecret, generated: true, accepted: true, eligible: true},
+		{name: "accepted generated Secret", kind: manifest.KindSecret, generated: true, accepted: true},
+		{name: "unaccepted rendered generated Secret", kind: manifest.KindSecret, generated: true, rendered: true},
+		{name: "accepted rendered generated Secret", kind: manifest.KindSecret, generated: true, accepted: true, rendered: true, eligible: true},
+		{name: "accepted readable generated Secret", kind: manifest.KindSecret, generated: true, accepted: true, readable: true, eligible: true},
 		{name: "unaccepted generated Secret", kind: manifest.KindSecret, generated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,8 +82,25 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 				producer := &manifest.RawObject{
 					APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "settings",
 				}
+				children := []store.Child{{Obj: producer}}
+				if tc.readable {
+					children = append(
+						children,
+						store.Child{
+							Obj: &manifest.Secret{
+								Name:       "settings",
+								Namespace:  "apps",
+								StringData: map[string]any{"VALUE": "readable"},
+							},
+						},
+					)
+				}
+				var receipt *manifest.RenderReceipt
+				if tc.rendered {
+					receipt = manifest.NewRenderReceipt("rendered", func(a, b any) bool { return a == b })
+				}
 				objects.RecordEmitted(candidate.Named(), &store.Emission{
-					Children: []store.Child{{Obj: producer}}, Complete: tc.accepted,
+					Children: children, Complete: tc.accepted, Render: receipt,
 				}, nil)
 			}
 			l := loader.New(objects)

@@ -319,7 +319,7 @@ func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (Comparis
 				return Comparison{}, nil
 			}
 			value, err := data.Value(ref.Key)
-			if err != nil {
+			if err != nil || value.Encrypted {
 				return Comparison{}, nil //nolint:nilerr // Unreadable values leave comparison unknown.
 			}
 			values[side], present[side] = value.Value, value.Found

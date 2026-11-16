@@ -80,9 +80,12 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 				s.ReferenceFacts(target, nil, manifest.NamedResource{}),
 				ReferenceFacts{
 					Generated:     true,
+					Keys:          manifest.KeySet{Names: []string{"VALUE"}, Complete: true},
 					Materializers: []manifest.NamedResource{owner},
 					Productions:   want,
-					ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}},
+					ReferenceData: []manifest.ReferenceData{
+						{Production: want[0], Keys: manifest.KeySet{Names: []string{"VALUE"}, Complete: true}},
+					},
 				},
 			)
 			assert.Diff(t, s.Productions(target, nil), want)
@@ -144,7 +147,7 @@ func testStoreReferenceFactsWarningOnlyReplacement(t *testing.T, mode string) {
 	data := &manifest.Secret{Name: "input", Namespace: "apps"}
 	warning := manifest.Warning{
 		Resource: data.Named(),
-		Category: manifest.WarnSOPSUnreadable,
+		Category: manifest.WarnInputParseFailed,
 		Detail:   []string{"VALUE"},
 	}
 	publish := func(warnings []manifest.Warning) {
@@ -202,4 +205,41 @@ func testStoreReferenceFactsWarningOnlyReplacement(t *testing.T, mode string) {
 		previous = reads
 	}
 	previous.Close()
+}
+
+func TestReferenceFacts_MetadataKeepsCapturedKeys(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			st.AddObject(owner)
+			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+			id := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
+			var metadata manifest.BaseManifest = &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace}
+			if kind == manifest.KindSecret {
+				metadata = &manifest.Secret{Name: id.Name, Namespace: id.Namespace}
+			}
+			production := manifest.Production{
+				Owner:    owner.Named(),
+				Authored: id,
+				Source:   manifest.BootstrapSourceID,
+				Path:     "values",
+				File:     "values/input.yaml",
+			}
+			keys := manifest.KeySet{Names: []string{"values.yaml"}, Complete: true}
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {
+					Path: "values", File: "values/input.yaml", Declaration: metadata,
+					Productions:   []manifest.Production{production},
+					ReferenceData: []manifest.ReferenceData{{Production: production, Keys: keys}},
+				},
+			}})
+			facts := st.ReferenceFacts(id, nil, ownerID("consumer"))
+			assert.Equal(t, facts.Declared, true)
+			assert.Equal(t, facts.Data == nil, true)
+			assert.Diff(t, facts.Keys, keys)
+		})
+	}
 }

@@ -301,14 +301,6 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			change := comparison.output[0].changes[0]
 			assert.Equal(t, change.Status, StatusChanged)
 			assert.Equal(t, change.Name, manifest.DocIdentity(healthyNew.Manifest).Name)
-			assert.Diff(
-				t,
-				comparison.Groups[0].Output,
-				[2][]manifest.NamedResource{
-					{manifest.DocIdentity(healthyOld.Manifest)},
-					{manifest.DocIdentity(healthyNew.Manifest)},
-				},
-			)
 			var first, second bytes.Buffer
 			assert.NoError(t, comparison.Write(&first, nil))
 			assert.NoError(t, comparison.Write(&second, nil))
@@ -380,7 +372,6 @@ func testCompareUnavailableProducerPolicyCase(
 		assert.NoError(t, unmarshalErr2)
 	}
 	if testCaseInput.tc.withheld {
-		assert.Diff(t, comparison1.Groups[0].Output, [2][]manifest.NamedResource{})
 		want := Suppression{
 			Parent: helmReleaseParent(),
 			Side:   testCaseInput.tc.side,

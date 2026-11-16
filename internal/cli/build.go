@@ -63,15 +63,14 @@ func buildCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command
 			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), stdin: cmd.InOrStdin(),
 		}, func(inv *selectedInvocation) selectedPayload {
 			groups := make([]output.DocumentGroup, len(inv.groups))
-			inventory := make([][2][]manifest.NamedResource, len(inv.groups))
 			var payloadErr error
 			for i, group := range inv.groups {
 				groups[i].Cluster = group.cluster
 				var err error
-				groups[i].Documents, inventory[i][0], err = collectRendered(group.sides[0], b)
+				groups[i].Documents, err = collectRendered(group.sides[0], b)
 				payloadErr = errors.Join(payloadErr, err)
 			}
-			return selectedPayload{output: inventory, err: payloadErr, write: func() error {
+			return selectedPayload{err: payloadErr, write: func() error {
 				return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DocumentGroups(
 					groups,
 				)
@@ -84,21 +83,19 @@ func buildCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command
 	return cmd
 }
 
-func collectRendered(res *selection.Result, b *buildFlags) ([]map[string]any, []manifest.NamedResource, error) {
+func collectRendered(res *selection.Result, b *buildFlags) ([]map[string]any, error) {
 	count := renderedDocumentCount(res)
 	out := make([]map[string]any, 0, count)
-	identities := make([]manifest.NamedResource, 0, count)
 	for j, batch := range res.Manifests {
-		identity, err := batch.IdentityAccessor()
+		_, err := batch.IdentityAccessor()
 		if err != nil {
-			return nil, nil, fmt.Errorf("batch %d: %w", j, err)
+			return nil, fmt.Errorf("batch %d: %w", j, err)
 		}
 		for _, i := range emissionOrder(batch.Documents, b) {
 			out = append(out, batch.Documents[i])
-			identities = append(identities, identity(i))
 		}
 	}
-	return out, identities, nil
+	return out, nil
 }
 
 func emissionOrder(documents []map[string]any, b *buildFlags) []int {

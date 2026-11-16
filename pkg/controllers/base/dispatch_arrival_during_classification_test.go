@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -253,7 +255,7 @@ func testExecutionSyntheticDependencyReasonsCase(
 						Input:     store.ReferenceFacts{Materializers: []manifest.NamedResource{owner.Named()}},
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 					t.Error("failed input resumed")
 					return nil
 				},

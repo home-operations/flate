@@ -16,7 +16,9 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -302,28 +304,11 @@ func testReconcileUnresolvedWarningReplayCase(
 ) {
 	t.Helper()
 
-	c, s, _ := newControllerWithFixture(t)
+	fixture, s, _ := newControllerWithFixture(t)
 	freezeSourceForTest(t, s)
-	declaration := &manifest.RawObject{
-		APIVersion: "external-secrets.io/v1",
-		Kind:       "ExternalSecret",
-		Name:       "cluster-secrets",
-		Namespace:  "flux-system",
-		Spec:       map[string]any{"target": map[string]any{"name": "cluster-secrets"}},
-	}
-	s.AddObject(declaration)
-	input := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "flux-system",
-		Name:      "cluster-secrets",
-	}
-	s.SetDiscoveryIndex(
-		&manifest.DiscoveryIndex{
-			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				input: {Productions: []manifest.Production{{Declaration: declaration.Named()}}},
-			},
-		},
-	)
+	c := New(s, fixture.Tasks, fixture.Trees)
+	c.Configure(Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret})}, sourcecache.RetryConfig{})
+	c.StartLifecycle()
 	consumers := make([]*manifest.Kustomization, 2)
 	for i := range consumers {
 		parsed, err := manifest.ParseDoc(map[string]any{

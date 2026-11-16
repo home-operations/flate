@@ -7,20 +7,23 @@ import (
 	"strings"
 )
 
+// KeySet retains known names without proving absence until coverage is complete.
+type KeySet struct {
+	Names    []string `json:"names,omitempty"`
+	Complete bool     `json:"complete,omitempty"`
+}
+
 // ProducerTarget identifies a declared object and its known data keys.
 type ProducerTarget struct {
 	NamedResource
 
-	DeclaredKeys []string
+	Keys KeySet
 }
 
 // ProducerTargets returns fixed outputs and matching concrete candidates declared by obj.
 // Predictions establish identity only; they provide no generated content.
 // ArtifactGenerator contributes fixed outputs and compatible concrete candidates.
 //
-// ExternalSecret produces target.name, defaulting to its own name. Nonempty
-// target.template.data defines the output keys; otherwise data[].secretKey supplies
-// them. dataFrom feeds remote inputs and cannot declare their keys offline.
 // SealedSecret produces template.metadata.name, defaulting to its own name, with
 // encryptedData keys. ObjectBucketClaim produces a same-named Secret and ConfigMap
 // for credentials and connection settings, without declaring their keys.
@@ -58,31 +61,36 @@ func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget
 		return r.artifactTargets(candidates)
 	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
 		name := cmp.Or(spec.child("target").str(nameKey), r.Name)
-		// Template output keys take precedence over explicit data inputs; an empty
-		// template falls back to data[].secretKey, never remote dataFrom keys.
-		keys := spec.child("target").child("template").mapKeys(dataKey)
-		if keys == nil {
-			keys = spec.entryKeys(dataKey, "secretKey")
+		template := spec.child("target").child("template")
+		keys := template.mapKeys(dataKey)
+		includeInputs := len(keys) == 0 || template.str("mergePolicy") == "Merge"
+		if includeInputs {
+			keys = append(keys, spec.entryKeys(dataKey, "secretKey")...)
+			slices.Sort(keys)
+			keys = slices.Compact(keys)
 		}
-		return []ProducerTarget{r.secret(name, keys)}
+		dataFrom, _ := r.Spec["dataFrom"].([]any)
+		templateFrom, _ := template.m["templateFrom"].([]any)
+		complete := len(keys) != 0 && len(templateFrom) == 0 && (!includeInputs || len(dataFrom) == 0)
+		return []ProducerTarget{r.secret(name, KeySet{Names: keys, Complete: complete})}
 	case r.Kind == "SealedSecret" && apiGroup(r.APIVersion) == "bitnami.com":
 		name := cmp.Or(spec.child("template").child(metadataKey).str(nameKey), r.Name)
-		return []ProducerTarget{r.secret(name, spec.mapKeys("encryptedData"))}
+		return []ProducerTarget{r.secret(name, KeySet{Names: spec.mapKeys("encryptedData"), Complete: true})}
 	case r.Kind == "ObjectBucketClaim" && apiGroup(r.APIVersion) == "objectbucket.io":
-		return []ProducerTarget{r.secret(r.Name, nil), r.target(KindConfigMap, r.Name, nil)}
+		return []ProducerTarget{r.secret(r.Name, KeySet{}), r.target(KindConfigMap, r.Name, KeySet{})}
 	default:
 		return nil
 	}
 }
 
-func (r *RawObject) secret(name string, declaredKeys []string) ProducerTarget {
-	return r.target(KindSecret, name, declaredKeys)
+func (r *RawObject) secret(name string, keys KeySet) ProducerTarget {
+	return r.target(KindSecret, name, keys)
 }
 
-func (r *RawObject) target(kind, name string, declaredKeys []string) ProducerTarget {
+func (r *RawObject) target(kind, name string, keys KeySet) ProducerTarget {
 	return ProducerTarget{
 		Kind: kind, Namespace: r.Namespace, Name: name,
-		DeclaredKeys: declaredKeys,
+		Keys: keys,
 	}
 }
 
@@ -141,3 +149,11 @@ func (*ResourceSet) producerTargets([]NamedResource) []ProducerTarget      { ret
 func (*ResourceSetInputProvider) producerTargets([]NamedResource) []ProducerTarget { return nil }
 func (*ConfigMap) producerTargets([]NamedResource) []ProducerTarget                { return nil }
 func (*Secret) producerTargets([]NamedResource) []ProducerTarget                   { return nil }
+
+// Equal MUST include key completeness in publication identity.
+//
+//nolint:gocritic // The SDK preserves immutable value snapshots and the value method set.
+func (t ProducerTarget) Equal(other ProducerTarget) bool {
+	return t.NamedResource == other.NamedResource && t.Keys.Complete == other.Keys.Complete &&
+		slices.Equal(t.Keys.Names, other.Keys.Names)
+}

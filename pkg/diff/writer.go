@@ -67,7 +67,6 @@ func (e encoder) diffGroups(groups []diffGroup) error {
 
 type lineChange struct {
 	Resource, Parent Subject
-	Output           [2]manifest.NamedResource
 	ParentPath       string
 	From, To         string
 	Status, Label    string
@@ -94,7 +93,6 @@ func prepareLines(prepared prepared) ([]lineChange, error) {
 		}
 		out = append(out, lineChange{
 			Resource: Subject{ID: p.Resource}, Parent: Subject{ID: p.Parent.NamedResource},
-			Output:     p.Output,
 			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.status(),
 		})
 	}
@@ -108,11 +106,6 @@ func lineInventory(changes []lineChange, format Format) GroupResult {
 		inventory.Subjects = append(inventory.Subjects, c.Resource.ID)
 		if format == FormatHTML {
 			inventory.Subjects = append(inventory.Subjects, c.Parent.ID)
-		}
-		for side, content := range [2]string{c.From, c.To} {
-			if content != "" {
-				inventory.Output[side] = append(inventory.Output[side], c.Output[side])
-			}
 		}
 	}
 	return inventory

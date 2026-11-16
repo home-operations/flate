@@ -464,7 +464,7 @@ func TestSource_CompositionCredentialPolicy(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			c, st, source, _ := compositionFixture(t)
-			c.Configure(FetchOptions{AllowMissingSecrets: mode == "allowed"}, cache.RetryConfig{})
+			c.Configure(FetchOptions{Missing: sourceMissingPolicy(mode == "allowed")}, cache.RetryConfig{})
 			cause := src.MissingSecretErr(manifest.DiagnosticFor(source.Named(), source), "auth", "not found")
 			if mode == "malformed" {
 				cause = manifest.NewError(manifest.ErrInput, errors.New("malformed credentials"), "")

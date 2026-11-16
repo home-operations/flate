@@ -151,7 +151,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 					!old.binding.equal(&entry.binding) ||
 					!slices.Equal(old.child.Productions, entry.child.Productions) ||
 					!slices.EqualFunc(old.targets, entry.targets, func(a, b manifest.ProducerTarget) bool {
-						return a.NamedResource == b.NamedResource && slices.Equal(a.DeclaredKeys, b.DeclaredKeys)
+						return a.Equal(b)
 					})
 				add(old, direct)
 				add(entry, direct)

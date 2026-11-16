@@ -23,6 +23,8 @@ import (
 )
 
 // Prepare admits one authoritative document while retaining its sanitized outcome.
+//
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.Child, manifest.DocOccurrence, bool) {
 	if doc.Err != nil {
 		sanitized, changed := manifest.SanitizeDocument(doc)
@@ -270,6 +272,7 @@ func (r documentReader) censusFile(
 	return facts, err
 }
 
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func expandDocuments(o manifest.DocOccurrence) ([]manifest.DocOccurrence, bool, error) {
 	kind, _ := o.Document["kind"].(string)
 	if _, collection := o.Document["items"]; !strings.HasSuffix(kind, "List") || !collection {

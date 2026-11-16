@@ -43,7 +43,9 @@ type RenderRequest struct {
 	// SubPath selects the source directory to build.
 	SubPath string `json:"SubPath"`
 	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
-	Spec *manifest.Kustomization `json:"Spec"`
+	Spec                    *manifest.Kustomization       `json:"Spec"`
+	SubstitutionActive      bool                          `json:"SubstitutionActive"`
+	UnreadableSubstitutions map[string]manifest.Reference `json:"-"`
 
 	// StrictSubstitutions binds undefined-variable handling to accepted history.
 	StrictSubstitutions bool `json:"StrictSubstitutions"`

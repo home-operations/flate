@@ -257,7 +257,7 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 		diff := cmp.Diff(
 			retained.Children,
 			[]Child{child},
-			cmp.AllowUnexported(Child{}),
+			cmp.AllowUnexported(Child{}, manifest.ConfigMap{}, manifest.Secret{}),
 			cmpopts.IgnoreFields(Child{}, "policy"),
 		)
 		assert.FatalIf(t, diff != "", "rejection changed accepted children (-want +got): %s", diff)

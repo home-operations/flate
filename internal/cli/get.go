@@ -186,14 +186,12 @@ type listSection struct {
 	kind      string
 	table     output.Table
 	documents []output.DocumentGroup
-	output    [][]manifest.NamedResource
 }
 
 func collectSelected[T manifest.BaseManifest](inv *selectedInvocation, view listView[T]) listSection {
 	section := listSection{
 		kind: view.kind, table: output.Table{Columns: view.cols},
 		documents: make([]output.DocumentGroup, len(inv.groups)),
-		output:    make([][]manifest.NamedResource, len(inv.groups)),
 	}
 	for i, group := range inv.groups {
 		res := group.sides[0]
@@ -204,7 +202,6 @@ func collectSelected[T manifest.BaseManifest](inv *selectedInvocation, view list
 				continue
 			}
 			row, doc := view.mapper(res, obj)
-			section.output[i] = append(section.output[i], obj.Named())
 			row["cluster"] = group.cluster
 			section.table.Rows = append(section.table.Rows, row)
 			section.documents[i].Documents = append(section.documents[i].Documents, doc)
@@ -220,7 +217,6 @@ func resourcePayload(
 	combined bool,
 ) selectedPayload {
 	var tables []output.Table
-	inventory := make([][2][]manifest.NamedResource, len(inv.groups))
 	documents := make([]output.DocumentGroup, len(inv.groups))
 	for i, group := range inv.groups {
 		documents[i] = output.DocumentGroup{Cluster: group.cluster, Documents: []map[string]any{}}
@@ -228,7 +224,6 @@ func resourcePayload(
 	for _, section := range sections {
 		for i, group := range section.documents {
 			documents[i].Documents = append(documents[i].Documents, group.Documents...)
-			inventory[i][0] = append(inventory[i][0], section.output[i]...)
 		}
 		if combined {
 			if len(section.table.Rows) == 0 {
@@ -241,7 +236,7 @@ func resourcePayload(
 		tables = append(tables, section.table)
 	}
 	tables, multi := prepareGetTables(inv, tables)
-	return selectedPayload{output: inventory, write: func() error {
+	return selectedPayload{write: func() error {
 		if encoder.Format == output.FormatJSON || encoder.Format == output.FormatYAML {
 			return encoder.DocumentGroups(documents)
 		}

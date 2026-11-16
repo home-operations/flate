@@ -50,7 +50,7 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			assert.FatalIf(t, len(sides) != 1 || selectedErr == nil, "completed run selection: %v", selectedErr)
 			var stdout, stderr bytes.Buffer
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
-			_, _, collectionErr := collectRendered(&selection.Result{Manifests: []manifest.DocumentBatch{{
+			_, collectionErr := collectRendered(&selection.Result{Manifests: []manifest.DocumentBatch{{
 				Identities: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "malformed"}},
 			}}}, &buildFlags{})
 			assert.Equal(t, errors.Is(collectionErr, manifest.ErrInput), true)

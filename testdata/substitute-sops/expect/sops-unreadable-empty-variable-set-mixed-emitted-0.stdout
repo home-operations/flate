@@ -14,6 +14,7 @@ metadata:
 apiVersion: v1
 data:
   CONFIG_EMPTY: ""
+  CONFIG_ENCRYPTED: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
   CONFIG_PLAIN: repository
 kind: ConfigMap
 metadata:
@@ -40,6 +41,7 @@ metadata:
 stringData:
   EMPTY: ""
   READABLE: repository
+  VALUE: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
 type: Opaque
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1

@@ -22,10 +22,10 @@ type Production struct {
 
 // ReferenceData retains one production's lookup evidence without object authority.
 type ReferenceData struct {
-	Production   Production `json:"Production"`
-	DeclaredKeys []string   `json:"DeclaredKeys"`
-	OfflineData  Data       `json:"OfflineData"`
-	Warnings     []Warning  `json:"-"`
+	Production  Production `json:"Production"`
+	Keys        KeySet     `json:"Keys"`
+	OfflineData Data       `json:"OfflineData"`
+	Warnings    []Warning  `json:"-"`
 }
 
 // Materializer returns the owner that can supply the target through this contribution.

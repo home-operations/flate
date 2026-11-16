@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -70,7 +71,7 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			resumed := false
 			assert.NoError(t, normal.AwaitData(t.Context(), DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 					resumed = true
 					return nil
 				},
@@ -113,9 +114,9 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 		assert.NoError(t, err)
 		err = e.AwaitData(t.Context(), DataWait{
 			Inputs: inputs,
-			Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []depwait.DataDependency) error {
+			Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []values.Result) error {
 				assert.Equal(t, len(omitted), 1)
-				assert.Equal(t, omitted[0].NamedResource, input)
+				assert.Equal(t, omitted[0].ID(), input)
 				return nil
 			},
 		}, manifest.DrainNone)
@@ -215,7 +216,7 @@ func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
 		Inputs: []depwait.DataDependency{
 			{NamedResource: secret.Named(), Key: "value", Use: "valuesFrom", Input: facts},
 		},
-		Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
+		Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { resumed = true; return nil },
 	}, manifest.DrainNone))
 	assert.Equal(t, resumed, true)
 	for required := range execution.Reads.Required() {
@@ -223,16 +224,15 @@ func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
 	}
 }
 
-func TestAwaitData_EncryptedSubstitutionAdvisory(t *testing.T) {
+func TestAwaitData_EncryptedSubstitutionProjection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		optional   bool
-		allowed    []string
-		unreadable int
+		name     string
+		optional bool
+		allowed  []string
 	}{
 		{name: "required mixed input"},
-		{name: "permitted mixed input", allowed: []string{manifest.KindSecret}, unreadable: 1},
+		{name: "permitted mixed input", allowed: []string{manifest.KindSecret}},
 		{name: "optional mixed input", optional: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -244,18 +244,17 @@ func TestAwaitData_EncryptedSubstitutionAdvisory(t *testing.T) {
 				},
 			}}
 			input := &manifest.Secret{
-				Name:       "input",
-				Namespace:  "apps",
-				StringData: map[string]any{"PLAIN": "readable", "SUPPLIED": ""},
+				Name:      "input",
+				Namespace: "apps",
+				StringData: map[string]any{
+					"PLAIN":    "readable",
+					"SUPPLIED": "",
+					"ALPHA":    "ENC[AES256_GCM,data:alpha,iv:y,tag:z,type:str]",
+					"ZETA":     "ENC[AES256_GCM,data:zeta,iv:y,tag:z,type:str]",
+				},
 			}
 			st.AddObject(owner)
-			st.AddDeclaration(store.Declaration{Obj: input, Warnings: []manifest.Warning{
-				{
-					Resource: input.Named(),
-					Category: manifest.WarnSOPSUnreadable,
-					Detail:   []string{"ZETA", "ALPHA", "SUPPLIED", "ZETA"},
-				},
-			}})
+			st.AddDeclaration(store.Declaration{Obj: input})
 			c := New(st, nil)
 			c.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)})
 			var e Execution
@@ -263,36 +262,63 @@ func TestAwaitData_EncryptedSubstitutionAdvisory(t *testing.T) {
 			defer e.Close()
 			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
 			assert.NoError(t, err)
-			assert.Equal(t, len(e.Unreadable), tc.unreadable)
+			assert.Equal(t, len(e.Unreadable), 1)
 			resumed := false
 			assert.NoError(t, e.AwaitData(t.Context(), DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 					resumed = true
 					return nil
 				},
 			}, manifest.DrainNone))
 			assert.Equal(t, resumed, true)
-			assert.Equal(t, len(st.Warnings()), 1)
+			assert.Equal(t, len(st.Warnings()), 0)
 			e.Reads.Accept(store.AssessmentReconciled)
-			var advisories []manifest.Warning
-			for _, warning := range st.Warnings() {
-				if warning.Category == manifest.WarnUnresolvedSubstitution {
-					advisories = append(advisories, warning)
-				}
-			}
-			if tc.optional {
-				assert.Equal(t, len(advisories), 0)
-				return
-			}
-			assert.FatalIf(t, len(advisories) != 1, "advisories=%+v", advisories)
-			assert.Equal(
-				t,
-				advisories[0].Message,
-				`substituteFrom Secret "apps/input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "ALPHA" is SOPS-encrypted and unreadable; supply it with --supply`,
-			)
-			assert.Diff(t, advisories[0].Detail, []string{"ZETA"})
-			assert.Diff(t, advisories[0].Related, []manifest.NamedResource{input.Named()})
+			assert.Equal(t, len(st.Warnings()), 0)
+			assert.Equal(t, inputs[0].Result.Effect(), values.Used)
+			assert.Diff(t, inputs[0].Result.UnreadableKeys(), []string{"ALPHA", "ZETA"})
 		})
 	}
+}
+
+func TestAwaitData_OrderedAssessments(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	owner.ValuesFrom = []manifest.ValuesReference{
+		{Kind: manifest.KindConfigMap, Name: "input", ValuesKey: "first"},
+		{Kind: manifest.KindSecret, Name: "absent", Optional: true},
+		{Kind: manifest.KindConfigMap, Name: "input", ValuesKey: "last"},
+	}
+	data := &manifest.ConfigMap{
+		Name:      "input",
+		Namespace: "apps",
+		Data:      map[string]any{"first": "a: first", "last": "a: last"},
+	}
+	st.AddObjects([]manifest.BaseManifest{owner, data})
+	var e Execution
+	e.Init(New(st, task.NewBounded(2)), owner.Named())
+	defer e.Close()
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	assert.NoError(t, err)
+	resumed := false
+	assert.NoError(t, e.AwaitData(t.Context(), DataWait{
+		Inputs: inputs,
+		Resume: func(_ context.Context, _ manifest.DrainLevel, results []values.Result) error {
+			resumed = true
+			assert.Equal(t, len(results), 3)
+			for position := range results {
+				assert.Equal(t, results[position].Position(), position)
+			}
+			assert.Equal(t, results[0].Effect(), values.Used)
+			assert.Equal(t, results[0].Value(), "a: first")
+			assert.Equal(t, results[1].Effect(), values.Omitted)
+			assert.Equal(t, results[2].Effect(), values.Used)
+			assert.Equal(t, results[2].Value(), "a: last")
+			return nil
+		},
+	}, manifest.DrainNone))
+	assert.Equal(t, resumed, true)
+	e.Reads.Accept(store.AssessmentReconciled)
+	assert.Equal(t, len(st.Warnings()), 0)
 }

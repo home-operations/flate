@@ -201,7 +201,14 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 			parseChildrenResult1 := (&Execution{Controller: &c}).ParseChildren(
 				owner,
 				[]manifest.DocOccurrence{
-					{Document: invalid, Ordinal: 2, Err: failure},
+					{
+						Document: invalid,
+						Ordinal:  2,
+						Err:      failure,
+						ConsumedUnreadable: []manifest.Reference{
+							{Kind: manifest.KindSecret, Namespace: "apps", Name: "input", Key: "TOKEN", Position: 3},
+						},
+					},
 					{Document: sibling, Ordinal: 3},
 				},
 				manifest.ParseDocOptions{},
@@ -219,6 +226,8 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 				docs,
 				failures,
 			)
+			assert.Equal(t, failures[0].ConsumedUnreadable[0].Key, "TOKEN")
+			assert.Equal(t, failures[0].ConsumedUnreadable[0].Position, 3)
 			assert.Equal(t, children[0].Obj.Named().Name, "healthy")
 			assert.Diff(t, docs[len(docs)-1].Document, sibling)
 			if tc.wantDocs == 2 {

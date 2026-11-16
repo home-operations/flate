@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestFetcher_DiscardedPreparationClosesAgent(t *testing.T) {
@@ -26,7 +27,10 @@ func TestFetcher_DiscardedPreparationClosesAgent(t *testing.T) {
 	_, err := (&Fetcher{}).Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok, "credential preparation: %v", err)
-	prepared, err := missing.RetryMachine(t.Context(), reads)
+	request := missing.Input
+	request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+	assessment := values.Resolve(&request)
+	prepared, err := missing.RetryMachine(t.Context(), &assessment)
 	assert.NoError(t, err)
 	assert.Equal(t, opened.Load(), 1)
 	assert.FatalIf(t, prepared.Close == nil, "prepared acquisition has no cleanup")

@@ -189,6 +189,26 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 			warning,
 		)
 	}
+	permitted, err := renderTreesForTest(t.Context(), t,
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{Concurrency: 2, AllowMissingKinds: []string{manifest.KindSecret}},
+	)
+	assert.FatalIf(t, err != nil || len(permitted) != 1, "permitted absent-input render: %v", err)
+	assert.Equal(t, len(permitted[0].Result.Failed), 0)
+	var warnings []manifest.Warning
+	for _, warning := range permitted[0].Result.Warnings {
+		if warning.Category == manifest.WarnUnresolvedSubstitution {
+			warnings = append(warnings, warning)
+		}
+	}
+	want := manifest.Warning{
+		Category: manifest.WarnUnresolvedSubstitution,
+		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
+			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
+			"or resolve to defaults or empty values",
+		Count: 2,
+	}
+	assert.Diff(t, warnings, []manifest.Warning{want})
 	testutil.WriteFile(t, dir, "kubernetes/apps/external-secret.yaml", `apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata: {name: cluster-secrets, namespace: flux-system}
@@ -210,21 +230,13 @@ spec:
 
 	res = renderedSingleton2[0].Result
 	assert.Equal(t, len(res.Failed), 0)
-	var warnings []manifest.Warning
+	warnings = nil
 	for _, warning := range res.Warnings {
 		if warning.Category == manifest.WarnUnresolvedSubstitution {
 			warnings = append(warnings, warning)
 		}
 	}
-	want := manifest.Warning{
-		Category: manifest.WarnUnresolvedSubstitution,
-		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
-			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
-			"or resolve to defaults or empty values: " +
-			"is produced in the cluster with unknown data; supply it with --supply",
-		Count: 2,
-	}
-	assert.Diff(t, warnings, []manifest.Warning{want})
+	assert.Diff(t, warnings, []manifest.Warning(nil))
 }
 
 func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {

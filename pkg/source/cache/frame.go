@@ -331,11 +331,15 @@ func (p *FramePublication) WriteTo(w io.Writer) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	//nolint:wrapcheck // Publication preserves the writer's original error and byte count.
-	return io.Copy(
-		w,
-		io.MultiReader(bytes.NewReader(p.frame.header), bytes.NewReader(payload), bytes.NewReader(p.tail)),
-	)
+	var written int64
+	for _, data := range [...][]byte{p.frame.header, payload, p.tail} {
+		n, writeErr := bytes.NewReader(data).WriteTo(w)
+		written += n
+		if writeErr != nil {
+			return written, writeErr //nolint:wrapcheck // Publication preserves the writer's original error and byte count.
+		}
+	}
+	return written, nil
 }
 
 var _ io.WriterTo = (*FramePublication)(nil)

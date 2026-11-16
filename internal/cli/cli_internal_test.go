@@ -461,7 +461,7 @@ func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(stderr, "must be one of"), "expected validation error, got %q", stderr)
 }
 
-func writeUnreadableSecretFixture(t *testing.T) string {
+func writePermittedMissingSecretFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	k8s := filepath.Join(root, "kubernetes")
@@ -479,13 +479,8 @@ func writeUnreadableSecretFixture(t *testing.T) string {
 	)
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(k8s, "apps", "producer.yaml"),
-		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nspec: {target: {name: cluster-secrets}}\n",
-	)
-	testutil.WriteFileAt(
-		t,
 		filepath.Join(k8s, "apps", "kustomization.yaml"),
-		"resources:\n- cm.yaml\n- producer.yaml\n",
+		"resources:\n- cm.yaml\n",
 	)
 	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
 apiVersion: v1
@@ -499,7 +494,7 @@ data:
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_AdvisoryDestinations(t *testing.T) {
-	k8s := writeUnreadableSecretFixture(t)
+	k8s := writePermittedMissingSecretFixture(t)
 
 	for _, command := range [][]string{{"build", "all"}, {"get", "all"}, {"get", "ks"}, {"get", "images"}, {"test", "all"}} {
 		t.Run(strings.Join(command, "/"), func(t *testing.T) { runAdvisoryDestinationsCase(t, &command, &k8s) })
@@ -577,10 +572,15 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
-	path := writeUnreadableSecretFixture(t)
+	path := writePermittedMissingSecretFixture(t)
 	want := errors.New("stdout closed")
 	var stderr bytes.Buffer
-	code := Run([]string{"test", "all", "--path", path}, failingWriter{err: want}, &stderr, RunConfig{})
+	code := Run(
+		[]string{"test", "all", "--path", path, "--allow-missing-kinds", "Secret"},
+		failingWriter{err: want},
+		&stderr,
+		RunConfig{},
+	)
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero for stdout write failure")
 	assert.ErrorIf(
 		t,

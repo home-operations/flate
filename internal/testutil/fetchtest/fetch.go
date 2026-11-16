@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Fetch copies the policy because preparation retains it for deferred acquisition.
@@ -47,15 +48,17 @@ func Retry(
 	return prepared.Fetch(ctx, nil)
 }
 
-// Machine supplies current reads to the machine retry before acquisition.
+// Machine MUST use the same final continuation assessment as production acquisition.
 func Machine(
 	ctx context.Context,
 	missing *source.MissingSecretError,
-	reads *store.ReadSet,
 ) (*store.SourceArtifact, error) {
+	request := missing.Input
+	request.Demand, request.Unavailable, request.Ambient = values.SourceDemand, missing, missing.RetryAmbient != nil
+	assessment := values.Resolve(&request)
 	return Retry(
 		ctx,
-		func(ctx context.Context) (source.PreparedFetch, error) { return missing.RetryMachine(ctx, reads) },
+		func(ctx context.Context) (source.PreparedFetch, error) { return missing.RetryMachine(ctx, &assessment) },
 	)
 }
 

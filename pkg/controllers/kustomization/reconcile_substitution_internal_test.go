@@ -269,12 +269,12 @@ func TestRender_SuspendedSkipsRender(t *testing.T) {
 	st.AddObject(ks)
 	execution := c.newExecution(ks.Named())
 	defer execution.run.Close()
-	sourceID, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
+	sourceID, _, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	want := execution.run.Checkpoint()
 	assert.FatalIf(t, want == nil, "%v", "suspended declaration passed admission")
 	before := guard.opened.Load()
-	got := execution.render(t.Context(), ks, sourceID, applyIgnore)
+	got := execution.render(t.Context(), ks, sourceID, nil)
 	assert.ErrorIf(t, !errors.Is(got, want), "render error = %v, want admission error %v", got, want)
 	{
 		opens := guard.opened.Load() - before

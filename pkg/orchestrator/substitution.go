@@ -15,7 +15,6 @@ import (
 func snapshotSubstitutions(cfg *Config) error {
 	cfg.AllowMissingKinds = slices.Clone(cfg.AllowMissingKinds)
 	cfg.missing = depwait.NewMissingPolicy(cfg.AllowMissingKinds)
-	cfg.allowMissingSecrets = cfg.missing.AllowsKind(manifest.KindSecret)
 	if len(cfg.Supply) == 0 {
 		return nil
 	}

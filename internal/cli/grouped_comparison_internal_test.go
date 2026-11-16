@@ -62,7 +62,6 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 			assert.Equal(t, len(comparison.Groups), 2)
 			assert.Equal(t, len(payload.warnings), 2)
 			assert.Equal(t, len(payload.subjects), 2)
-			assert.Equal(t, len(payload.output), 2)
 			failed := inv.groups[0].sides[1].Manifests[0].Parent.Named()
 			subject := manifest.DiagnosticIdentity{ID: failed, Resource: failed, Path: "clusters/alpha"}
 			note := diff.Suppression{
@@ -78,7 +77,6 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 				assert.Diff(t, result.Suppressed, wantNotes[i])
 				assert.Diff(t, payload.warnings[i], diff.MergeWarnings(result.Warnings, result.Suppressed))
 				assert.Diff(t, payload.subjects[i], result.Subjects)
-				assert.Diff(t, payload.output[i], result.Output)
 			}
 			assert.Diff(t, payload.warnings[0], []manifest.Warning{{
 				Resource: failed, Subject: subject, Category: manifest.WarnDiffSuppressed,

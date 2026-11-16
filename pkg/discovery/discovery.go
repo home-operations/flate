@@ -604,6 +604,9 @@ func (d *Session) prepareDocuments(
 	input *store.SourceArtifact,
 	guard *store.ReadSet,
 ) (*declarationPreparation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	previous := d.prepared[ks.Named()]
 	if previous != nil && previous.matches(ks, input, guard) {
 		return previous, previous.err
@@ -622,14 +625,47 @@ func (d *Session) prepareDocuments(
 		frame.retire(d.cfg.Store)
 		return nil, manifest.NewError(manifest.ErrInput, nil, "construction support changed")
 	}
-	var provider values.Provider
-	if ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
-		provider = values.NewStoreProvider(&frame.support)
+	err := d.renderPreparation(ctx, frame, previous)
+	return frame, err
+}
+
+func (d *Session) renderPreparation(
+	ctx context.Context,
+	frame, previous *declarationPreparation,
+) error {
+	ks, input := frame.owner, frame.source
+	sourceID := ks.EffectiveSourceID()
+	provider := values.NewStoreProvider(&frame.support)
+	var inputs []values.Result
+	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
+		if ref.Use == "substituteFrom" {
+			inputs = append(
+				inputs,
+				values.Resolve(
+					&values.ResolveRequest{
+						Reference:  ref,
+						Facts:      provider.Lookup(ref.NamedResource),
+						Permission: d.loader.Options.Missing,
+					},
+				),
+			)
+		}
 	}
-	prepared, err := kustomize.Prepare(ks, provider, d.loader.Options.Missing)
+	for i := range inputs {
+		if err := inputs[i].MaterialError(); err != nil {
+			frame.err, frame.complete = err, true
+			return err
+		}
+	}
+	for i := range inputs {
+		if !inputs[i].CanPrepare() {
+			return nil
+		}
+	}
+	prepared, err := kustomize.Prepare(ks, inputs)
 	if err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
-		return frame, err
+		return err
 	}
 	work := d.preparationWork(ks, sourceID)
 	request := kustomize.RenderRequest{
@@ -639,6 +675,7 @@ func (d *Session) prepareDocuments(
 		SubPath:             prepared.Path,
 		Spec:                prepared,
 		StrictSubstitutions: d.cfg.StrictSubstitutions,
+		SubstitutionActive:  values.ResolvedSubstitutionActive(inputs),
 		SkipKinds:           d.cfg.SkipKinds,
 	}
 	request.Preparation = &frame.preparation
@@ -651,7 +688,7 @@ func (d *Session) prepareDocuments(
 		docs, receipt, err = kustomize.Render(ctx, d.cfg.Trees, request, d.cfg.RemoteRetry)
 		if err != nil {
 			frame.err, frame.complete = err, ctx.Err() == nil
-			return frame, err
+			return err
 		}
 	}
 	shaping := kustomize.PrepareShape(&request, docs)
@@ -664,7 +701,7 @@ func (d *Session) prepareDocuments(
 		},
 	); err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
-		return frame, err
+		return err
 	}
 	parseChildrenResult2 := loader.ParseChildren(
 		prepared,
@@ -675,14 +712,14 @@ func (d *Session) prepareDocuments(
 	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	if err := manifest.DocumentFailure(failures); err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
-		return frame, err
+		return err
 	}
 	frame.work, frame.children, frame.receipt, frame.content = request.Work, built, receipt, content
 	frame.complete = true
 	for _, doc := range docs {
 		frame.warnings = append(frame.warnings, doc.Warnings...)
 	}
-	return frame, nil
+	return nil
 }
 
 func (d *Session) prepareProducer(
@@ -699,6 +736,9 @@ func (d *Session) prepareProducer(
 }
 
 func (d *Session) registerProducer(ctx context.Context, prepared *declarationPreparation) error {
+	if !prepared.complete {
+		return nil
+	}
 	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
 	if err := d.loader.RegisterBuilt(

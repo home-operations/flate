@@ -101,11 +101,6 @@ spec:
 		output := outputByParent(run.Result.Manifests)[testutil.KustomizationID("apps", "child")]
 		assert.FatalIf(t, len(output) != 1, "changed descendant output: %+v", run.Result.Manifests)
 		assert.Diff(t, output[0]["data"], map[string]any{"value": []string{"before", "after"}[side]})
-		warnings := map[string]bool{}
-		for _, warning := range run.Result.Warnings {
-			warnings[warning.Category] = true
-		}
-		assert.Equal(t, warnings[manifest.WarnSOPSUnreadable], true)
-		assert.Equal(t, warnings[manifest.WarnUnresolvedSubstitution], true)
+		assert.Equal(t, len(run.Result.Warnings), 0)
 	}
 }

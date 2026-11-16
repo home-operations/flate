@@ -161,7 +161,7 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 		"profile lookup ran before continuation: %v",
 		err,
 	)
-	artifact, err = fetchtest.Machine(t.Context(), missing, reads)
+	artifact, err = fetchtest.Machine(t.Context(), missing)
 	success := (*(*captures.shape)) == "process" || (*(*captures.shape)) == "static before process" ||
 		(*(*captures.shape)) == "environment before files" ||
 		(*(*captures.shape)) ==
@@ -271,7 +271,7 @@ func testFetcherMachineProfilesCaseCompletionTail(
 		}
 	}
 	if *scope.success {
-		warm, err := fetchtest.Machine(t.Context(), (*scope.missing), (*scope.reads))
+		warm, err := fetchtest.Machine(t.Context(), (*scope.missing))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -295,7 +295,7 @@ func testFetcherMachineProfilesCaseCompletionTail(
 				strings.ReplaceAll((*(*scope.captures).script), "file-canary", "rotated-canary"),
 			)
 		}
-		rotated, err := fetchtest.Machine(t.Context(), (*scope.missing), (*scope.reads))
+		rotated, err := fetchtest.Machine(t.Context(), (*scope.missing))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,

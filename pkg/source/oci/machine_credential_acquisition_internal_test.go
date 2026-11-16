@@ -92,7 +92,7 @@ func testFetcherMachineCredentialsCase(t *testing.T, tc *struct {
 				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			},
 		}
-		selected, err = op.resolveRegistryConfig(t.Context(), new(repo.RegistryAccess()), "ghcr.io")
+		selected, _, err = op.resolveRegistryConfig(t.Context(), new(repo.RegistryAccess()), "ghcr.io")
 	}
 	assert.FatalIf(t, (err != nil) != tc.fail, "native lookup: %v", err)
 	if !tc.fail {

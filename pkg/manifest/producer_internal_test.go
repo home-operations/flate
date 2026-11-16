@@ -8,11 +8,10 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-// secret is a small helper so each case reads as identity + declared keys.
 func secret(ns, name string, keys ...string) ProducerTarget {
 	return ProducerTarget{
 		Kind: KindSecret, Namespace: ns, Name: name,
-		DeclaredKeys: keys,
+		Keys: KeySet{Names: keys, Complete: true},
 	}
 }
 
@@ -29,7 +28,7 @@ func TestProducerTargets(t *testing.T) {
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
 				Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
 			},
-			want: []ProducerTarget{secret("default", "app-values")},
+			want: []ProducerTarget{{Kind: KindSecret, Namespace: "default", Name: "app-values"}},
 		},
 		{
 			name: "ExternalSecret no target falls back to own name",
@@ -40,7 +39,7 @@ func TestProducerTargets(t *testing.T) {
 				Name:       "my-secret",
 				Spec:       map[string]any{},
 			},
-			want: []ProducerTarget{secret("staging", "my-secret")},
+			want: []ProducerTarget{{Kind: KindSecret, Namespace: "staging", Name: "my-secret"}},
 		},
 		{
 			name: "ExternalSecret template.data declares the output keys",
@@ -69,7 +68,152 @@ func TestProducerTargets(t *testing.T) {
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "app-creds",
 				Spec: map[string]any{"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "vault/app"}}}},
 			},
-			want: []ProducerTarget{secret("default", "app-creds")},
+			want: []ProducerTarget{{Kind: KindSecret, Namespace: "default", Name: "app-creds"}},
+		},
+		{
+			name: "ExternalSecret mixed dataFrom leaves coverage incomplete",
+			raw: &RawObject{
+				Kind:       "ExternalSecret",
+				APIVersion: "external-secrets.io/v1",
+				Namespace:  "default",
+				Name:       "mixed",
+				Spec: map[string]any{
+					"data":     []any{map[string]any{"secretKey": "TOKEN"}},
+					"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "remote"}}},
+				},
+			},
+			want: []ProducerTarget{
+				{Kind: KindSecret, Namespace: "default", Name: "mixed", Keys: KeySet{Names: []string{"TOKEN"}}},
+			},
+		},
+		{
+			name: "ExternalSecret template output remains complete with dataFrom",
+			raw: &RawObject{
+				Kind:       "ExternalSecret",
+				APIVersion: "external-secrets.io/v1",
+				Namespace:  "default",
+				Name:       "template",
+				Spec: map[string]any{
+					"target": map[string]any{
+						"template": map[string]any{"data": map[string]any{"OUTPUT": "{{ .value }}"}},
+					},
+					"data":     []any{map[string]any{"secretKey": "TOKEN"}},
+					"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "remote"}}},
+				},
+			},
+			want: []ProducerTarget{secret("default", "template", "OUTPUT")},
+		},
+		{
+			name: "ExternalSecret Replace discards explicit and remote input keys",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{
+					"target": map[string]any{"template": map[string]any{
+						"mergePolicy": "Replace",
+						"data":        map[string]any{"OUTPUT": "{{ .value }}"},
+					}},
+					"data":     []any{map[string]any{"secretKey": "TOKEN"}},
+					"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "remote"}}},
+				},
+			},
+			want: []ProducerTarget{secret("default", "template", "OUTPUT")},
+		},
+		{
+			name: "ExternalSecret Merge combines sorted unique template and input keys",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{
+					"target": map[string]any{"template": map[string]any{
+						"mergePolicy": "Merge",
+						"data":        map[string]any{"OUTPUT": "{{ .value }}", "SHARED": "template"},
+					}},
+					"data": []any{
+						map[string]any{"secretKey": "TOKEN"},
+						map[string]any{"secretKey": "SHARED"},
+						map[string]any{"secretKey": "API_KEY"},
+						map[string]any{"secretKey": "TOKEN"},
+					},
+				},
+			},
+			want: []ProducerTarget{secret("default", "template", "API_KEY", "OUTPUT", "SHARED", "TOKEN")},
+		},
+		{
+			name: "ExternalSecret Merge preserves names with reversed input order",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{
+					"target": map[string]any{"template": map[string]any{
+						"mergePolicy": "Merge",
+						"data":        map[string]any{"OUTPUT": "{{ .value }}", "SHARED": "template"},
+					}},
+					"data": []any{
+						map[string]any{"secretKey": "TOKEN"},
+						map[string]any{"secretKey": "API_KEY"},
+						map[string]any{"secretKey": "SHARED"},
+						map[string]any{"secretKey": "TOKEN"},
+					},
+				},
+			},
+			want: []ProducerTarget{secret("default", "template", "API_KEY", "OUTPUT", "SHARED", "TOKEN")},
+		},
+		{
+			name: "ExternalSecret Merge with remote inputs leaves coverage incomplete",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{
+					"target": map[string]any{"template": map[string]any{
+						"mergePolicy": "Merge",
+						"data":        map[string]any{"OUTPUT": "{{ .value }}"},
+					}},
+					"data":     []any{map[string]any{"secretKey": "TOKEN"}},
+					"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "remote"}}},
+				},
+			},
+			want: []ProducerTarget{{
+				Kind: KindSecret, Namespace: "default", Name: "template",
+				Keys: KeySet{Names: []string{"OUTPUT", "TOKEN"}},
+			}},
+		},
+		{
+			name: "ExternalSecret imported templates leave template coverage incomplete",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{"target": map[string]any{"template": map[string]any{
+					"data":         map[string]any{"OUTPUT": "{{ .value }}"},
+					"templateFrom": []any{map[string]any{"literal": "IMPORTED: {{ .value }}"}},
+				}}},
+			},
+			want: []ProducerTarget{{
+				Kind: KindSecret, Namespace: "default", Name: "template",
+				Keys: KeySet{Names: []string{"OUTPUT"}},
+			}},
+		},
+		{
+			name: "ExternalSecret imported templates leave explicit input coverage incomplete",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{
+					"target": map[string]any{"template": map[string]any{
+						"templateFrom": []any{map[string]any{"literal": "IMPORTED: {{ .value }}"}},
+					}},
+					"data": []any{map[string]any{"secretKey": "TOKEN"}},
+				},
+			},
+			want: []ProducerTarget{{
+				Kind: KindSecret, Namespace: "default", Name: "template",
+				Keys: KeySet{Names: []string{"TOKEN"}},
+			}},
+		},
+		{
+			name: "ExternalSecret empty templateFrom keeps template coverage complete",
+			raw: &RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Namespace: "default", Name: "template",
+				Spec: map[string]any{"target": map[string]any{"template": map[string]any{
+					"data":         map[string]any{"OUTPUT": "{{ .value }}"},
+					"templateFrom": []any{},
+				}}},
+			},
+			want: []ProducerTarget{secret("default", "template", "OUTPUT")},
 		},
 		{
 			name: "SealedSecret template.metadata.name + encryptedData keys",
@@ -102,7 +246,7 @@ func TestProducerTargets(t *testing.T) {
 				Name:       "netbox-obc",
 			},
 			want: []ProducerTarget{
-				secret("default", "netbox-obc"),
+				{Kind: KindSecret, Namespace: "default", Name: "netbox-obc"},
 				{Kind: KindConfigMap, Namespace: "default", Name: "netbox-obc"},
 			},
 		},
@@ -116,8 +260,10 @@ func TestProducerTargets(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			{
+				before := c.raw.Clone()
 				got := ProducerTargets(c.raw)
 				assert.ErrorIf(t, !reflect.DeepEqual(got, c.want), "targets = %#v, want %#v", got, c.want)
+				assert.Diff(t, c.raw.Spec, before.Spec)
 			}
 		})
 	}

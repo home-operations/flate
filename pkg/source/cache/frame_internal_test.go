@@ -449,6 +449,13 @@ func TestFrame_StorageErrors(t *testing.T) {
 				acquired, frameErr := OpenFrame(t.Context(), "domain", os.DirFS(root), &metadata)
 				assert.NoError(t, frameErr)
 				assert.NoError(t, os.Remove(file))
+				publication, prepareErr := acquired.PreparePublication(t.Context(), FramePublicationInput{})
+				assert.NoError(t, prepareErr)
+				var output bytes.Buffer
+				n, writeErr := publication.WriteTo(&output)
+				assert.Equal(t, n, int64(0))
+				assert.Equal(t, output.Len(), 0)
+				assert.Equal(t, errors.Is(writeErr, fs.ErrNotExist), true)
 				_, err = acquired.Payload(t.Context())
 			}
 			_, storage := errors.AsType[*Error](err)
@@ -483,21 +490,41 @@ func TestFramePublication_Writer(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	failure := errors.New("writer failure")
-	for _, count := range []int{0, len(frame.header) + 2, len(frame.header) + len(frame.payload) + 3} {
-		n, err := publication.WriteTo(&frameErrorWriter{remaining: count, err: failure})
-		assert.Equal(t, n, int64(count))
-		assert.Equal(t, err, failure)
+	for _, tc := range []struct {
+		name              string
+		writeErr, wantErr error
+	}{
+		{name: "original error", writeErr: failure, wantErr: failure},
+		{name: "short write", wantErr: io.ErrShortWrite},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, count := range []int{
+				0, len(frame.header), len(frame.header) + 2,
+				len(frame.header) + len(frame.payload), len(frame.header) + len(frame.payload) + 3,
+			} {
+				n, err := publication.WriteTo(&frameErrorWriter{remaining: count, err: tc.writeErr})
+				assert.Equal(t, n, int64(count))
+				assert.Equal(t, err, tc.wantErr)
+			}
+		})
 	}
 	var first, second bytes.Buffer
 	var failures [2]error
+	var written [2]int64
 	var writers sync.WaitGroup
 	for i, output := range []*bytes.Buffer{&first, &second} {
-		writers.Go(func() { _, failures[i] = publication.WriteTo(output) })
+		writers.Go(func() { written[i], failures[i] = publication.WriteTo(output) })
 	}
 	writers.Wait()
 	for _, err := range failures {
 		assert.NoError(t, err)
 	}
+	want := bytes.Join([][]byte{frame.header, []byte("output"), publication.tail}, nil)
+	for _, count := range written {
+		assert.Equal(t, count, int64(len(want)))
+	}
+	assert.Diff(t, first.Bytes(), want)
 	assert.Equal(t, bytes.Equal(first.Bytes(), second.Bytes()), true)
 }
 

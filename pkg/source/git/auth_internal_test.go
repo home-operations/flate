@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -46,7 +47,23 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "missing proxy", proxy: true, wantMissing: true},
 		{name: "missing auth", wantMissing: true},
 		{name: "incomplete basic", data: map[string]any{"username": "alice"}, wantMissing: true},
-		{name: "unwired getter", unwired: true, wantError: "SecretGetter"},
+		{name: "unwired getter", unwired: true, wantMissing: true},
+		{name: "unwired proxy", unwired: true, proxy: true, wantMissing: true},
+		{
+			name:        "encrypted SSH identity",
+			ssh:         true,
+			data:        map[string]any{"identity": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"},
+			wantMissing: true,
+		},
+		{
+			name: "unused encrypted SSH passphrase",
+			ssh:  true,
+			data: map[string]any{
+				"identity":    identity,
+				"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(hostKey)),
+				"password":    "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]",
+			},
+		},
 		{name: "empty bearer uses basic", data: map[string]any{"bearerToken": "", "username": "u", "password": "p"}},
 		{
 			name:        "empty known hosts",
@@ -604,13 +621,15 @@ func TestFetcher_CapturedCredentialAlternatives(t *testing.T) {
 			SecretRef: &manifest.LocalObjectReference{Name: "auth"},
 		}
 		secret := &manifest.Secret{
-			Data:       map[string]any{"password": "!"},
-			StringData: map[string]any{"username": "user"},
+			Data: map[string]any{"password": "!"},
+			StringData: map[string]any{
+				"username":    "user",
+				"bearerToken": "ENC[AES256_GCM,data:fixture,iv:fixture,tag:fixture,type:str]",
+			},
 		}
 		facts := store.ReferenceFacts{
 			Data:     secret,
 			Original: secret,
-			Warnings: []manifest.Warning{{Category: manifest.WarnSOPSUnreadable, Detail: []string{"bearerToken"}}},
 		}
 		getter := func(string, string) store.ReferenceFacts { return facts }
 		_, err := (&operation{secrets: getter}).resolveAuth(repo, new(facts), testEndpoint(t, repo.URL))
@@ -638,4 +657,26 @@ func TestFetcher_CapturedCredentialAlternatives(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, auth != nil, true)
 	})
+}
+
+func TestFetcher_CapturesAuthAndTLSOnce(t *testing.T) {
+	t.Parallel()
+	repo := gitRepoWithSecret("repo", "https://source.invalid/repo", "auth")
+	calls := 0
+	secret := &manifest.Secret{StringData: map[string]any{
+		"username": "user", "password": "pass", "ca.crt": testutil.SelfSignedCA(t),
+		"bearerToken": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]",
+	}}
+	request, err := (&operation{Fetcher: &Fetcher{}, secrets: func(namespace, name string) store.ReferenceFacts {
+		calls++
+		assert.Equal(t, namespace, repo.Namespace)
+		assert.Equal(t, name, "auth")
+		return store.ReferenceFacts{Data: secret, Original: secret}
+	}}).resolveTransport(repo, &sourcecache.Policy{})
+	assert.NoError(t, err)
+	assert.Equal(t, calls, 1)
+	auth, ok := request.auth.(*githttp.BasicAuth)
+	assert.FatalIf(t, !ok, "selected authentication: %T", request.auth)
+	assert.Equal(t, auth.Username, "user")
+	assert.Equal(t, auth.Password, "pass")
 }

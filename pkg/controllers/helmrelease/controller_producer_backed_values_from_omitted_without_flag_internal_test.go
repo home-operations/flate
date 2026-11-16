@@ -71,7 +71,10 @@ data:
 	publishRawFixture(t, c, &manifest.RawObject{
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
 		Name: "app-creds", Namespace: "default",
-		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
+		Spec: map[string]any{
+			"target":   map[string]any{"name": "app-values"},
+			"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "input"}}},
+		},
 	})
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
@@ -115,10 +118,9 @@ data:
 		"status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)",
 		info,
 	)
-	assert.FatalIf(t, !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Resource == hr.Named() && w.Category == manifest.WarnOmittedValues &&
-			strings.Contains(w.Message, "Secret/default/app-values")
-	}), "missing omission warning: %+v", st.Warnings())
+	assert.FatalIf(t, slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == hr.Named() && w.Category == manifest.WarnOmittedValues
+	}), "satisfied producer reference warned: %+v", st.Warnings())
 	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
 	{
@@ -136,15 +138,15 @@ data:
 	info = reconcileFixture(t, c, invalid.Named())
 	assert.FatalIf(
 		t,
-		info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
-		"permitted values omission hid required chart failure: %+v",
+		info.Outcome() != store.OutcomeSkipped || !strings.HasPrefix(info.Message, "cannot render offline") ||
+			!strings.Contains(info.Message, "missing required value"),
+		"unreadable reference did not skip the failed render: %+v",
 		info,
 	)
-	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
-			strings.Contains(w.Message, "Secret/default/app-values")
+	if slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues
 	}) {
-		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
+		t.Fatalf("satisfied producer reference warned after chart failure: %+v", st.Warnings())
 	}
 }
 

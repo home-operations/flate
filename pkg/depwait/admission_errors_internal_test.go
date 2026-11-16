@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type errorPromotion struct{ cause error }
@@ -67,13 +68,18 @@ func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 			got := w.Available(t.Context(), dep, manifest.DrainForce)
 			assert.FatalIf(
 				t,
-				!errors.Is(got.Err, cause) || got.Omit,
+				!errors.Is(got.Err, cause) || got.Result.Effect() == values.Omitted,
 				"Available = %+v, want original cause without omission",
 				got,
 			)
 			w.Existence = errorPromotion{}
 			got = w.Available(t.Context(), dep, manifest.DrainForce)
-			assert.FatalIf(t, got.Err != nil || !got.Omit, "genuine absence = %+v, want optional omission", got)
+			assert.FatalIf(
+				t,
+				got.Err != nil || got.Result.Effect() != values.Omitted,
+				"genuine absence = %+v, want optional omission",
+				got,
+			)
 		})
 	}
 }

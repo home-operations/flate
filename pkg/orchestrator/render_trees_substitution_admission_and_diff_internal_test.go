@@ -279,20 +279,10 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 			data := current.store.ReferenceFacts(last.Obj.Named(), nil, manifest.NamedResource{}).Data
 			want := last.Obj.(*manifest.ConfigMap).Data
 			if encryptedLast {
-				want = map[string]any{"EMPTY": ""}
+				want = encrypted.Obj.(*manifest.ConfigMap).Data
 			}
 			assert.Diff(t, data.(*manifest.ConfigMap).Data, want)
-			warnings := current.store.Warnings()
-			count := 0
-			if encryptedLast {
-				count = 1
-			}
-			assert.Equal(t, len(warnings), count)
-			if encryptedLast {
-				assert.Equal(t, warnings[0].Count, 1)
-				assert.Equal(t, warnings[0].Category, manifest.WarnSOPSUnreadable)
-				assert.Diff(t, warnings[0].Detail, []string{"A", "Z"})
-			}
+			assert.Equal(t, len(current.store.Warnings()), 0)
 		})
 	}
 }
@@ -625,7 +615,7 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
 		assert.Equal(t, (*inputs.paired)[i].Store().Policy(id).Origin, origin)
 		assert.Equal(t, full[0].Store().Policy(id).Origin, origin)
 		for _, result := range []*Result{(*inputs.paired)[i].Result, full[0].Result} {
-			testSuppliedOutputData(t, result, id, (*(*inputs.transition))[i] == "real")
+			testSuppliedOutputData(t, result, id, (*(*inputs.transition))[i])
 		}
 		var wantWarnings []manifest.Warning
 		if (*(*inputs.transition))[i] == "real" {
@@ -663,20 +653,21 @@ type testRenderTreesSuppliedTransitionsMatchFullCase1Part1Inputs struct {
 	consumer   *manifest.NamedResource
 }
 
-func testSuppliedOutputData(t *testing.T, result *Result, id manifest.NamedResource, readable bool) {
+func testSuppliedOutputData(t *testing.T, result *Result, id manifest.NamedResource, state string) {
 	t.Helper()
+	found := false
 	for _, documents := range outputByParent(result.Manifests) {
 		for _, document := range documents {
 			if manifest.DocIdentity(document) != id {
 				continue
 			}
-			data, _ := document["data"].(map[string]any)
-			if readable {
-				assert.Equal(t, data["VALUE"], any("repository"))
-			} else {
-				_, present := data["VALUE"]
-				assert.Equal(t, present, false)
+			found = true
+			want := "repository"
+			if state == "empty" {
+				want = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
 			}
+			assert.Diff(t, document["data"], map[string]any{"VALUE": want})
 		}
 	}
+	assert.Equal(t, found, state != "absent")
 }

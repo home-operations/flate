@@ -20,11 +20,11 @@ func TestResolveProxy(t *testing.T) {
 	}{
 		{
 			name: "unwired Git", kind: manifest.KindGitRepository, unwired: true,
-			wantError: "references proxySecretRef but no source.SecretGetter is wired",
+			wantError: "secret ns/px not found",
 		},
 		{
 			name: "unwired Helm", kind: manifest.KindHelmRepository, unwired: true,
-			wantError: "references proxySecretRef but no source.SecretGetter is wired",
+			wantError: "secret ns/px not found",
 		},
 		{
 			name: "absent", kind: manifest.KindOCIRepository,
@@ -91,7 +91,7 @@ func testResolveProxyCase1(t *testing.T, tc struct {
 		assert.FatalIf(t, err == nil || err.Error() != tc.wantError,
 			"ResolveProxy: %v, want %q", err, tc.wantError)
 
-		if !tc.unwired && tc.secret == nil {
+		if tc.secret == nil {
 			missing, ok := errors.AsType[*MissingSecretError](err)
 			assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrMissingSecret),
 				"expected missing-secret error: %v", err)

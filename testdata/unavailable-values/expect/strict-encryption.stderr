@@ -1,4 +1,0 @@
-
-  ✗  HelmRelease  apps/demo  valuesFrom Secret apps/input key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply
-
-  ✗ 1 failed

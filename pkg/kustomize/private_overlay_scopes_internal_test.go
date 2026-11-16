@@ -15,7 +15,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -112,7 +111,7 @@ func testRenderConcurrentPrivateOverlaysCase(
 			projected.NamePrefix = fmt.Sprintf("render%d-", n)
 			projected.TargetNamespace = fmt.Sprintf("namespace%d", n)
 			projected.PostBuild.Substitute = map[string]string{"SLOT": strconv.Itoa(n)}
-			spec, err := Prepare(projected, nil, depwait.NewMissingPolicy(nil))
+			spec, err := Prepare(projected, nil)
 			if err != nil {
 				t.Error(err)
 				return

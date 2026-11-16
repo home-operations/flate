@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestWarnings_SOPSUnreadableUnionAndScope(t *testing.T) {
+func TestWarnings_AcceptedPayloadsAndScope(t *testing.T) {
 	t.Parallel()
 	s := New()
 	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
@@ -28,8 +28,8 @@ func TestWarnings_SOPSUnreadableUnionAndScope(t *testing.T) {
 		reads.AddWarning(
 			manifest.Warning{
 				Resource: resource,
-				Category: manifest.WarnSOPSUnreadable,
-				Message:  "unreadable",
+				Category: manifest.WarnInputParseFailed,
+				Message:  "input parse failed",
 				Detail:   keys[i],
 			},
 		)
@@ -43,8 +43,8 @@ func TestWarnings_SOPSUnreadableUnionAndScope(t *testing.T) {
 			s.AddWarning(
 				manifest.Warning{
 					Resource: resource,
-					Category: manifest.WarnSOPSUnreadable,
-					Message:  "unreadable",
+					Category: manifest.WarnInputParseFailed,
+					Message:  "input parse failed",
 					Detail:   []string{key},
 				},
 			)
@@ -53,8 +53,10 @@ func TestWarnings_SOPSUnreadableUnionAndScope(t *testing.T) {
 	writers.Wait()
 	for range 2 {
 		warnings := s.Warnings()
-		assert.Equal(t, len(warnings), 1)
-		assert.Equal(t, warnings[0].Count, 1)
-		assert.Diff(t, warnings[0].Detail, []string{"a", "b", "c", "d", "z"})
+		assert.Equal(t, len(warnings), 4)
+		for i, detail := range [][]string{{"b", "a"}, {"c"}, {"d"}, {"z", "a"}} {
+			assert.Equal(t, warnings[i].Count, 1)
+			assert.Diff(t, warnings[i].Detail, detail)
+		}
 	}
 }

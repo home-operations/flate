@@ -134,7 +134,7 @@ spec:
 				diff := cmp.Diff(
 					after.Children,
 					before.Children,
-					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 					cmpopts.IgnoreUnexported(store.Child{}),
 					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
 					cmpopts.IgnoreUnexported(

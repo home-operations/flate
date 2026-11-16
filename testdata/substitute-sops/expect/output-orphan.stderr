@@ -1,4 +1,0 @@
-
-  ⚠ warnings (1)
-    [SOPSUnreadable] ConfigMap apps/orphan: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
-      ORPHAN

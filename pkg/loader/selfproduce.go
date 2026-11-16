@@ -112,7 +112,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			if l.documents.compact && !l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 				continue
 			}
-			child, err := r.materialize(ctx, &l.Options)
+			generated, err := r.materialize(ctx, &l.Options)
 			if err != nil {
 				if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
 					return err
@@ -120,10 +120,14 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 				slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
 				continue
 			}
+			//nolint:errcheck // Generator materialization must panic if it produces a non-Data object.
+			data := generated.child.Obj.(manifest.Data)
 			record.ReferenceData = append(
 				record.ReferenceData,
-				//nolint:errcheck // Generator materialization must panic if it produces a non-Data object.
-				manifest.ReferenceData{Production: p, OfflineData: child.Obj.(manifest.Data), Warnings: child.Warnings},
+				manifest.ReferenceData{
+					Production: p, OfflineData: data, Warnings: generated.child.Warnings,
+					Keys: generated.keys,
+				},
 			)
 			l.Index.Records[id] = record
 		}
@@ -334,13 +338,13 @@ func (b *selfProduceBuilder) recordTarget(target *manifest.ProducerTarget, p *ma
 	if !slices.Contains(r.Productions, *p) {
 		r.Productions = append(r.Productions, *p)
 	}
-	if len(target.DeclaredKeys) != 0 && !slices.ContainsFunc(
+	if target.NamedResource.KindInfo().Data && !slices.ContainsFunc(
 		r.ReferenceData,
 		func(candidate manifest.ReferenceData) bool { return candidate.Production == *p },
 	) {
 		r.ReferenceData = append(
 			r.ReferenceData,
-			manifest.ReferenceData{Production: *p, DeclaredKeys: target.DeclaredKeys},
+			manifest.ReferenceData{Production: *p, Keys: target.Keys},
 		)
 	}
 	b.idx.Records[target.NamedResource] = r

@@ -11,9 +11,12 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+const secretReferenceUse = "secretRef"
+
 // MissingSecretError retains unavailable source material and an optional Secret identity.
 // Acquisition owners supply the ambient continuation.
 type MissingSecretError struct {
+	Input values.ResolveRequest
 	// Owner is the source requiring unavailable material.
 	Owner manifest.NamedResource
 	// Subject is captured before unavailable material can be reported.
@@ -46,49 +49,45 @@ func (e *MissingSecretError) Unwrap() error {
 	return manifest.ErrMissingSecret
 }
 
-// ProducerBacked reports whether captured declarations can supply the missing Secret.
-func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
-	if reads != nil && e.Secret != (manifest.NamedResource{}) {
-		productions := reads.Productions(e.Secret, nil)
-		for i := range productions {
-			if productions[i].Declaration != (manifest.NamedResource{}) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// RetryMachine runs the acquisition owner's continuation when no producer can supply material.
-func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.ReadSet) (PreparedFetch, error) {
+// RetryMachine MUST consume a settled authorization without repeating policy.
+func (e *MissingSecretError) RetryMachine(ctx context.Context, assessment *values.Result) (PreparedFetch, error) {
 	if err := ctx.Err(); err != nil {
 		return PreparedFetch{}, fmt.Errorf("retry machine credentials: %w", err)
 	}
-	if e.RetryAmbient == nil || e.ProducerBacked(reads) {
+	if e.RetryAmbient == nil || assessment == nil || assessment.Effect() != values.Deferred ||
+		len(assessment.Pending()) != 0 {
 		return PreparedFetch{}, e
 	}
 	prepared, err := e.RetryAmbient(ctx)
-	normalize := func(err error) error {
-		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) &&
-			!errors.Is(err, context.DeadlineExceeded) {
-			if missing, ok := errors.AsType[*MissingSecretError](
-				err,
-			); ok && missing.AnonymousDenied &&
-				e.Secret == (manifest.NamedResource{}) {
-				return err
-			}
-			return e
-		}
-		return err
-	}
 	if prepared.Fetch != nil {
 		fetch := prepared.Fetch
 		prepared.Fetch = func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
 			artifact, fetchErr := fetch(ctx, local)
-			return artifact, normalize(fetchErr)
+			fetchErr = e.normalizeMachineError(fetchErr, prepared.LocalUnavailable != nil)
+			return artifact, fetchErr
 		}
 	}
-	return prepared, normalize(err)
+	err = e.normalizeMachineError(err, prepared.LocalUnavailable != nil)
+	return prepared, err
+}
+
+func (e *MissingSecretError) normalizeMachineError(err error, localUnavailable bool) error {
+	if !errors.Is(err, manifest.ErrMissingSecret) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	missing, typed := errors.AsType[*MissingSecretError](err)
+	if !typed {
+		if localUnavailable {
+			return e
+		}
+		return err
+	}
+	if missing.Cause != nil && !missing.AnonymousDenied ||
+		missing.AnonymousDenied && e.Secret == (manifest.NamedResource{}) {
+		return err
+	}
+	return e
 }
 
 // AcquireMachine bounds preparation independently of deferred content acquisition.
@@ -147,38 +146,62 @@ func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason strin
 			Name:      secretRef,
 		}
 	}
+	missing.Input.Reference = manifest.Reference{NamedResource: missing.Secret, Use: secretReferenceUse}
 	return missing
 }
 
-// An unwired getter is configuration failure; missing material retains the
-// source and Secret identities for the existing whole-source skip policy.
-func resolveSecretRef(
+// ResolveSecretRef MUST retain authored absence without inventing producer evidence.
+func ResolveSecretRef(
 	secrets SecretGetter,
 	ownerValue *manifest.DiagnosticIdentity,
-	field string,
 	ref *manifest.LocalObjectReference,
-) (store.ReferenceFacts, error) {
+) store.ReferenceFacts {
 	owner := *ownerValue
-	if secrets == nil {
-		return store.ReferenceFacts{}, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
+	if secrets == nil || ref == nil {
+		return store.ReferenceFacts{}
 	}
-	return secrets(owner.ID.Namespace, ref.Name), nil
+	return secrets(owner.ID.Namespace, ref.Name)
 }
 
-// SecretValue MUST classify each consumed field from the same captured facts.
+// SecretValue MUST resolve each consumed field from the same captured facts.
 func SecretValue(
 	input *store.ReferenceFacts,
 	owner *manifest.DiagnosticIdentity,
 	secretRef, key string,
 ) (values.Result, error) {
-	return values.Classify(new(manifest.Reference{
-		Kind: manifest.KindSecret, Namespace: owner.ID.Namespace, Name: secretRef, Key: key, Use: "secretRef",
-	}), input)
+	result := values.Resolve(&values.ResolveRequest{
+		Reference: manifest.Reference{
+			Kind:      manifest.KindSecret,
+			Namespace: owner.ID.Namespace,
+			Name:      secretRef,
+			Key:       key,
+			Use:       secretReferenceUse,
+		},
+		Facts:  *input,
+		Demand: values.SourceDemand,
+	})
+	err := result.MaterialError()
+	return result, err
 }
 
 // UnavailableSecret MUST retain acquisition retry and whole-source policy.
-func UnavailableSecret(owner *manifest.DiagnosticIdentity, secretRef string, result *values.Result) error {
-	return MissingSecretErr(*owner, secretRef, result.Cause())
+func UnavailableSecret(
+	owner *manifest.DiagnosticIdentity,
+	input *store.ReferenceFacts,
+	result *values.Result,
+) *MissingSecretError {
+	missing := &MissingSecretError{
+		Owner:   owner.ID,
+		Subject: *owner,
+		Secret:  result.ID(),
+		Detail:  result.Cause(),
+		Input: values.ResolveRequest{
+			Reference: result.Reference(),
+			Facts:     *input,
+			Demand:    values.SourceDemand,
+		},
+	}
+	return missing
 }
 
 // BasicAuthFromSecret rejects malformed credentials and reports absent
@@ -200,12 +223,14 @@ func BasicAuthFromSecret(
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
 	for _, result := range []values.Result{valueResult, password} {
-		if result.State() != values.Readable {
-			return "", "", UnavailableSecret(new(owner), secretRef, new(result))
+		if result.Effect() != values.Used {
+			return "", "", UnavailableSecret(new(owner), &input, new(result))
 		}
 	}
 	if username == "" || password.Value() == "" {
-		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
+		missing := UnavailableSecret(&owner, &input, &valueResult)
+		missing.Detail = "missing username/password"
+		return "", "", missing
 	}
 	return username, password.Value(), nil
 }

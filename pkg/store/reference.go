@@ -23,17 +23,26 @@ func (f *ReferenceFacts) resolve(
 	}
 	owner := scope.consumer
 	input := *f
+	input.Declared = f.Data != nil
 	input.Data, input.Original, input.Warnings = nil, nil, nil
 	production := trackReferenceProductions(&input, owner)
-	allowData := owner == (manifest.NamedResource{}) || f.Accepted || production.independent || !production.materialized
+	scope.resolveData(&input, f, &production)
+	input.captureDeclaration(id, scope, production.independent)
+	input.selectKeys()
+	return input.resolveReference(id, scope)
+}
+
+func (r *referenceResolution) resolveData(input, original *ReferenceFacts, production *referenceProductionRoles) {
+	allowData := r.consumer == (manifest.NamedResource{}) || original.Accepted || production.independent ||
+		!production.materialized
 	if allowData {
-		input.Data = f.Data
+		input.Data = original.Data
 		if input.Data != nil {
-			input.Warnings = f.Warnings
+			input.Warnings = original.Warnings
 		}
 		if input.Data == nil {
-			for index := range f.ReferenceData {
-				candidate := &f.ReferenceData[index]
+			for index := range original.ReferenceData {
+				candidate := &original.ReferenceData[index]
 				if candidate.OfflineData != nil {
 					input.Data, input.Offline = candidate.OfflineData, true
 					input.Warnings = candidate.Warnings
@@ -42,11 +51,52 @@ func (f *ReferenceFacts) resolve(
 			}
 		}
 	}
+}
 
-	consumer, known := scope.index.Lookup(owner)
-	input.Prepared = known && consumer.Authored == (manifest.NamedResource{}) &&
-		input.Private && !production.independent
-	return input.resolveReference(id, scope)
+func (f *ReferenceFacts) captureDeclaration(
+	id manifest.NamedResource,
+	scope *referenceResolution,
+	independent bool,
+) {
+	consumer, known := scope.index.Lookup(scope.consumer)
+	f.Prepared = known && consumer.Authored == (manifest.NamedResource{}) &&
+		f.Private && !independent
+	record, exists := scope.index.Lookup(id)
+	declared := exists && record.Path != ""
+	if (!exists || record.Path == "") && id.Namespace != "" {
+		bare := id
+		bare.Namespace = ""
+		record, exists = scope.index.Lookup(bare)
+	}
+	if f.Prepared {
+		f.Declared = false
+	} else if exists && record.Path != "" &&
+		(len(record.Productions) == 0 || slices.ContainsFunc(f.Productions, func(p manifest.Production) bool { return p.Path != "" && p.Declaration == (manifest.NamedResource{}) })) {
+		f.Declared = f.Declared || declared
+		if data, ok := record.Declaration.(manifest.Data); ok && f.Data == nil && len(f.ReferenceData) == 0 {
+			f.Keys = manifest.KeySet{Names: slices.Sorted(data.Keys()), Complete: data.KeysKnown()}
+		}
+	}
+}
+
+func (f *ReferenceFacts) selectKeys() {
+	if f.Data == nil && !f.Keys.Complete && len(f.Keys.Names) == 0 {
+		for i := range f.Productions {
+			production := f.Productions[i]
+			selected := false
+			for i := range f.ReferenceData {
+				candidate := &f.ReferenceData[i]
+				if candidate.Production == production {
+					f.Keys = candidate.Keys
+					selected = true
+					break
+				}
+			}
+			if selected {
+				break
+			}
+		}
+	}
 }
 
 func (f *ReferenceFacts) resolveReference(
@@ -61,6 +111,15 @@ func (f *ReferenceFacts) resolveReference(
 		external := production.Owner != (manifest.NamedResource{}) && production.Owner != scope.consumer
 		if external && !slices.Contains(f.Materializers, production.Owner) {
 			f.Materializers = append(f.Materializers, production.Owner)
+		}
+	}
+	if f.Data != nil {
+		if f.Generated && f.Original == nil {
+			names := slices.AppendSeq(slices.Clone(f.Keys.Names), f.Data.Keys())
+			slices.Sort(names)
+			f.Keys.Names = slices.Compact(names)
+		} else {
+			f.Keys = manifest.KeySet{Names: slices.Sorted(f.Data.Keys()), Complete: f.Data.KeysKnown()}
 		}
 	}
 	return *f
@@ -88,17 +147,18 @@ func trackReferenceProductions(input *ReferenceFacts, owner manifest.NamedResour
 	return referenceProductionRoles{independent: independent, materialized: materialized}
 }
 
-func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *ReferenceFacts) {
+func (r *referenceResolution) applySupplied(id manifest.NamedResource, f *ReferenceFacts) {
 	var supplied manifest.Data
-	if sc.reference != nil {
-		supplied, _ = sc.reference.Obj.(manifest.Data)
+	if r.reference != nil {
+		supplied, _ = r.reference.Obj.(manifest.Data)
 	}
 	if supplied == nil {
 		return
 	}
 	f.Prepared = false
-	if len(sc.reference.Warnings) != 0 {
-		f.Warnings = append(slices.Clone(f.Warnings), sc.reference.Warnings...)
+	f.Declared = true
+	if len(r.reference.Warnings) != 0 {
+		f.Warnings = append(slices.Clone(f.Warnings), r.reference.Warnings...)
 	}
 	if f.Data == nil {
 		f.Data = supplied
@@ -106,9 +166,9 @@ func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *Refer
 		var overridden []string
 		supply := f.Data.WithSupplied(supplied)
 		f.Data, overridden = supply.Data, supply.Overridden
-		if len(overridden) > 0 && sc.reads != nil {
-			sc.reads.RecordSuppliedOverride(
-				SuppliedOverride{Resource: id, SupplyPath: sc.reference.InputPath, Keys: overridden},
+		if len(overridden) > 0 && r.reads != nil {
+			r.reads.RecordSuppliedOverride(
+				SuppliedOverride{Resource: id, SupplyPath: r.reference.InputPath, Keys: overridden},
 			)
 		}
 	}

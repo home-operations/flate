@@ -27,12 +27,11 @@ type Fetcher struct {
 type operation struct {
 	*Fetcher
 
-	work                 manifest.AcquisitionWork
-	reads                *store.ReadSet
-	secrets              source.SecretGetter
-	mediaTypes           []string
-	allowAnonymousDenied bool
-	produce              func(context.Context, registryAcquisition, *cache.Policy) (*store.SourceArtifact, error)
+	work       manifest.AcquisitionWork
+	reads      *store.ReadSet
+	secrets    source.SecretGetter
+	mediaTypes []string
+	produce    func(context.Context, registryAcquisition, *cache.Policy) (*store.SourceArtifact, error)
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.

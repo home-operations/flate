@@ -189,6 +189,7 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 		missing     bool
 		input       bool
 	}{
+		{name: "encrypted username", state: "encrypted", missing: true},
 		{name: "auth unwired", state: "unwired", missing: true},
 		{name: "auth absent", state: "absent", missing: true},
 		{name: "auth empty", state: "empty", missing: true},
@@ -198,7 +199,7 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 		{name: "auth nonscalar", state: "nonscalar", input: true},
 		{name: "auth empty username malformed password", state: "empty malformed", input: true},
 		{name: "auth malformed username empty password", state: "malformed empty", input: true},
-		{name: "cert unwired", state: "unwired", cert: true},
+		{name: "cert unwired", state: "unwired", cert: true, missing: true},
 		{name: "cert absent", state: "absent", cert: true, missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,6 +239,13 @@ func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
 		fInputs.secrets = nil
 	case "absent":
 		secret = nil
+	case "encrypted":
+		secret = &manifest.Secret{
+			StringData: map[string]any{
+				"username": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]",
+				"password": "readable",
+			},
+		}
 	case "empty":
 		secret = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": ""}}
 	case "partial":
@@ -298,11 +306,15 @@ func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
 			"input error exposed credential payload",
 		)
 	}
-	if tc.missing && tc.state != "unwired" && !tc.cert {
+	if tc.missing {
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
-		assert.FatalIf(t, !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" ||
+		name := "creds"
+		if tc.cert {
+			name = "tls"
+		}
+		assert.FatalIf(t, !ok || missing.Owner != r.Named() || missing.Secret.Name != name ||
 			missing.Secret.Namespace != r.Namespace ||
-			missing.RetryAmbient == nil,
+			(!tc.cert && tc.state != "unwired" && missing.RetryAmbient == nil),
 			"missing error lost source identity or ambient continuation: %v", err)
 	}
 }

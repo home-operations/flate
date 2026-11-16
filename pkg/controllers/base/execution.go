@@ -16,6 +16,10 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+type offlineRenderError struct{ error }
+
+func (e *offlineRenderError) Unwrap() error { return e.error }
+
 type preparation interface{ Retire() }
 
 // Execution MUST retain its input capture through every output borrower.
@@ -40,10 +44,50 @@ type Execution struct {
 	pending               error
 	resume                func(context.Context, manifest.DrainLevel) error
 	initial               store.StatusInfo
-	unresolved            []depwait.DataDependency
 	recovering            bool
 	generated             []store.Child
 	prepared              bool
+}
+
+// RenderFailure MUST precede publication and never excuses a failed readable document.
+func (e *Execution) RenderFailure(
+	ctx context.Context,
+	err error,
+	documents []manifest.DocOccurrence,
+	unreadable []manifest.Reference,
+) error {
+	if err == nil {
+		err = manifest.DocumentFailure(documents)
+	}
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	renderWide := len(unreadable) != 0
+	for _, document := range documents {
+		if document.Err == nil {
+			continue
+		}
+		if len(document.ConsumedUnreadable) == 0 && !renderWide {
+			return err
+		}
+		unreadable = append(slices.Clone(unreadable), document.ConsumedUnreadable...)
+	}
+	if len(unreadable) == 0 {
+		return err
+	}
+	labels := make([]string, 0, len(unreadable))
+	for i := range unreadable {
+		ref := &unreadable[i]
+		labels = append(labels, fmt.Sprintf("%s %s %s/%s key %q (reference %d)", ref.Use, ref.Kind,
+			ref.Namespace, ref.Name, ref.Key, ref.Position+1))
+	}
+	slices.Sort(labels)
+	labels = slices.Compact(labels)
+	return manifest.NewError(manifest.ErrSourceSkipped, &offlineRenderError{err},
+		"cannot render offline: unreadable inputs "+strings.Join(labels, ", ")+": "+err.Error())
 }
 
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
@@ -269,7 +313,17 @@ func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource
 	}
 	e.withdrawSource(errors.Is(err, manifest.ErrSourceSkipped))
 	_, _, next := e.Reads.GetEmission(id)
-	if e.Store.HasInventory(id) && len(next.Failures) == 0 {
+	_, offline := errors.AsType[*offlineRenderError](err)
+	if offline {
+		e.generated, e.generationObject = nil, nil
+		e.generationKnown = false
+		next.Finish()
+		next = store.Emission{Complete: true}
+		if publishErr := e.publish(ctx, id, &next, nil); publishErr != nil {
+			err = errors.Join(err, publishErr)
+		}
+	}
+	if !offline && e.Store.HasInventory(id) && len(next.Failures) == 0 {
 		next.Complete = !next.OutputReads.Valid()
 		if publishErr := e.publish(ctx, id, &next, nil); publishErr != nil {
 			err = errors.Join(err, publishErr)

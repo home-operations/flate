@@ -28,7 +28,8 @@ data:
 			"parseConfigMap: %v", err)
 
 		assert.Diff(t, cm.Data, map[string]any{
-			"PLAINTEXT": "keep-me",
+			"PLAINTEXT":   "keep-me",
+			"BASE_DOMAIN": ciphertext,
 		})
 	})
 }

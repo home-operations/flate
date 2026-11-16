@@ -569,7 +569,7 @@ func discoveryReference(refValue *manifest.Reference) bool {
 	ref := *refValue
 
 	return ref.Use == "valuesFrom" ||
-		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
+		ref.Use == substitutionReferenceUse && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
 		ref.IsSource() && ref.Kind != "" && ref.Name != ""
 }
 

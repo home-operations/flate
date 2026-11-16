@@ -24,4 +24,5 @@ metadata:
     kustomize.toolkit.fluxcd.io/namespace: apps
   name: backup-values
   namespace: apps
-stringData: {}
+stringData:
+  VALUE: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]

@@ -16,7 +16,15 @@ func runAdvisoryDestinationsCase(t *testing.T, command *[]string, k8s *string) {
 
 	var firstOut, firstErr string
 	for run := range 2 {
-		args := append(slices.Clone((*command)), "--path", (*k8s), "--concurrency", "2")
+		args := append(
+			slices.Clone((*command)),
+			"--path",
+			(*k8s),
+			"--concurrency",
+			"2",
+			"--allow-missing-kinds",
+			"Secret",
+		)
 		if (*command)[0] != "test" {
 			args = append(args, "-o", "json")
 		}
@@ -41,7 +49,16 @@ func runAdvisoryDestinationsCase(t *testing.T, command *[]string, k8s *string) {
 		}
 	}
 	for _, level := range []string{"debug", "info", "warn", "error"} {
-		args := append(slices.Clone((*command)), "--path", (*k8s), "--concurrency=2", "--log-level", level)
+		args := append(
+			slices.Clone((*command)),
+			"--path",
+			(*k8s),
+			"--concurrency=2",
+			"--log-level",
+			level,
+			"--allow-missing-kinds",
+			"Secret",
+		)
 		cli2 := runCLI(t, args...)
 		stdout, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 		assert.FatalIf(t, code != 0 || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 ||

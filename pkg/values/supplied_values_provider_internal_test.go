@@ -125,7 +125,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 			Substitute: map[string]string{"VALUE": "inline"},
 		},
 	}
-	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil)))
+	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, provider, testPermissions(nil))))
 	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "inline")
 	hr := &manifest.HelmRelease{
 		Name:      "consumer",
@@ -137,7 +137,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		},
 		Values: map[string]any{"greeting": "inline"},
 	}
-	err := ExpandValueReferences(hr, provider, nil)
+	err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 	assert.NoError(t, err)
 	assert.Diff(t, hr.Values, map[string]any{"greeting": "inline", "image": map[string]any{"tag": ""}})
 }

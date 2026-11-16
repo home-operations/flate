@@ -711,6 +711,9 @@ func (w *qualificationWalk) prepare(
 		}
 		return nil
 	}
+	if frame := w.q.session.prepared[ks.Named()]; frame == nil || !frame.registered {
+		return nil
+	}
 	w.q.changed = w.q.changed || !reused
 	w.q.pending = !w.reads.Valid()
 	return nil

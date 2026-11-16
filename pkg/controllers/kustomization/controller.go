@@ -7,9 +7,9 @@ package kustomization
 
 import (
 	"context"
+	"errors"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -135,7 +135,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if _, localErr := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); localErr != nil {
 		return localErr
 	}
-	source, applyIgnore, err := kustomize.SourceInput(&c.run.Reads, ks)
+	source, _, err := kustomize.SourceInput(&c.run.Reads, ks)
 	if err != nil {
 		return err
 	}
@@ -147,8 +147,8 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 		ctx,
 		base.DataWait{
 			Inputs: inputs,
-			Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []depwait.DataDependency) error {
-				return c.render(ctx, ks, source, applyIgnore)
+			Resume: func(ctx context.Context, _ manifest.DrainLevel, results []values.Result) error {
+				return c.render(ctx, ks, source, results)
 			},
 		},
 		level,
@@ -159,10 +159,11 @@ func (c *execution) render(
 	ctx context.Context,
 	ks *manifest.Kustomization,
 	source *store.SourceArtifact,
-	applyIgnore bool,
+	inputs []values.Result,
 ) error {
 	id := ks.Named()
-	ks, err := kustomize.Prepare(ks, c.data, c.Missing)
+	unreadable := values.UnreadableSubstitutions(ks, inputs)
+	ks, err := kustomize.Prepare(ks, inputs)
 	if err != nil {
 		return err
 	}
@@ -180,14 +181,16 @@ func (c *execution) render(
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	request := kustomize.RenderRequest{
-		Work:                c.run.Reads.Work().Scope().RenderWork(),
-		Source:              source,
-		ApplyIgnore:         applyIgnore,
-		SubPath:             ks.Path,
-		Spec:                ks,
-		HeldSlot:            c.Tasks,
-		SkipKinds:           c.SkipKinds,
-		StrictSubstitutions: c.strictSubstitutions,
+		Work:                    c.run.Reads.Work().Scope().RenderWork(),
+		Source:                  source,
+		ApplyIgnore:             kustomize.ApplySourceIgnore(ks, source),
+		SubPath:                 ks.Path,
+		Spec:                    ks,
+		HeldSlot:                c.Tasks,
+		SkipKinds:               c.SkipKinds,
+		StrictSubstitutions:     c.strictSubstitutions,
+		SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
+		UnreadableSubstitutions: unreadable,
 	}
 	c.prepareRequest(&request)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
@@ -220,7 +223,7 @@ func (c *execution) render(
 			Work:   c.run.Reads.Work().Scope().RenderWork().Substitution(),
 		},
 	); err != nil {
-		return err
+		return c.run.RenderFailure(ctx, err, docs, nil)
 	}
 
 	parseChildrenResult3 := c.run.ParseChildren(
@@ -229,6 +232,9 @@ func (c *execution) render(
 		manifest.ParseDocOptions{},
 	)
 	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult3.Children, parseChildrenResult3.Visible, parseChildrenResult3.Failures
+	if err := c.run.RenderFailure(ctx, nil, attempt.Failures, nil); errors.Is(err, manifest.ErrSourceSkipped) {
+		return err
+	}
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
@@ -269,13 +275,18 @@ func (c *Controller) PreviousRender(
 	if err != nil {
 		return history
 	}
+	var results []values.Result
 	if err = ex.run.AwaitData(ctx, base.DataWait{
 		Inputs: inputs,
-		Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
+		Resume: func(_ context.Context, _ manifest.DrainLevel, inputs []values.Result) error {
+			results = inputs
+			return nil
+		},
 	}, manifest.DrainNone); err != nil {
 		return history
 	}
-	prepared, err := kustomize.Prepare(ks, data, c.Missing)
+	unreadable := values.UnreadableSubstitutions(ks, results)
+	prepared, err := kustomize.Prepare(ks, results)
 	if err != nil {
 		return history
 	}
@@ -284,13 +295,15 @@ func (c *Controller) PreviousRender(
 		return history
 	}
 	request := kustomize.RenderRequest{
-		Work:                reads.Work().Scope().RenderWork(),
-		Source:              source,
-		ApplyIgnore:         ignore,
-		SubPath:             prepared.Path,
-		Spec:                prepared,
-		SkipKinds:           c.SkipKinds,
-		StrictSubstitutions: c.strictSubstitutions,
+		Work:                    reads.Work().Scope().RenderWork(),
+		Source:                  source,
+		ApplyIgnore:             ignore,
+		SubPath:                 prepared.Path,
+		Spec:                    prepared,
+		SkipKinds:               c.SkipKinds,
+		StrictSubstitutions:     c.strictSubstitutions,
+		SubstitutionActive:      values.ResolvedSubstitutionActive(results),
+		UnreadableSubstitutions: unreadable,
 	}
 	ex.prepareRequest(&request)
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)

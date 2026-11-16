@@ -52,7 +52,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		context.TODO(),
 		DataWait{
 			Inputs: inputs,
-			Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
+			Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { return nil },
 		},
 		manifest.DrainNone,
 	)

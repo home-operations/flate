@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -91,7 +90,7 @@ spec:
 		t.Fatalf("producer-declared credential lost its current unavailable cause: %v", err)
 	}
 
-	want := "${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com"
+	want := ".cfargotunnel.com"
 	var got string
 	for _, docs := range outputByParent(res.Manifests) {
 		for _, d := range docs {
@@ -105,12 +104,7 @@ spec:
 	assert.ErrorIf(t, got != want,
 		"tunnel ConfigMap data.target = %q, want %q", got, want)
 
-	for _, w := range res.Warnings {
-		if w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, "cloudflared-secret") {
-			return
-		}
-	}
-	t.Fatal("missing unresolved-substitution advisory")
+	assert.Equal(t, len(res.Warnings), 0)
 }
 
 func TestRender_UnreadableSSHKnownHosts(t *testing.T) {
@@ -162,19 +156,9 @@ sops: {version: 3.9.0}
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(rendered) != 1, "rendered trees = %d, want one", len(rendered))
-	var unreadable, unavailable int
+	var unavailable int
 	for _, warning := range rendered[0].Result.Warnings {
-		switch warning.Category {
-		case manifest.WarnSOPSUnreadable:
-			unreadable++
-			assert.Equal(
-				t,
-				warning.Resource,
-				(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}),
-			)
-			assert.Diff(t, warning.Detail, []string{"known_hosts"})
-			assert.Equal(t, warning.Count, 1)
-		case manifest.WarnSourceCredentialsUnavailable:
+		if warning.Category == manifest.WarnSourceCredentialsUnavailable {
 			unavailable++
 			assert.Equal(
 				t,
@@ -183,6 +167,5 @@ sops: {version: 3.9.0}
 			)
 		}
 	}
-	assert.Equal(t, unreadable, 1)
 	assert.Equal(t, unavailable, 1)
 }

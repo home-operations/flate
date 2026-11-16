@@ -9,14 +9,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Acquisition retains credential policy and continuations for acquired content.
 type Acquisition struct {
-	// AllowMissingSecrets permits unavailable authored Secret material.
-	AllowMissingSecrets bool
-	// AllowAnonymousDenied permits a proven registry denial without a credential.
-	AllowAnonymousDenied bool
+	ProviderOnly bool
 	// Fetch acquires content with this execution's captured inputs.
 	Fetch func(context.Context) (source.PreparedFetch, error)
 	// Select MUST classify discovery-admitted content before remote credential preparation.
@@ -121,7 +119,11 @@ func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.Dra
 		}
 		p.ambientConsumed = true
 		p.close()
-		e.Tasks.YieldSlot(func() { p.prepared, p.cause = p.missing.RetryMachine(ctx, &e.Reads) })
+		assessment := p.assess(p.cause, p.missing.RetryAmbient != nil)
+		if assessment.Effect() != values.Deferred {
+			return p.complete(ctx, nil, p.cause, level)
+		}
+		e.Tasks.YieldSlot(func() { p.prepared, p.cause = p.missing.RetryMachine(ctx, &assessment) })
 		if p.cause != nil {
 			return p.complete(ctx, nil, p.cause, level)
 		}
@@ -199,14 +201,9 @@ func (p *pendingAcquisitionError) complete(
 	}
 	if err != nil {
 		missing, hasMissing := errors.AsType[*source.MissingSecretError](err)
-		anonymousDenied := hasMissing && p.acquisition.AllowAnonymousDenied && missing.AnonymousDenied &&
-			missing.Secret == (manifest.NamedResource{})
-		allowed := p.acquisition.AllowMissingSecrets || anonymousDenied ||
-			hasMissing && missing.ProducerBacked(&e.Reads)
-		if !errors.Is(err, manifest.ErrMissingSecret) || errors.Is(err, context.Canceled) ||
-			errors.Is(err, context.DeadlineExceeded) ||
-			!allowed {
-			return err
+		assessment := p.assess(err, false)
+		if assessment.Effect() != values.Omitted {
+			return assessment.Err()
 		}
 		if e.Reads.Valid() {
 			slog.Info(
@@ -239,4 +236,27 @@ func (p *pendingAcquisitionError) complete(
 		e.Reads.SetAcquisition(store.AcquisitionPending)
 	}
 	return result
+}
+
+func (p *pendingAcquisitionError) assess(err error, ambient bool) values.Result {
+	request := values.ResolveRequest{Demand: values.SourceDemand, Failure: err}
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok {
+		request = missing.Input
+		request.Reference.NamedResource = missing.Secret
+		request.Reference.Kind = manifest.KindSecret
+		request.Demand = values.SourceDemand
+		request.Unavailable = err
+		request.Ambient = ambient
+		request.AnonymousDenied = missing.AnonymousDenied
+		if missing.Cause != nil && !missing.AnonymousDenied {
+			request.Failure = err
+		}
+	} else if failure, ok := errors.AsType[*manifest.Error](err); ok &&
+		errors.Is(failure.Category(), manifest.ErrMissingSecret) && failure.Cause() == nil {
+		request.Failure, request.Unavailable = nil, err
+		request.Reference.Kind = manifest.KindSecret
+	}
+	request.Permission = p.execution.Missing
+	request.ProviderOnly = p.acquisition.ProviderOnly
+	return values.Resolve(&request)
 }

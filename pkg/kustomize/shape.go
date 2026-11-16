@@ -1,11 +1,13 @@
 package kustomize
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	sigsyaml "sigs.k8s.io/yaml"
 
@@ -22,11 +24,13 @@ type Shaping struct {
 	inputs      []substitutionDocument
 	active      bool
 	content     renderContent
+	unreadable  map[string]manifest.Reference
 }
 
 type substitutionDocument struct {
-	data []byte
-	err  error
+	data  []byte
+	err   error
+	names map[string]struct{}
 }
 
 type preparedShaping struct {
@@ -46,7 +50,8 @@ func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shapin
 	}
 	p := &Shaping{
 		spec: ks, docs: docs, preparation: request.Preparation,
-		active: values.SubstitutionActive(ks),
+		active:     request.SubstitutionActive || values.SubstitutionActive(ks),
+		unreadable: request.UnreadableSubstitutions,
 	}
 	output := manifest.Fingerprint(docs)
 	var prepared *preparedShaping
@@ -101,6 +106,7 @@ func (p *Shaping) prepareInputs() map[string]struct{} {
 			continue
 		}
 		current := values.SubstitutionNames(input.data)
+		input.names = current
 		if input.err != nil || current == nil {
 			names = nil
 		} else {
@@ -121,7 +127,7 @@ func (p *Shaping) Retire() {
 	p.inputs, p.docs, p.spec, p.preparation = nil, nil, nil, nil
 }
 
-// Apply consumes the attempt's prepared YAML and releases it on every return.
+// Apply MUST retain every document failure while returning the first substitution error.
 func (p *Shaping) Apply(_ context.Context, options ShapeOptions) error {
 	defer p.Retire()
 	for i := range p.docs {
@@ -129,6 +135,7 @@ func (p *Shaping) Apply(_ context.Context, options ShapeOptions) error {
 		p.docs[i], changed = manifest.SanitizeDocument(p.docs[i])
 		if p.active && changed {
 			p.inputs[i].data, p.inputs[i].err = values.SubstitutionDocument(p.docs[i], true)
+			p.inputs[i].names = values.SubstitutionNames(p.inputs[i].data)
 		}
 	}
 	if !p.active {
@@ -138,35 +145,51 @@ func (p *Shaping) Apply(_ context.Context, options ShapeOptions) error {
 	if p.spec.PostBuild != nil {
 		vars = manifest.VarsMap(p.spec.PostBuild.Substitute)
 	}
+	var firstErr error
 	for i := range p.docs {
 		input := &p.inputs[i]
-		substituted, err := input.apply(p.docs[i].Document, vars, options.Strict, options.Work)
+		substituted, err := input.apply(&p.docs[i], vars, options, p.unreadable)
 		if err != nil {
-			return manifest.NewError(manifest.ErrInvalidSubstituteReference, err, "")
+			p.docs[i].Err = manifest.NewError(manifest.ErrInvalidSubstituteReference, err, "")
+			if firstErr == nil {
+				firstErr = p.docs[i].Err
+			}
+			continue
 		}
 		p.docs[i].Document = substituted
 	}
-	return nil
+	return firstErr
 }
 
 func (p *substitutionDocument) apply(
-	doc map[string]any,
+	doc *manifest.DocOccurrence,
 	vars map[string]string,
-	strict bool,
-	work *manifest.WorkRecord,
+	options ShapeOptions,
+	unreadable map[string]manifest.Reference,
 ) (map[string]any, error) {
 	if p.data == nil && p.err == nil {
-		return doc, nil
+		return doc.Document, nil
 	}
+	work := options.Work
 	work.Add(&manifest.WorkCounts{Attempts: 1})
 	if p.err != nil {
 		work.Finish(p.err)
 		return nil, fmt.Errorf("substitute: marshal doc: %w", p.err)
 	}
-	out, err := Substitute(p.data, vars, strict)
+	out, err := Substitute(p.data, vars, options.Strict)
 	if err != nil {
 		work.Finish(err)
 		return nil, err
+	}
+	if len(unreadable) != 0 {
+		for name := range unreadable {
+			if _, consumed := p.names[name]; consumed {
+				doc.ConsumedUnreadable = append(doc.ConsumedUnreadable, unreadable[name])
+			}
+		}
+		slices.SortFunc(doc.ConsumedUnreadable, func(a, b manifest.Reference) int {
+			return cmp.Or(a.Compare(b.NamedResource), strings.Compare(a.Key, b.Key))
+		})
 	}
 	// Flux kustomize.SubstituteVariables uses varSubstitution to preserve YAML-to-JSON scalar semantics.
 	data, err := sigsyaml.YAMLToJSON(out)

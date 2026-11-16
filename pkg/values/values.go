@@ -1,9 +1,7 @@
 package values
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"regexp"
 	"slices"
@@ -122,43 +120,72 @@ func (c *Cache) put(key string, parsed map[string]any) {
 	}
 }
 
-// ExpandValueReferences resolves all spec.valuesFrom references on hr,
-// merges them with hr.Values (inline values take precedence per Helm
-// semantics), and writes the result back to hr.Values.
-//
-// Honors ValuesReference.Optional: missing resources or values keys on
-// Optional=true refs are skipped silently; Optional=false refs fail.
-// Matches Flux helm-controller chartutil semantics.
-//
-// Hard errors from the lookup itself — unsupported kind, malformed
-// binaryData — always bubble up; they are unrelated to whether the ref
-// is optional.
-//
-// cache may be nil — tests and embedders without an orchestrator pass
-// nil and pay the (small) per-ref yaml.Unmarshal cost. Orchestrators
-// supply a Cache constructed at startup so refs shared across HRs
-// (a common pattern for platform-wide values CMs) parse exactly once.
-func ExpandValueReferences(
-	hr *manifest.HelmRelease,
-	provider Provider,
-	cache *Cache,
-) error {
+// ExpandValueReferences MUST consume original authored positions before filtering references.
+func ExpandValueReferences(hr *manifest.HelmRelease, inputs []Result, cache *Cache) error {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
 	}
-
+	if err := validateResults(hr, inputs, "valuesFrom"); err != nil {
+		return err
+	}
 	ex := valueExpansion{values: map[string]any{}, owned: true}
-	for edge := range manifest.References(hr, manifest.ReferenceRelations) {
-		if edge.Use != "valuesFrom" {
+	filter := len(inputs) != len(hr.ValuesFrom)
+	for i := range inputs {
+		filter = filter || inputs[i].effect == Omitted
+	}
+	kept := hr.ValuesFrom
+	if filter {
+		kept = make([]manifest.ValuesReference, 0, len(inputs))
+	}
+	for i := range inputs {
+		result := &inputs[i]
+		if result.effect == Omitted {
 			continue
 		}
-		ref := hr.ValuesFrom[edge.Position]
-		if err := ex.expand(&ref, &edge, provider, cache); err != nil {
+		ref := hr.ValuesFrom[result.ref.Position]
+		if err := ex.expand(&ref, result.value, cache); err != nil {
 			return err
+		}
+		if filter {
+			kept = append(kept, ref)
 		}
 	}
 	DeepMergeInto(ex.values, hr.Values)
-	hr.Values = ex.values
+	hr.Values, hr.ValuesFrom = ex.values, kept
+	return nil
+}
+
+func validateResults(obj manifest.BaseManifest, inputs []Result, use string) error {
+	position := 0
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if ref.Use != use || ref.Name == "" {
+			continue
+		}
+		if position == len(inputs) {
+			return manifest.NewError(
+				manifest.ErrInvalidValuesReference,
+				nil,
+				"reference requires a settled assessment in authored order",
+			)
+		}
+		result := &inputs[position]
+		if err := result.Err(); err != nil {
+			return err
+		}
+		matchesReference := result.ref.NamedResource == ref.NamedResource && result.ref.Use == use &&
+			result.ref.Position == ref.Position
+		if !matchesReference || result.effect != Used && result.effect != Omitted {
+			return manifest.NewError(
+				manifest.ErrInvalidValuesReference,
+				nil,
+				"reference requires a settled assessment in authored order",
+			)
+		}
+		position++
+	}
+	if position != len(inputs) {
+		return manifest.NewError(manifest.ErrInvalidValuesReference, nil, "unexpected reference assessment")
+	}
 	return nil
 }
 
@@ -229,9 +256,9 @@ func stripMatchingQuotes(value string) (string, bool) {
 	return value, false
 }
 
-// ExpandPostBuildSubstituteReference resolves referenced and authored inline substitutions.
-func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider, missing missingPolicy) error {
-	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 {
+// ExpandPostBuildSubstituteReference MUST return captured failures before mutating the declaration.
+func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, inputs []Result) error {
+	if ks == nil || ks.PostBuild == nil {
 		return nil
 	}
 	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
@@ -241,40 +268,28 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider, 
 			"Kustomization with substituteFrom has no namespace",
 		)
 	}
-
-	// Flux gives inline substitutions precedence over references.
-	values := map[string]string{}
-	if err := readSubstitutions(ks, p, missing, values); err != nil {
+	if err := validateResults(ks, inputs, substitutionUse); err != nil {
 		return err
 	}
-	maps.Copy(values, ks.PostBuild.Substitute)
-
-	if err := validateSubstitutions(values); err != nil {
-		return err
-	}
-	ks.PostBuild.Substitute = values
-	return nil
-}
-
-func mergeSubstitutions(values map[string]string, data manifest.Data) error {
-	var failure struct {
-		key string
-		err error
-	}
-	data.Keys()(func(k string) bool {
-		valueResult, err := data.Value(k)
-		v := valueResult.Value
-		if err != nil {
-			if failure.err == nil || k < failure.key {
-				failure.err, failure.key = err, k
-			}
-			return true
+	capacity := len(ks.PostBuild.Substitute)
+	for i := range inputs {
+		if inputs[i].effect == Used {
+			capacity += len(inputs[i].variables)
 		}
-		// Flux strips newlines before substituting into single-line YAML fields.
-		values[k] = strings.ReplaceAll(v, "\n", "")
-		return true
-	})
-	return failure.err
+	}
+	variables := make(map[string]string, capacity)
+	for i := range inputs {
+		result := &inputs[i]
+		if result.effect == Used {
+			maps.Copy(variables, result.variables)
+		}
+	}
+	maps.Copy(variables, ks.PostBuild.Substitute)
+	if err := validateSubstitutions(variables); err != nil {
+		return err
+	}
+	ks.PostBuild.Substitute = variables
+	return nil
 }
 
 func validateSubstitutions(values map[string]string) error {
@@ -312,82 +327,19 @@ type valueExpansion struct {
 	owned  bool
 }
 
-func (ex *valueExpansion) expand(
-	ref *manifest.ValuesReference,
-	edge *manifest.Reference,
-	provider Provider,
-	cache *Cache,
-) error {
-	result, err := Classify(edge, new(provider.Lookup(edge.NamedResource)))
-	if err != nil {
-		return err
-	}
-	if result.State() != Readable {
-		if ref.Optional {
-			return nil
-		}
-		return result.Failure()
-	}
-	found := result.Value()
+func (ex *valueExpansion) expand(ref *manifest.ValuesReference, found string, cache *Cache) error {
 	if ref.TargetPath != "" {
 		if !ex.owned {
-			// Cached nested ex.values may be borrowed; strvals mutates them in place.
+			// Cached nested values must be copied before strvals mutates them.
 			ex.values = manifest.DeepCopyMap(ex.values)
 			ex.owned = true
 		}
-		err = setValueReference(ex.values, ref, found)
-	} else {
-		err = cache.updateHelmReleaseValues(*ref, found, ex.values)
-		ex.owned = false
+		return setValueReference(ex.values, ref, found)
 	}
-	if err != nil {
+	if err := cache.updateHelmReleaseValues(*ref, found, ex.values); err != nil {
 		return err
 	}
-	return nil
-}
-
-func readSubstitutions(
-	ks *manifest.Kustomization,
-	p Provider,
-	missing missingPolicy,
-	substitutions map[string]string,
-) error {
-	for position, authored := range ks.PostBuild.SubstituteFrom {
-		ref := manifest.Reference{
-			Kind:      authored.Kind,
-			Namespace: ks.Namespace,
-			Name:      authored.Name,
-			Use:       substitutionUse,
-			Position:  position,
-			Optional:  authored.Optional,
-		}
-		result, err := Classify(new(ref), new(p.Lookup(ref.NamedResource)))
-		if err != nil {
-			if errors.Is(err, manifest.ErrInvalidValuesReference) {
-				slog.Debug("values: unsupported SubstituteReference kind",
-					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "kind", ref.Kind)
-				continue
-			}
-			return err
-		}
-		if result.State() == Absent && !ref.Optional && result.Disposition(missing) == Reject {
-			slog.Debug(
-				"values: SubstituteReference not found",
-				"id",
-				manifest.DiagnosticFor(ks.Named(), ks).String(),
-				"ref",
-				ref.Name,
-			)
-		}
-		if result.Disposition(missing) == Reject {
-			continue
-		}
-		if result.Data() != nil {
-			if err := mergeSubstitutions(substitutions, result.Data()); err != nil {
-				return err
-			}
-		}
-	}
+	ex.owned = false
 	return nil
 }
 

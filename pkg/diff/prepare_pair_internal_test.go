@@ -216,11 +216,6 @@ func TestPair_GeneratorRename(t *testing.T) {
 			assert.Equal(t, entry.NewPos, 0)
 			assert.Equal(t, entry.OldChart, "app-1")
 			assert.Equal(t, entry.NewChart, "app-2")
-			assert.Equal(
-				t,
-				entry.Output,
-				[2]manifest.NamedResource{manifest.DocIdentity(old.Manifest), manifest.DocIdentity(current.Manifest)},
-			)
 			assert.Equal(t, chartLabel(entry.Old), "")
 			assert.Equal(t, chartLabel(entry.New), "")
 			assert.Diff(t, []Doc{old, current}, before)

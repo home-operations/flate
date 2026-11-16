@@ -173,6 +173,93 @@ func TestBlob_RenderAcquisition(t *testing.T) {
 			innerT.Fatalf("unaccepted work survived owner close: %v", err)
 		}
 	})
+	for _, tc := range []struct {
+		name   string
+		chunks []int
+	}{
+		{name: "zero", chunks: []int{0}},
+		{name: "small", chunks: []int{7}},
+		{name: "boundary", chunks: []int{renderSpoolLimit}},
+		{name: "overflow", chunks: []int{renderSpoolLimit, 1}},
+		{name: "large single write", chunks: []int{2*renderSpoolLimit + 1}},
+		{name: "multiple writes", chunks: []int{1, 127, 4096, renderSpoolLimit - 4224, 17}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testBlobRenderSpoolCase(t, tc.chunks)
+		})
+	}
+	for _, invalid := range []string{"missing bytes", "corrupted-size"} {
+		t.Run("accepted "+invalid, func(t *testing.T) {
+			testBlobRevalidationCase2(t, &invalid, RenderAccepted)
+		})
+	}
+	t.Run("accepted parent replacement", func(t *testing.T) {
+		testBlobRevalidationUnchangedParentReplacement(t, RenderAccepted)
+	})
+}
+
+func testBlobRenderSpoolCase(t *testing.T, chunks []int) {
+	t.Helper()
+	c := cachetest.New(t, t.TempDir(), New)
+	key := BlobKey{Content: "bounded-render-" + t.Name(), Render: RenderAccepted}
+	size := 0
+	for _, count := range chunks {
+		size += count
+	}
+	body := bytes.Repeat([]byte("x"), size)
+	calls := 0
+	for range 2 {
+		var captured *payload
+		generation, _, _, err := c.Blob(t.Context(), key, &Policy{},
+			func(_ context.Context, input ProducerInput) (ProducerResult, error) {
+				calls++
+				captured = input.payload
+				offset := 0
+				for _, count := range chunks {
+					n, writeErr := input.Write(body[offset : offset+count])
+					assert.NoError(t, writeErr)
+					assert.Equal(t, n, count)
+					offset += count
+					assert.Equal(t, captured.written, int64(offset))
+					assert.Equal(t, captured.file != nil, offset > renderSpoolLimit)
+					assert.Equal(t, cap(captured.memory.Bytes()) <= renderSpoolLimit, true)
+				}
+				return ProducerResult{}, nil
+			})
+		assert.NoError(t, err)
+		if size == 0 {
+			assert.Equal(t, generation == nil, true)
+			assert.Equal(t, captured.hash == nil, true)
+			assert.Equal(t, cap(captured.memory.Bytes()), 0)
+			continue
+		}
+		data, readErr := fs.ReadFile(generation, "content")
+		assert.NoError(t, readErr)
+		assert.Diff(t, data, body)
+		assert.Equal(t, AcquisitionIdentity(generation), digest.FromBytes(body).String())
+		if size <= renderSpoolLimit {
+			assert.Equal(t, captured.memory.Len(), size)
+		}
+	}
+	assert.Equal(t, calls, 2)
+	if size == 0 {
+		return
+	}
+	var captured *payload
+	generation, _, _, err := c.Blob(t.Context(), key, &Policy{},
+		func(ctx context.Context, input ProducerInput) (ProducerResult, error) {
+			captured = input.payload
+			previous, previousErr := input.Previous(ctx)
+			assert.NoError(t, previousErr)
+			assert.Equal(t, previous != nil, true)
+			return ProducerResult{Unchanged: true}, nil
+		})
+	assert.NoError(t, err)
+	data, err := fs.ReadFile(generation, "content")
+	assert.NoError(t, err)
+	assert.Diff(t, data, body)
+	assert.Equal(t, captured.hash == nil, true)
+	assert.Equal(t, cap(captured.memory.Bytes()), 0)
 }
 
 //nolint:paralleltest // The test changes the process build identity and restores it afterward.
@@ -380,12 +467,12 @@ func TestBlob_Revalidation(t *testing.T) {
 	t.Run("absent", func(t *testing.T) { t.Parallel(); testBlobRevalidationAbsent(t) })
 	t.Run(
 		"unchanged-parent-replacement",
-		func(t *testing.T) { t.Parallel(); testBlobRevalidationUnchangedParentReplacement(t) },
+		func(t *testing.T) { t.Parallel(); testBlobRevalidationUnchangedParentReplacement(t, 0) },
 	)
 	for _, invalid := range []string{"missing bytes", "corrupted-size"} {
 		t.Run(invalid, func(t *testing.T) {
 			t.Parallel()
-			testBlobRevalidationCase2(t, &invalid)
+			testBlobRevalidationCase2(t, &invalid, 0)
 		},
 		)
 	}

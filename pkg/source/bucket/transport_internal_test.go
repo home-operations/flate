@@ -90,7 +90,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		unwired, encoded, missing    bool
 		field                        string
 	}{
-		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, wantError: "SecretGetter"},
+		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, missing: true, wantError: "secret ns/creds not found"},
+		{name: "proxy unwired", ref: "proxy", secret: "proxy", unwired: true, missing: true},
+		{name: "encrypted accesskey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]", "secretkey": "readable"}, missing: true, wantError: "unreadable"},
+		{name: "encoded encrypted accesskey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]", "secretkey": "readable"}, encoded: true, missing: true, wantError: "unreadable"},
 		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: `key "secretkey" not found`},
 		{name: "accesskey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, missing: true},
 		{name: "accesskey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, encoded: true, missing: true},
@@ -110,7 +113,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "cert empty", ref: "cert", secret: "tls", data: map[string]any{"unrelated": "x"}, missing: true},
 		{name: "cert absent", ref: "cert", secret: "missing", missing: true},
 		{name: "proxy absent", ref: "proxy", secret: "missing", missing: true},
-		{name: "cert unwired", ref: "cert", secret: "tls", unwired: true, wantError: "source.SecretGetter"},
+		{name: "cert unwired", ref: "cert", secret: "tls", unwired: true, missing: true, wantError: "secret ns/tls not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -692,7 +695,7 @@ func testFetcherSecretReferencesCase1Tail(t *testing.T, inputs *testFetcherSecre
 			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: (*inputs.tc).secret},
 		)
 		if (*inputs.tc).ref != "auth" && (*inputs.tc).data == nil {
-			assert.Equal(t, (*inputs.err).Error(), "secret ns/missing not found")
+			assert.Equal(t, (*inputs.err).Error(), "secret ns/"+(*inputs.tc).secret+" not found")
 		}
 	}
 }

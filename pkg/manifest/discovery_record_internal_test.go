@@ -134,7 +134,9 @@ func TestDiscoveryRecord_EqualExcludedFields(t *testing.T) {
 		{"declaration", func(r *DiscoveryRecord) { r.Declaration = &Kustomization{Name: "other"} }},
 		{"declared fingerprint", func(r *DiscoveryRecord) { r.Declared = "other" }},
 		{"builder owner", func(r *DiscoveryRecord) { r.BuilderOwner = NamedResource{Name: "other"} }},
-		{"reference data", func(r *DiscoveryRecord) { r.ReferenceData = []ReferenceData{{DeclaredKeys: []string{"other"}}} }},
+		{"reference data", func(r *DiscoveryRecord) {
+			r.ReferenceData = []ReferenceData{{Keys: KeySet{Names: []string{"other"}, Complete: true}}}
+		}},
 		{"content roots", func(r *DiscoveryRecord) { r.ContentRoots = map[NamedResource][]string{{Name: "other"}: {"path"}} }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

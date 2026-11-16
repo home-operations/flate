@@ -3,7 +3,6 @@ package kustomize
 import (
 	"fmt"
 
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -12,11 +11,10 @@ import (
 // Prepare clones ks and resolves referenced and inline substitutions.
 func Prepare(
 	ks *manifest.Kustomization,
-	provider values.Provider,
-	missing *depwait.MissingPolicy,
+	inputs []values.Result,
 ) (*manifest.Kustomization, error) {
 	ks = ks.Clone()
-	if err := values.ExpandPostBuildSubstituteReference(ks, provider, missing); err != nil {
+	if err := values.ExpandPostBuildSubstituteReference(ks, inputs); err != nil {
 		return nil, err
 	}
 	return ks, nil

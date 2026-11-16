@@ -465,7 +465,7 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 		for i := range min(len(facts.ReferenceData), len(oldFacts.ReferenceData)) {
 			next, previous := facts.ReferenceData[i], oldFacts.ReferenceData[i]
 			assert.Equal(t, next.Production, previous.Production)
-			assert.Diff(t, next.DeclaredKeys, previous.DeclaredKeys)
+			assert.Diff(t, next.Keys, previous.Keys)
 			assert.Equal(t, next.OfflineData == nil, previous.OfflineData == nil)
 			if next.OfflineData != nil && previous.OfflineData != nil {
 				assert.Diff(t, next.OfflineData.Snapshot(), previous.OfflineData.Snapshot())

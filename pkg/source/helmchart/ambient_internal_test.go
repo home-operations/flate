@@ -546,7 +546,7 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		pending, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "%s", err)
 
-		_, err = fetchtest.Machine(ctx, pending, nil)
+		_, err = fetchtest.Machine(ctx, pending)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		response, typed = errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||

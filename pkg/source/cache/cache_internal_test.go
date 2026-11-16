@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -391,6 +392,56 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 			testDecodeRequiredMetadataCase(t, &family)
 		},
 		)
+	}
+	resolved := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	for _, tc := range []struct {
+		name        string
+		upstream    ocispec.Descriptor
+		annotations map[string]string
+	}{
+		{
+			name: "empty upstream",
+			annotations: map[string]string{
+				"revision":            "v1",
+				"flate.resolved-at":   "2026-01-02T03:04:05Z",
+				"flate.upstream-size": "0",
+			},
+		},
+		{
+			name: "provided upstream",
+			upstream: ocispec.Descriptor{
+				Digest: digest.FromString("upstream"), Size: 12, MediaType: "upstream/type",
+			},
+			annotations: map[string]string{
+				"revision":                  "v1",
+				"flate.resolved-at":         "2026-01-02T03:04:05Z",
+				"flate.upstream-digest":     digest.FromString("upstream").String(),
+				"flate.upstream-size":       "12",
+				"flate.upstream-media-type": "upstream/type",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.upstream.Annotations = map[string]string{
+				"revision":                  "v1",
+				"flate.resolved-at":         "untrusted",
+				"flate.upstream-digest":     "untrusted",
+				"flate.upstream-size":       "untrusted",
+				"flate.upstream-media-type": "untrusted",
+			}
+			original := maps.Clone(tc.upstream.Annotations)
+			e := entry{descriptor: tc.upstream, resolved: resolved}
+			stored := e.storedDescriptor(digest.FromString("stored"), 42)
+			assert.Diff(t, stored.Annotations, tc.annotations)
+			upstream, at, valid := decode(&stored, nil)
+			assert.Equal(t, valid, true)
+			assert.Equal(t, at, resolved)
+			want := tc.upstream
+			want.Annotations = map[string]string{"revision": "v1"}
+			assert.Diff(t, upstream, want)
+			assert.Diff(t, tc.upstream.Annotations, original)
+		})
 	}
 }
 

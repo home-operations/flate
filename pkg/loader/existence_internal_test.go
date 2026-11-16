@@ -236,7 +236,11 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 				assert.ErrorIf(t, st.GetObject(id) == nil, "admitted sibling %s was not promoted", id)
 			}
 			secret := st.GetObject(secretID).(*manifest.Secret)
-			assert.Diff(t, secret.StringData, map[string]any{})
+			assert.Diff(
+				t,
+				secret.StringData,
+				map[string]any{"TOKEN": "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"},
+			)
 		})
 	}
 }

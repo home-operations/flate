@@ -44,7 +44,7 @@ type AdmissionResult struct {
 
 type admissionDriver struct {
 	session      *Session
-	options      *AdmissionOptions
+	options      AdmissionOptions
 	request      PrepareRequest
 	ownedHistory bool
 	proposal     *Admission
@@ -58,7 +58,7 @@ type admissionDriver struct {
 //
 //nolint:gocritic // One owner MUST retain acquisitions and first-attempt presence through publication retries.
 func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
-	driver := admissionDriver{session: s, options: &options, request: options.Request}
+	driver := admissionDriver{session: s, options: options, request: options.Request}
 	local := driver.request.Preparation == nil
 	var preparation *Preparation
 	if local {

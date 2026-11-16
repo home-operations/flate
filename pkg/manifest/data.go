@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -10,7 +11,9 @@ import (
 // Data provides lazy ConfigMap/Secret variables and owned snapshot documents.
 type Data interface {
 	HasKeys() bool
+	KeysKnown() bool
 	Value(string) (DataValue, error)
+	// Keys MUST return a replayable sequence over immutable key membership.
 	Keys() iter.Seq[string]
 	Snapshot() map[string]any
 	WithSupplied(Data) SuppliedData
@@ -18,8 +21,9 @@ type Data interface {
 
 // DataValue keeps empty present values distinct from absent keys.
 type DataValue struct {
-	Value string
-	Found bool
+	Value     string
+	Found     bool
+	Encrypted bool
 }
 
 // SuppliedData retains immutable data and records keys that repository data overrides.
@@ -28,22 +32,48 @@ type SuppliedData struct {
 	Overridden []string
 }
 
-func fillSupplied(repository, supplied Data, write func(string, string)) []string {
+//nolint:gocritic // The output replaces caller storage while the previous map remains immutable.
+func fillSupplied(
+	repository, supplied Data,
+	projection *map[string]Data,
+	write func(string, string),
+) []string {
+	previous := *projection
 	var overridden []string
+	var unreadable map[string]Data
 	supplied.Keys()(func(key string) bool {
 		value, err := repository.Value(key)
 		if err != nil {
 			return true
 		}
-		if value.Found {
+		if value.Found && !value.Encrypted {
 			overridden = append(overridden, key)
 			return true
 		}
-		value, _ = supplied.Value(key)
+		repositoryFound := value.Found
+		value, err = supplied.Value(key)
+		if err != nil || !value.Found || value.Encrypted && repositoryFound {
+			return true
+		}
+		if value.Encrypted {
+			if unreadable == nil {
+				unreadable = make(map[string]Data, len(previous)+1)
+				maps.Copy(unreadable, previous)
+			}
+			unreadable[key] = supplied
+			return true
+		}
+		if _, exists := previous[key]; exists {
+			if unreadable == nil {
+				unreadable = maps.Clone(previous)
+			}
+			delete(unreadable, key)
+		}
 		write(key, value.Value)
 		return true
 	})
 	slices.Sort(overridden)
+	*projection = unreadable
 	return overridden
 }
 

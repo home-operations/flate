@@ -330,6 +330,7 @@ func (e *Emission) retainPreviousDocuments(prev *Emission, prepared []admission)
 	}
 }
 
+//nolint:gocritic // DocOccurrence preserves an immutable value snapshot across this boundary.
 func (e *Emission) consumePreviousDocument(
 	doc manifest.DocOccurrence,
 	available map[manifest.NamedResource][]int,

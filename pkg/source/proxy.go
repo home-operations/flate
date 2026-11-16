@@ -23,10 +23,7 @@ func resolveProxy(
 	if ref == nil {
 		return nil, nil, nil
 	}
-	sec, err := resolveSecretRef(secrets, new(owner), "proxySecretRef", ref)
-	if err != nil {
-		return nil, nil, err
-	}
+	sec := ResolveSecretRef(secrets, &owner, ref)
 
 	material, err := proxyValues(&sec, &owner, ref.Name)
 	if err != nil {
@@ -56,7 +53,6 @@ func resolveProxy(
 				fmt.Sprintf("proxy secret %s/%s missing required 'address' key", owner.ID.Namespace, ref.Name),
 			)
 		}
-		return nil, nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}
 	return proxy, selected, nil
 }
@@ -75,12 +71,17 @@ func proxyValues(sec *store.ReferenceFacts, ownerValue *manifest.DiagnosticIdent
 	}
 	for i := range results {
 		result := &results[i]
-		if i != 0 && result.State() == values.Produced {
+		if i != 0 && !result.KnownKey() && !result.KeysComplete() && result.Present() {
 			continue
 		}
-		if result.State() != values.Readable && result.State() != values.MissingKey {
-			return [3]string{}, UnavailableSecret(new(owner), name, result)
+		if result.Effect() != values.Used && (!result.KeysComplete() || result.KnownKey()) {
+			return [3]string{}, UnavailableSecret(&owner, sec, result)
 		}
+	}
+	if material == [3]string{} {
+		missing := UnavailableSecret(&owner, sec, &results[0])
+		missing.Detail = "missing required 'address' key"
+		return [3]string{}, missing
 	}
 	return material, nil
 }

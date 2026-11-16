@@ -38,10 +38,81 @@ func (p *sliceProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 	return store.ReferenceFacts{}
 }
 
+func resolveInputsForTest(
+	obj manifest.BaseManifest,
+	provider Provider,
+	permission missingPolicy,
+	scratch ...Result,
+) []Result {
+	results := scratch[:0]
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if ref.Name != "" && (ref.Use == "valuesFrom" || ref.Use == "substituteFrom") {
+			results = append(
+				results,
+				Resolve(
+					&ResolveRequest{Reference: ref, Facts: provider.Lookup(ref.NamedResource), Permission: permission},
+				),
+			)
+		}
+	}
+	return results
+}
+
 func expandValuesForTest(t *testing.T, hr *manifest.HelmRelease, provider Provider, cache *Cache) {
 	t.Helper()
-	err := ExpandValueReferences(hr, provider, cache)
+	err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), cache)
 	assert.NoError(t, err)
+}
+
+func TestExpandValueReferences_PreservesAuthoredDeclarations(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		filter    bool
+		malformed bool
+	}{
+		{name: "all_used"},
+		{name: "unnamed_and_omitted", filter: true},
+		{name: "malformed_all_used", malformed: true},
+		{name: "malformed_after_omission", filter: true, malformed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			refs := []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "first"}}
+			if tc.filter {
+				refs = append(refs, manifest.ValuesReference{}, manifest.ValuesReference{
+					Kind: manifest.KindSecret, Name: "absent", Optional: true,
+				})
+			}
+			refs = append(refs, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "later"})
+			hr := &manifest.HelmRelease{
+				Name: "consumer", Namespace: "apps", ValuesFrom: refs,
+				Values: map[string]any{"inline": "fixed"},
+			}
+			before, borrowed := hr.Clone(), slices.Clone(refs)
+			later := "value: later\n"
+			if tc.malformed {
+				later = "value: ["
+			}
+			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{
+				{Name: "first", Namespace: "apps", Data: map[string]any{"values.yaml": "value: first\n"}},
+				{Name: "later", Namespace: "apps", Data: map[string]any{"values.yaml": later}},
+			}}
+			err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
+			assert.Diff(t, refs, borrowed)
+			if tc.malformed {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, manifest.Equal(hr, before), true)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Diff(t, hr.ValuesFrom, []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "first"},
+				{Kind: manifest.KindConfigMap, Name: "later"},
+			})
+			assert.Diff(t, hr.Values, map[string]any{"value": "later", "inline": "fixed"})
+		})
+	}
 }
 
 func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
@@ -99,7 +170,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 		Values:     map[string]any{"image": map[string]any{"repository": "x"}},
 	}
 	{
-		err := ExpandValueReferences(hr, provider, nil)
+		err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	assert.ErrorIf(t, hr.Values["replicaCount"] != float64(5),
@@ -150,7 +221,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 					Namespace:  "default",
 					ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}},
 				}
-				err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+				err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st), nil), nil)
 
 				assert.FatalIf(
 					t,
@@ -177,7 +248,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 		},
 	}
 	{
-		err := ExpandValueReferences(hr, provider, nil)
+		err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	auth := hr.Values["auth"].(map[string]any)
@@ -207,7 +278,11 @@ environment = ["FOO=bar", "BAZ=qux"]
 		},
 	}
 	{
-		err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		err := ExpandValueReferences(
+			hr,
+			resolveInputsForTest(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil),
+			nil,
+		)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	runners := hr.Values["runners"].(map[string]any)
@@ -239,7 +314,11 @@ func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
 		},
 	}
 	{
-		err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		err := ExpandValueReferences(
+			hr,
+			resolveInputsForTest(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil),
+			nil,
+		)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	annotations := hr.Values["annotations"].(map[string]any)
@@ -265,7 +344,7 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	}
 	provider := &sliceProvider{}
 	{
-		err := ExpandValueReferences(hr, provider, nil)
+		err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	if _, ok := hr.Values["k"]; ok {
@@ -326,7 +405,11 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 	}
 
 	{
-		err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		err := ExpandValueReferences(
+			hr,
+			resolveInputsForTest(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil),
+			nil,
+		)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	assert.ErrorIf(t, hr.Values["existing"] != "kept" || len(hr.Values) != 1,
@@ -351,7 +434,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 
 	a := hr()
 	{
-		err := ExpandValueReferences(a, provider, cache)
+		err := ExpandValueReferences(a, resolveInputsForTest(a, provider, nil), cache)
 		assert.FatalIf(t, err != nil, "first ExpandValueReferences: %v", err)
 	}
 	assert.FatalIf(t, a.Values["replicaCount"] != float64(5),
@@ -366,7 +449,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	b.Namespace = other.Namespace
 	b.ValuesFrom = []manifest.ValuesReference{{Kind: "ConfigMap", Name: other.Name, ValuesKey: "extra.yaml"}}
 	{
-		err := ExpandValueReferences(b, provider, cache)
+		err := ExpandValueReferences(b, resolveInputsForTest(b, provider, nil), cache)
 		assert.FatalIf(t, err != nil, "second ExpandValueReferences: %v", err)
 	}
 	assert.ErrorIf(t, b.Values["replicaCount"] != float64(5),
@@ -381,7 +464,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	a.Values["replicaCount"] = "stomped"
 	c := hr()
 	{
-		err := ExpandValueReferences(c, provider, cache)
+		err := ExpandValueReferences(c, resolveInputsForTest(c, provider, nil), cache)
 		assert.FatalIf(t, err != nil, "third ExpandValueReferences: %v", err)
 	}
 	assert.ErrorIf(t, c.Values["replicaCount"] != float64(5),
@@ -406,7 +489,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 
 	a := mk()
 	{
-		err := ExpandValueReferences(a, provider, cache)
+		err := ExpandValueReferences(a, resolveInputsForTest(a, provider, nil), cache)
 		assert.FatalIf(t, err != nil, "first: %v", err)
 	}
 	assert.FatalIf(t, a.Values["replicaCount"] != float64(5),
@@ -416,7 +499,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 
 	b := mk()
 	{
-		err := ExpandValueReferences(b, provider, cache)
+		err := ExpandValueReferences(b, resolveInputsForTest(b, provider, nil), cache)
 		assert.FatalIf(t, err != nil, "second: %v", err)
 	}
 	assert.ErrorIf(t, b.Values["replicaCount"] != float64(99),
@@ -438,7 +521,7 @@ func TestExpandValueReferences_NilCache(t *testing.T) {
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 	}
 	{
-		err := ExpandValueReferences(hr, provider, nil)
+		err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences nil cache: %v", err)
 	}
 	assert.ErrorIf(t, hr.Values["replicaCount"] != float64(7),
@@ -484,7 +567,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 	postBuild := ks.PostBuild
 	{
-		err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
+		err := ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, provider, testPermissions(nil)))
 		assert.FatalIf(t, err != nil, "ExpandPostBuildSubstituteReference: %v", err)
 	}
 	assert.Equal(t, ks.PostBuild, postBuild)
@@ -514,7 +597,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 				},
 			}
 			for _, permissions := range []testPermissions{nil, {kind}} {
-				err := ExpandPostBuildSubstituteReference(ks, provider, permissions)
+				err := ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, provider, permissions))
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want ErrInput", err)
 				assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 			}
@@ -535,7 +618,7 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 	}
 	_, want := sec.Value("A")
 	for range 50 {
-		err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
+		err := ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, provider, testPermissions(nil)))
 
 		assert.FatalIf(t, err == nil || err.Error() != want.Error(), "got %v, want %v", err, want)
 	}
@@ -561,7 +644,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			}
 
 			before := ks.Clone()
-			err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
+			err := ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, provider, testPermissions(nil)))
 			assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 			assert.FatalIf(
@@ -589,7 +672,7 @@ func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}},
 	}
 	before := ks.Clone()
-	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{}, testPermissions(nil))
+	err := ExpandPostBuildSubstituteReference(ks, resolveInputsForTest(ks, &sliceProvider{}, testPermissions(nil)))
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 	assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||
@@ -686,7 +769,7 @@ func testExpandValueReferencesMissingReferencesCase(
 			},
 		},
 	}
-	err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+	err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st), nil), nil)
 	if (*testCaseInput.optional) && testCaseInput.tc.kind != "Deployment" && testCaseInput.tc.want != nil {
 		assert.NoError(t, err)
 		assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})

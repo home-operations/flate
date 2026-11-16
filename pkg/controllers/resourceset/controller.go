@@ -34,9 +34,7 @@ type Controller struct {
 	Inputs *oci.Fetcher
 	// Retry controls transient failures during provider acquisition.
 	Retry cache.RetryConfig
-	// AllowMissingSecrets applies the source credential policy to provider inputs.
-	AllowMissingSecrets bool
-	cache               *cache.Cache
+	cache *cache.Cache
 }
 
 type execution struct {
@@ -132,8 +130,7 @@ func (c *execution) acquireProvider(
 		ctx,
 		provider,
 		base.Acquisition{
-			AllowMissingSecrets:  c.AllowMissingSecrets,
-			AllowAnonymousDenied: true,
+			ProviderOnly: true,
 			Fetch: func(ctx context.Context) (source.PreparedFetch, error) {
 				return c.Inputs.FetchInputs(ctx, provider, &c.run.Reads, &cache.Policy{Retry: c.Retry})
 			},

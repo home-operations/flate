@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -24,107 +25,175 @@ type availability struct {
 	Reason  manifest.DiagnosticReason
 	Blocked []manifest.NamedResource
 	Failed  []manifest.NamedResource
-	Omit    bool
 	Result  values.Result
 }
 
-// Available waits for offline materializers without making their failure a required cause.
+// Available MUST combine structural settlement with the captured values decision.
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer would share caller-owned policy fields.
 func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manifest.DrainLevel) availability {
 	if message := w.Store.Preflight(); message != "" {
 		return availability{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
-	result, err := values.Classify(new(dep.Reference), new(dep.Input))
-	if err != nil {
+	request := values.ResolveRequest{Reference: dep.Reference, Facts: dep.Input, Permission: w.Missing}
+	dep.Result = values.Resolve(&request)
+	if err := w.settleMaterializers(ctx, &dep, level, &request); err != nil {
 		return availability{Err: err}
 	}
-	dep.Result = result
-	readable := result.Disposition(w.Missing) == values.UseData
-	settledData := dep.Input.Accepted || dep.Input.Original != nil
-	var pending []manifest.NamedResource
-	if !readable && !settledData {
-		pending = w.Store.UnsettledProducers(dep.NamedResource)
+	if err := w.settleAbsent(ctx, &dep, level, &request); err != nil {
+		return availability{Err: err}
 	}
-	allowed := dep.Optional || result.AdmitMissing(w.Missing)
-	var blocked []manifest.NamedResource
+	failure, _ := errors.AsType[*manifest.DependencyFailedError](request.Settlement.Failure)
+	result := values.Resolve(&request)
+	switch result.Effect() {
+	case values.Deferred:
+		return availability{Kind: schedule.Blocked, Blocked: result.Pending(), Result: result}
+	case values.Used, values.Omitted:
+		return availability{Kind: schedule.Terminal, Result: result}
+	case values.Failed:
+		var failed []manifest.NamedResource
+		if failure != nil {
+			failed = failure.Failed
+		}
+		return availability{
+			Kind:   schedule.DependencyFailed,
+			Failed: failed,
+			Result: result,
+			Reason: manifest.DiagnosticReason{
+				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+				Message: result.Cause(),
+			},
+		}
+	default:
+		panic("depwait: unresolved values assessment")
+	}
+}
+
+func (w *Waiter) settleMaterializers(
+	ctx context.Context, dep *DataDependency, level manifest.DrainLevel, request *values.ResolveRequest,
+) error {
+	if dep.Input.Accepted || dep.Input.Original != nil {
+		return nil
+	}
+	materialized := dep.Result.Materialized()
+	var unpublished []manifest.NamedResource
+	if !materialized {
+		unpublished = w.Store.UnsettledProducers(dep.NamedResource)
+	}
 	for _, producer := range dep.Input.Materializers {
-		if producer == w.Parent || settledData || readable && !w.blocksParent(producer) {
+		if producer == w.Parent || materialized && !w.blocksParent(producer) {
 			continue
 		}
 		cl := w.Classify(ctx, manifest.DependencyRef{NamedResource: producer}, level)
-		unpublished := cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer)
-		if cl.Kind == schedule.Blocked && !readable || unpublished {
-			blocked = append(blocked, producer)
+		if cl.Err != nil {
+			return cl.Err
 		}
-		if failure, failed := w.materializerFailure(allowed, readable, producer, &cl); failed {
-			failure.Result = result
-			return failure
+		pending := cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(unpublished, producer)
+		if cl.Kind == schedule.Blocked && !materialized || pending {
+			request.Settlement.Pending = append(request.Settlement.Pending, producer)
 		}
+		w.captureMaterializerFailure(producer, dep, &cl, request)
 	}
-	if len(blocked) != 0 {
-		return availability{Kind: schedule.Blocked, Blocked: blocked, Result: result}
+	if len(request.Settlement.Pending) != 0 && !request.Settlement.BlocksConsumer {
+		request.Settlement.Failure = nil
 	}
-	if readable {
-		return availability{Kind: schedule.Terminal, Result: result}
-	}
-	return w.availableAbsent(ctx, &dep, level, allowed)
+	return nil
 }
 
-func (w *Waiter) materializerFailure(
-	allowed, readable bool,
-	producer manifest.NamedResource,
-	cl *Classification,
-) (availability, bool) {
-	if cl.Err != nil {
-		return availability{Err: cl.Err}, true
-	}
-	if cl.Kind != schedule.DependencyFailed || allowed {
-		return availability{}, false
+func (w *Waiter) captureMaterializerFailure(
+	producer manifest.NamedResource, dep *DataDependency, cl *Classification, request *values.ResolveRequest,
+) {
+	if cl.Kind != schedule.DependencyFailed {
+		return
 	}
 	status, _ := w.Store.GetStatus(producer)
-	if readable && status.Status != store.StatusFailed {
-		return availability{}, false
+	blocks := w.blocksParent(producer)
+	if !dep.Result.RequiresData() && !blocks {
+		return
 	}
-	if status.Status == store.StatusFailed && !w.blocksParent(producer) {
-		return availability{}, false
+	materialized := dep.Result.Materialized()
+	if materialized && (status.Status != store.StatusFailed || !blocks) {
+		return
 	}
 	if status.Status == store.StatusFailed {
 		cl.Message, cl.Causes = "not ready", nil
 	}
-	return availability{
-		Kind:   cl.Kind,
-		Reason: cl.DiagnosticReason(producer),
-		Failed: []manifest.NamedResource{producer},
-	}, true
+	failure, _ := errors.AsType[*manifest.DependencyFailedError](request.Settlement.Failure)
+	if failure == nil {
+		failure = &manifest.DependencyFailedError{
+			Parent: w.Parent, Subject: manifest.DiagnosticFor(w.Parent, w.Store.GetObject(w.Parent)),
+			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+		}
+	}
+	failedID := producer
+	reason := cl.DiagnosticReason(producer)
+	if !blocks && status.Status == store.StatusFailed {
+		failedID = dep.NamedResource
+		previous := failure.Reasons[failedID]
+		reason = manifest.DiagnosticReason{
+			Subject: manifest.DiagnosticFor(failedID, w.Store.GetObject(failedID)),
+			Message: dep.Result.Cause(),
+			Causes:  append(previous.Causes, reason),
+		}
+	}
+	if _, exists := failure.Reasons[failedID]; !exists {
+		failure.Failed = append(failure.Failed, failedID)
+	}
+	failure.Reasons[failedID] = reason
+	request.Settlement.Failure = failure
+	request.Settlement.BlocksConsumer = request.Settlement.BlocksConsumer || blocks
 }
 
-func (w *Waiter) availableAbsent(
-	ctx context.Context,
-	dep *DataDependency,
-	level manifest.DrainLevel,
-	allowed bool,
-) availability {
-	if dep.Result.State() == values.Absent && len(dep.Input.Materializers) == 0 && (!allowed || dep.Input.Offline) {
-		cl := w.Classify(ctx, dep.DependencyRef, level)
-		if cl.Err != nil {
-			return availability{Err: cl.Err}
-		}
-		if cl.Kind == schedule.Blocked {
-			return availability{Kind: cl.Kind, Blocked: []manifest.NamedResource{dep.NamedResource}, Result: dep.Result}
-		}
+func (w *Waiter) settleAbsent(
+	ctx context.Context, dep *DataDependency, level manifest.DrainLevel, request *values.ResolveRequest,
+) error {
+	assessment := &dep.Result
+	needsInput := assessment.NeedsInput() || assessment.RequiresData() && assessment.Data() == nil
+	if !needsInput {
+		return nil
 	}
-	if allowed {
-		return availability{Kind: schedule.Terminal, Omit: true, Result: dep.Result}
+	omittedProduction := assessment.Effect() == values.Omitted && len(dep.Input.Materializers) != 0
+	//nolint:nilerr // Settlement retains domain failures for the final values decision.
+	if omittedProduction || len(request.Settlement.Pending) != 0 || request.Settlement.Failure != nil {
+		return nil
 	}
-	return availability{
-		Kind: schedule.DependencyFailed,
-		Reason: manifest.DiagnosticReason{
-			Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-			Message: dep.Result.Failure().Cause().Error(),
-		},
-		Result: dep.Result,
+	if assessment.Effect() != values.Failed && !dep.Input.Offline {
+		return nil
 	}
+	cl := w.Classify(ctx, dep.DependencyRef, level)
+	if cl.Err != nil {
+		return cl.Err
+	}
+	if cl.Kind == schedule.Terminal {
+		cl = w.classifyAbsent(&dep.DependencyRef, level)
+	}
+	if cl.Kind == schedule.Blocked {
+		request.Settlement.Pending = append(request.Settlement.Pending, dep.NamedResource)
+	}
+	if cl.Kind != schedule.DependencyFailed {
+		return nil
+	}
+	cause := assessment.Err()
+	if domain, ok := errors.AsType[*manifest.Error](cause); ok {
+		cause = domain.Cause()
+	}
+	message := assessment.Cause()
+	if cause != nil {
+		message = cause.Error()
+	}
+	failure := &manifest.DependencyFailedError{
+		Parent: w.Parent, Subject: manifest.DiagnosticFor(w.Parent, w.Store.GetObject(w.Parent)),
+		Failed: []manifest.NamedResource{dep.NamedResource},
+		Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{dep.NamedResource: {
+			Subject: manifest.DiagnosticFor(
+				dep.NamedResource,
+				w.Store.GetObject(dep.NamedResource),
+			),
+			Message: message,
+		}},
+	}
+	request.Settlement.Failure = manifest.NewError(manifest.ErrObjectNotFound, failure, failure.Error())
+	return nil
 }
 
 func (w *Waiter) blocksParent(id manifest.NamedResource) bool {

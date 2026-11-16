@@ -114,9 +114,9 @@ func unavailableValuesBytes(t *testing.T, run Rendered, state string) []byte {
 	consumer := testutil.HelmReleaseID("apps", "consumer")
 	docs := outputByParent(run.Result.Manifests)[consumer]
 	assert.FatalIf(t, len(docs) != 1, "state=%s documents=%+v", state, docs)
-	wantValue, wantKeep, wantOmissions := "readable", "retained", 0
+	wantValue, wantKeep := "readable", "retained"
 	if state != "readable" {
-		wantValue, wantOmissions = "fallback", 1
+		wantValue = "fallback"
 	}
 	if state == "produced" {
 		wantKeep = "fallback"
@@ -129,7 +129,7 @@ func unavailableValuesBytes(t *testing.T, run Rendered, state string) []byte {
 			omissions++
 		}
 	}
-	assert.Equal(t, omissions, wantOmissions)
+	assert.Equal(t, omissions, 0)
 	result, err := json.Marshal(docs)
 	assert.NoError(t, err)
 	return result

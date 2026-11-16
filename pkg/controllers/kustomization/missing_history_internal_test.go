@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -170,7 +172,6 @@ type unreadableSecretCase struct {
 	optional bool
 	allowed  []string
 	value    string
-	warnings int
 }
 
 func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
@@ -198,7 +199,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
 				},
 			},
-			mixed: true, allowed: []string{manifest.KindSecret}, value: "readable", warnings: 1,
+			mixed: true, allowed: []string{manifest.KindSecret}, value: "readable",
 		},
 		{
 			name: "permitted_mixed_configmap", kind: manifest.KindConfigMap,
@@ -208,7 +209,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
 				},
 			},
-			mixed: true, allowed: []string{manifest.KindConfigMap}, value: "readable", warnings: 1,
+			mixed: true, allowed: []string{manifest.KindConfigMap}, value: "readable",
 		},
 		{
 			name: "required_mixed_secret", kind: manifest.KindSecret,
@@ -219,7 +220,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					"OTHER": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
 				},
 			},
-			mixed: true, value: "readable", warnings: 1,
+			mixed: true, value: "readable",
 		},
 		{
 			name: "required_mixed_configmap", kind: manifest.KindConfigMap,
@@ -230,7 +231,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					"OTHER": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
 				},
 			},
-			mixed: true, value: "readable", warnings: 1,
+			mixed: true, value: "readable",
 		},
 		{
 			name: "optional_mixed_secret", kind: manifest.KindSecret,
@@ -240,7 +241,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
 				},
 			},
-			mixed: true, optional: true, value: "readable", warnings: 1,
+			mixed: true, optional: true, value: "readable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,13 +285,13 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			_, err := normal.run.DataInputs(t.Context(), owner, normal.data)
 			assert.NoError(t, err)
 			var unreadable []manifest.NamedResource
-			if !tc.optional && (tc.object == nil || tc.mixed && len(tc.allowed) != 0) {
+			if tc.mixed || !tc.optional && tc.object == nil && len(tc.allowed) != 0 {
 				unreadable = []manifest.NamedResource{input}
 			}
 			assert.Diff(t, history.Assessment.Unreadable, unreadable)
 			assert.Diff(t, history.Assessment.Unreadable, normal.run.Unreadable)
 			assert.Diff(t, st.Warnings(), beforeWarnings)
-			assert.Equal(t, len(st.Warnings()), tc.warnings)
+			assert.Equal(t, len(st.Warnings()), 0)
 			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
 			history.Assessment.Close()
 			if len(tc.allowed) == 0 && !tc.mixed {
@@ -313,11 +314,9 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 				assert.FatalIf(t, replay.Assessment == nil, "missing %s assessment", regime)
 				assert.Equal(t, replay.Complete, persistent)
 				assert.Diff(t, replay.Assessment.Unreadable, normal.run.Unreadable)
-				assert.Diff(
-					t,
-					replay.Assessment.Reads.ReferenceFacts(input, nil, owner.Named()),
-					normal.data.Lookup(input),
-				)
+				actualFacts := replay.Assessment.Reads.ReferenceFacts(input, nil, owner.Named())
+				wantFacts := normal.data.Lookup(input)
+				assertCapturedReferenceFacts(t, &actualFacts, &wantFacts)
 				replay.Assessment.Close()
 				t.Logf("%s history: complete=%t, output and warning assertions evaluated", regime, replay.Complete)
 			}
@@ -325,35 +324,43 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 	}
 }
 
+func assertCapturedReferenceFacts(t *testing.T, actualFacts, wantFacts *store.ReferenceFacts) {
+	t.Helper()
+	for _, pair := range [][2]manifest.Data{
+		{actualFacts.Data, wantFacts.Data},
+		{actualFacts.Original, wantFacts.Original},
+	} {
+		assert.Equal(t, pair[0] == nil, pair[1] == nil)
+		if pair[0] != nil && pair[1] != nil {
+			assert.Diff(t, pair[0].Snapshot(), pair[1].Snapshot())
+			assert.Equal(t, pair[0].KeysKnown(), pair[1].KeysKnown())
+		}
+	}
+	actualFacts.Data, actualFacts.Original = nil, nil
+	wantFacts.Data, wantFacts.Original = nil, nil
+	assert.Diff(t, actualFacts, wantFacts)
+}
+
 func (tc *unreadableSecretCase) assertWarnings(
 	t *testing.T, warnings, beforeWarnings []manifest.Warning, input manifest.NamedResource,
 ) {
 	t.Helper()
-	if tc.optional {
+	if tc.optional || tc.object != nil {
 		assert.Diff(t, warnings, beforeWarnings)
-	} else {
-		assert.Equal(t, len(warnings), len(beforeWarnings)+1)
-		unresolved := warnings[len(warnings)-1]
-		assert.Equal(t, unresolved.Category, manifest.WarnUnresolvedSubstitution)
-		assert.Equal(t, unresolved.Count, 1)
-		if tc.mixed {
-			key := "VALUE"
-			var detail []string
-			if len(tc.allowed) == 0 {
-				key, detail = "OTHER", []string{"VALUE"}
-			}
-			assert.Equal(t, unresolved.Message, fmt.Sprintf(
-				`substituteFrom %s "flux-system/unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key %q is SOPS-encrypted and unreadable; supply it with --supply`,
-				tc.kind,
-				key,
-			))
-			assert.Diff(t, unresolved.Detail, detail)
-			assert.Diff(t, unresolved.Related, []manifest.NamedResource{input})
-		}
+		return
 	}
-	if tc.mixed {
-		assert.Diff(t, warnings[0], beforeWarnings[0])
-	}
+	assert.FatalIf(t, len(warnings) != len(beforeWarnings)+1,
+		"warnings = %+v, want one missing-reference warning", warnings)
+	unresolved := warnings[len(warnings)-1]
+	assert.Equal(t, unresolved.Category, manifest.WarnUnresolvedSubstitution)
+	assert.Equal(t, unresolved.Count, 1)
+	assert.Equal(t, unresolved.Message, fmt.Sprintf(
+		`substituteFrom %s %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values`,
+		tc.kind,
+		input.Name,
+	))
+	assert.Equal(t, len(unresolved.Detail), 0)
+	assert.Equal(t, len(unresolved.Related), 0)
 }
 
 func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
@@ -429,7 +436,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			resumed := false
 			waitErr := normal.run.AwaitData(t.Context(), base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
 					resumed = true
 					return nil
 				},
@@ -512,15 +519,22 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 			t.Context(),
 			base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { resumed = true; return nil },
 			},
 			manifest.DrainNone,
 		),
 	)
 	assert.Equal(t, resumed, true)
-	assert.Diff(
-		t,
-		fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named()),
-		normal.data.Lookup(input.Named()),
-	)
+	captured := fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named())
+	expected := normal.data.Lookup(input.Named())
+	assert.Diff(t, captured.Data.Snapshot(), expected.Data.Snapshot())
+	assert.Equal(t, captured.Data.KeysKnown(), expected.Data.KeysKnown())
+	if captured.Original != nil && expected.Original != nil {
+		assert.Diff(t, captured.Original.Snapshot(), expected.Original.Snapshot())
+		assert.Equal(t, captured.Original.KeysKnown(), expected.Original.KeysKnown())
+	} else {
+		assert.Equal(t, captured.Original == nil, expected.Original == nil)
+	}
+	captured.Data, expected.Data, captured.Original, expected.Original = nil, nil, nil, nil
+	assert.Diff(t, captured, expected)
 }

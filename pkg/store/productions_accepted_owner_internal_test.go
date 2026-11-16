@@ -76,7 +76,7 @@ func testStoreProductionsRetainsAcceptedOwnerFrozenBorrow(t *testing.T) {
 	)
 	snapshot := s.Productions(child.Obj.Named(), nil)
 	facts := s.ReferenceFacts(child.Obj.Named(), nil, manifest.NamedResource{})
-	assert.Diff(t, facts.Data, child.Obj.(manifest.Data))
+	assert.Equal(t, manifest.Equal(facts.Data.(manifest.BaseManifest), child.Obj), true)
 	assert.FatalIf(t, !facts.Accepted, "accepted selected facts=%+v", facts)
 	want := []manifest.Production{proof, {Owner: q}}
 	accept(t, s, q, &Emission{Complete: true})

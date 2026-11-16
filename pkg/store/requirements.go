@@ -92,7 +92,7 @@ func (r *ReadSet) RequireQualification(id manifest.NamedResource) {
 	}
 }
 
-// CarryWarnings reuses advisories after the caller verifies an equal consumed projection.
+// CarryWarnings MUST replace prior diagnostics, including an empty projection.
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
@@ -101,6 +101,10 @@ func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
 		warningValues := previous.warnings
 		for warningIndex := range warningValues {
 			warning := warningValues[warningIndex]
+			if warning.Category == manifest.WarnOmittedValues ||
+				warning.Category == manifest.WarnUnresolvedSubstitution {
+				continue
+			}
 			if slices.ContainsFunc(current, func(fresh manifest.Warning) bool {
 				return fresh.Resource == warning.Resource && fresh.Category == warning.Category
 			}) {

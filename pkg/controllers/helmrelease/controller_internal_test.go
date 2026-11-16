@@ -227,7 +227,8 @@ data:
 		Name:       "app-creds",
 		Namespace:  "default",
 		Spec: map[string]any{
-			"target": map[string]any{"name": "app-values"},
+			"target":   map[string]any{"name": "app-values"},
+			"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "input"}}},
 		},
 	})
 	hr := &manifest.HelmRelease{
@@ -291,13 +292,6 @@ data:
 			Message:  "required valuesFrom ConfigMap/default/runtime-values omitted from offline render",
 			Count:    1,
 		},
-		{
-			Resource: hr.Named(),
-			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
-			Category: manifest.WarnOmittedValues,
-			Message:  "required valuesFrom Secret/default/app-values omitted from offline render: is produced in the cluster with unknown data; supply it with --supply",
-			Count:    1,
-		},
 	})
 	warnings := st.Warnings()
 	hr = hr.Clone()
@@ -331,13 +325,6 @@ data:
 			Message:  "required valuesFrom Secret/default/another-values omitted from offline render",
 			Count:    1,
 		},
-		{
-			Resource: hr.Named(),
-			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
-			Category: manifest.WarnOmittedValues,
-			Message:  "required valuesFrom Secret/default/app-values omitted from offline render: is produced in the cluster with unknown data; supply it with --supply",
-			Count:    1,
-		},
 	})
 	invalid := hr.Clone()
 	invalid.Name = "invalid"
@@ -346,13 +333,14 @@ data:
 	info = reconcileFixture(t, c, invalid.Named())
 	assert.FatalIf(
 		t,
-		info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value"),
-		"permitted values omission hid required chart failure: %+v",
+		info.Outcome() != store.OutcomeSkipped || !strings.HasPrefix(info.Message, "cannot render offline") ||
+			!strings.Contains(info.Message, "missing required value"),
+		"unreadable reference did not skip the failed render: %+v",
 		info,
 	)
 	assert.FatalIf(t, !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues &&
-			strings.Contains(w.Message, "Secret/default/app-values")
+			strings.Contains(w.Message, "ConfigMap/default/runtime-values")
 	}),
 		"failed chart lost its omission warning: %+v", st.Warnings())
 }

@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -48,7 +49,7 @@ func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 		{name: "required unknown cascade", level: manifest.DrainCascade, want: schedule.DependencyFailed},
 		{name: "allowed unknown", allowed: true, want: schedule.Terminal, omit: true},
 		{name: "allowed settled absence", allowed: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
-		{name: "private strict", private: true, want: schedule.Terminal, omit: true},
+		{name: "private strict", private: true, want: schedule.Blocked},
 		{name: "private allowed", private: true, allowed: true, want: schedule.Terminal, omit: true},
 		{name: "optional file waiting", optional: true, offline: true, want: schedule.Blocked},
 		{name: "optional file absent", optional: true, offline: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
@@ -142,14 +143,14 @@ func testAvailableOptionalMaterializerAbsenceCase(
 	got := w.Available(
 		t.Context(),
 		DataDependency{
-			NamedResource: id, Optional: testCaseInput.optional, Use: use,
+			NamedResource: id, Optional: testCaseInput.optional, Use: use, Key: "VALUE",
 			Input: input,
 		},
 		testCaseInput.level,
 	)
 	assert.FatalIf(
 		t,
-		got.Kind != testCaseInput.want || got.Omit != testCaseInput.omit,
+		got.Kind != testCaseInput.want || (got.Result.Effect() == values.Omitted) != testCaseInput.omit,
 		"availability=%+v, want kind=%v omit=%t",
 		got,
 		testCaseInput.want,
@@ -228,6 +229,10 @@ func testAvailableRequiredMaterializerCycleCase(
 		got,
 		want,
 	)
+	if testCaseInput.optional || testCaseInput.unrelated {
+		assert.Equal(t, got.Result.Effect(), values.Used)
+		assert.Equal(t, got.Result.Materialized(), true)
+	}
 }
 
 func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
@@ -235,11 +240,11 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 	for _, tc := range []struct {
 		name, use string
 		allowed   bool
-		state     values.State
+		effect    values.Effect
 	}{
-		{name: "required values", use: "valuesFrom", state: values.Produced},
-		{name: "allowed values", use: "valuesFrom", allowed: true, state: values.Produced},
-		{name: "allowed substitution", use: "substituteFrom", allowed: true, state: values.Encrypted},
+		{name: "required values", use: "valuesFrom", effect: values.Omitted},
+		{name: "allowed values", use: "valuesFrom", allowed: true, effect: values.Omitted},
+		{name: "allowed substitution", use: "substituteFrom", allowed: true, effect: values.Used},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -276,18 +281,16 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 			ref := manifest.Reference{NamedResource: id, Key: "second", Use: tc.use}
 			if tc.use == "substituteFrom" {
 				ref.Key = ""
-				facts.Warnings = []manifest.Warning{
-					{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"second"}},
-				}
+				facts.Keys = manifest.KeySet{Names: []string{"first", "second"}}
 			}
-			result, err := values.Classify(new(ref), new(facts))
-			assert.NoError(t, err)
-			assert.Equal(t, result.State(), tc.state)
+			result := values.Resolve(&values.ResolveRequest{Reference: ref, Facts: facts})
+			assert.NoError(t, result.Err())
+			assert.Equal(t, result.Effect(), tc.effect)
 			firstRef := ref
-			firstRef.Key = "first"
-			first, err := values.Classify(new(firstRef), new(facts))
-			assert.NoError(t, err)
-			assert.Equal(t, first.State(), values.Readable)
+			firstRef.Key, firstRef.Use = "first", "valuesFrom"
+			first := values.Resolve(&values.ResolveRequest{Reference: firstRef, Facts: facts})
+			assert.NoError(t, first.Err())
+			assert.Equal(t, first.Effect(), values.Used)
 			assert.Equal(t, first.Value(), "supplied")
 			var kinds []string
 			if tc.allowed {
@@ -323,7 +326,7 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 			w.Store = &after
 			ready := w.Available(t.Context(), DataDependency{Reference: ref, Input: facts}, manifest.DrainNone)
 			assert.Equal(t, ready.Kind, schedule.Terminal)
-			assert.Equal(t, ready.Omit, false)
+			assert.Equal(t, ready.Result.Effect() == values.Omitted, false)
 			if tc.use == "valuesFrom" {
 				assert.Equal(t, ready.Result.Value(), "materialized")
 			}
@@ -375,7 +378,7 @@ func TestAvailable_AcceptedDataDoesNotCaptureProducerReadiness(t *testing.T) {
 				NamedResource: data.Named(), Key: tc.key, Use: "valuesFrom", Optional: tc.optional, Input: input,
 			}, manifest.DrainNone)
 			assert.Equal(t, result.Kind, tc.want)
-			assert.Equal(t, result.Omit, tc.omit)
+			assert.Equal(t, result.Result.Effect() == values.Omitted, tc.omit)
 			assert.NoError(t, result.Err)
 			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 			assert.Equal(t, reads.Valid(), true)
@@ -424,12 +427,48 @@ func TestAvailable_OriginalDataDoesNotCaptureProducerReadiness(t *testing.T) {
 				NamedResource: data.Named(), Key: tc.key, Use: "valuesFrom", Optional: tc.optional, Input: input,
 			}, manifest.DrainNone)
 			assert.Equal(t, result.Kind, tc.want)
-			assert.Equal(t, result.Omit, tc.omit)
+			assert.Equal(t, result.Result.Effect() == values.Omitted, tc.omit)
 			assert.NoError(t, result.Err)
 			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 			assert.Equal(t, reads.Valid(), true)
 			st.DeleteObject(data.Named())
 			assert.Equal(t, reads.Valid(), false)
 		})
+	}
+}
+
+func TestAvailable_CapturesMaterializerFailures(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	parent := testutil.KustomizationID("apps", "consumer")
+	producers := []manifest.NamedResource{
+		testutil.KustomizationID("apps", "first"),
+		testutil.KustomizationID("apps", "second"),
+	}
+	for _, id := range producers {
+		st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+		st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{parent}})
+	}
+	var reads store.ReadSet
+	reads.Init(st, parent, nil)
+	defer reads.Close()
+	waiter := Waiter{Store: &reads, Parent: parent, Missing: NewMissingPolicy(nil)}
+	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	got := waiter.Available(
+		t.Context(),
+		DataDependency{
+			NamedResource: target,
+			Use:           "substituteFrom",
+			Input:         store.ReferenceFacts{Generated: true, Materializers: producers},
+		},
+		manifest.DrainForce,
+	)
+	assert.Equal(t, got.Kind, schedule.DependencyFailed)
+	captured, ok := errors.AsType[*manifest.DependencyFailedError](got.Result.Err())
+	assert.Equal(t, ok, true)
+	assert.Diff(t, captured.Failed, producers)
+	assert.Diff(t, got.Failed, producers)
+	for _, id := range producers {
+		assert.Equal(t, captured.Reasons[id].Subject.ID, id)
 	}
 }

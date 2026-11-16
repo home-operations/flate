@@ -3,10 +3,9 @@ package helmrelease
 
 import (
 	"context"
-	"slices"
+	"errors"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -98,13 +97,11 @@ func (c *execution) render(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
 	level manifest.DrainLevel,
-	omitted []manifest.NamedResource,
+	inputs []values.Result,
 ) error {
-	id := hr.Named()
-	c.SetPendingUnlessReady(id, "resolving chart")
-	hr, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
-	slices.SortFunc(omitted, manifest.NamedResource.Compare)
-	omitted = slices.Compact(omitted)
+	c.SetPendingUnlessReady(hr.Named(), "resolving chart")
+	hr, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, inputs, c.Helm.ValuesCache())
+	omitted, unreadable := values.OmittedIDs(inputs), values.UnreadableValueReferences(inputs)
 	if err != nil {
 		return err
 	}
@@ -139,13 +136,13 @@ func (c *execution) render(
 		if admission.Key != "" {
 			content = hr.Content(admission.Key, omitted)
 		}
-		fingerprintDedupResult1, innerLocalErr := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fingerprintDedupResult1, innerLocalErr := c.run.FingerprintDedup(ctx, hr.Named(), content, &attempt)
 		fp, handled = fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused
 		if handled || innerLocalErr != nil {
 			return handled, innerLocalErr
 		}
 		attempt.Finish()
-		_, _, attempt = c.run.Reads.GetEmission(id)
+		_, _, attempt = c.run.Reads.GetEmission(hr.Named())
 		if admission.Accepted {
 			replay = admission
 			return true, nil
@@ -155,6 +152,9 @@ func (c *execution) render(
 	c.prepareRequest(hr, &input)
 	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if err != nil {
+		if _, rendering := errors.AsType[*helm.RenderError](err); rendering {
+			return c.run.RenderFailure(ctx, err, nil, unreadable)
+		}
 		return err
 	}
 	if c.run.Disposition == store.AssessmentQualificationSettled {
@@ -165,14 +165,14 @@ func (c *execution) render(
 	}
 	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, &input); len(stale) > 0 {
 		c.run.Reads.AddWarning(manifest.Warning{
-			Resource: id,
+			Resource: hr.Named(),
 			Category: manifest.WarnStaleValues,
 			Message:  "values not used by the chart",
 			Detail:   stale,
 		})
 	}
 	if handled {
-		return c.recordRender(ctx, id, &attempt)
+		return c.recordRender(ctx, hr.Named(), &attempt)
 	}
 
 	hr.EmissionPolicy().Stamp(docs)
@@ -182,12 +182,16 @@ func (c *execution) render(
 		docs,
 		manifest.ParseDocOptions{},
 	)
-	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
-	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
-	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
+	attempt.Children, attempt.Manifests, attempt.Failures =
+		parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
+	if err := c.run.RenderFailure(ctx, nil, attempt.Failures, unreadable); errors.Is(err, manifest.ErrSourceSkipped) {
 		return err
 	}
-	return c.recordRender(ctx, id, &attempt)
+	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
+	if err := c.run.Emit(ctx, hr.Named(), &attempt, nil); err != nil {
+		return err
+	}
+	return c.recordRender(ctx, hr.Named(), &attempt)
 }
 
 func (c *execution) recordRender(ctx context.Context, id manifest.NamedResource, attempt *store.Emission) error {
@@ -225,25 +229,24 @@ func (c *Controller) PreviousRender(
 	if err != nil {
 		return history
 	}
-	var omittedRefs []depwait.DataDependency
+	var results []values.Result
 	if err = ex.run.AwaitData(ctx, base.DataWait{
 		Inputs: inputs,
-		Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []depwait.DataDependency) error {
-			omittedRefs = requiredValuesOmissions(omitted)
+		Resume: func(_ context.Context, _ manifest.DrainLevel, inputs []values.Result) error {
+			results = inputs
 			return nil
 		},
 	}, manifest.DrainNone); err != nil {
 		return history
 	}
-	hr = omitValues(hr, omittedRefs)
-	hr, err = helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
+	hr, err = helm.Prepare(hr, helm.NewSources(reads).Declaration, results, c.Helm.ValuesCache())
 	if err != nil {
 		return history
 	}
 	request := helm.RenderOptions{
 		Work: reads.Work().Scope().RenderWork(), Options: c.Options,
 		Sources: helm.NewSources(reads), PreparationTasks: c.Tasks,
-		Omitted: omissionIDs(omittedRefs),
+		Omitted: values.OmittedIDs(results),
 	}
 	ex.prepareRequest(hr, &request)
 	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)

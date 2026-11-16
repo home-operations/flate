@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,23 +22,29 @@ import (
 
 func (c *Cache) publish(
 	ctx context.Context,
-	tmp *os.File,
-	payload digest.Digest,
+	staged *payload,
 	e *entry,
 ) (ocispec.Descriptor, string, error) {
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ocispec.Descriptor{}, "", fmt.Errorf("rewind cache payload: %w", err)
+	var input io.Reader
+	size := int64(staged.memory.Len())
+	if staged.file != nil {
+		if _, err := staged.file.Seek(0, io.SeekStart); err != nil {
+			return ocispec.Descriptor{}, "", fmt.Errorf("rewind cache payload: %w", err)
+		}
+		info, err := staged.file.Stat()
+		if err != nil {
+			return ocispec.Descriptor{}, "", err //nolint:wrapcheck // Cache.publish forwards the staging file Stat PathError for cache classification.
+		}
+		size, input = info.Size(), staged.file
+	} else {
+		input = bytes.NewReader(staged.memory.Bytes())
 	}
-	info, err := tmp.Stat()
-	if err != nil {
-		return ocispec.Descriptor{}, "", err //nolint:wrapcheck // Cache.publish forwards the staging file Stat PathError for cache classification.
-	}
-	stored := e.storedDescriptor(payload, info.Size())
-	if err := c.store.Push(ctx, stored, tmp); err != nil {
+	stored := e.storedDescriptor(staged.hash.Digest(), size)
+	if err := c.store.Push(ctx, stored, input); err != nil {
 		if !errors.Is(err, errdef.ErrAlreadyExists) {
 			return stored, "", fmt.Errorf("publish cache payload: %w", err)
 		}
-		repair, repairErr := c.repairPayload(tmp, &stored)
+		repair, repairErr := c.repairPayload(staged, &stored)
 		return stored, repair, repairErr
 	}
 	c.snapshotDirty.Store(true)
@@ -60,6 +67,10 @@ func (e *entry) storedDescriptor(payload digest.Digest, size int64) ocispec.Desc
 		"upstream-size":       strconv.FormatInt(e.descriptor.Size, 10),
 		"upstream-media-type": e.descriptor.MediaType,
 	} {
+		if v == "" {
+			delete(stored.Annotations, prefix+k)
+			continue
+		}
 		stored.Annotations[prefix+k] = v
 	}
 	return stored
@@ -90,7 +101,7 @@ func (c *Cache) persistPayload(
 	var stored ocispec.Descriptor
 	var repairName string
 	var err error
-	if staged.writer == nil {
+	if !staged.unchanged && staged.writer == nil {
 		if stageErr := staged.stage(); stageErr != nil {
 			return ocispec.Descriptor{}, repairName, stageErr
 		}
@@ -98,7 +109,7 @@ func (c *Cache) persistPayload(
 	if staged.unchanged {
 		stored = e.storedDescriptor(e.stored.Digest, e.stored.Size)
 	} else {
-		stored, repairName, err = c.publish(ctx, staged.file, staged.hash.Digest(), e)
+		stored, repairName, err = c.publish(ctx, staged, e)
 		if err != nil {
 			return ocispec.Descriptor{}, repairName, err
 		}
@@ -106,19 +117,21 @@ func (c *Cache) persistPayload(
 			return ocispec.Descriptor{}, repairName, restoreErr
 		}
 	}
-	closeErr := staged.file.Close()
-	staged.file = nil
-	removeErr := c.root.Remove(staged.name)
-	if removeErr == nil {
-		staged.name = ""
-	}
-	if joinErr := errors.Join(closeErr, removeErr); joinErr != nil {
-		return ocispec.Descriptor{}, repairName, joinErr
+	if staged.file != nil {
+		closeErr := staged.file.Close()
+		staged.file = nil
+		removeErr := c.root.Remove(staged.name)
+		if removeErr == nil {
+			staged.name = ""
+		}
+		if joinErr := errors.Join(closeErr, removeErr); joinErr != nil {
+			return ocispec.Descriptor{}, repairName, joinErr
+		}
 	}
 	return stored, repairName, nil
 }
 
-func (c *Cache) repairPayload(tmp *os.File, stored *ocispec.Descriptor) (string, error) {
+func (c *Cache) repairPayload(staged *payload, stored *ocispec.Descriptor) (string, error) {
 	info, err := os.Stat(filepath.Join(c.root.Name(), blobPath(stored.Digest)))
 	if err != nil {
 		return "", err //nolint:wrapcheck // repairPayload forwards the retained blob Stat PathError.
@@ -126,6 +139,12 @@ func (c *Cache) repairPayload(tmp *os.File, stored *ocispec.Descriptor) (string,
 	if info.Size() == stored.Size {
 		return "", nil
 	}
+	if staged.file == nil {
+		if err := staged.stage(); err != nil {
+			return "", err
+		}
+	}
+	tmp := staged.file
 	{
 		name, err := filepath.Rel(c.root.Name(), tmp.Name())
 		if err != nil {

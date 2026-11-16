@@ -118,17 +118,14 @@ func (f *operation) resolveTransport(
 		return gitAcquisition{}, err
 	}
 	secrets := f.secrets
-	var sec store.ReferenceFacts
-	if repo.SecretRef != nil && secrets != nil {
-		sec = secrets(repo.Namespace, repo.SecretRef.Name)
-	}
+	sec := source.ResolveSecretRef(secrets, new(manifest.DiagnosticFor(repo.Named(), repo)), repo.SecretRef)
 	auth, authErr := f.resolveAuth(repo, &sec, endpoint)
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return gitAcquisition{}, authErr
 	}
 	skipTLS := endpoint.Scheme == sshScheme
 	var inputs []source.TransportInput
-	if repo.SecretRef != nil && !skipTLS && secrets != nil {
+	if repo.SecretRef != nil && !skipTLS {
 		inputs = append(
 			inputs,
 			source.TransportInput{
@@ -141,7 +138,12 @@ func (f *operation) resolveTransport(
 	}
 	inputs = append(inputs, source.TransportInput{Reference: repo.ProxySecretRef, Use: source.TransportProxy})
 	owner := manifest.DiagnosticFor(repo.Named(), repo)
-	resolved, err := source.ResolveTransport(secrets, owner, inputs)
+	resolved, err := source.ResolveTransport(func(namespace, name string) store.ReferenceFacts {
+		if repo.SecretRef != nil && namespace == repo.Namespace && name == repo.SecretRef.Name {
+			return sec
+		}
+		return source.ResolveSecretRef(secrets, &owner, &manifest.LocalObjectReference{Name: name})
+	}, owner, inputs)
 	if err != nil {
 		return gitAcquisition{}, err
 	}

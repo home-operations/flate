@@ -3,6 +3,8 @@ package values
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -109,7 +111,15 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 		id    manifest.NamedResource
 		input store.ReferenceFacts
 	}{{first.Named(), input}, {absent, missing}, {other.Named(), otherInput}, {supplied.Named(), private}, {generatedID, generated}} {
-		assert.Diff(t, captured.input, provider.Lookup(captured.id))
+		assert.Equal(
+			t,
+			cmp.Equal(
+				captured.input,
+				provider.Lookup(captured.id),
+				cmp.AllowUnexported(manifest.ConfigMap{}, manifest.Secret{}),
+			),
+			true,
+		)
 		assert.FatalIf(
 			t,
 			provider.Lookup(captured.id).Data != captured.input.Data,

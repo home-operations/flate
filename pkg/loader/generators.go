@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 
 	"sigs.k8s.io/kustomize/api/ifc"
 	"sigs.k8s.io/kustomize/api/kv"
@@ -32,20 +33,25 @@ type generatorRecord struct {
 
 var errRemoteInputs = manifest.NewError(manifest.ErrInput, nil, "remote generator input requires HTTPInputs")
 
-func (r *generatorRecord) materialize(ctx context.Context, optsArg *options) (store.Child, error) {
+type materializedGenerator struct {
+	child store.Child
+	keys  manifest.KeySet
+}
+
+func (r *generatorRecord) materialize(ctx context.Context, optsArg *options) (materializedGenerator, error) {
 	opts := *optsArg
 	var ldr ifc.Loader
 	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
 		var err error
 		ldr, err = r.inputLoader(ctx, &opts)
 		if err != nil {
-			return store.Child{}, err
+			return materializedGenerator{}, err
 		}
 	}
 
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
-		return store.Child{}, manifest.NewError(
+		return materializedGenerator{}, manifest.NewError(
 			manifest.ErrInput,
 			fmt.Errorf("generator %s in %s: %w", r.args.Name, r.file, err),
 			"",
@@ -63,9 +69,13 @@ type generatorFileLoader struct {
 
 func (l generatorFileLoader) Load(file string) ([]byte, error) { return l.load(file) }
 
-func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (store.Child, error) {
+func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (materializedGenerator, error) {
 	data := make(map[string]any, len(pairs))
-	for _, pair := range pairs {
+	var names []string
+	if len(pairs) != 0 {
+		names = make([]string, len(pairs))
+	}
+	for i, pair := range pairs {
 		value := pair.Value
 		var encoding *base64.Encoding
 		if !r.isConfigMap {
@@ -74,7 +84,9 @@ func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (store.Chi
 		}
 
 		data[pair.Key] = value
+		names[i] = pair.Key
 	}
+	slices.Sort(names)
 	kind := manifest.KindSecret
 	if r.isConfigMap {
 		kind = manifest.KindConfigMap
@@ -86,7 +98,13 @@ func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (store.Chi
 		"data":       data,
 	}
 	child, outcome, _ := Prepare(manifest.DocOccurrence{Document: doc}, manifest.ParseDocOptions{})
-	return child, outcome.Err
+	if outcome.Err != nil {
+		return materializedGenerator{child: child}, outcome.Err
+	}
+	return materializedGenerator{
+		child: child,
+		keys:  manifest.KeySet{Names: slices.Compact(names), Complete: true},
+	}, nil
 }
 
 func (r *generatorRecord) inputLoader(ctx context.Context, optsArg *options) (generatorFileLoader, error) {

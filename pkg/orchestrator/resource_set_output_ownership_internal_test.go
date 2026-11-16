@@ -248,7 +248,9 @@ func recordResourceSetDocumentBoundary(t *testing.T, doc map[string]any, counts 
 		assert.Equal(t, ns, "other")
 	}
 	if name == "sanitized" {
-		assert.Diff(t, doc["data"], map[string]any{})
+		assert.Diff(t, doc["data"], map[string]any{
+			"encrypted": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]",
+		})
 	}
 	if name == "kindless-list" {
 		assert.Equal(t, manifest.DocKind(doc), "")

@@ -128,7 +128,10 @@ func publishUnavailableValuesState(t *testing.T, c *Controller, state string, mi
 				APIVersion: "external-secrets.io/v1",
 				Name:       "cluster",
 				Namespace:  id.Namespace,
-				Spec:       map[string]any{"target": map[string]any{"name": id.Name}},
+				Spec: map[string]any{
+					"target":   map[string]any{"name": id.Name},
+					"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "input"}}},
+				},
 			},
 		)
 		st.UpdateStatus(testutil.KustomizationID("apps", "producer-root"), store.StatusInfo{Status: store.StatusReady})
@@ -137,16 +140,14 @@ func publishUnavailableValuesState(t *testing.T, c *Controller, state string, mi
 		if mixed {
 			secret.StringData["keep"] = "retained"
 		}
-		var warnings []manifest.Warning
 		switch state {
 		case "readable":
 			secret.StringData["value"] = "readable"
 		case "encrypted":
-			warnings = []manifest.Warning{
-				{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"unused", "value"}},
-			}
+			secret.StringData["value"] = "ENC[AES256_GCM,data:fixture,iv:fixture,tag:fixture,type:str]"
+			secret.StringData["unused"] = "ENC[AES256_GCM,data:fixture,iv:fixture,tag:fixture,type:str]"
 		}
-		st.AddDeclaration(store.Declaration{Obj: secret, Warnings: warnings})
+		st.AddDeclaration(store.Declaration{Obj: secret})
 	}
 }
 
@@ -179,27 +180,23 @@ func (c *Controller) assertUnavailableValuesState(
 			omissions = append(omissions, *warning)
 		}
 	}
-	wantOmissions := 1
-	if state == "readable" {
-		wantOmissions = 0
+	wantOmissions := 0
+	if state == "absent" {
+		wantOmissions = 1
 	}
-	assert.Equal(t, len(omissions), wantOmissions)
+	assert.FatalIf(
+		t,
+		len(omissions) != wantOmissions,
+		"state=%s omissions=%+v, want %d",
+		state,
+		omissions,
+		wantOmissions,
+	)
 	if len(omissions) != 0 {
-		assert.Equal(t, strings.Contains(omissions[0].Message, "SOPS-encrypted"), state == "encrypted")
-		assert.Equal(t, strings.Contains(omissions[0].Message, "produced in the cluster"), state == "produced")
-		if state == "encrypted" {
-			assert.Equal(
-				t,
-				omissions[0].Message,
-				`required valuesFrom Secret/apps/input omitted from offline render: key "value" is SOPS-encrypted and unreadable; supply it with --supply`,
-			)
-			assert.Equal(t, len(omissions[0].Detail), 0)
-			assert.Diff(
-				t,
-				omissions[0].Related,
-				[]manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}},
-			)
-		}
+		assert.Equal(t, omissions[0].Message,
+			"required valuesFrom Secret/apps/input omitted from offline render")
+		assert.Equal(t, len(omissions[0].Detail), 0)
+		assert.Equal(t, len(omissions[0].Related), 0)
 	}
 	previous := c.PreviousRender(t.Context(), hr, schedule.Result{})
 	assert.Equal(t, previous.Complete, persistent)

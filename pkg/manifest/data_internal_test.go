@@ -92,9 +92,6 @@ func testParseDocAuthoritativeSanitationCase1(t *testing.T, tc *struct {
 		raw = base64.StdEncoding.EncodeToString([]byte(raw.(string)))
 	}
 	want := raw
-	if tc.unreadable {
-		want = nil
-	}
 	clearValue := "readable"
 	if tc.field == "binaryData" || (tc.kind == KindSecret && tc.field == "data") {
 		clearValue = base64.StdEncoding.EncodeToString([]byte(clearValue))
@@ -113,7 +110,7 @@ func testParseDocAuthoritativeSanitationCase1(t *testing.T, tc *struct {
 	before := DeepCopyMap(doc)
 	result3, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
 	obj, authoritative, changed := result3.Object, result3.Document, result3.Changed
-	assert.Equal(t, changed, tc.unreadable || tc.metadata || (*valid))
+	assert.Equal(t, changed, tc.metadata || (*valid))
 	if *valid {
 		testParseDocAuthoritativeSanitationCase1Part1(
 			t,
@@ -164,7 +161,8 @@ func testParseDocAuthoritativeSanitationCase1Part1(
 				"value=%q found=%t err=%v", value, found, valueErr)
 		} else {
 			assert.NoError(t, valueErr)
-			assert.Equal(t, found, !(*inputs.tc).unreadable)
+			assert.Equal(t, found, true)
+			assert.Equal(t, result5.Encrypted, (*inputs.tc).unreadable)
 			assert.Equal(t, value, (*inputs.tc).wantRead)
 		}
 	}
@@ -229,5 +227,35 @@ type testParseDocAuthoritativeSanitationCase1Part1Inputs struct {
 		metadata   bool
 		unreadable bool
 		readError  bool
+	}
+}
+
+func TestData_OpaqueCoverage(t *testing.T) {
+	t.Parallel()
+	const cipher = "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"
+	for _, kind := range []string{KindConfigMap, KindSecret} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       kind,
+				"metadata":   map[string]any{"name": "input", "namespace": "apps"},
+				"data":       cipher,
+			}
+			parsed, err := ParseDoc(doc, ParseDocOptions{RequiredIdentity: true})
+			assert.NoError(t, err)
+			data := parsed.Object.(Data)
+			assert.Equal(t, data.KeysKnown(), false)
+			assert.Equal(t, len(slices.Collect(data.Keys())), 0)
+			assert.Equal(t, data.Snapshot()["data"], any(cipher))
+			assert.Diff(t, parsed.Document, doc)
+			malformed := DeepCopyMap(doc)
+			malformed["data"] = "readable invalid mapping"
+			_, err = ParseDoc(malformed, ParseDocOptions{RequiredIdentity: true})
+			assert.Equal(t, errors.Is(err, ErrInput), true)
+		})
+	}
+	for _, data := range []Data{NewConfigMap(NamedResource{}, nil), NewSecret(NamedResource{}, nil, nil)} {
+		assert.Equal(t, data.KeysKnown(), true)
 	}
 }

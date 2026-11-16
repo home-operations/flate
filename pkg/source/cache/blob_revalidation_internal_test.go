@@ -131,12 +131,12 @@ func testBlobRevalidationAbsent(t *testing.T) {
 	assert.FatalIf(t, r != nil || !errors.Is(err, manifest.ErrInput), "unchanged without payload: %v", err)
 }
 
-func testBlobRevalidationUnchangedParentReplacement(t *testing.T) {
+func testBlobRevalidationUnchangedParentReplacement(t *testing.T, mode RenderMode) {
 	t.Helper()
 
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
-	key := BlobKey{Content: "unchanged-parent-replacement"}
+	key := BlobKey{Content: "unchanged-parent-replacement", Render: mode}
 	upstream := ocispec.Descriptor{
 		Digest:      digest.FromString("upstream"),
 		Size:        7,
@@ -195,13 +195,13 @@ func testBlobRevalidationUnchangedParentReplacement(t *testing.T) {
 	}
 }
 
-func testBlobRevalidationCase2(t *testing.T, invalid *string,
+func testBlobRevalidationCase2(t *testing.T, invalid *string, mode RenderMode,
 ) {
 	t.Helper()
 
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
-	key := BlobKey{Content: "missing"}
+	key := BlobKey{Content: "missing", Render: mode}
 	_, _, id, err := c.Blob(t.Context(), key, &Policy{}, producer([]byte("old"), &ocispec.Descriptor{}))
 	assert.NoError(t, err)
 

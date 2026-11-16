@@ -116,7 +116,7 @@ func testControllerBucketMachineFailuresCase(
 	c, st := newConfiguredController(
 		t,
 		map[string]src.Fetcher{manifest.KindBucket: src.Wrap(manifest.KindBucket, f)},
-		FetchOptions{AllowMissingSecrets: (*testCaseInput.allow)},
+		FetchOptions{Missing: sourceMissingPolicy((*testCaseInput.allow))},
 	)
 	b := &manifest.Bucket{
 		Name:       "bucket",

@@ -49,7 +49,7 @@ func TestAdmission_OwnUnreadableInput(t *testing.T) {
 	for _, child := range proposal.Objects {
 		if secret, ok := child.Obj.(*manifest.Secret); ok {
 			found = true
-			assert.Equal(t, secret.HasKeys(), false)
+			assert.Equal(t, secret.HasKeys(), true)
 		}
 	}
 	assert.Equal(t, found, false)

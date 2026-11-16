@@ -58,11 +58,7 @@ type Controller struct {
 	// are ignored. Register fetchers before StartLifecycle.
 	Fetchers map[string]src.Fetcher
 
-	// allowMissingSecrets converts ErrMissingSecret fetch errors into a
-	// skip (StatusReady with ReasonSkipped). Wired from
-	// FetchOptions.AllowMissingSecrets via Configure.
-	allowMissingSecrets bool
-	admission           localSources
+	admission localSources
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -70,9 +66,9 @@ type Controller struct {
 // changed resources in changed-only mode.
 type FetchOptions struct {
 	// Loader borrows the invocation's declaration admission boundary.
-	Loader              *loader.Loader
-	Session             *selection.Session
-	AllowMissingSecrets bool
+	Loader  *loader.Loader
+	Session *selection.Session
+	Missing *depwait.MissingPolicy
 	// Admission resolves runtime sources against immutable discovery policy.
 	Admission localSources
 }
@@ -97,13 +93,12 @@ func New(s *store.Store, t *task.Service, owner *cache.Cache) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
-	common := base.Options{Session: opts.Session, Loader: opts.Loader}
+	common := base.Options{Session: opts.Session, Loader: opts.Loader, Missing: opts.Missing}
 	if opts.Loader != nil {
 		common.Index = opts.Loader.Index
 	}
 	c.Controller.Configure(common)
 	c.retry = retry
-	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.admission = opts.Admission
 }
 
@@ -172,7 +167,6 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	fetcher := c.Fetchers[id.Kind]
 	var selected *store.SourceArtifact
 	return c.run.Acquire(ctx, obj, base.Acquisition{
-		AllowMissingSecrets: c.allowMissingSecrets,
 		Fetch: func(ctx context.Context) (src.PreparedFetch, error) {
 			return fetcher.Fetch(ctx, obj, &c.run.Reads, &cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 		},

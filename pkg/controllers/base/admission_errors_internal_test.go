@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/values"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -112,7 +114,7 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 						Optional:  true,
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { resumed = true; return nil },
 			}, manifest.DrainForce)
 			assert.Equal(t, errors.Is(err, cause), true)
 			assert.Equal(t, resumed, false)

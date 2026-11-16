@@ -44,9 +44,8 @@ func TestRender_SOPSDiagnosticsOnReplay(t *testing.T) {
 		)
 
 		assert.NoError(t, PrepareShape(&RenderRequest{Spec: spec}, docs).Apply(t.Context(), ShapeOptions{}))
-		assert.Equal(t, len(docs[0].Warnings), 1)
-		assert.Diff(t, docs[0].Warnings[0].Detail, []string{"VALUE"})
-		assert.Diff(t, docs[0].Document["stringData"], map[string]any{"PLAIN": "readable"})
+		assert.Equal(t, len(docs[0].Warnings), 0)
+		assert.Diff(t, docs[0].Document["stringData"], map[string]any{"PLAIN": "readable", "VALUE": cipher})
 		encoded, err := manifest.EncodeRender(docs)
 		assert.NoError(t, err)
 		if i != 0 {

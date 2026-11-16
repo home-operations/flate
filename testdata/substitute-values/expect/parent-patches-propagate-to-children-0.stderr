@@ -1,3 +1,0 @@
-
-  ⚠ warnings (1)
-    [UnresolvedSubstitution] substituteFrom Secret "flux-system/cluster-secrets" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "MY_SECRET" is SOPS-encrypted and unreadable; supply it with --supply

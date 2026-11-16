@@ -149,7 +149,7 @@ type historyPaths struct {
 
 type historyPath struct {
 	Path    string `json:"Path"`
-	Subtree bool   `json:"Subtree"`
+	Subtree bool   `json:"Subtree,omitempty"`
 }
 
 func (hv *RenderHistory) record(acceptance string) *historyRecord {

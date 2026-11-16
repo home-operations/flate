@@ -259,7 +259,7 @@ func observeFrameHistoryDiffSide(t *testing.T, run *Rendered, changed, reused bo
 		)
 	}
 	assert.Equal(t, configMapNames(run.Result)["cfg-b"], !changed)
-	assert.ErrorIf(t, len(run.Result.Warnings) == 0, "render omitted its expected warning")
+	assert.Equal(t, len(run.Result.Warnings), 0)
 	if reused {
 		assert.Equal(t, workCounts(run.Result.Work, app, manifest.WorkKustomize).Attempts, uint64(0))
 		assert.ErrorIf(

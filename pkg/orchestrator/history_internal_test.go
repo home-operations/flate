@@ -407,10 +407,10 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 
 	root := t.TempDir()
 	resources := "[child.yaml, bucket.yaml, generator.yaml, consumer.yaml]"
-	if (*testCaseInput) == "authored" {
+	switch *testCaseInput {
+	case "authored":
 		resources = "[owner.yaml, child.yaml, bucket.yaml, generator.yaml, consumer.yaml]"
-	}
-	if (*testCaseInput) == "empty" {
+	case "empty":
 		resources = "[owner.yaml]"
 	}
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: "+resources+"\n")
@@ -558,6 +558,11 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		}
 	}
 	paths := []string{"leaf/value.yaml", "entry/child.yaml", "unrelated/value.yaml"}
+	identities := append(
+		slices.SortedFunc(maps.Keys(before), manifest.NamedResource.Compare),
+		owner,
+		testutil.KustomizationID("apps", "ready"),
+	)
 	selectRecords := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
 		selected := make([][]bool, len(paths))
 		for i, path := range paths {
@@ -581,8 +586,9 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 			)
 			assert.NoError(t, failure)
 			admissiontest.Execute(t, admissionLoader, proposal)
-			for _, id := range append(slices.SortedFunc(maps.Keys(before), manifest.NamedResource.Compare), owner, testutil.KustomizationID("apps", "ready")) {
-				selected[i] = append(selected[i], session.Snapshot().Reconcile(id))
+			snapshot := session.Snapshot()
+			for _, id := range identities {
+				selected[i] = append(selected[i], snapshot.Reconcile(id))
 			}
 		}
 		return selected
@@ -607,13 +613,13 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
 	after := readHistory()
 	assert.Diff(t, after, before)
+	wantBefore := [][]bool{{true, false}, {true, false}, {false, false}}
+	if *testCaseInput == "empty" {
+		wantBefore[0][0] = false
+	}
 	if persistent {
 		assert.Diff(t, selectRecords(after), selected)
 	} else {
-		wantBefore := [][]bool{{true, false}, {true, false}, {false, false}}
-		if *testCaseInput == "empty" {
-			wantBefore[0][0] = false
-		}
 		assert.Diff(t, selected, wantBefore)
 		assert.Diff(t, selectRecords(after), [][]bool{{false, false}, {true, false}, {false, false}})
 	}

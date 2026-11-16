@@ -305,7 +305,6 @@ type testBootstrapAcceptedOrphanHelmChildRootCaseInputs struct {
 	mode *string
 }
 
-//nolint:gocognit // Orphan recovery MUST retain declaration, selection, render, and probe-lifetime assertions in both modes.
 func testBootstrapAcceptedOrphanHelmChildRootCase(
 	t *testing.T,
 	testCaseInput testBootstrapAcceptedOrphanHelmChildRootCaseInputs,
@@ -379,15 +378,14 @@ spec:
   sourceRef: {kind: GitRepository, name: content}
 `), "metadata: {name: child, namespace: apps}", `metadata: {name: child, namespace: apps, labels: {witness: {{ .Values.marker }}}}`, 1),
 	)
-	if (*testCaseInput.mode) != "inline" {
+	switch *testCaseInput.mode {
+	case "values_from":
 		testutil.WriteFile(
 			t,
 			root,
 			"flux/supplied.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata:\n  values.yaml: 'root: ./apps/blue'\n  ROOT: ./apps/blue\n",
 		)
-	}
-	if (*testCaseInput.mode) == "values_from" {
 		release, err := os.ReadFile(filepath.Join(root, "flux", "release.yaml"))
 		assert.NoError(t, err)
 		testutil.WriteFile(
@@ -401,8 +399,7 @@ spec:
 				1,
 			),
 		)
-	}
-	if (*testCaseInput.mode) == "substitute_from" {
+	case "substitute_from":
 		testutil.WriteFile(
 			t,
 			root,
@@ -482,11 +479,12 @@ spec:
 	assert.Equal(t, len(fresh.historyOwners[owner]) != 0, persistent)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	assert.Equal(t, fresh.store.GetDeclaration(owner) != nil, persistent || (*testCaseInput.mode) == "substitute_from")
-	if (*testCaseInput.mode) == "substitute_from" {
+	switch {
+	case (*testCaseInput.mode) == "substitute_from":
 		declaration := fresh.store.GetDeclaration(owner).(*manifest.Kustomization)
 		assert.Equal(t, len(declaration.Patches), 1)
 		assert.Equal(t, len(declaration.PostBuild.SubstituteFrom), 1)
-	} else if persistent {
+	case persistent:
 		declaration := fresh.store.GetDeclaration(owner).(*manifest.HelmRelease)
 		assert.Equal(t, declaration.Values["marker"], any("keep"))
 		if (*testCaseInput.mode) == "values_from" {
@@ -517,8 +515,10 @@ spec:
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]
 	wantDocuments := 0
+	wantRenders := [3]int{}
 	if persistent {
 		wantDocuments = 1
+		wantRenders = [3]int{0, 1, 0}
 	}
 	assert.Equal(t, len(docs), wantDocuments)
 	if len(docs) != 0 {
@@ -526,10 +526,6 @@ spec:
 	}
 	var renders [3]int
 	testBootstrapAcceptedOrphanHelmChildRootCaseSegment(t, &testCaseInput, &unrelated, &renders)
-	wantRenders := [3]int{}
-	if persistent {
-		wantRenders = [3]int{0, 1, 0}
-	}
 	assert.Equal(t, renders, wantRenders)
 	if (*testCaseInput.mode) == "substitute_from" {
 		declaration := fresh.store.GetObject(owner).(*manifest.Kustomization).Clone()

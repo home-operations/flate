@@ -179,27 +179,3 @@ func (f *candidateFailureFile) Read([]byte) (int, error) {
 	}
 	return 0, f.input.failure
 }
-
-func TestSet_FileChanged(t *testing.T) {
-	t.Parallel()
-	input := &store.SourceArtifact{}
-	for _, tc := range []struct {
-		name     string
-		delta    *Set
-		location FileContext
-		file     string
-		want     bool
-	}{
-		{name: "nil", file: "file"},
-		{name: "unpaired", delta: NewSet([]string{"file"}), location: FileContext{Input: input, Root: "/work", Origin: "relative"}, file: "file", want: true},
-		{name: "paired_without_input", delta: NewSet([]string{"file"}), location: FileContext{Paired: true, Root: "/work", Origin: "relative"}, file: "file", want: true},
-		{name: "normalized", delta: NewSet([]string{"file"}), location: FileContext{Paired: true, Input: input, ToIndex: ".", Root: "/work/nested", Origin: "/work"}, file: "dir/../file", want: true},
-		{name: "origin", delta: NewSet([]string{"nested/file"}), location: FileContext{Paired: true, Input: input, Root: "/work/nested", Origin: "/work"}, file: "file", want: true},
-		{name: "failed_coordinates", delta: NewSet([]string{"file"}), location: FileContext{Paired: true, Input: input, Root: "/work", Origin: "relative"}, file: "file"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.delta.FileChanged(tc.location, tc.file), tc.want)
-		})
-	}
-}

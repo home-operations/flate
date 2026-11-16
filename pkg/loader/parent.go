@@ -291,14 +291,14 @@ func sourceView(
 // Completed source coordinates MUST NOT project copied content onto physical input files.
 func (r *documentReader) localBase(root, repoRoot string) string {
 	dr := *r
-	if origin := dr.artifacts[root].OriginPath(root); origin != root {
-		base, _ := filepath.Rel(repoRoot, origin)
-		return filepath.ToSlash(base)
-	}
 	artifact := dr.artifacts[root]
+	if origin := artifact.OriginPath(root); origin != root {
+		base, _ := artifact.IndexPath(repoRoot, ".")
+		return base
+	}
 	if artifact != nil && artifact.LocalRoot == root && artifact.Content != "" && !artifact.InputAlias {
-		base, _ := filepath.Rel(repoRoot, root)
-		return filepath.ToSlash(base)
+		base, _ := artifact.IndexPath(repoRoot, ".")
+		return base
 	}
 	return "."
 }

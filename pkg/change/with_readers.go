@@ -128,17 +128,8 @@ func (r *readerScope) completeSources() bool {
 }
 
 func (r *readerScope) fileAt(side int, file string) string {
-	if r.roots[side] == "" || r.evidence.artifacts[side] == nil || r.evidence.artifacts[side].LocalPath == "" {
-		return file
-	}
-	if r.origins[side] == r.roots[side] {
-		return filepath.ToSlash(filepath.Clean(file))
-	}
-	relative, err := filepath.Rel(r.origins[side], filepath.Join(r.roots[side], filepath.FromSlash(file)))
-	if err != nil {
-		return ""
-	}
-	return filepath.ToSlash(relative)
+	relative, _ := r.evidence.artifacts[side].SourcePath(r.roots[side], file)
+	return relative
 }
 
 func (r *readerScope) collectDeclaredContents() {
@@ -249,17 +240,8 @@ func (r *readerScope) observeOppositeDeclaration(
 }
 
 func (r *readerScope) coordinate(side int, name string) string {
-	if input := r.evidence.artifacts[side]; input != nil && r.roots[side] != "" {
-		if r.origins[side] == r.roots[side] {
-			return filepath.ToSlash(filepath.Clean(name))
-		}
-		relative, err := filepath.Rel(r.roots[side], filepath.Join(r.origins[side], filepath.FromSlash(name)))
-		if err != nil {
-			return ""
-		}
-		return filepath.ToSlash(relative)
-	}
-	return name
+	relative, _ := r.evidence.artifacts[side].IndexPath(r.roots[side], name)
+	return relative
 }
 
 func (r *readerScope) collectVisibility() {

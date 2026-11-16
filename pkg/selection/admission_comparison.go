@@ -2,7 +2,6 @@ package selection
 
 import (
 	"cmp"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -42,10 +41,14 @@ func (c *admissionClosure) boundSource(source manifest.NamedResource) *SourceFac
 
 func (c *admissionClosure) fileChanged(source manifest.NamedResource, file string) bool {
 	evidence := c.boundSource(source)
-	return evidence.Delta.FileChanged(change.FileContext{
-		Root: c.context.Root, Origin: evidence.Origin, ToIndex: evidence.ToIndex,
-		Input: evidence.Input, Paired: evidence.Paired,
-	}, file)
+	if evidence.Paired && evidence.Input != nil {
+		var known bool
+		file, known = evidence.Input.SourcePath(c.context.Root, file)
+		if !known {
+			return false
+		}
+	}
+	return evidence.Delta.Contains(file)
 }
 
 func (c *admissionClosure) inputsChanged(source manifest.NamedResource, inputs []string) bool {
@@ -198,7 +201,7 @@ func (c *admissionClosure) affectedProductions(
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
 			indexed := c.coordinates(new(production)).indexed
-			fileOwned = fileOwned || indexed == record.File
+			fileOwned = fileOwned || indexed != "" && indexed == record.File
 			if production.Declaration == (manifest.NamedResource{}) &&
 				(production.Materializer(id) != (manifest.NamedResource{}) || production.Owner == (manifest.NamedResource{}) || manifest.Resolve(production.Authored, id.Namespace, "") == id) &&
 				c.changedProduction(production) {
@@ -220,24 +223,12 @@ func (c *admissionClosure) affectedCoordinates(
 	paired bool,
 ) affectedLocation {
 	base := cmp.Or(root, ".")
-	if !paired && input != nil {
-		relative, err := filepath.Rel(
-			c.context.Root,
-			input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root))),
-		)
-		if err != nil {
-			return affectedLocation{}
-		}
-		base = filepath.ToSlash(relative)
+	prefix, known := input.IndexPath(c.context.Root, base)
+	if !known {
+		return affectedLocation{}
 	}
-	prefix := base
-	if paired && input != nil {
-		physical := input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root)))
-		relative, err := filepath.Rel(c.context.Root, physical)
-		if err != nil {
-			return affectedLocation{}
-		}
-		prefix = filepath.ToSlash(relative)
+	if !paired {
+		base = prefix
 	}
 	if prefix == "." {
 		prefix = ""

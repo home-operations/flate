@@ -38,8 +38,6 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			assert.NoError(t, err)
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, sources[1])
-			toIndex, err := filepath.Rel(root, origin)
-			assert.NoError(t, err)
 			facts := &solverFacts{
 				sources: map[manifest.NamedResource]SourceFacts{
 					manifest.BootstrapSourceID: {
@@ -48,7 +46,6 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 						Delta:   changes,
 						Input:   sources[1],
 						Origin:  origin,
-						ToIndex: toIndex,
 						Files:   []SourceFile{{Path: file, Indexed: "input.txt"}},
 						Paired:  true,
 					},
@@ -66,8 +63,201 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			relative, indexed := coordinates2.relative, coordinates2.indexed
 			assert.Equal(t, relative, file)
 			assert.Equal(t, indexed, "input.txt")
+			inverse, known := sources[1].SourcePath(root, indexed)
+			assert.Equal(t, known, true)
+			assert.Equal(t, inverse, file)
+			assert.Equal(
+				t,
+				c.affectedCoordinates(file, sources[1], true),
+				affectedLocation{base: file, prefix: indexed, known: true},
+			)
+			assert.Equal(
+				t,
+				c.affectedCoordinates(file, sources[1], false),
+				affectedLocation{base: indexed, prefix: indexed, known: true},
+			)
+			assert.Equal(t, c.comparisonIndexedFile(file, sources[1], true), indexed)
 			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)
+			evidence := facts.sources[manifest.BootstrapSourceID]
+			assert.Equal(t, c.comparisonInputLocal(&evidence, changes, indexed), origin == root)
 			assert.Diff(t, slices.Collect(c.sourceFiles(manifest.BootstrapSourceID)), []string{"input.txt"})
+		})
+	}
+	t.Run("failed_production_mapping", func(t *testing.T) {
+		t.Parallel()
+		source := manifest.BootstrapSourceID
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", InputAlias: true}
+		facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
+			source: {Source: source, Input: input, Delta: change.NewSet([]string{"input.yaml"}), Paired: true},
+		}}
+		c := solverClosure(t, store.New(), facts)
+		c.context.Root = "/workspace"
+		c.states[id] = admissionState{productionsKnown: true, productions: []manifest.Production{
+			{Source: source, File: "input.yaml", Path: "/mounted/input.yaml"},
+		}}
+		assert.Equal(t, c.affectedProductions(id, &manifest.DiscoveryRecord{}).fileOwned, false)
+	})
+	t.Run("failed_unbound_input_mapping", func(t *testing.T) {
+		t.Parallel()
+		source := manifest.BootstrapSourceID
+		dependency := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+		consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+		facts := &solverFacts{index: manifest.DiscoveryIndex{
+			Claims: map[string][]manifest.NamedResource{"unrelated/": {consumer}},
+		}}
+		c := solverClosure(t, store.New(), facts)
+		c.context.Root = "/workspace"
+		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", InputAlias: true}
+		changed := c.comparisonRecordChanged(
+			dependency,
+			change.InputChange{File: "input.yaml", Unbound: true},
+			&comparisonInput{
+				consumer: consumer, dependency: dependency, source: source,
+				input: input, paired: true, delta: change.NewSet([]string{"input.yaml"}),
+			},
+		)
+		assert.Equal(t, changed, false)
+	})
+}
+
+func TestAdmission_SourceCoordinateClaims(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, origin, file, indexed, prefix string
+		pinned, failed                      bool
+	}{
+		{name: "nested_alias", origin: "/workspace", file: "selected/app/input.txt", indexed: "app/input.txt", prefix: "app"},
+		{name: "pinned", origin: "/workspace", file: "app/input.txt", indexed: "../../mounted/app/input.txt", prefix: "../../mounted/app", pinned: true},
+		{name: "external", origin: "/outside", file: "app/input.txt", indexed: "../../outside/app/input.txt", prefix: "../../outside/app"},
+		{name: "failed", origin: "relative", file: "app/input.txt", failed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: !tc.pinned}
+			if tc.pinned {
+				input.Content = "pinned"
+			}
+			source := manifest.BootstrapSourceID
+			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
+			delta := change.NewSet([]string{tc.file})
+			evidence := SourceFacts{
+				Source: source, Input: input, Delta: delta, Paired: true,
+				Files: []SourceFile{{Path: tc.file, Indexed: tc.indexed}},
+			}
+			facts := &solverFacts{
+				sources: map[manifest.NamedResource]SourceFacts{source: evidence},
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					owner: {
+						ContentRoots: map[manifest.NamedResource][]string{
+							source: {filepath.ToSlash(filepath.Dir(tc.file))},
+						},
+					},
+				}},
+			}
+			c := solverClosure(t, store.New(), facts)
+			c.context.Root = "/workspace/selected"
+			assert.Equal(
+				t,
+				c.coordinates(
+					&manifest.Production{Source: source, File: tc.file, Path: filepath.Join(input.LocalPath, tc.file)},
+				),
+				productionCoordinates{relative: tc.file, indexed: tc.indexed},
+			)
+			assert.Equal(
+				t,
+				c.changedProduction(
+					manifest.Production{
+						Source: source,
+						Owner:  owner,
+						File:   tc.file,
+						Path:   filepath.Join(input.LocalPath, tc.file),
+					},
+				),
+				!tc.failed,
+			)
+			var wantFiles []string
+			if !tc.failed {
+				wantFiles = append(wantFiles, tc.indexed)
+			}
+			assert.Diff(t, slices.Collect(c.sourceFiles(source)), wantFiles)
+			assert.Equal(t, c.comparisonIndexedFile(tc.file, input, true), tc.indexed)
+			pairedLocation, unpairedLocation := affectedLocation{}, affectedLocation{}
+			if !tc.failed {
+				pairedLocation = affectedLocation{
+					base: filepath.ToSlash(filepath.Dir(tc.file)), prefix: tc.prefix, known: true,
+				}
+				unpairedLocation = affectedLocation{base: tc.prefix, prefix: tc.prefix, known: true}
+			}
+			assert.Equal(t, c.affectedCoordinates(filepath.ToSlash(filepath.Dir(tc.file)), input, true), pairedLocation)
+			assert.Equal(
+				t,
+				c.affectedCoordinates(filepath.ToSlash(filepath.Dir(tc.file)), input, false),
+				unpairedLocation,
+			)
+			assert.Equal(t, c.comparisonInputLocal(&evidence, delta, "app/input.txt"), false)
+			reader := &manifest.FileReader{Reader: owner, Source: source}
+			file := "app/input.txt"
+			if !tc.failed {
+				file = tc.indexed
+			}
+			contentChanged := func(manifest.FileReader) bool { return true }
+			assert.Equal(t, c.completeChangedClaim(&completeChangedClaimState{
+				reader: reader, file: &file, delta: &delta, input: &input, contentChanged: &contentChanged,
+			}), !tc.failed)
+			if !tc.failed {
+				assert.Equal(t, file, tc.file)
+			}
+		})
+	}
+	t.Run("failed_file_evidence", func(t *testing.T) {
+		t.Parallel()
+		source := manifest.BootstrapSourceID
+		facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
+			source: {
+				Input: &store.SourceArtifact{LocalPath: "/workspace"}, Paired: true,
+				Delta: change.NewSet([]string{"input.txt"}), Files: []SourceFile{{Path: "input.txt"}},
+			},
+		}}
+		c := solverClosure(t, store.New(), facts)
+		c.context.Root = "/workspace"
+		assert.Equal(t, len(slices.Collect(c.sourceFiles(source))), 0)
+		assert.Equal(
+			t,
+			c.affectedCoordinates(".", facts.sources[source].Input, true),
+			affectedLocation{base: ".", known: true},
+		)
+		assert.Equal(
+			t,
+			c.affectedSourceRoots(manifest.NamedResource{}, source, []string{"."}, &manifest.DiscoveryRecord{}),
+			affectedResult{settled: true},
+		)
+	})
+}
+
+func TestAdmission_FileCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, root, file string
+		delta            *change.Set
+		input            *store.SourceArtifact
+		paired, want     bool
+	}{
+		{name: "nil", file: "file"},
+		{name: "unpaired", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", file: "file", want: true},
+		{name: "paired_without_input", delta: change.NewSet([]string{"file"}), root: "/work", paired: true, file: "file", want: true},
+		{name: "normalized", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work", paired: true, file: "dir/../file", want: true},
+		{name: "origin", delta: change.NewSet([]string{"nested/file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work/nested", paired: true, file: "file", want: true},
+		{name: "failed_coordinates", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", paired: true, file: "file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
+				manifest.BootstrapSourceID: {Delta: tc.delta, Input: tc.input, Paired: tc.paired},
+			}}
+			c := solverClosure(t, store.New(), facts)
+			c.context.Root = tc.root
+			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, tc.file), tc.want)
 		})
 	}
 }

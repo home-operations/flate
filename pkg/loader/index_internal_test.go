@@ -351,7 +351,9 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 	assert.Equal(t, l.SourceRoot, root)
 	facts := l.SourceFacts(manifest.BootstrapSourceID, nil)
 	assert.Equal(t, facts.Origin, root)
-	assert.Equal(t, facts.ToIndex, ".")
+	coordinate, known := facts.Input.IndexPath(facts.Context.Root, ".")
+	assert.Equal(t, coordinate, ".")
+	assert.Equal(t, known, true)
 }
 
 func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {

@@ -369,14 +369,19 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 	for id, r := range l.Index.Files() {
 		kind := id.KindInfo()
 		if origin := new(l.documents).localPath(r.Path); origin != r.Path {
-			rel, _ := filepath.Rel(repoRoot, origin)
-			r.File = filepath.ToSlash(rel)
+			root := new(l.documents).mountedRoot(r.Path)
+			file, err := filepath.Rel(root, r.Path)
+			r.File = ""
+			if err == nil {
+				r.File, _ = l.documents.artifacts[root].IndexPath(repoRoot, filepath.ToSlash(file))
+			}
 		}
-		if selection.Root(l.roots.get(id).view()).Independent {
+		switch owner := parents[id]; {
+		case selection.Root(l.roots.get(id).view()).Independent:
 			r.Parent = manifest.NamedResource{}
-		} else if owner := parents[id]; kind.Parent && owner != (manifest.NamedResource{}) {
+		case kind.Parent && owner != (manifest.NamedResource{}):
 			r.Parent = owner
-		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
+		case kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})):
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
 				r.Parent = parent
 			}

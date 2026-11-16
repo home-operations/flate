@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -34,12 +33,14 @@ func (s *Session) EntryFailure(ctx context.Context, failures iter.Seq[EntryFailu
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if request.Changed && source.Comparison != nil &&
-			!source.Delta.FileChanged(change.FileContext{
-				Root: source.Context.Root, Origin: source.Origin, ToIndex: source.ToIndex,
-				Input: source.Input, Paired: source.Paired,
-			}, failure.Coordinate) {
-			continue
+		if request.Changed && source.Comparison != nil {
+			file, known := failure.Coordinate, true
+			if source.Paired && source.Input != nil {
+				file, known = source.Input.SourcePath(source.Context.Root, file)
+			}
+			if !known || !source.Delta.Contains(file) {
+				continue
+			}
 		}
 		if Root(failure.Evidence).Admitted {
 			return fmt.Errorf("entry %s: %w (invalid YAML)", failure.File,

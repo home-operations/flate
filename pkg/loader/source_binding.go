@@ -3,7 +3,6 @@ package loader
 import (
 	"cmp"
 	"hash/maphash"
-	"path/filepath"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -20,7 +19,6 @@ type admissionSource struct {
 	declaration              manifest.BaseManifest
 	input, initial           *store.SourceArtifact
 	origin                   string
-	toIndex                  string
 	files                    []selection.SourceFile
 	bound, paired            bool
 	filesKnown, initialKnown bool
@@ -81,7 +79,6 @@ func (l *Loader) admissionSourceFacts(
 	if input != nil {
 		evidence.origin = input.OriginPath(input.LocalPath)
 	}
-	evidence.toIndex, _ = filepath.Rel(l.SourceRoot, evidence.origin)
 	for side, snapshot := range snapshots {
 		if snapshot == nil || input == nil || declaration != declarations[side] {
 			continue
@@ -169,7 +166,6 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 		Initial:         e.initial,
 		Origin:          e.origin,
 		Path:            location.Path,
-		ToIndex:         e.toIndex,
 		Files:           e.files,
 		Paired:          e.paired,
 		InitialKnown:    e.initialKnown,
@@ -183,10 +179,7 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 		for i, file := range paths {
 			indexed := file
 			if e.paired {
-				physical := filepath.Join(e.input.LocalPath, filepath.FromSlash(file))
-				if filepath.IsAbs(physical) {
-					_, indexed = facts.Coordinates(l.SourceRoot, physical)
-				}
+				indexed, _ = e.input.IndexPath(l.SourceRoot, file)
 			}
 			e.files[i] = selection.SourceFile{Path: file, Indexed: indexed}
 		}

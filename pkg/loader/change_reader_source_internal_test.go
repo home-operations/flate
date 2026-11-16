@@ -93,6 +93,7 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 	for _, mode := range []string{
 		"exact_removed", "deferred_consumer", "wrong_namespace", "unrelated_blank_namespace",
 		"artifact_replaced", "declaration_replaced", "stale_bootstrap_alternative", "foreign_duplicate",
+		"nested_removed", "nested_added",
 	} {
 		t.Run(
 			mode,
@@ -518,6 +519,30 @@ func crossSourceSupplierPair(t *testing.T, namespace, mode string) (
 	t.Helper()
 	changes, stores, roots, source := optionalSupplierPair(t, namespace)
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}
+	if mode == "nested_removed" || mode == "nested_added" {
+		if mode == "nested_added" {
+			stores[0], stores[1] = stores[1], stores[0]
+			roots[0], roots[1] = roots[1], roots[0]
+		}
+		var indexes [2]*manifest.DiscoveryIndex
+		for side, st := range stores {
+			artifact := *st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+			artifact.LocalPath, artifact.LocalRoot = t.TempDir(), filepath.Join(roots[side], "nested")
+			artifact.InputAlias = true
+			st.SetArtifact(source.Named(), &artifact)
+			observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
+			if (side == 0) == (mode == "nested_removed") {
+				observation.Inputs = map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}
+			}
+			indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
+		}
+		var err error
+		changes, err = change.Qualify(t.Context(), nil, stores, manifest.WorkScope{})
+		assert.NoError(t, err)
+		changes, err = changes.WithReaders(t.Context(), indexes,
+			[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
+		assert.NoError(t, err)
+	}
 	if mode == "foreign_duplicate" {
 		foreign := &manifest.GitRepository{Name: "foreign", Namespace: "infra"}
 		var indexes [2]*manifest.DiscoveryIndex
@@ -630,7 +655,8 @@ func testCrossSourceOptionalInputPair(t *testing.T, mode string) {
 			admissionConfig{changes: changes, index: index, inventory: st, root: roots[side]},
 		)
 		removed := mode == "exact_removed" || mode == "deferred_consumer"
-		want := removed || mode == "stale_bootstrap_alternative" || mode == "foreign_duplicate"
+		nested := mode == "nested_removed" || mode == "nested_added"
+		want := removed || mode == "stale_bootstrap_alternative" || mode == "foreign_duplicate" || nested
 		if got := filter.Reconcile(consumer.Named()); got != want {
 			t.Errorf("side %d consumer selected=%t, want %t: %v", side, got, want, filter.KeepNames())
 		}

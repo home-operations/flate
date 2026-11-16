@@ -9,7 +9,6 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -227,17 +226,8 @@ func (l *Loader) builtRecord(
 			l.retainBuiltDeclaration(&record, &raw, id)
 		}
 		same := manifest.Equal(obj, original.Obj)
-		if l.canCompareBuiltInputs(same, &raw) {
-			evidence := l.SourceFacts(input.Source, nil)
-			location := change.FileContext{
-				Root: l.SourceRoot, Origin: evidence.Origin, ToIndex: evidence.ToIndex,
-				Input: evidence.Input, Paired: evidence.Paired,
-			}
-			same = evidence.Delta != nil && !evidence.Delta.FileChanged(location, raw.File) &&
-				!slices.ContainsFunc(
-					inputs.shared,
-					func(file string) bool { return evidence.Delta.FileChanged(location, file) },
-				)
+		if !same {
+			same = l.builtInputsUnchanged(&raw, input, inputs)
 		}
 		if !same && original.Obj != nil {
 			same = l.stampedBuiltEqual(obj, &original, input)
@@ -602,6 +592,22 @@ func (l *Loader) admitBuiltRoot(ctx context.Context, root string) (string, bool,
 	return sourceRoot, true, nil
 }
 
-func (l *Loader) canCompareBuiltInputs(same bool, raw *manifest.DiscoveryRecord) bool {
-	return !same && l.documents.compact && l.Options.Changes != nil && raw.Path != ""
+func (l *Loader) builtInputsUnchanged(raw *manifest.DiscoveryRecord, input *BuiltInput, inputs *builtInputs) bool {
+	if !l.documents.compact || l.Options.Changes == nil || raw.Path == "" {
+		return false
+	}
+	evidence := l.SourceFacts(input.Source, nil)
+	unchanged := func(file string) bool {
+		if evidence.Paired && evidence.Input != nil {
+			var known bool
+			file, known = evidence.Input.SourcePath(l.SourceRoot, file)
+			if !known {
+				return false
+			}
+		}
+		return evidence.Delta != nil && !evidence.Delta.Contains(file)
+	}
+	return unchanged(raw.File) && !slices.ContainsFunc(inputs.shared, func(file string) bool {
+		return !unchanged(file)
+	})
 }

@@ -216,7 +216,7 @@ func newHistoryEvaluation(t *testing.T, cfg historyEvaluationConfig) *historyEva
 				cfg.changes.Paths(),
 			)
 		}
-		location.Context, location.Source, location.Input, location.Initial, location.InitialKnown, location.Origin, location.ToIndex = facts.context, id, input, input, true, cfg.root, "."
+		location.Context, location.Source, location.Input, location.Initial, location.InitialKnown, location.Origin = facts.context, id, input, input, true, cfg.root
 		location.Declaration = cfg.inventory.GetDeclaration(id)
 		facts.sources[id] = location
 	}

@@ -2,6 +2,7 @@ package loader
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -123,12 +124,32 @@ func admissionMembershipFixture(
 
 func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"local", "local alias", "foreign", "pinned"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode                      string
+		nested, owned, localApplication bool
+		claim                           string
+	}{
+		{name: "local", mode: "local", owned: true, localApplication: true},
+		{name: "local alias", mode: "alias", owned: true, localApplication: true},
+		{name: "foreign", mode: "foreign", localApplication: true},
+		{name: "pinned", mode: "pinned"},
+		{name: "nested", mode: "local", nested: true, owned: true, localApplication: true, claim: "../payload/"},
+		{name: "nested alias", mode: "alias", nested: true, owned: true, claim: "../payload/"},
+		{name: "failed", mode: "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l, source, factory, owner, child := admissionMembershipFixture(t)
 			local := l.Store.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
-			if mode != "local" {
+			if tc.nested {
+				l = New(l.Store)
+				l.SourceRoot = filepath.Join(local.LocalPath, "declarations")
+				configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{child}})
+				_, err := l.Load(t.Context(), l.SourceRoot, manifest.NamedResource{}, nil)
+				assert.NoError(t, err)
+				assert.NoError(t, l.FinalizeIndex(t.Context(), l.SourceRoot, true))
+			}
+			if tc.mode != "local" {
 				other := *local
 				other.LocalPath = t.TempDir()
 				other.LocalRoot = other.LocalPath
@@ -137,11 +158,13 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 						Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./foreign-payload\n")),
 					},
 				}
-				if mode == "local alias" {
+				switch tc.mode {
+				case "alias":
 					other.InputAlias, other.LocalRoot, other.FS = true, local.LocalRoot, local.FS
-				}
-				if mode == "pinned" {
+				case "pinned":
 					other.Content, other.Key, other.LocalRoot = "pinned-content", "pinned-key", local.LocalRoot
+				case "failed":
+					other.InputAlias, other.LocalRoot = true, "relative"
 				}
 				l.Store.SetArtifact(source.Named(), &other)
 			}
@@ -158,13 +181,17 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
 			)
 			assert.NoError(t, err)
-			owned := mode == "local" || mode == "local alias"
-			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), owned)
-			assert.Equal(t, slices.Contains(proposal.Needed, otherOwner.Named()), owned)
+			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), tc.owned)
+			assert.Equal(t, slices.Contains(proposal.Needed, otherOwner.Named()), tc.owned)
+			evidence := l.RootEvidence(child, nil, true)
+			assert.Equal(t, evidence.Scope.LocalApplication, tc.localApplication)
+			if tc.nested || tc.mode == "failed" {
+				assert.Equal(t, evidence.Scope.Claim, tc.claim)
+			}
 			assert.Equal(
 				t,
 				slices.ContainsFunc(proposal.Objects, func(c store.Child) bool { return c.Obj.Named() == child }),
-				!owned,
+				!tc.owned,
 			)
 			assert.Diff(
 				t,

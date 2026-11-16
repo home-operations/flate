@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -357,23 +356,30 @@ func TestSourceFacts_ChangedFileCoordinates(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, origin, file, indexed string
-		paired                      bool
+		paired, pinned, mutable     bool
 	}{
 		{name: "same_root", origin: "/workspace/selected", file: "input.txt", indexed: "input.txt", paired: true},
 		{name: "ancestor_root", origin: "/workspace", file: "selected/input.txt", indexed: "input.txt", paired: true},
 		{name: "other_root", origin: "/other", file: "input.txt", indexed: "../../other/input.txt", paired: true},
 		{name: "unpaired", origin: "/workspace", file: "selected/input.txt", indexed: "selected/input.txt"},
+		{name: "normalized", origin: "/workspace/selected", file: "dir/../input.txt", indexed: "input.txt", paired: true},
+		{name: "failed", origin: "relative", file: "input.txt", paired: true},
+		{name: "pinned", origin: "/workspace", file: "input.txt", indexed: "../../mounted/input.txt", paired: true, pinned: true},
+		{name: "mutable", origin: "/workspace", file: "selected/input.txt", indexed: "input.txt", paired: true, mutable: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := New(store.New())
 			l.SourceRoot = "/workspace/selected"
-			toIndex, err := filepath.Rel(l.SourceRoot, tc.origin)
-			assert.NoError(t, err)
 			evidence := &admissionSource{
 				source: manifest.BootstrapSourceID, delta: change.NewSet([]string{tc.file}),
 				input:  &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: true},
-				origin: tc.origin, toIndex: toIndex, paired: tc.paired,
+				origin: tc.origin, paired: tc.paired,
+			}
+			if tc.pinned {
+				evidence.input.InputAlias, evidence.input.Content = false, "pinned"
+			} else if tc.mutable {
+				evidence.input.InputAlias = false
 			}
 			facts := l.sourceViewFacts(evidence, true)
 			assert.Diff(t, facts.Files, []selection.SourceFile{{Path: tc.file, Indexed: tc.indexed}})

@@ -72,9 +72,9 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt34,
 					Records: emptyRenderInventory,
@@ -114,9 +114,9 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 		)
 		if err == nil {
 			{
-				recordErr := c.RecordRender(
+				recordErr := c.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt39,
 						Records: emptyRenderInventory,
@@ -138,9 +138,9 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 		)
 		if err == nil {
 			{
-				recordErr := c.RecordRender(
+				recordErr := c.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt40,
 						Records: emptyRenderInventory,
@@ -173,9 +173,9 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := newClientCli.RecordRender(
+			recordErr := newClientCli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt35,
 					Records: emptyRenderInventory,
@@ -242,9 +242,9 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := fresh.RecordRender(
+			recordErr := fresh.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt36,
 					Records: emptyRenderInventory,
@@ -284,9 +284,9 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	)
 	if err == nil {
 		{
-			recordErr := newClientCli2.RecordRender(
+			recordErr := newClientCli2.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt37,
 					Records: emptyRenderInventory,
@@ -335,9 +335,9 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	)
 	if err == nil {
 		{
-			recordErr := fresh.RecordRender(
+			recordErr := fresh.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   sourceHR.Named(),
 					Receipt: receipt38,
 					Records: emptyRenderInventory,

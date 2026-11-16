@@ -71,7 +71,8 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			renderer := newTestTreeCache(t, t.TempDir())
 			_, receipt, err := testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
 				Owner:   owner,
 				Receipt: receipt,
 				Records: emptyRenderInventory,
@@ -89,10 +90,10 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
 			binding := frame.binding
-			binding.Render = prepared.key
-			header := frame.header
-			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
-			wire, err := testEncodeFrame(t, &header, frame.output)
+			binding.Key = prepared.key
+			frame.Key, frame.Binding = prepared.key, binding.Fingerprint()
+			frame.Stored = nil
+			wire, err := testEncodeFrame(t, &frame)
 			assert.NoError(t, err)
 			stored, err := testDecodeFrame(t, wire)
 			assert.NoError(t, err)
@@ -148,10 +149,11 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			output, err := manifest.EncodeRender(docs)
 			assert.NoError(t, err)
 			prior := receipt.Value().(renderFrame)
-			priorOutput := bytes.Clone(prior.output)
+			priorOutput := bytes.Clone(prior.Output)
 			binding, key := preparation.binding, preparation.key
-			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-				Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
+			assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
+				Owner:   owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
 			}))
 			history, complete := renderer.previousHistory(t.Context(), &current, owner, content)
 			assert.Equal(t, complete, persistent)
@@ -176,22 +178,23 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			assert.NoError(t, err)
 			assert.Equal(t, bytes.Equal(encoded, output), true)
 			frame := rebound.Value().(renderFrame)
-			assert.Equal(t, bytes.Equal(frame.output, priorOutput), true)
-			assert.Equal(t, frame.binding.Revision, replacement.Revision)
-			assert.Equal(t, frame.binding.URL, replacement.URL)
+			assert.Equal(t, bytes.Equal(frame.Output, priorOutput), true)
+			assert.Equal(t, frame.binding.Artifact.Revision, replacement.Revision)
+			assert.Equal(t, frame.binding.Artifact.URL, replacement.URL)
 			assert.Equal(t, current.Preparation.key, key)
 			assert.Equal(t, current.Preparation.source, &replacement)
-			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-				Owner: owner, Receipt: rebound, Records: emptyRenderInventory, Content: content,
+			assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
+				Owner:   owner, Receipt: rebound, Records: emptyRenderInventory, Content: content,
 			}))
 			history, complete = renderer.previousHistory(t.Context(), &current, owner, content)
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			unchanged := receipt.Value().(renderFrame)
-			assert.Equal(t, unchanged.binding.equal(&binding), true)
-			assert.Equal(t, bytes.Equal(unchanged.output, priorOutput), true)
+			assert.Equal(t, unchanged.binding.Equal(&binding, equalRenderPolicy), true)
+			assert.Equal(t, bytes.Equal(unchanged.Output, priorOutput), true)
 			assert.Equal(t, source.Revision, "before")
-			assert.Equal(t, source.URL, binding.URL)
+			assert.Equal(t, source.URL, binding.Artifact.URL)
 			var engine manifest.WorkCounts
 			rows := work.Scope().Snapshot(0)
 			for i := range rows {
@@ -214,19 +217,21 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
-	frame := renderFrame{header: renderHeader{Key: "oversized-accepted"}, output: payload}
+	frame := renderFrame{Key: "oversized-accepted", Output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
 		owner: {File: string(bytes.Repeat([]byte{'x'}, (16<<20)+1))},
 	}
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
+		Owner:   owner, Receipt: receipt, Records: emptyRenderInventory, Content: content,
 	}))
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
-		Owner: owner, Receipt: receipt, Records: maps.All(records), Content: content,
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
+		Owner:   owner, Receipt: receipt, Records: maps.All(records), Content: content,
 	}))
 	generation, _, _, err := renderer.owner.Blob(t.Context(),
-		sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted},
+		sourcecache.BlobKey{Content: frame.Key, Render: sourcecache.RenderAccepted},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if !persistent {
 		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
@@ -237,8 +242,8 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	stored, valid, err := (*Preparation)(nil).readFrame(t.Context(), generation)
 	assert.NoError(t, err)
 	assert.Equal(t, valid, true)
-	assert.Equal(t, bytes.Equal(stored.output, payload), true)
-	history, complete := stored.stored.History(owner, content)
+	assert.Equal(t, bytes.Equal(stored.Output, payload), true)
+	history, complete := stored.Stored.History(owner, content)
 	assert.Equal(t, complete, true)
 	assert.Diff(t, maps.Collect(history), map[manifest.NamedResource]manifest.DiscoveryRecord{})
 }
@@ -323,7 +328,8 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		content := PrepareShape(request, docs).Content()
 		return renderer.RenderHistory(spec.Named(), receipt, content)
 	}
-	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   spec.Named(),
 		Receipt: pending,
 		Records: emptyRenderInventory,
@@ -340,18 +346,18 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	before := pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		before.stored == nil || persistent && before.lookup == "",
+		before.Stored == nil || persistent && before.Lookup == "",
 		"%s",
 		"warm receipt lacks publication memos",
 	)
-	_, complete := before.stored.History(spec.Named(), initialContent)
+	_, complete := before.Stored.History(spec.Named(), initialContent)
 	assert.Equal(t, complete, persistent)
-	beforeWire, err := testEncodeFrame(t, &before.header, before.output)
+	beforeWire, err := testEncodeFrame(t, &before)
 	assert.NoError(t, err)
-	_, _, before.lookup, err = renderer.owner.Blob(
+	_, _, before.Lookup, err = renderer.owner.Blob(
 		t.Context(),
 		sourcecache.BlobKey{
-			Content: before.header.Key,
+			Content: before.Key,
 			Render:  sourcecache.RenderAccepted,
 		},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
@@ -361,10 +367,10 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		assert.NoError(t, err)
 	} else {
 		assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
-		assert.Equal(t, before.lookup, "")
+		assert.Equal(t, before.Lookup, "")
 	}
 	pending = manifest.NewRenderReceipt(before, equalRenderFrame)
-	wire, output := bytes.Clone(beforeWire), bytes.Clone(before.output)
+	wire, output := bytes.Clone(beforeWire), bytes.Clone(before.Output)
 	projected := req
 	projected.Spec = spec.Clone()
 	projected.Spec.PostBuild.Substitute["DEP"] = "ready"
@@ -373,13 +379,14 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		_, complete := history(&projected)
 		assert.FatalIf(t, complete, "%s", "unaccepted snapshot supplied history")
 	}
-	acceptance := RenderAcceptance{
+	acceptance := sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
 		Owner:   spec.Named(),
 		Receipt: pending,
 		Records: emptyRenderInventory,
 		Content: finalContent,
 	}
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptance))
 	{
 		records, complete := history(&projected)
 		assert.Equal(t, complete, persistent)
@@ -390,33 +397,33 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		assert.FatalIf(t, complete, "%s", "displaced snapshot retained history")
 	}
 	original := pending.Value().(renderFrame)
-	assert.Equal(t, original.binding.equal(&before.binding), true)
-	assert.Equal(t, original.header.Binding, before.header.Binding)
-	originalPublication, err := original.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
+	assert.Equal(t, original.binding.Equal(&before.binding, equalRenderPolicy), true)
+	assert.Equal(t, original.Binding, before.Binding)
+	originalPublication, err := original.Stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
 		Owner: spec.Named(), Content: initialContent, Records: emptyRenderInventory, Complete: true,
 	})
 	assert.NoError(t, err)
-	beforePublication, err := before.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
+	beforePublication, err := before.Stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
 		Owner: spec.Named(), Content: initialContent, Records: emptyRenderInventory, Complete: true,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, originalPublication.Identity(), beforePublication.Identity())
-	assert.Equal(t, original.lookup, before.lookup)
-	assert.Equal(t, original.stored == before.stored, true)
-	originalWire, err := testEncodeFrame(t, &original.header, original.output)
+	assert.Equal(t, original.Lookup, before.Lookup)
+	assert.Equal(t, original.Stored == before.Stored, true)
+	originalWire, err := testEncodeFrame(t, &original)
 	assert.NoError(t, err)
-	assert.Equal(t, bytes.Equal(originalWire, wire) && bytes.Equal(original.output, output), true)
+	assert.Equal(t, bytes.Equal(originalWire, wire) && bytes.Equal(original.Output, output), true)
 	_, rebound, err := Render(t.Context(), renderer, projected, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	after := rebound.Value().(renderFrame)
-	assert.Equal(t, after.header.Key, before.header.Key)
-	assert.Equal(t, bytes.Equal(after.output, output), true)
+	assert.Equal(t, after.Key, before.Key)
+	assert.Equal(t, bytes.Equal(after.Output, output), true)
 	assert.Diff(t, after.header.Reads, before.header.Reads)
 	index := filepath.Join(cacheDir, "oci", "index.json")
 	stamp := time.Unix(1, 0)
 	assert.NoError(t, os.Chtimes(index, stamp, stamp))
 	acceptance.Receipt = rebound
-	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptance))
 	info, err := os.Stat(index)
 	assert.NoError(t, err)
 	assert.Equal(t, info.ModTime().Equal(stamp), true)
@@ -473,7 +480,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 		"cold input was not rendered: %v",
 		docs,
 	)
-	assert.NoError(t, c.RecordRender(t.Context(), acceptanceForEmission(
+	assert.NoError(t, c.owner.RecordRender(t.Context(), acceptanceForEmission(
 		spec.Named(), acceptedEmission(t, spec.Named(), receipt, content), content,
 	)))
 	input.prepared.Store(0)
@@ -563,7 +570,7 @@ func testRecordRenderAcceptanceRequiredCase(t *testing.T, testCaseInput *string,
 		acceptance.Content == nil,
 		(*testCaseInput) == "missing fingerprint" || (*testCaseInput) == "incomplete",
 	)
-	assert.NoError(t, cache.RecordRender(t.Context(), acceptance))
+	assert.NoError(t, cache.owner.RecordRender(t.Context(), acceptance))
 	_, complete := cache.previousHistory(t.Context(), &request, spec.Named(), content)
 	assert.Equal(t, complete, persistent && (*testCaseInput) == "accepted")
 }

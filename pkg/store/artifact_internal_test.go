@@ -16,6 +16,45 @@ type hookFS struct{ open func(string) (fs.File, error) }
 
 func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
 
+func TestSourceArtifact_HistoryInput(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, (*SourceArtifact)(nil).HistoryInput(), ArtifactHistory{})
+	artifact := &SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "first", Key: "family", Content: "generation",
+		Revision: "revision", Digest: "digest", LocalPath: "/source", LocalRoot: "/origin", InputAlias: true,
+		FS: fstest.MapFS{}, Metadata: map[string]string{"org.opencontainers.image.revision": "origin"},
+		Reads: &ReadSet{}, ContentFingerprint: func(context.Context, fs.FS) (string, error) {
+			t.Fatal("history projection evaluated content")
+			return "", nil
+		},
+	}
+	prior := artifact.HistoryInput()
+	assert.Equal(t, prior, ArtifactHistory{
+		Present:       true,
+		Readable:      true,
+		Kind:          artifact.Kind,
+		Key:           "family",
+		Content:       "generation",
+		Digest:        "digest",
+		LocalRoot:     "/origin",
+		LocalPath:     "/source",
+		InputAlias:    true,
+		Revision:      "revision",
+		Origin:        "origin",
+		OriginPresent: true, URL: "first",
+	})
+	material := artifact.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+	artifact.URL = "second"
+	assert.Equal(t, artifact.Input(ArtifactContent|ArtifactRevision|ArtifactOrigin), material)
+	assert.Equal(t, artifact.HistoryInput() == prior, false)
+	artifact.Metadata["org.opencontainers.image.revision"] = "changed"
+	artifact.Revision = "changed"
+	assert.Equal(t, prior.URL, "first")
+	assert.Equal(t, prior.Origin, "origin")
+	assert.Equal(t, prior.Revision, "revision")
+	assert.Equal(t, map[ArtifactHistory]bool{prior: true}[prior], true)
+}
+
 func TestSourceArtifact_Coordinates(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

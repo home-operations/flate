@@ -489,10 +489,11 @@ func (r *templateRequest) render(
 			return nil, nil, encodeRenderErr
 		}
 		frame := renderFrame{
-			header:  renderHeader{Key: r.key, Analysis: r.loaded.analysis},
+			Key: r.key, Output: payload,
+			header:  renderHeader{Analysis: r.loaded.analysis},
+			persist: c.cache.CanPersistRenders(),
 			binding: r.binding,
 			chart:   r.loaded.chart,
-			output:  payload,
 			content: r.release.Clone().Content(r.key, r.input.Omitted),
 		}
 		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
@@ -548,17 +549,16 @@ func (r *templateRequest) validateRecord(
 	}
 	documents, err := manifest.DecodeRender(record.Output)
 	if err == nil {
-		if !record.binding.same(&r.binding) || record.receipt == nil ||
+		if !record.binding.Equal(&r.binding, equalTemplatePolicy) || record.receipt == nil ||
 			!manifest.ValueEqual(record.frame.content, r.content) {
 			fresh := *record
 			fresh.binding = r.binding
 			frame := record.frame
 			frame.binding = r.binding
 			frame.content = r.release.Clone().Content(r.key, r.input.Omitted)
-			binding := manifest.Fingerprint(r.binding)
-			if frame.header.Binding != binding {
-				frame.header.Binding, frame.stored = binding, nil
-			}
+			frame.persist = c.cache.CanPersistRenders()
+			binding := r.binding.Fingerprint()
+			frame.Rebind(binding)
 			fresh.frame = frame
 			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 			record = &fresh
@@ -591,11 +591,11 @@ func (r *templateRequest) produce(
 	if frame.header.Analysis == nil {
 		frame.header.Analysis = r.loaded.analyze()
 	}
-	frame.stored, errResult2 = cache.NewFrame(frameDomain, frame.header, frame.output)
-	if errResult2 != nil || frame.stored == nil {
+	frame.Stored, errResult2 = frame.Encode(frameDomain, frame.header)
+	if errResult2 != nil || frame.Stored == nil {
 		return cache.ProducerResult{}, errResult2
 	}
-	publication, errResult2 := frame.stored.PreparePublication(ctx, cache.FramePublicationInput{})
+	publication, errResult2 := frame.Stored.PreparePublication(ctx, cache.FramePublicationInput{})
 	if errResult2 == nil {
 		_, errResult2 = publication.WriteTo(w)
 	}
@@ -603,7 +603,7 @@ func (r *templateRequest) produce(
 		frame.chart = nil
 		result.produced = &renderRecord{
 			key:      r.key,
-			Output:   frame.output,
+			Output:   frame.Output,
 			Analysis: frame.header.Analysis,
 			frame:    frame,
 		}
@@ -660,23 +660,16 @@ func (r *templateRequest) cachedRecord(ctx context.Context, generation fs.FS, id
 	record := r.loaded.record
 	if record == nil || record.key != r.key || record.identity != identity {
 		var frame renderFrame
-		stored, err := cache.OpenFrame(ctx, frameDomain, generation, &frame.header)
+		var err error
+		frame.RenderFrame, err = cache.OpenRenderFrame(ctx, frameDomain, generation, &frame.header)
 		if _, storage := errors.AsType[*cache.Error](err); storage {
 			return nil, err
 		}
-		if err != nil || frame.header.Key != r.key || frame.header.Analysis == nil {
+		if err != nil || frame.Key != r.key || frame.header.Analysis == nil {
 			return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 		}
-		frame.output, err = stored.Payload(ctx)
-		if _, storage := errors.AsType[*cache.Error](err); storage {
-			return nil, err
-		}
-		if err != nil {
-			return nil, nil //nolint:nilerr,nilnil // Invalid reusable payload is an ordinary cache miss.
-		}
-		frame.stored = stored
 		record = &renderRecord{
-			key: r.key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame,
+			key: r.key, identity: identity, Output: frame.Output, Analysis: frame.header.Analysis, frame: frame,
 		}
 	}
 	return record, nil

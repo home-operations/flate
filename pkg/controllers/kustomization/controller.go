@@ -201,7 +201,7 @@ func (c *execution) render(
 	shaping := kustomize.PrepareShape(&request, docs)
 	defer shaping.Retire()
 	content := shaping.Content()
-	acceptance := kustomize.RenderAcceptance{
+	acceptance := cache.RenderAcceptance{
 		Work:    c.run.Reads.Work().Scope().RenderWork(),
 		Owner:   id,
 		Source:  source.HistoryIdentity(ks.EffectiveSourceID()),
@@ -245,12 +245,12 @@ func (c *execution) render(
 func (c *execution) recordRender(
 	ctx context.Context,
 	attempt *store.Emission,
-	acceptance *kustomize.RenderAcceptance,
+	acceptance *cache.RenderAcceptance,
 ) error {
 	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
 	acceptance.Records = attempt.Footprint()
 	acceptance.Sources = attempt.SourcePaths()
-	return c.Trees.RecordRender(ctx, *acceptance)
+	return c.Cache.RecordRender(ctx, *acceptance)
 }
 
 // PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.

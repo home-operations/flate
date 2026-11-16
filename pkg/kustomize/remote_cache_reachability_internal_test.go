@@ -148,10 +148,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 	out, receipt28, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := c.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt28},
-			)
+			recordErr := recordPendingRender(t.Context(), c.owner, receipt28)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -224,10 +221,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 	out, receipt29, err = testutil.RenderMaps(Render(ctx, c, request(), sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := c.RecordRender(
-				ctx,
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt29},
-			)
+			recordErr := recordPendingRender(ctx, c.owner, receipt29)
 			assert.NoError(t, recordErr)
 		}
 	}

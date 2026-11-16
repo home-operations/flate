@@ -51,9 +51,9 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(
 				t,
-				renderer.RecordRender(
+				renderer.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt,
 						Sources: []manifest.SourceEvidence{},
@@ -93,9 +93,11 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			binding := frame.binding
 			binding.Policy = prepared.binding.Policy
 			header := frame.header
-			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
+			frame.Key = prepared.key
+			frame.Stored = nil
+			frame.Rebind(binding.Fingerprint())
 			header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-			stored, err := cache.NewFrame(frameDomain, header, frame.output)
+			stored, err := frame.Encode(frameDomain, header)
 			assert.NoError(t, err)
 			accepted, err := stored.PreparePublication(t.Context(), cache.FramePublicationInput{
 				Owner: changed.Named(), Content: prepared.content, Records: emptyRenderInventory, Complete: true,
@@ -150,9 +152,9 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			output, err := manifest.EncodeRender(docs)
 			assert.NoError(t, err)
 			prior := receipt.Value().(renderFrame)
-			priorOutput := bytes.Clone(prior.output)
+			priorOutput := bytes.Clone(prior.Output)
 			binding, key := preparation.binding, preparation.key
-			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, renderer.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Sources: []manifest.SourceEvidence{},
@@ -181,12 +183,12 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			assert.NoError(t, err)
 			assert.Equal(t, bytes.Equal(encoded, output), true)
 			frame := rebound.Value().(renderFrame)
-			assert.Equal(t, bytes.Equal(frame.output, priorOutput), true)
-			assert.Equal(t, frame.binding.Revision, replacement.Revision)
-			assert.Equal(t, frame.binding.URL, replacement.URL)
+			assert.Equal(t, bytes.Equal(frame.Output, priorOutput), true)
+			assert.Equal(t, frame.binding.Artifact.Revision, replacement.Revision)
+			assert.Equal(t, frame.binding.Artifact.URL, replacement.URL)
 			assert.Equal(t, current.Preparation.key, key)
 			assert.Equal(t, current.Preparation.source, &replacement)
-			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, renderer.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: rebound,
 				Sources: []manifest.SourceEvidence{},
@@ -196,10 +198,10 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			unchanged := receipt.Value().(renderFrame)
-			assert.Equal(t, unchanged.binding.same(&binding), true)
-			assert.Equal(t, bytes.Equal(unchanged.output, priorOutput), true)
+			assert.Equal(t, unchanged.binding.Equal(&binding, equalTemplatePolicy), true)
+			assert.Equal(t, bytes.Equal(unchanged.Output, priorOutput), true)
 			assert.Equal(t, source.Revision, "before")
-			assert.Equal(t, source.URL, binding.URL)
+			assert.Equal(t, source.URL, binding.Artifact.URL)
 			var engine manifest.WorkCounts
 			rows := work.Scope().Snapshot(0)
 			for i := range rows {

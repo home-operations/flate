@@ -91,10 +91,11 @@ func testPreviousRenderImplicitSourceIgnore(t *testing.T, replacement string) {
 	var first []byte
 	for run := range 2 {
 		fixture, st, root := newControllerWithFixture(t)
-		trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+		cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
+		trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
 		t.Cleanup(trees.Close)
 		c := New(st, fixture.Tasks, trees)
-		c.Configure(Options{}, sourcecache.RetryConfig{})
+		c.Configure(Options{Cache: cacheOwner}, sourcecache.RetryConfig{})
 		c.StartLifecycle()
 		testutil.WriteFile(t, root, ".sourceignore", "# included\n")
 		freezeSourceForTest(t, st)

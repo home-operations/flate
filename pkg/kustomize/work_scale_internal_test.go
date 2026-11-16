@@ -186,7 +186,7 @@ func TestPrepareRender_FilteredAdmission(t *testing.T) {
 				assert.Equal(t, prepared.source, req.Source)
 				assert.Equal(t, prepared.key, renderKey(&req, root, input.ignore))
 				assert.Equal(t, prepared.key == first.key, tc.retain)
-				assert.Equal(t, &prepared.binding.Skip[0] == &first.binding.Skip[0], tc.retain)
+				assert.Equal(t, &prepared.binding.Policy.Skip[0] == &first.binding.Policy.Skip[0], tc.retain)
 				if tc.retain {
 					assert.Equal(t, prepared.decoded, decoded)
 					assert.Equal(t, prepared.shaping, shaping)
@@ -233,7 +233,7 @@ func TestPrepareRender_UncomparableSourceFS(t *testing.T) {
 	for _, prepared := range []*Preparation{&next.Preparation, &repeated.Preparation, &preparation} {
 		assert.Equal(t, prepared.source, req.Source)
 		assert.Equal(t, prepared.key, first.key)
-		assert.Equal(t, &prepared.binding.Skip[0], &first.binding.Skip[0])
+		assert.Equal(t, &prepared.binding.Policy.Skip[0], &first.binding.Policy.Skip[0])
 		data, readErr := fs.ReadFile(prepared.lower, "content")
 		assert.NoError(t, readErr)
 		assert.Equal(t, string(data), "current")
@@ -282,7 +282,7 @@ func testPrepareRenderSourceBinding(t *testing.T, name string) {
 	}
 	first, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
-	assert.Equal(t, &first.binding.Skip[0] != &req.SkipKinds[0], true)
+	assert.Equal(t, &first.binding.Policy.Skip[0] != &req.SkipKinds[0], true)
 	replacement := original
 	current := &replacement
 	prepares := uint64(1)
@@ -306,18 +306,18 @@ func testPrepareRenderSourceBinding(t *testing.T, name string) {
 	repeated, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
 	for _, prepared := range []*Preparation{&next.Preparation, &repeated.Preparation, &preparation} {
-		assert.Equal(t, prepared.binding.Revision, replacement.Revision)
-		assert.Equal(t, prepared.binding.URL, replacement.URL)
+		assert.Equal(t, prepared.binding.Artifact.Revision, replacement.Revision)
+		assert.Equal(t, prepared.binding.Artifact.URL, replacement.URL)
 		assert.Equal(t, prepared.source, current)
 		assert.Equal(t, prepared.key, first.key)
 		assert.Equal(t, prepared.lower, first.lower)
 	}
-	assert.Equal(t, &next.binding.Skip[0], &repeated.binding.Skip[0])
+	assert.Equal(t, &next.binding.Policy.Skip[0], &repeated.binding.Policy.Skip[0])
 	if name == "url" || name == "mutable_wrapper" {
-		assert.Equal(t, &next.binding.Skip[0], &first.binding.Skip[0])
+		assert.Equal(t, &next.binding.Policy.Skip[0], &first.binding.Policy.Skip[0])
 	}
-	assert.Equal(t, first.binding.Revision, original.Revision)
-	assert.Equal(t, first.binding.URL, original.URL)
+	assert.Equal(t, first.binding.Artifact.Revision, original.Revision)
+	assert.Equal(t, first.binding.Artifact.URL, original.URL)
 	assert.Equal(t, first.source, &original)
 	var counts manifest.WorkCounts
 	records := recorder.Scope().Snapshot(0)

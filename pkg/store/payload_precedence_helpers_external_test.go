@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
 
@@ -27,12 +28,12 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 			}
 			(*scope.s).RecordEmitted(
 				(*scope.owners)[i],
-				&Emission{
-					Children:  []Child{(*scope.children)[i]},
+				&store.Emission{
+					Children:  []store.Child{(*scope.children)[i]},
 					Manifests: testutil.DocumentOccurrences([]map[string]any{(*scope.children)[i].Doc}),
 					Complete:  true,
 				},
-				map[manifest.NamedResource]*SourceArtifact{(*scope.target): (*scope.payloads)[i]},
+				map[manifest.NamedResource]*store.SourceArtifact{(*scope.target): (*scope.payloads)[i]},
 			)
 			if i == 0 {
 				close(start)
@@ -46,8 +47,8 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication panicked")
 	(*scope.s).RecordEmitted(
 		(*scope.zz),
-		&Emission{
-			Children:  []Child{(*scope.declaration)},
+		&store.Emission{
+			Children:  []store.Child{(*scope.declaration)},
 			Manifests: testutil.DocumentOccurrences([]map[string]any{scope.declaration.Doc}),
 			Complete:  true,
 		},
@@ -69,7 +70,7 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 		},
 	)
 	seen := 0
-	unsubscribe := (*scope.s).AddListener(EventArtifactUpdated, func(id manifest.NamedResource, value any) {
+	unsubscribe := (*scope.s).AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, value any) {
 		if id == (*scope.target) {
 			seen++
 			assert.ErrorIf(t, value != (*scope.last), "%s", "replay selected a different payload")
@@ -80,7 +81,7 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	assert.FatalIf(
 		t,
 		(*scope.s).EmissionOwner((*scope.target)) != (*scope.zz) ||
-			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
+			(*scope.s).GetArtifact((*scope.target), store.ArtifactContent) != (*scope.last),
 		"%s",
 		"declaration winner suppressed greatest byte contributor",
 	)
@@ -97,7 +98,7 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	assert.Equal(t, (*scope.s).DeleteObject((*scope.target)), true)
 	assert.FatalIf(
 		t,
-		(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
+		(*scope.s).GetArtifact((*scope.target), store.ArtifactContent) != (*scope.last),
 		"%s",
 		"static deletion discarded the surviving emitted payload",
 	)
@@ -109,27 +110,27 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	opened, (*scope.err) = (*scope.last).FS.Open("file")
 	assert.NoError(t, (*scope.err))
 	defer func() { _ = opened.Close() }()
-	(*scope.s).RecordEmitted((*scope.z), &Emission{Complete: true}, nil)
+	(*scope.s).RecordEmitted((*scope.z), &store.Emission{Complete: true}, nil)
 	assert.FatalIf(
 		t,
-		(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
+		(*scope.s).GetArtifact((*scope.target), store.ArtifactContent) != (*scope.first),
 		"%s",
 		"withdrawal did not select the whole surviving descriptor",
 	)
 	checkDeclaration()
 	{
 		data, err := fs.ReadFile(
-			(*scope.s).GetArtifact((*scope.target), ArtifactContent).(*SourceArtifact).FS,
+			(*scope.s).GetArtifact((*scope.target), store.ArtifactContent).(*store.SourceArtifact).FS,
 			"file",
 		)
 		assert.FatalIf(t, err != nil ||
 			string(data) != "a", "surviving payload = %q, %v", data, err)
 	}
-	(*scope.s).RecordEmitted((*scope.a), &Emission{Complete: true}, nil)
+	(*scope.s).RecordEmitted((*scope.a), &store.Emission{Complete: true}, nil)
 	assert.FatalIf(
 		t,
 		(*scope.s).GetObject((*scope.target)) == nil ||
-			(*scope.s).GetArtifact((*scope.target), ArtifactContent) != nil,
+			(*scope.s).GetArtifact((*scope.target), store.ArtifactContent) != nil,
 		"%s",
 		"declaration-only survivor retained byte authority",
 	)
@@ -146,12 +147,12 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(
 	}
 	assert.FatalIf(
 		t,
-		(*scope.peer).GetArtifact((*scope.target), ArtifactContent) != (*scope.first),
+		(*scope.peer).GetArtifact((*scope.target), store.ArtifactContent) != (*scope.first),
 		"%s",
 		"withdrawal discarded another store's shared cache backing",
 	)
-	(*scope.peer).RecordEmitted((*scope.a), &Emission{Complete: true}, nil)
-	for _, payload := range []*SourceArtifact{(*scope.first), (*scope.last)} {
+	(*scope.peer).RecordEmitted((*scope.a), &store.Emission{Complete: true}, nil)
+	for _, payload := range []*store.SourceArtifact{(*scope.first), (*scope.last)} {
 		{
 			data, err := fs.ReadFile(
 				payload.FS,

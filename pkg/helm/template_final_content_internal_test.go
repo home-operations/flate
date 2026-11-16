@@ -53,7 +53,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			next, err := client.prepareTemplate(t.Context(), hr, nil, &current)
 			assert.NoError(t, err)
 			assert.Equal(t, next.key, first.key)
-			assert.Equal(t, next.binding.same(&first.binding), true)
+			assert.Equal(t, next.binding.Equal(&first.binding, equalTemplatePolicy), true)
 			assert.Equal(t, manifest.ValueEqual(next.content, first.content), false)
 			current.Omitted[0].Name = "mutated"
 			assert.Diff(t, next.input.Omitted, []manifest.NamedResource{omitted})
@@ -62,22 +62,24 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			header := renderHeader{
-				Key:      first.key,
-				Binding:  manifest.Fingerprint(first.binding),
 				Analysis: &chartAnalysis{Version: "0.1.0"},
 			}
-			frame, err := cache.NewFrame(frameDomain, header, payload)
+			shared := cache.RenderFrame{Key: first.key, Binding: first.binding.Fingerprint(), Output: payload}
+			frame, err := shared.Encode(frameDomain, header)
 			assert.NoError(t, err)
 			publication, err := frame.PreparePublication(t.Context(), cache.FramePublicationInput{
 				Owner: hr.Named(), Content: first.content, Records: emptyRenderInventory, Complete: true,
 			})
 			assert.NoError(t, err)
 			previous := renderFrame{
+				Key:     shared.Key,
+				Binding: shared.Binding,
+				Output:  payload,
+				Stored:  publication.Frame(),
 				header:  header,
-				output:  payload,
+				persist: client.cache.CanPersistRenders(),
 				content: first.content,
 				binding: first.binding,
-				stored:  publication.Frame(),
 			}
 			receipt := manifest.NewRenderReceipt(previous, equalRenderFrame)
 			record, documents, err := next.validateRecord(t.Context(), client, &renderRecord{
@@ -91,9 +93,9 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, record.receipt.Equal(receipt), false)
 			assert.Equal(t, manifest.ValueEqual(record.frame.content, next.content), true)
-			_, accepted := record.frame.stored.History(hr.Named(), next.content)
+			_, accepted := record.frame.Stored.History(hr.Named(), next.content)
 			assert.Equal(t, accepted, false)
-			_, accepted = previous.stored.History(hr.Named(), first.content)
+			_, accepted = previous.Stored.History(hr.Named(), first.content)
 			assert.Equal(t, accepted, true)
 			var observed RenderAdmission
 			next.input.Admit = func(admission RenderAdmission) (bool, error) {
@@ -104,7 +106,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			_, err = result.admit(t.Context(), client, &next)
 			assert.NoError(t, err)
 			assert.Equal(t, observed.Accepted, false)
-			updated, err := record.frame.stored.PreparePublication(t.Context(), cache.FramePublicationInput{
+			updated, err := record.frame.Stored.PreparePublication(t.Context(), cache.FramePublicationInput{
 				Owner: hr.Named(), Content: record.frame.content, Records: emptyRenderInventory, Complete: true,
 			})
 			assert.NoError(t, err)
@@ -139,7 +141,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			}
 			initial, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 			assert.NoError(t, err)
-			assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt,
 				Records: emptyRenderInventory,
@@ -164,8 +166,8 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			}
 			request, err := client.prepareTemplate(t.Context(), hr.Clone(), nil, &current)
 			assert.NoError(t, err)
-			assert.Equal(t, request.key, previous.header.Key)
-			assert.Equal(t, request.binding.same(&previous.binding), true)
+			assert.Equal(t, request.key, previous.Key)
+			assert.Equal(t, request.binding.Equal(&previous.binding, equalTemplatePolicy), true)
 			assert.Diff(t, request.input.Omitted, []manifest.NamedResource{a, b})
 			current.Omitted[0].Name = "mutated"
 			assert.Diff(t, request.input.Omitted, []manifest.NamedResource{a, b})
@@ -180,15 +182,15 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			if record != nil {
 				assert.Equal(t, admission.Accepted, false)
 				assert.Equal(t, admission.Receipt.Equal(receipt), false)
-				assert.Equal(t, bytes.Equal(record.Output, previous.output), true)
+				assert.Equal(t, bytes.Equal(record.Output, previous.Output), true)
 				assert.Equal(t, manifest.ValueEqual(record.frame.content, request.content), true)
 				if persistent {
-					_, oldMatches := record.frame.stored.History(hr.Named(), previous.content)
-					_, currentMatches := record.frame.stored.History(hr.Named(), request.content)
+					_, oldMatches := record.frame.Stored.History(hr.Named(), previous.content)
+					_, currentMatches := record.frame.Stored.History(hr.Named(), request.content)
 					assert.Equal(t, oldMatches, true)
 					assert.Equal(t, currentMatches, false)
 				} else {
-					assert.Equal(t, record.frame.stored == nil, true)
+					assert.Equal(t, record.frame.Stored == nil, true)
 				}
 				result := templateResult{record: record, receipt: admission.Receipt}
 				_, err = result.admit(t.Context(), client, &request)
@@ -214,7 +216,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 					assert.Equal(t, row.Counts.Attempts, wantAttempts)
 				}
 			}
-			assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{
+			assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: updated,
 				Records: emptyRenderInventory,
@@ -243,11 +245,11 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	documents, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
-	assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 		Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory, Sources: []manifest.SourceEvidence{},
 	}))
 	frame := receipt.Value().(renderFrame)
-	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
+	key := cache.BlobKey{Content: frame.Key, Render: cache.RenderAccepted}
 	prior, descriptor, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 	var before []byte
 	if persistent {
@@ -261,7 +263,7 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	assert.NoError(t, err)
 	frame.content = make(chan struct{})
 	unsupported := manifest.NewRenderReceipt(frame, equalRenderFrame)
-	assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{
+	assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 		Owner: hr.Named(), Receipt: unsupported, Records: emptyRenderInventory, Sources: []manifest.SourceEvidence{},
 	}))
 	after, current, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
@@ -276,7 +278,7 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 		assert.Equal(t, after == nil, true)
 		assert.Equal(t, current.Digest, descriptor.Digest)
 	}
-	decoded, err := testutil.DecodeRender(frame.output)
+	decoded, err := testutil.DecodeRender(frame.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, documents)
 	history, complete := client.PreviousRender(t.Context(), hr, nil, input)

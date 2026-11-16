@@ -173,10 +173,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 	out, receipt30, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := c.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt30},
-			)
+			recordErr := recordPendingRender(t.Context(), c.owner, receipt30)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -219,10 +216,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 	out, receipt31, err = testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := c.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt31},
-			)
+			recordErr := recordPendingRender(t.Context(), c.owner, receipt31)
 			assert.NoError(t, recordErr)
 		}
 	}

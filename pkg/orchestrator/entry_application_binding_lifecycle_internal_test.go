@@ -256,7 +256,7 @@ func stageBindingLifecycleRoot(t *testing.T, o *Orchestrator, root string) {
 	seed := bindingLifecycleObject(t, testutil.KustomizationYAML("seed-owner", "apps", "  path: ./seed\n"))
 	o.store.AddObject(seed.Object, seed.Document)
 	controller := kustomizationctrl.New(o.store, o.tasks, o.ksc.Trees)
-	controller.Configure(kustomizationctrl.Options{}, cache.RetryConfig{})
+	controller.Configure(kustomizationctrl.Options{Cache: o.cache}, cache.RetryConfig{})
 	info := controllertest.DispatchToFixpoint(
 		t.Context(),
 		t,

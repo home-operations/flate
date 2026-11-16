@@ -39,7 +39,8 @@ func testPreviousRenderUnavailableValuesTransitions(t *testing.T, mixed, persist
 		t,
 		&base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret})},
 	)
-	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+	c.Helm = helm.NewClient(c.Cache)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(

@@ -124,14 +124,22 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 	}
 }
 
+//nolint:gocritic // Test configuration MUST share its cache owner with its renderer.
+func testConfig(t *testing.T, cfg Config) Config {
+	t.Helper()
+	cfg.Cache = cachetest.New(t, "", cache.New)
+	cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
+	t.Cleanup(cfg.Trees.Close)
+	return cfg
+}
+
 func testTrees(t *testing.T) *kustomize.TreeCache {
 	t.Helper()
-	trees := kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2))
-	t.Cleanup(trees.Close)
-	return trees
+	return testConfig(t, Config{}).Trees
 }
 
 type receiptTrees struct {
+	owner *cache.Cache
 	trees *kustomize.TreeCache
 	close func()
 }
@@ -148,7 +156,7 @@ func testReceiptTrees(t *testing.T, cacheDir string, persistent bool) receiptTre
 	}
 	t.Cleanup(closeCache)
 	assert.Equal(t, owner.CanPersistRenders(), cacheDir != "" && persistent)
-	return receiptTrees{trees: trees, close: closeCache}
+	return receiptTrees{owner: owner, trees: trees, close: closeCache}
 }
 
 func packageHistory(t *testing.T, trees *kustomize.TreeCache,
@@ -214,13 +222,12 @@ func TestRun_BuiltEntryFixedPoint(t *testing.T) {
 	st := store.New()
 	result, err := Run(
 		t.Context(),
-		Config{
+		testConfig(t, Config{
 			Input:    &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:     root + "/app",
 			Store:    st,
-			Trees:    testTrees(t),
 			SelfURLs: []string{"https://fixture.invalid/self"},
-		},
+		}),
 	)
 	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child-dev")
@@ -457,12 +464,11 @@ func testLoadAtIgnoreFileAndMissingDirectoryMountedSymlink(t *testing.T) {
 		st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact),
 	)
 	d := Session{
-		cfg: Config{
+		cfg: testConfig(t, Config{
 			Path:  root,
 			Store: st,
 			Input: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
-			Trees: testTrees(t),
-		},
+		}),
 		loader: loader.New(st),
 	}
 	{
@@ -624,9 +630,9 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 	t.Helper()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 	testReceiptTreesResult1 := testReceiptTrees(t, (*tailCaseInput.cacheDir), persistent)
-	trees, closeCache := testReceiptTreesResult1.trees, testReceiptTreesResult1.close
+	cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	cfg := Config{
-		Trees: trees,
+		Cache: cacheOwner, Trees: trees,
 		Store: (*tailCaseInput.st),
 		Input: &store.SourceArtifact{LocalPath: tailCaseInput.root, FS: (*tailCaseInput.input)},
 		Path:  tailCaseInput.root + "/app",
@@ -783,14 +789,13 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
 	_, err := beginTest(
 		t.Context(),
-		Config{
+		testConfig(t, Config{
 			Path:      filepath.Join(root, "flux"),
 			RepoRoot:  root,
 			Store:     st,
 			Loader:    l,
-			Trees:     testTrees(t),
 			Selection: selection.Request{Roots: []manifest.NamedResource{consumer}},
-		},
+		}),
 	)
 	assert.NoError(t, err)
 	record, ok := l.Index.Lookup(data)
@@ -819,18 +824,4 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(supplier), true)
 	assert.Equal(t, st.GetObject(unused), nil)
 	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
-}
-
-func previousPackageHistory(
-	t *testing.T,
-	trees *kustomize.TreeCache,
-	req *kustomize.RenderRequest,
-) kustomize.EntryEvidence {
-	t.Helper()
-	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
-	if !available || !complete {
-		return kustomize.EntryEvidence{}
-	}
-	return kustomize.EntryEvidence{Owner: req.Spec.Named(), Records: records}
 }

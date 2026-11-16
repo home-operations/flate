@@ -27,7 +27,7 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "entry/file", "mapped input")
 		st := store.New()
-		d := Session{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+		d := Session{cfg: testConfig(t, Config{Path: root, Store: st}), loader: loader.New(st)}
 		t.Cleanup(d.loader.Close)
 		t.Cleanup(d.Close)
 		_, err := d.resolveTestSources(t.Context(), false)

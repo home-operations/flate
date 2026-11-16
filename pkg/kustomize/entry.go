@@ -116,7 +116,7 @@ func (c *TreeCache) ApplicationReceipt(
 	slog.Debug("kustomize: entry application captured", "producer", evidence.Owner, "files", len(files))
 	snapshot := entrySnapshot{
 		Key:      prepared.key,
-		Binding:  manifest.Fingerprint(prepared.binding),
+		Binding:  prepared.binding.Fingerprint(),
 		Producer: evidence.Producer,
 		Owner:    evidence.Owner,
 		Application: entryApplication{
@@ -216,7 +216,7 @@ func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (rende
 	}
 	prepared.key = manifest.Fingerprint(struct {
 		EntryPath string
-		Source    renderBinding
+		Source    sourcecache.RenderBinding[renderPolicy]
 	}{manifest.NormalizeClaimBase(req.SubPath), prepared.binding})
 	req.Work.Fingerprint(prepared.key)
 	return prepared, nil
@@ -268,7 +268,7 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 	}
 	var snapshot entrySnapshot
 	frame, err := sourcecache.OpenFrame(ctx, "kustomize-entry", reader, &snapshot)
-	if err != nil || snapshot.Key != prepared.key || snapshot.Binding != manifest.Fingerprint(prepared.binding) {
+	if err != nil || snapshot.Key != prepared.key || snapshot.Binding != prepared.binding.Fingerprint() {
 		return EntryEvidence{}
 	}
 	application := snapshot.Application

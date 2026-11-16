@@ -58,9 +58,9 @@ func testTemplateCacheSameKeyReplacements(
 		)
 		if blobErr == nil {
 			{
-				recordErr := (*inputs.cli).RecordRender(
+				recordErr := (*inputs.cli).cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   newHR().Named(),
 						Receipt: receipt22,
 						Records: emptyRenderInventory,

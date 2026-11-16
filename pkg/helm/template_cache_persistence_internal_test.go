@@ -32,9 +32,9 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	)
 	if renderMapsErr == nil {
 		{
-			recordErr := (*inputs.cli).RecordRender(
+			recordErr := (*inputs.cli).cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt18,
 					Records: emptyRenderInventory,
@@ -54,9 +54,9 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	)
 	if renderMapsErr == nil {
 		{
-			recordErr := fresh.RecordRender(
+			recordErr := fresh.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt19,
 					Records: emptyRenderInventory,
@@ -86,9 +86,9 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	)
 	if renderMapsErr == nil {
 		{
-			recordErr := (*inputs.cli).RecordRender(
+			recordErr := (*inputs.cli).cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt20,
 					Records: emptyRenderInventory,
@@ -146,9 +146,9 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	)
 	if renderMapsErr == nil {
 		{
-			recordErr := (*inputs.cli).RecordRender(
+			recordErr := (*inputs.cli).cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   newHR().Named(),
 					Receipt: receipt21,
 					Records: emptyRenderInventory,

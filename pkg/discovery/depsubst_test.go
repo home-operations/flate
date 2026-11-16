@@ -46,7 +46,7 @@ func TestRun_DependencyDocumentsImmutable(t *testing.T) {
 	st := store.New()
 	res, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), Store: st},
+		testConfig(t, discovery.Config{Path: filepath.Join(root, "flux"), Store: st}),
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	consumer := testutil.KustomizationID("apps", "consumer")
@@ -129,7 +129,7 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 	st.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	result, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "app"), RepoRoot: root, Store: st},
+		testConfig(t, discovery.Config{Path: filepath.Join(root, "app"), RepoRoot: root, Store: st}),
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	_, doc, emission := st.GetEmission(activeObject.Named())
@@ -197,7 +197,7 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: https://fixture.invalid/inactive.git}\n",
 	)
 	st := store.New()
-	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: root, Store: st})
+	result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{Path: root, Store: st}))
 	assert.FatalIf(t, err != nil, "%v", err)
 	active := testutil.KustomizationID("apps", "active")
 	if record, indexed := result.Index.Lookup(

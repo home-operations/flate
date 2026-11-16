@@ -95,10 +95,10 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 	result, err := discovery.Run(
 		t.Context(),
 		discovery.Config{
-			Input:        &store.SourceArtifact{LocalPath: root, FS: input},
-			Path:         root,
-			Store:        st,
-			Trees:        trees,
+			Input: &store.SourceArtifact{LocalPath: root, FS: input},
+			Path:  root,
+			Store: st,
+			Cache: owner, Trees: trees,
 			RemoteInputs: &inputs,
 		},
 	)
@@ -206,7 +206,14 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 	st := store.New()
 	result, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: trees, Path: root + "/flux", RepoRoot: root, Store: st, RemoteInputs: &inputs},
+		discovery.Config{
+			Cache:        owner,
+			Trees:        trees,
+			Path:         root + "/flux",
+			RepoRoot:     root,
+			Store:        st,
+			RemoteInputs: &inputs,
+		},
 	)
 	assert.NoError(t, err)
 	release := testutil.HelmReleaseID("apps", "remote")

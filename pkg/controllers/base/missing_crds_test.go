@@ -9,9 +9,11 @@ import (
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -30,11 +32,16 @@ func TestConfigure_MissingCRDs(t *testing.T) {
 	}
 	err := controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-	c.Configure(base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})})
+	owner := cachetest.New(t, "", cache.New)
+	c.Configure(
+		base.Options{Cache: owner, Missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
+	)
 	assert.Equal(t, controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil, true)
+	assert.Equal(t, c.Cache, owner)
 	c.StartLifecycle()
 	defer func() {
 		assert.ErrorIf(t, recover() == nil, "%v", "Configure after start must panic")
+		assert.Equal(t, c.Cache, owner)
 		assert.Equal(
 			t,
 			controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil,

@@ -41,10 +41,10 @@ func TestAdmission_EntrySourceAuthority(t *testing.T) {
 			st.SetArtifact(id, &store.SourceArtifact{
 				Kind: kind, LocalPath: root, LocalRoot: root, FS: os.DirFS(root), InputAlias: true,
 			})
-			result, err := Run(t.Context(), Config{
+			result, err := Run(t.Context(), testConfig(t, Config{
 				Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st,
-				SelfURLs: []string{"https://mirror.invalid/source"}, Trees: testTrees(t),
-			})
+				SelfURLs: []string{"https://mirror.invalid/source"},
+			}))
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
 			child, material, err := result.Admission.Resolve(t.Context(), id, nil, nil)
@@ -95,10 +95,10 @@ spec:
 			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 			testutil.WriteFile(t, root, "payload/file", "working tree")
 			st := store.New()
-			result, err := Run(t.Context(), Config{
+			result, err := Run(t.Context(), testConfig(t, Config{
 				Path: filepath.Join(root, "entry", "config"), RepoRoot: root, Store: st,
-				SelfURLs: []string{tc.remote}, Trees: testTrees(t),
-			})
+				SelfURLs: []string{tc.remote},
+			}))
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "entry"}

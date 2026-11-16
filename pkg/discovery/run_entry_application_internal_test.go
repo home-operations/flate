@@ -278,12 +278,11 @@ func TestRun_EntryPackage(t *testing.T) {
 			observed := &entryGeneratorFS{FS: input}
 			result, err := Run(
 				t.Context(),
-				Config{
+				testConfig(t, Config{
 					Input: &store.SourceArtifact{LocalPath: root, FS: observed},
 					Path:  root,
 					Store: st,
-					Trees: testTrees(t),
-				},
+				}),
 			)
 			assert.NoError(t, err)
 			assert.Equal(t, result.Binding.Producer.ReportHidden(), true)
@@ -464,14 +463,13 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 		delete(input, "owner.yaml")
 	}
 	d := newDiscoverer(
-		&Config{
+		new(testConfig(t, Config{
 			Declarations: declarations,
 			Input:        &store.SourceArtifact{LocalPath: root, FS: observed},
 			Path:         root,
 			Store:        st,
-			Trees:        testTrees(t),
 			SelfURLs:     []string{"https://fixture.invalid/self"},
-		},
+		})),
 	)
 	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)

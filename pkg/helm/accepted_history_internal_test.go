@@ -27,17 +27,19 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 		runtime.AddCleanup(&payload[0], func(done chan struct{}) { close(done) }, done)
 		receipt := manifest.NewRenderReceipt(
 			renderFrame{
-				header: renderHeader{Key: "large-accepted-lifetime", Analysis: &chartAnalysis{Version: "0.1.0"}},
-				output: payload,
+				Key: "large-accepted-lifetime", Output: payload,
+				header:  renderHeader{Analysis: &chartAnalysis{Version: "0.1.0"}},
+				content: newHR().Content("large-accepted-lifetime", nil),
+				persist: renderer.cache.CanPersistRenders(),
 			},
 			equalRenderFrame,
 		)
 		owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
 		assert.NoError(
 			t,
-			renderer.RecordRender(
+			renderer.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   owner,
 					Receipt: receipt,
 					Sources: []manifest.SourceEvidence{},
@@ -47,7 +49,7 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 		)
 		assert.NoError(t, renderer.cache.Close())
 		runtime.GC()
-		docs, err := testutil.DecodeRender(receipt.Value().(renderFrame).output)
+		docs, err := testutil.DecodeRender(receipt.Value().(renderFrame).Output)
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs[0]["value"].(string)), (16<<20)+1)
 		runtime.KeepAlive(receipt)

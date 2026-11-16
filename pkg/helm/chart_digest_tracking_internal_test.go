@@ -43,9 +43,9 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt28,
 						Records: emptyRenderInventory,
@@ -74,9 +74,9 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		)
 		if err == nil {
 			{
-				recordErr := freshClient.RecordRender(
+				recordErr := freshClient.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt29,
 						Records: emptyRenderInventory,

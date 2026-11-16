@@ -38,7 +38,7 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 		"sibling/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}}
 	st := store.New()
-	d := newDiscoverer(&Config{Input: input, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t)})
+	d := newDiscoverer(new(testConfig(t, Config{Input: input, Path: filepath.Join(root, "entry"), Store: st})))
 	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))

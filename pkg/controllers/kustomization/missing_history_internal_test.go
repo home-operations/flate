@@ -75,11 +75,12 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 				Data:      map[string]any{"VALUE": "promoted"},
 			}
 			promotion := &historyInputPromotion{store: st, input: input}
-			trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+			cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
+			trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
 			t.Cleanup(trees.Close)
 			c := New(st, fixture.Tasks, trees)
 			c.Configure(
-				Options{Existence: promotion, Missing: depwait.NewMissingPolicy(tc.allowed)},
+				Options{Cache: cacheOwner, Existence: promotion, Missing: depwait.NewMissingPolicy(tc.allowed)},
 				sourcecache.RetryConfig{},
 			)
 			c.StartLifecycle()
@@ -92,7 +93,10 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			freezeSourceForTest(t, st)
 			warmFixture, warmStore, _ := newControllerWithFixture(t)
 			warm := New(warmStore, warmFixture.Tasks, c.Trees)
-			warm.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			warm.Configure(
+				Options{Cache: c.Cache, Missing: depwait.NewMissingPolicy(tc.allowed)},
+				sourcecache.RetryConfig{},
+			)
 			warm.StartLifecycle()
 			warmStore.SetArtifact(
 				manifest.BootstrapSourceID,
@@ -147,7 +151,10 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 
 			fullFixture, fullStore, fullRoot := newControllerWithFixture(t)
 			full := New(fullStore, fullFixture.Tasks, fullFixture.Trees)
-			full.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			full.Configure(
+				Options{Cache: fullFixture.Cache, Missing: depwait.NewMissingPolicy(tc.allowed)},
+				sourcecache.RetryConfig{},
+			)
 			full.StartLifecycle()
 			testutil.WriteFile(t, fullRoot, "apps/cm.yaml", document)
 			fullStore.AddObject(owner)
@@ -247,10 +254,14 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fixture, st, root := newControllerWithFixture(t)
-			trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+			cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
+			trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
 			t.Cleanup(trees.Close)
 			c := New(st, fixture.Tasks, trees)
-			c.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			c.Configure(
+				Options{Cache: cacheOwner, Missing: depwait.NewMissingPolicy(tc.allowed)},
+				sourcecache.RetryConfig{},
+			)
 			c.StartLifecycle()
 			testutil.WriteFile(
 				t,
@@ -378,7 +389,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 				input: &manifest.ConfigMap{Name: "not-indexed", Namespace: "flux-system"},
 			}
 			c := New(st, fixture.Tasks, fixture.Trees)
-			c.Configure(Options{Existence: promotion}, sourcecache.RetryConfig{})
+			c.Configure(Options{Cache: fixture.Cache, Existence: promotion}, sourcecache.RetryConfig{})
 			c.StartLifecycle()
 			owner := &manifest.Kustomization{
 				Name:      "apps",
@@ -453,10 +464,11 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	t.Parallel()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	fixture, st, root := newControllerWithFixture(t)
-	trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+	cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
+	trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
 	t.Cleanup(trees.Close)
 	c := New(st, fixture.Tasks, trees)
-	c.Configure(Options{}, sourcecache.RetryConfig{})
+	c.Configure(Options{Cache: cacheOwner}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	testutil.WriteFile(
 		t,

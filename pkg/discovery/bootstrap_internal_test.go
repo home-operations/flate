@@ -521,12 +521,11 @@ func testRunIndexedRootPreparedProjectionCase(
 	t.Helper()
 
 	st := store.New()
-	cfg := Config{
+	cfg := testConfig(t, Config{
 		Input: (*testCaseInput.entries)[0].Input,
 		Path:  (*testCaseInput.entries)[0].Path,
 		Store: st,
-		Trees: testTrees(t),
-	}
+	})
 	if *testCaseInput.prepared {
 		cfg.Entry = &(*testCaseInput.entries)[0]
 

@@ -700,6 +700,7 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
 	o.ksc.Trees = kustomize.NewTreeCache(reopened, &o.inputs, o.tasks)
+	o.cache, o.ksc.Cache = reopened, reopened
 	bootstrap := o.cfg.Input
 	owners, err := reopened.ProducersForPaths(
 		t.Context(),
@@ -803,9 +804,9 @@ data: {VALUE: rendered}
 	assert.Equal(t, len(failures), 0)
 	assert.NoError(
 		t,
-		warm.ksc.Trees.RecordRender(
+		warm.cache.RecordRender(
 			t.Context(),
-			kustomize.RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   owner,
 				Receipt: receipt,
 				Content: content,

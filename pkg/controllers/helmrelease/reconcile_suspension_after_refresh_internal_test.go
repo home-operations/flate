@@ -603,7 +603,7 @@ func checkParentUpdateDuringRender(t *testing.T, workers *int) {
 	t.Cleanup(func() { _ = owner.Close() })
 	client := helm.NewClient(owner)
 	c := New(base.New(st, tasks), client, helm.Options{})
-	c.Configure(base.Options{})
+	c.Configure(base.Options{Cache: owner})
 	c.StartLifecycle()
 	started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })

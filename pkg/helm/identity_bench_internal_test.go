@@ -173,9 +173,9 @@ func benchmarkTemplateOCIIdentityCase(b *testing.B, disk, disabled *bool) {
 		RenderOptions{Options: opts, Sources: cliSources},
 	)
 	if err == nil {
-		if recordErr := cli.RecordRender(
+		if recordErr := cli.cache.RecordRender(
 			b.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt1,
 				Records: emptyRenderInventory,
@@ -197,9 +197,9 @@ func benchmarkTemplateOCIIdentityCase(b *testing.B, disk, disabled *bool) {
 			RenderOptions{Options: opts, Sources: cliSources},
 		)
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				b.Context(),
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt2,
 					Records: emptyRenderInventory,

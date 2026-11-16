@@ -328,7 +328,8 @@ func testReconcileRequiredPostBuildPermissionCase(
 
 	original, st, _ := newControllerWithFixture(t)
 	freezeSourceForTest(t, st)
-	trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, original.Tasks)
+	cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
+	trees := kustomize.NewTreeCache(cacheOwner, nil, original.Tasks)
 	t.Cleanup(trees.Close)
 	opts := Options{}
 	if *testCaseInput.allowed {
@@ -339,6 +340,7 @@ func testReconcileRequiredPostBuildPermissionCase(
 		})
 	}
 	c := New(st, original.Tasks, trees)
+	opts.Cache = cacheOwner
 	c.Configure(opts, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	ks := &manifest.Kustomization{

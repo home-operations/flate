@@ -30,10 +30,10 @@ func TestRun_AnonymousAdmissionPreparation(t *testing.T) {
 	l.Options.Changes = change.NewSet([]string{"entry/release.yaml"})
 	request := selection.Request{Changed: true}
 	configureSelection(t, l, request)
-	session, err := beginTest(t.Context(), Config{
+	session, err := beginTest(t.Context(), testConfig(t, Config{
 		Input: input, Path: filepath.Join(root, "entry"), Store: st, Loader: l,
-		Trees: testTrees(t), Work: work.Scope(), Selection: request,
-	})
+		Work: work.Scope(), Selection: request,
+	}))
 	assert.NoError(t, err)
 	defer session.Close()
 	preparation := session.prepareRequest(&selection.PrepareRequest{Invocation: true})

@@ -76,12 +76,11 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	st := store.New()
 	res, err := discovery.Run(
 		context.Background(),
-		discovery.Config{
-			Trees:    testTrees(t),
+		testConfig(t, discovery.Config{
 			Path:     filepath.Join(dir, "cluster"),
 			RepoRoot: dir,
 			Store:    st,
-		},
+		}),
 	)
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 
@@ -114,7 +113,7 @@ func TestRun_SymlinkEntryResolved(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	got, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: link, Store: store.New()})
+	got, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{Path: link, Store: store.New()}))
 	assert.FatalIf(t, err != nil, "%v", err)
 	want, _ := filepath.EvalSymlinks(target)
 	assert.ErrorIf(t, got.RepoRoot != want,
@@ -143,7 +142,7 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 				}
 			}
 			st := store.New()
-			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st})
+			result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{Path: dir, Store: st}))
 			assert.FatalIf(t, err != nil, "%v", err)
 			artifact := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			assert.ErrorIf(t, result.RepoRoot != dir || artifact.LocalPath != dir,
@@ -276,10 +275,9 @@ spec:
 
 	st := store.New()
 	{
-		_, err := discovery.Run(context.Background(), discovery.Config{
-			Trees: testTrees(t),
-			Path:  dir, Store: st,
-		})
+		_, err := discovery.Run(context.Background(), testConfig(t, discovery.Config{
+			Path: dir, Store: st,
+		}))
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 
@@ -333,10 +331,9 @@ configMapGenerator:
 	inputs.Close()
 	st := store.New()
 	{
-		_, err := discovery.Run(t.Context(), discovery.Config{
-			Trees: testTrees(t),
-			Path:  dir, Store: st, RemoteInputs: &inputs,
-		})
+		_, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
+			Path: dir, Store: st, RemoteInputs: &inputs,
+		}))
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 
@@ -392,8 +389,7 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 
 	testutil.WriteFile(t, dir, "cluster/kustomization.yaml", "resources: [keep.yaml]\n")
 	st := store.New()
-	result, err := discovery.Run(t.Context(), discovery.Config{
-		Trees: testTrees(t),
+	result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
 		Path: filepath.Join(
 			dir,
 			"cluster",
@@ -401,7 +397,7 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 		RepoRoot:      dir,
 		Store:         st,
 		KRMIgnoreFile: filepath.Join(dir, "override.krmignore"),
-	})
+	}))
 	assert.FatalIf(t, err != nil, "Run: %v", err)
 	id := func(name string) manifest.NamedResource {
 		return testutil.KustomizationID("flux-system", name)
@@ -512,7 +508,7 @@ data: {value: fixture}
 			st := store.New()
 			res, err := discovery.Run(
 				t.Context(),
-				discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st},
+				testConfig(t, discovery.Config{Path: dir, RepoRoot: dir, Store: st}),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			raw := testutil.HelmReleaseID("demo", "demo")
@@ -597,7 +593,7 @@ stringData: {HOST: fixture-value}
 	}
 	result, err := discovery.Run(
 		t.Context(),
-		discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st},
+		testConfig(t, discovery.Config{Path: dir, RepoRoot: dir, Store: st}),
 	)
 	assert.FatalIf(t, err != nil, "%s", err)
 
@@ -694,7 +690,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	{
 		_, err := discovery.Run(
 			t.Context(),
-			discovery.Config{Trees: testTrees(t), Path: (*testCaseInput.dir), Store: st},
+			testConfig(t, discovery.Config{Path: (*testCaseInput.dir), Store: st}),
 		)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}

@@ -81,10 +81,7 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 			out, receipt32, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 			if err == nil {
 				{
-					recordErr := c.RecordRender(
-						t.Context(),
-						RenderAcceptance{Owner: spec.Named(), Receipt: receipt32},
-					)
+					recordErr := recordPendingRender(t.Context(), c.owner, receipt32)
 					assert.NoError(t, recordErr)
 				}
 			}

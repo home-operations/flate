@@ -279,7 +279,7 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	}
 	first, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
-	assert.Equal(t, &first.binding.Options.SkipKinds[0] != &input.SkipKinds[0], true)
+	assert.Equal(t, &first.binding.Policy.Options.SkipKinds[0] != &input.SkipKinds[0], true)
 	current := &original
 	if name == "missing_source" {
 		sources.SetArtifact(hr.ChartSource(), nil)
@@ -296,8 +296,8 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 		current = original.WithReads(&store.ReadSet{}).WithReads(&store.ReadSet{})
 		sources.SetArtifact(hr.ChartSource(), current)
 	case "observed_content":
-		preparation.binding.Revision, preparation.loaded.artifact.Revision = "stale", "stale"
-		preparation.binding.URL, preparation.loaded.artifact.URL = "stale", "stale"
+		preparation.binding.Artifact.Revision, preparation.loaded.artifact.Revision = "stale", "stale"
+		preparation.binding.Artifact.URL, preparation.loaded.artifact.URL = "stale", "stale"
 		first.Preparation = preparation
 	default:
 		replacement := original
@@ -309,14 +309,14 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 		current = &replacement
 		sources.SetArtifact(hr.ChartSource(), current)
 	}
-	priorRevision, priorURL := first.binding.Revision, first.binding.URL
+	priorRevision, priorURL := first.binding.Artifact.Revision, first.binding.Artifact.URL
 	next, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
 	repeated, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
 	for _, prepared := range []*Preparation{&next.Preparation, &repeated.Preparation, &preparation} {
-		assert.Equal(t, prepared.binding.Revision, current.Revision)
-		assert.Equal(t, prepared.binding.URL, current.URL)
+		assert.Equal(t, prepared.binding.Artifact.Revision, current.Revision)
+		assert.Equal(t, prepared.binding.Artifact.URL, current.URL)
 		assert.Equal(t, prepared.loaded.artifact.Revision, current.Revision)
 		assert.Equal(t, prepared.loaded.artifact.URL, current.URL)
 		assert.Equal(t, prepared.source, current)
@@ -327,10 +327,10 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 		assert.Equal(t, prepared.loaded.record, first.loaded.record)
 		assert.Equal(t, prepared.loaded.oci, first.loaded.oci)
 		assert.Equal(t, prepared.caps, first.caps)
-		assert.Equal(t, &prepared.binding.Options.SkipKinds[0], &first.binding.Options.SkipKinds[0])
+		assert.Equal(t, &prepared.binding.Policy.Options.SkipKinds[0], &first.binding.Policy.Options.SkipKinds[0])
 	}
-	assert.Equal(t, first.binding.Revision, priorRevision)
-	assert.Equal(t, first.binding.URL, priorURL)
+	assert.Equal(t, first.binding.Artifact.Revision, priorRevision)
+	assert.Equal(t, first.binding.Artifact.URL, priorURL)
 	assert.Equal(t, first.loaded.artifact.Revision, priorRevision)
 	assert.Equal(t, first.loaded.artifact.URL, priorURL)
 	assert.Equal(t, original.Revision, "first")

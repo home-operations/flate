@@ -47,9 +47,9 @@ func testTemplateCacheNonOCITrackingModeCase(
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt11,
 						Records: emptyRenderInventory,

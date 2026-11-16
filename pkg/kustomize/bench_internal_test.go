@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -45,7 +46,7 @@ data:
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(
+			if recordErr := cache.owner.RecordRender(
 				ctx,
 				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
@@ -92,9 +93,10 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	accepted := acceptBenchmarkRender(b, cache, &req, content)
 	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 	if err == nil {
-		if recordErr := cache.RecordRender(
+		if recordErr := cache.owner.RecordRender(
 			ctx,
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
+				Sources: []manifest.SourceEvidence{},
 				Owner:   req.Spec.Named(),
 				Receipt: receipt2,
 				Records: emptyRenderInventory,
@@ -112,7 +114,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(
+			if recordErr := cache.owner.RecordRender(
 				ctx,
 				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
@@ -186,7 +188,7 @@ data:
 	for b.Loop() {
 		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(
+			if recordErr := cache.owner.RecordRender(
 				ctx,
 				acceptanceForEmission(req.Spec.Named(), accepted, content),
 			); recordErr != nil {
@@ -242,7 +244,7 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 			i := int(ctr.Add(1)) % apps
 			out, _, err := Render(ctx, cache, requests[i], sourcecache.RetryConfig{})
 			if err == nil {
-				if recordErr := cache.RecordRender(
+				if recordErr := cache.owner.RecordRender(
 					ctx,
 					acceptanceForEmission(rawSpec.Named(), accepted[i], content),
 				); recordErr != nil {
@@ -272,7 +274,7 @@ func acceptBenchmarkRender(b *testing.B, cache *TreeCache, incoming *RenderReque
 		b.Fatal(err)
 	}
 	emission := acceptedEmission(b, request.Spec.Named(), receipt, content)
-	if recordRenderErr := cache.RecordRender(
+	if recordRenderErr := cache.owner.RecordRender(
 		b.Context(),
 		acceptanceForEmission(request.Spec.Named(), emission, content),
 	); recordRenderErr != nil {

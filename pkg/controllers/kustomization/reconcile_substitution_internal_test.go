@@ -317,7 +317,7 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 		inputs := source.NewHTTPInputs(owner, network, fixture.Tasks)
 		trees := kustomize.NewTreeCache(owner, &inputs, fixture.Tasks)
 		controller := New(st, fixture.Tasks, trees)
-		controller.Configure(Options{}, sourcecache.RetryConfig{})
+		controller.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
 		controller.StartLifecycle()
 		closeResources := sync.OnceFunc(func() {
 			trees.Close()
@@ -406,7 +406,7 @@ func testReconcileEffectiveSubstitutionsCase(
 
 	fixture, s, root := newControllerWithFixture(t)
 	c := New(s, fixture.Tasks, fixture.Trees)
-	c.Configure(Options{}, sourcecache.RetryConfig{})
+	c.Configure(Options{Cache: fixture.Cache}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	metadata := "{name: hello, namespace: default}"
 	if testCaseInput.disabled {
@@ -483,7 +483,7 @@ func testReconcileEffectiveSubstitutionsCase(
 		}
 		freshFixture, freshStore, freshRoot := newControllerWithFixture(t)
 		fresh := New(freshStore, freshFixture.Tasks, freshFixture.Trees)
-		fresh.Configure(Options{}, sourcecache.RetryConfig{})
+		fresh.Configure(Options{Cache: freshFixture.Cache}, sourcecache.RetryConfig{})
 		fresh.StartLifecycle()
 		raw, err := os.ReadFile(filepath.Join(root, "apps", "cm.yaml"))
 		assert.NoError(t, err)
@@ -524,7 +524,7 @@ func testReconcileEffectiveSubstitutionDiagnosticsCase(
 
 	fixture, s, root := newControllerWithFixture(t)
 	c := New(s, fixture.Tasks, fixture.Trees)
-	c.Configure(Options{StrictSubstitutions: testCaseInput.strict}, sourcecache.RetryConfig{})
+	c.Configure(Options{Cache: fixture.Cache, StrictSubstitutions: testCaseInput.strict}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	expression := "${USED}"
 	if testCaseInput.strict {

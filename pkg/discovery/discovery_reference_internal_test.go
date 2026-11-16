@@ -9,13 +9,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
@@ -48,11 +44,10 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	st := store.New()
 	l := loader.New(st)
 	configureSelection(t, l, selection.Request{Changed: true})
-	session, err := beginTest(t.Context(), Config{
+	session, err := beginTest(t.Context(), testConfig(t, Config{
 		Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, Loader: l,
-		Trees:     kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
 		Selection: selection.Request{Changed: true},
-	})
+	}))
 	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child")
 	parent := testutil.KustomizationID("apps", "parent")
@@ -104,10 +99,9 @@ func TestAdvance_ProducerDemandRejectsChangedAuthority(t *testing.T) {
 					}
 				}
 			}
-			d := &Session{loader: loader.New(st), cfg: Config{
+			d := &Session{loader: loader.New(st), cfg: testConfig(t, Config{
 				Store: st, Input: input, Path: root, RepoRoot: root,
-				Trees: kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
-			}}
+			})}
 			defer d.Close()
 			prepared, err := d.prepareDemandedProducers(t.Context(), []selection.Demand{{
 				Identity: owner.Named(), Witness: owner, Reads: &guard,

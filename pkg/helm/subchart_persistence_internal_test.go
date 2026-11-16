@@ -81,9 +81,9 @@ func testTemplateCacheSubchartPersistenceCase(
 	)
 	if err == nil {
 		{
-			recordErr := next.RecordRender(
+			recordErr := next.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   (*testCaseInput.hr).Named(),
 					Receipt: receipt10,
 					Records: emptyRenderInventory,

@@ -13,8 +13,9 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 	t.Parallel()
 	h := newAcceptedHistoryCase(t)
 	persistent := h.persistent
-	assert.NoError(t, h.cache.RecordRender(t.Context(), RenderAcceptance{
-		Owner: h.req.Spec.Named(), Receipt: h.receipt, Records: maps.All(h.records), Content: h.content,
+	assert.NoError(t, h.cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
+		Sources: []manifest.SourceEvidence{},
+		Owner:   h.req.Spec.Named(), Receipt: h.receipt, Records: maps.All(h.records), Content: h.content,
 	}))
 	recorder := &manifest.WorkRecorder{
 		Key: manifest.WorkKey{Owner: h.req.Spec.Named(), Source: manifest.BootstrapSourceID},

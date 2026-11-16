@@ -28,14 +28,8 @@ func TestRender_SOPSDiagnosticsOnReplay(t *testing.T) {
 		}
 		docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 		assert.NoError(t, err)
-		assert.NoError(
-			t,
-			cache.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt, Records: emptyRenderInventory},
-			),
-		)
-		_, raw, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).header.Key)
+		assert.NoError(t, recordPendingRender(t.Context(), cache.owner, receipt))
+		_, raw, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).Key)
 		assert.FatalIf(
 			t,
 			!hit || len(raw) != 1 || raw[0]["stringData"].(map[string]any)["VALUE"] != cipher,

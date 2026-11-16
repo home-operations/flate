@@ -49,9 +49,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 		assert.NoError(t, readTestRecord(t.Context(), reader, &stored))
 		content := descriptor.Annotations[acceptedRenderAnnotation]
 
-		history, complete := stored.frame.stored.History(accepting, pending.Value().(renderFrame).content)
+		history, complete := stored.frame.Stored.History(accepting, pending.Value().(renderFrame).content)
 		assert.Equal(t, complete, true)
-		storedPublication, blobErr2 := stored.frame.stored.PreparePublication(t.Context(), cache.FramePublicationInput{
+		storedPublication, blobErr2 := stored.frame.Stored.PreparePublication(t.Context(), cache.FramePublicationInput{
 			Owner: accepting, Content: pending.Value().(renderFrame).content, Records: history, Complete: true,
 		})
 		assert.NoError(t, blobErr2)
@@ -88,9 +88,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	}
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -128,7 +128,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 			if state.canceled {
 				ctx = canceled
 			}
-			err := renderer.RecordRender(ctx, RenderAcceptance{
+			err := renderer.cache.RecordRender(ctx, cache.RenderAcceptance{
 				Owner:   state.owner,
 				Receipt: state.receipt,
 				Sources: []manifest.SourceEvidence{},
@@ -153,7 +153,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 			assert.Equal(t, complete, false)
 		}
 		assert.NoError(t, renderer.cache.Close())
-		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+		assert.NoError(t, renderer.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 			Owner: accepting, Receipt: pending, Sources: []manifest.SourceEvidence{}, Records: emptyRenderInventory,
 		}))
 		return
@@ -171,16 +171,16 @@ func testTemplateAcceptedHistoryDurablePublication(
 	resident := pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		resident.stored == nil,
+		resident.Stored == nil,
 		"%s",
 		"warm receipt did not carry decoded accepted evidence",
 	)
 	check := unchanged()
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -211,9 +211,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -228,9 +228,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	check = unchanged()
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -243,9 +243,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	assert.NoError(t, err)
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -285,9 +285,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	foreign.Namespace = "foreign"
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   foreign,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -306,9 +306,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	}
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: borrowedReceipt,
 				Sources: []manifest.SourceEvidence{},
@@ -329,9 +329,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	check = unchanged()
 	assert.NoError(
 		t,
-		renderer.RecordRender(
+		renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -344,9 +344,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	cancel()
 	check = unchanged()
 	{
-		err := renderer.RecordRender(
+		err := renderer.cache.RecordRender(
 			canceled,
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},
@@ -361,9 +361,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	check()
 	check = unchanged()
 	{
-		err := renderer.RecordRender(
+		err := renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: manifest.NewRenderReceipt("invalid", nil),
 				Sources: []manifest.SourceEvidence{},
@@ -379,9 +379,9 @@ func testTemplateAcceptedHistoryDurablePublication(
 	check = unchanged()
 	assert.NoError(t, renderer.cache.Close())
 	{
-		err := renderer.RecordRender(
+		err := renderer.cache.RecordRender(
 			t.Context(),
-			RenderAcceptance{
+			cache.RenderAcceptance{
 				Owner:   accepting,
 				Receipt: pending,
 				Sources: []manifest.SourceEvidence{},

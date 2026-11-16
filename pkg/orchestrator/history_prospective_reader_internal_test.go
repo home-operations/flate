@@ -700,9 +700,9 @@ spec:
 		assert.NoError(t, localErr)
 		assert.NoError(
 			t,
-			warm.hrc.Helm.RecordRender(
+			warm.hrc.Cache.RecordRender(
 				t.Context(),
-				helm.RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   owner,
 					Receipt: receipt,
 					Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {},

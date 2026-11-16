@@ -5,6 +5,8 @@ import (
 	"iter"
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -60,19 +62,51 @@ func (c *TreeCache) previousHistory(
 	return c.RenderHistory(owner, receipt, content)
 }
 
-func acceptanceForEmission(owner manifest.NamedResource, emission *store.Emission, content any) RenderAcceptance {
+func acceptanceForEmission(
+	owner manifest.NamedResource,
+	emission *store.Emission,
+	content any,
+) sourcecache.RenderAcceptance {
 	if emission == nil {
-		return RenderAcceptance{}
+		return sourcecache.RenderAcceptance{}
 	}
 	if emission.Fingerprint == "" {
 		content = nil
 	}
-	return RenderAcceptance{
+	return sourcecache.RenderAcceptance{
 		Owner:       owner,
 		Receipt:     emission.Render,
 		Records:     emission.Footprint(),
+		Sources:     []manifest.SourceEvidence{},
 		Content:     content,
 		Reads:       emission.Reads,
 		OutputReads: emission.OutputReads,
 	}
+}
+
+func recordPendingRender(ctx context.Context, owner *sourcecache.Cache, receipt *manifest.RenderReceipt) error {
+	if receipt == nil {
+		return nil
+	}
+	frame := receipt.Value().(renderFrame)
+	stored, err := frame.Encode(frameDomain, frame.header)
+	if err != nil || stored == nil {
+		return err
+	}
+	publication, err := stored.PreparePublication(ctx, sourcecache.FramePublicationInput{})
+	if err != nil || publication == nil {
+		return err
+	}
+	_, _, _, err = owner.Blob(
+		ctx,
+		sourcecache.BlobKey{Content: frame.Key, Render: sourcecache.RenderPending},
+		&sourcecache.Policy{
+			MaxAge: 0,
+		},
+		func(_ context.Context, out sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, writeErr := publication.WriteTo(out)
+			return sourcecache.ProducerResult{}, writeErr
+		},
+	)
+	return err
 }

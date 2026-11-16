@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"io/fs"
-	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -138,10 +137,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	out, receipt22, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
-			recordErr := cache.RecordRender(
-				t.Context(),
-				RenderAcceptance{Owner: spec.Named(), Receipt: receipt22},
-			)
+			recordErr := recordPendingRender(t.Context(), cache.owner, receipt22)
 			assert.NoError(t, recordErr)
 		}
 	}
@@ -164,10 +160,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		again, receipt23, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
-				recordErr := cache.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt23},
-				)
+				recordErr := recordPendingRender(t.Context(), cache.owner, receipt23)
 				assert.NoError(t, recordErr)
 			}
 		}
@@ -190,6 +183,9 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	default:
 		assert.FatalIf(t, !hasRenderField(out, "name", "fresh"), "candidate prevented a fresh render: %s", out)
 	}
+	_, retained, retainedHit := readTestRenderFrame(t, cache, key)
+	assert.Equal(t, retainedHit, true)
+	assert.Diff(t, retained, out)
 	cache.Close()
 	{
 		err := cache.owner.Close()
@@ -197,17 +193,13 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	}
 	cache = newTestTreeCache(t, cacheDir)
 	_, stored, hit := readTestRenderFrame(t, cache, key)
-	if hit != (*testCaseInput.eligible) || hit && !reflect.DeepEqual(stored, out) {
-		t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, (*testCaseInput.eligible))
-	}
+	assert.Equal(t, hit, false)
+	assert.Equal(t, stored == nil, true)
 	if testCaseInput.tc.corrupt {
 		again, receipt24, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
-				recordErr := cache.RecordRender(
-					t.Context(),
-					RenderAcceptance{Owner: spec.Named(), Receipt: receipt24},
-				)
+				recordErr := recordPendingRender(t.Context(), cache.owner, receipt24)
 				assert.NoError(t, recordErr)
 			}
 		}

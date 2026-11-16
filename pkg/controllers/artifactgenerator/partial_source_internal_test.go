@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcecontroller "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -113,6 +114,7 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	trees := kustomize.NewTreeCache(owner, nil, bodies)
 	defer trees.Close()
 	ks := kustomization.New(st, bodies, trees)
+	ks.Controller.Configure(base.Options{Cache: owner})
 	ks.StartLifecycle()
 	src := sourcecontroller.New(st, bodies, owner)
 	src.Fetchers[manifest.KindExternalArtifact] = sources.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})

@@ -201,6 +201,7 @@ func (o *Orchestrator) configureControllers() {
 	o.configureSources(false)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
+		Cache:     o.cache,
 		SkipKinds: o.cfg.HelmOptions.SkipKinds,
 		Session:   o.selection,
 		Loader:    o.loader,

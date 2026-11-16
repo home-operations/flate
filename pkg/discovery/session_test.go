@@ -39,14 +39,13 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	l := loader.New(st)
 	session, err := discovery.BeginTest(
 		t.Context(),
-		discovery.Config{
+		testConfig(t, discovery.Config{
 			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:      root,
 			Store:     st,
 			Loader:    l,
-			Trees:     testTrees(t),
 			Selection: selection.Request{Changed: true},
-		},
+		}),
 	)
 	assert.NoError(t, err)
 	for _, object := range st.Objects() {
@@ -129,11 +128,10 @@ func TestRun_RestrictedUsesSession(t *testing.T) {
 	l := loader.New(st)
 	one := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "one"}
 	two := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "two"}
-	result, err := discovery.Run(t.Context(), discovery.Config{
+	result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
 		Input: &store.SourceArtifact{LocalPath: root, FS: input},
-		Path:  root, Store: st, Loader: l, Trees: testTrees(t),
-		Selection: selection.Request{Roots: []manifest.NamedResource{one}},
-	})
+		Path:  root, Store: st, Loader: l, Selection: selection.Request{Roots: []manifest.NamedResource{one}},
+	}))
 	assert.NoError(t, err)
 	assert.Equal(t, result.Index, l.Index)
 	assert.Equal(t, len(l.PromotionDocuments(one)), 0)
@@ -189,14 +187,13 @@ spec: {path: ./workload}
 			assert.NoError(t, err)
 			session, err := discovery.BeginTest(
 				t.Context(),
-				discovery.Config{
+				testConfig(t, discovery.Config{
 					Input:     source,
 					Path:      filepath.Join(root, "entry"),
 					Store:     st,
 					Loader:    l,
-					Trees:     testTrees(t),
 					Selection: selection.Request{Changed: true},
-				},
+				}),
 			)
 			assert.NoError(t, err)
 			requests := 0

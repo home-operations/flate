@@ -199,13 +199,12 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 	fixture := &preparedConstructionFixture{
 		parent:       parent,
 		dependencies: inputs,
-		cfg: Config{
+		cfg: testConfig(t, Config{
 			Store:  st,
 			Input:  source,
 			Path:   filepath.Join(root, "entry"),
-			Trees:  testTrees(t),
 			Loader: loader.New(st),
-		},
+		}),
 	}
 	t.Cleanup(fixture.cfg.Loader.Retire)
 	fixture.cfg.Trees.SetGitBaseFetcher(

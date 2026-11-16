@@ -79,7 +79,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	raw.Spec = nil
 	_, rawReceipt, err := Render(t.Context(), cache, raw, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: rawReceipt}))
+	assert.NoError(t, recordPendingRender(t.Context(), cache.owner, rawReceipt))
 
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("changed"))
 	accepted := cache.PreviousEntry(t.Context(), request)
@@ -195,8 +195,8 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 			after, err := renderer.prepareRender(t.Context(), &request)
 			assert.NoError(t, err)
 			assert.Equal(t, after.key, before.key)
-			assert.Equal(t, after.binding.URL, replacement.URL)
-			assert.Equal(t, after.binding.Revision, source.Revision)
+			assert.Equal(t, after.binding.Artifact.URL, replacement.URL)
+			assert.Equal(t, after.binding.Artifact.Revision, source.Revision)
 			entryAfter, err := renderer.prepareEntry(t.Context(), &request)
 			assert.NoError(t, err)
 			assert.Equal(t, entryAfter.key == entryBefore.key, false)
@@ -221,7 +221,7 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 			_, err = unchanged.publication.WriteTo(&unchangedWire)
 			assert.NoError(t, err)
 			assert.Equal(t, bytes.Equal(unchangedWire.Bytes(), priorWire.Bytes()), true)
-			assert.Equal(t, source.URL, before.binding.URL)
+			assert.Equal(t, source.URL, before.binding.Artifact.URL)
 		})
 	}
 }

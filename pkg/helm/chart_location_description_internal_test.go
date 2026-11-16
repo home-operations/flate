@@ -42,9 +42,9 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   request.Named(),
 						Receipt: receipt12,
 						Records: emptyRenderInventory,

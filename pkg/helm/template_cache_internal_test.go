@@ -226,9 +226,9 @@ data:
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt5,
 					Records: emptyRenderInventory,
@@ -254,9 +254,9 @@ data:
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt6,
 					Records: emptyRenderInventory,
@@ -276,9 +276,9 @@ data:
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt7,
 					Records: emptyRenderInventory,
@@ -307,9 +307,9 @@ data:
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt8,
 					Records: emptyRenderInventory,
@@ -334,9 +334,9 @@ data:
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt9,
 					Records: emptyRenderInventory,
@@ -454,9 +454,9 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt1,
 						Records: emptyRenderInventory,
@@ -502,9 +502,9 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt2,
 						Records: emptyRenderInventory,
@@ -583,9 +583,9 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 		)
 		if err == nil {
 			{
-				recordErr := cli.RecordRender(
+				recordErr := cli.cache.RecordRender(
 					t.Context(),
-					RenderAcceptance{
+					cache.RenderAcceptance{
 						Owner:   hr.Named(),
 						Receipt: receipt3,
 						Records: emptyRenderInventory,
@@ -626,9 +626,9 @@ func testTemplateCacheOCIIdentityOneAdmittedArtifact(t *testing.T) {
 	)
 	if err == nil {
 		{
-			recordErr := cli.RecordRender(
+			recordErr := cli.cache.RecordRender(
 				t.Context(),
-				RenderAcceptance{
+				cache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt4,
 					Records: emptyRenderInventory,

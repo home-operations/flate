@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -16,6 +17,7 @@ import (
 // Controller owns shared reconciliation lifecycle, dependency gates and publication.
 // Configure MUST complete before StartLifecycle or dispatch.
 type Controller struct {
+	Cache *cache.Cache
 	Store *store.Store
 	Tasks *task.Service
 
@@ -45,6 +47,7 @@ func (c *Controller) requireNotStarted(method string) {
 
 // Options contains immutable controller configuration installed before dispatch.
 type Options struct {
+	Cache *cache.Cache
 	// Loader supplies the invocation's declaration admission boundary.
 	Loader *loader.Loader
 	// SkipKinds is the immutable visible-output exclusion list.
@@ -61,8 +64,11 @@ type Options struct {
 }
 
 // Configure MUST install the invocation policy before dispatch.
+//
+//nolint:gocritic // Configuration is an immutable value snapshot installed before dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
+	c.Cache = opts.Cache
 	c.selection = opts.Session
 	c.loader = opts.Loader
 	c.SkipKinds = opts.SkipKinds

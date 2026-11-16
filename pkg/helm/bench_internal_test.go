@@ -73,9 +73,9 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	for b.Loop() {
 		out, receipt1, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				ctx,
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt1,
 					Records: emptyRenderInventory,
@@ -121,9 +121,9 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	for b.Loop() {
 		out, receipt2, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				ctx,
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt2,
 					Records: emptyRenderInventory,
@@ -237,9 +237,9 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	ctx := context.Background()
 	_, receipt8, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err == nil {
-		if recordErr := cli.RecordRender(
+		if recordErr := cli.cache.RecordRender(
 			ctx,
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt8,
 				Records: emptyRenderInventory,
@@ -262,9 +262,9 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": strconv.Itoa(i)}}
 		out, receipt9, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				ctx,
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt9,
 					Records: emptyRenderInventory,
@@ -468,9 +468,9 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 	)
 	var recordErr error
 	if err == nil {
-		recordErr = cli.RecordRender(
+		recordErr = cli.cache.RecordRender(
 			b.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   hr.Named(),
 				Receipt: receipt4,
 				Records: emptyRenderInventory,
@@ -512,9 +512,9 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 			RenderOptions{Options: Options{}, Sources: cliSources},
 		)
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				b.Context(),
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt6,
 					Records: emptyRenderInventory,
@@ -551,9 +551,9 @@ func benchmarkTemplateCRDsValidationCase(b *testing.B, count *int, policy *strin
 			RenderOptions{SkipCRDs: true, Sources: cliSources},
 		)
 		if err == nil {
-			if recordErr := cli.RecordRender(
+			if recordErr := cli.cache.RecordRender(
 				b.Context(),
-				RenderAcceptance{
+				sourcecache.RenderAcceptance{
 					Owner:   hr.Named(),
 					Receipt: receipt7,
 					Records: emptyRenderInventory,
@@ -579,9 +579,9 @@ func benchmarkTemplateSourceValuesNameLoop(b *testing.B, loopInputs struct {
 	b.Helper()
 
 	if (*loopInputs.err) == nil {
-		if recordErr := (*loopInputs.cli).RecordRender(
+		if recordErr := (*loopInputs.cli).cache.RecordRender(
 			b.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   (*loopInputs.hr).Named(),
 				Receipt: (*loopInputs.receipt3),
 				Records: emptyRenderInventory,
@@ -636,9 +636,9 @@ func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValue
 		RenderOptions{Options: Options{}, Sources: (*inputs.cliSources)},
 	)
 	if err == nil {
-		if recordErr := (*inputs.cli).RecordRender(
+		if recordErr := (*inputs.cli).cache.RecordRender(
 			b.Context(),
-			RenderAcceptance{
+			sourcecache.RenderAcceptance{
 				Owner:   (*inputs.hr).Named(),
 				Receipt: receipt5,
 				Records: emptyRenderInventory,

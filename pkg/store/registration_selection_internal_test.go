@@ -30,6 +30,8 @@ func TestReadRegistration_SelectedArtifact(t *testing.T) {
 			{"revision", ArtifactContent | ArtifactRevision, func(a *SourceArtifact) { a.Revision = "next" }, true},
 			{"content-only-origin", ArtifactContent, func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": ""} }, false},
 			{"origin-presence", ArtifactContent | ArtifactOrigin, func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": ""} }, true},
+			{"availability", ArtifactContent, func(a *SourceArtifact) { a.FS = nil }, true},
+			{"origin-only-presence", ArtifactOrigin, func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": ""} }, true},
 			{"content", ArtifactContent, func(a *SourceArtifact) { a.Content = "next" }, true},
 			{"union", ArtifactContent | ArtifactRevision | ArtifactOrigin, func(a *SourceArtifact) {
 				a.Content = "next"
@@ -53,6 +55,41 @@ func TestReadRegistration_SelectedArtifact(t *testing.T) {
 			testReadRegistrationSelectedArtifactCase2(t, &read)
 		},
 		)
+	}
+	for _, read := range []ArtifactRead{ArtifactRevision, ArtifactOrigin} {
+		for _, transition := range []string{"independent", "nil to present", "present to nil"} {
+			t.Run(fmt.Sprintf("mutable/%d/%s", read, transition), func(t *testing.T) {
+				t.Parallel()
+				st := New()
+				source := &manifest.GitRepository{Name: "source"}
+				st.AddObject(source)
+				first := &SourceArtifact{FS: fstest.MapFS{}}
+				next := *first
+				prior, replacement := first, &next
+				if transition == "nil to present" {
+					prior = nil
+				}
+				if transition == "present to nil" {
+					replacement = nil
+				}
+				st.SetArtifact(source.Named(), prior)
+				var before, current ReadSet
+				before.Init(st, ownerID("before"), nil)
+				current.Init(st, ownerID("current"), nil)
+				defer before.Retire()
+				defer current.Retire()
+				before.GetArtifact(source.Named(), read)
+				st.SetArtifact(source.Named(), replacement)
+				assert.Equal(t, current.Matches(&before), transition == "independent")
+				current.GetArtifact(source.Named(), read)
+				assert.Equal(
+					t,
+					compareCapturedContent(t, &current, &before, source.Named()),
+					transition == "independent",
+				)
+				assert.Equal(t, current.Valid(), true)
+			})
+		}
 	}
 }
 
@@ -169,6 +206,8 @@ func testReadRegistrationSelectedArtifactCase(
 	replay.Init(s, reads.ID(), nil)
 	defer replay.Close()
 	assert.Equal(t, replay.Matches(&reads), !testCaseInput.tc.invalid)
+	replay.GetArtifact(child.Obj.Named(), testCaseInput.tc.read)
+	assert.Equal(t, compareCapturedContent(t, &replay, &reads, child.Obj.Named()), !testCaseInput.tc.invalid)
 	if *testCaseInput.emitted {
 		s.RecordEmitted(producer, &Emission{Complete: true}, nil)
 		assert.Equal(t, s.GetArtifact(child.Obj.Named(), ArtifactContent), Artifact(direct))

@@ -441,7 +441,8 @@ func (d *Session) hasEntryBuilder() bool {
 	if input == nil {
 		return false
 	}
-	if input.SameMaterial(d.entryBuilderInput) && d.entryBuilderPath == d.cfg.Path {
+	if input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
+		d.entryBuilderPath == d.cfg.Path {
 		return d.entryBuilder
 	}
 	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, false

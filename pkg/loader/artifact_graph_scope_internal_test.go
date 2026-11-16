@@ -2,10 +2,12 @@ package loader
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -169,6 +171,34 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	}
 	slices.Sort(files)
 	assert.Diff(t, files, []string{"views/first/apps/generator.yaml", "views/second/apps/generator.yaml"})
+	mounted := maps.Clone(l.documents.artifacts)
+	firstRoot, secondRoot := filepath.Join(root, "views", "first"), filepath.Join(root, "views", "second")
+	mutable := *mounted[firstRoot]
+	mutable.Content = ""
+	mounted[firstRoot] = &mutable
+	assert.Diff(t, l.documents.setSources(mounted), []string{firstRoot})
+	firstView := l.documents.read(filepath.Join(firstRoot, "apps")).body
+	secondView := l.documents.read(filepath.Join(secondRoot, "apps")).body
+	assert.Equal(t, firstView.Namespace, "apps")
+	mounted = maps.Clone(mounted)
+	mounted[firstRoot] = mutable.WithReads(&store.ReadSet{}).WithReads(&store.ReadSet{})
+	assert.Equal(t, len(l.documents.setSources(mounted)), 0)
+	assert.Equal(t, l.documents.read(filepath.Join(firstRoot, "apps")).body, firstView)
+	replacement := mutable
+	mounted = maps.Clone(mounted)
+	mounted[firstRoot] = &replacement
+	assert.Diff(t, l.documents.setSources(mounted), []string{firstRoot})
+	assert.Equal(t, l.documents.read(filepath.Join(firstRoot, "apps")).body != firstView, true)
+	changed := mutable
+	changed.FS = fstest.MapFS{"apps/kustomization.yaml": {Data: []byte("namespace: replaced\n")}}
+	mounted = maps.Clone(mounted)
+	mounted[firstRoot] = &changed
+	assert.Diff(t, l.documents.setSources(mounted), []string{firstRoot})
+	changedView := l.documents.read(filepath.Join(firstRoot, "apps")).body
+	assert.Equal(t, changedView.Namespace, "replaced")
+	assert.Equal(t, changedView != firstView, true)
+	assert.Equal(t, firstView.Namespace, "apps")
+	assert.Equal(t, l.documents.read(filepath.Join(secondRoot, "apps")).body, secondView)
 }
 
 func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -50,6 +51,119 @@ func TestSourceArtifact_Coordinates(t *testing.T) {
 			}
 			assert.Equal(t, source, want)
 			assert.Equal(t, known, tc.known)
+		})
+	}
+}
+
+func TestSourceArtifact_SameMaterial(t *testing.T) {
+	t.Parallel()
+	st := New()
+	object := &manifest.ConfigMap{Name: "input"}
+	st.AddObject(object)
+	var stale ReadSet
+	stale.Init(st, ownerID("reader"), nil)
+	t.Cleanup(stale.Retire)
+	stale.GetObject(object.Named())
+	st.AddObject(&manifest.ConfigMap{Name: "input", Data: map[string]any{"value": "changed"}})
+	assert.Equal(t, stale.Valid(), false)
+	immutable := &SourceArtifact{Content: "generation", FS: &hookFS{open: func(string) (fs.File, error) {
+		t.Fatal("material equality opened a filesystem")
+		return nil, fs.ErrNotExist
+	}}}
+	peer := *immutable
+	mutable := &SourceArtifact{FS: immutable.FS, Revision: "revision"}
+	independent := *mutable
+	wrapper := mutable.WithReads(&ReadSet{}).WithReads(&stale)
+	all := ArtifactContent | ArtifactRevision | ArtifactOrigin
+	for _, read := range []ArtifactRead{0, ArtifactContent, ArtifactRevision, ArtifactOrigin, ArtifactContent | ArtifactRevision, ArtifactContent | ArtifactOrigin, ArtifactRevision | ArtifactOrigin, all} {
+		t.Run(fmt.Sprintf("identity/%d", read), func(t *testing.T) {
+			t.Parallel()
+			var absent *SourceArtifact
+			assert.Equal(t, absent.SameMaterial(nil, read), true)
+			assert.Equal(t, mutable.SameMaterial(mutable, read), true)
+			assert.Equal(t, wrapper.SameMaterial(wrapper, read), true)
+			assert.Equal(t, absent.SameMaterial(immutable, read), false)
+			assert.Equal(t, immutable.SameMaterial(absent, read), false)
+		})
+	}
+	for _, tc := range []struct {
+		name        string
+		first, next *SourceArtifact
+		read        ArtifactRead
+		equal       bool
+	}{
+		{"immutable peers", immutable, &peer, ArtifactContent, true},
+		{"mutable wrappers", mutable, wrapper, all, true},
+		{"independent mutable", mutable, &independent, ArtifactContent, false},
+		{"metadata revision", mutable, &independent, ArtifactRevision, true},
+		{"metadata origin", mutable, &independent, ArtifactOrigin, true},
+		{"metadata union", mutable, &independent, ArtifactRevision | ArtifactOrigin, true},
+		{"empty mask", immutable, mutable, 0, true},
+		{"unreadable peers", &SourceArtifact{}, &SourceArtifact{}, ArtifactContent, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.first.SameMaterial(tc.next, tc.read), tc.equal)
+			assert.Equal(t, tc.next.SameMaterial(tc.first, tc.read), tc.equal)
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*SourceArtifact)
+		read   ArtifactRead
+	}{
+		{"kind", func(a *SourceArtifact) { a.Kind = "other" }, ArtifactContent},
+		{"key", func(a *SourceArtifact) { a.Key = "other" }, ArtifactContent},
+		{"generation", func(a *SourceArtifact) { a.Content = "other" }, ArtifactContent},
+		{"digest", func(a *SourceArtifact) { a.Digest = "other" }, ArtifactContent},
+		{"local root", func(a *SourceArtifact) { a.LocalRoot = "other" }, ArtifactContent},
+		{"local path", func(a *SourceArtifact) { a.LocalPath = "other" }, ArtifactContent},
+		{"alias", func(a *SourceArtifact) { a.InputAlias = true }, ArtifactContent},
+		{"availability", func(a *SourceArtifact) { a.FS = nil }, ArtifactContent},
+		{"revision", func(a *SourceArtifact) { a.Revision = "other" }, ArtifactRevision},
+		{"origin presence", func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": ""} }, ArtifactOrigin},
+		{"origin value", func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": "other"} }, ArtifactOrigin},
+		{"URL", func(a *SourceArtifact) { a.URL = "other" }, 0},
+		{"reads", func(a *SourceArtifact) { a.Reads = &stale }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			next := *immutable
+			tc.change(&next)
+			assert.Equal(t, immutable.SameMaterial(&next, all), tc.read == 0)
+			assert.Equal(t, immutable.SameMaterial(&next, all&^tc.read), true)
+			if tc.read != 0 {
+				assert.Equal(t, immutable.SameMaterial(&next, tc.read), false)
+			}
+		})
+	}
+	t.Cleanup(func() { assert.Equal(t, wrapper.Reads.Valid(), false) })
+}
+
+func BenchmarkSourceArtifact_SameMaterial(b *testing.B) {
+	immutable := &SourceArtifact{Content: "generation", FS: fstest.MapFS{}}
+	peer := *immutable
+	mutable := &SourceArtifact{FS: immutable.FS, Revision: "revision"}
+	independent := *mutable
+	for _, tc := range []struct {
+		name        string
+		first, next *SourceArtifact
+		read        ArtifactRead
+		equal       bool
+	}{
+		{"identical", mutable, mutable, ArtifactContent, true},
+		{"immutable", immutable, &peer, ArtifactContent, true},
+		{"wrappers", mutable, mutable.WithReads(&ReadSet{}).WithReads(&ReadSet{}), ArtifactContent, true},
+		{"independent", mutable, &independent, ArtifactContent, false},
+		{"metadata", mutable, &independent, ArtifactRevision | ArtifactOrigin, true},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if tc.first.SameMaterial(tc.next, tc.read) != tc.equal {
+					b.Fatal("unexpected material equality")
+				}
+			}
 		})
 	}
 }

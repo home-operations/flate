@@ -839,9 +839,7 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 	x, xok := a.(*SourceArtifact)
 	y, yok := b.(*SourceArtifact)
 	if xok || yok {
-		material := mutableMaterial(a)
-		return ((x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) ||
-			material != nil && material == mutableMaterial(b)) && x.Input(read) == y.Input(read)
+		return x.SameMaterial(y, read)
 	}
 	return artifactValueEqual(a, b)
 }

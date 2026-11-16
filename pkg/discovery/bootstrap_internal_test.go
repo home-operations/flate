@@ -126,8 +126,13 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 		assert.FatalIf(t, err != nil || count != 1, "source republication = %d, %v", count, err)
 		current, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		assert.FatalIf(t, !ok, "republished source artifact has type %T", st.GetArtifact(id, store.ArtifactContent))
-		assert.FatalIf(t, current == after || !current.SameMaterial(after),
-			"source republication did not retain material in a new wrapper: %+v", current)
+		assert.FatalIf(
+			t,
+			current == after ||
+				!current.SameMaterial(after, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin),
+			"source republication did not retain material in a new wrapper: %+v",
+			current,
+		)
 		assert.FatalIf(t, current.Reads == nil || !current.Reads.Valid() || after.Reads.Valid(),
 			"source republication did not renew acquisition evidence: %+v", current)
 	}

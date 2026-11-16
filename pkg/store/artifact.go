@@ -63,17 +63,20 @@ func (a *SourceArtifact) WithReads(reads *ReadSet) *SourceArtifact {
 	return &captured
 }
 
-// SameMaterial compares acquisition identity independently of execution registrations.
-func (a *SourceArtifact) SameMaterial(other *SourceArtifact) bool {
+// SameMaterial MUST ignore execution registrations.
+// The identical-pointer path MUST inline during capture validation.
+func (a *SourceArtifact) SameMaterial(other *SourceArtifact, read ArtifactRead) bool {
+	return a == other || a.sameMaterial(other, read)
+}
+
+func (a *SourceArtifact) sameMaterial(other *SourceArtifact, read ArtifactRead) bool {
 	if a == nil || other == nil {
-		return a == other
+		return false
 	}
-	return a.Input(
-		ArtifactContent|ArtifactRevision|ArtifactOrigin,
-	) == other.Input(
-		ArtifactContent|ArtifactRevision|ArtifactOrigin,
-	) &&
-		a.mutableMaterial() == other.mutableMaterial()
+	if a.Input(read) != other.Input(read) {
+		return false
+	}
+	return read&ArtifactContent == 0 || a.mutableMaterial() == other.mutableMaterial()
 }
 
 func (a *SourceArtifact) mutableMaterial() *SourceArtifact {
@@ -184,42 +187,24 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact)
 	dispatch.run()
 }
 
-func mutableMaterial(artifact Artifact) *SourceArtifact {
-	if source, ok := artifact.(*SourceArtifact); ok {
-		return source.mutableMaterial()
-	}
-	return nil
-}
-
 func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifactRecord, value Artifact) bool {
-	var input ArtifactInput
-	if source, ok := value.(*SourceArtifact); ok {
-		input = source.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
-	}
-	var before ArtifactInput
-	if source, ok := record.effective.(*SourceArtifact); ok {
-		before = source.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
-	}
-	revision, origin, originPresent := before.Revision, before.Origin, before.OriginPresent
-	after := input
-	before.Revision, before.Origin, before.OriginPresent = "", "", false
-	after.Revision, after.Origin, after.OriginPresent = "", "", false
+	previousSource, _ := record.effective.(*SourceArtifact)
+	nextSource, _ := value.(*SourceArtifact)
+	before := previousSource.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+	input := nextSource.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
 	changed := ArtifactRead(0)
-	if before != after ||
-		input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
+	if !previousSource.SameMaterial(nextSource, ArtifactContent) {
 		changed |= ArtifactContent
 	}
 	if _, source := value.(*SourceArtifact); !source && record.effective != value {
 		changed |= ArtifactContent
 	}
-	if revision != input.Revision {
+	if before.Revision != input.Revision {
 		changed |= ArtifactRevision
 	}
-	if origin != input.Origin || originPresent != input.OriginPresent {
+	if before.Origin != input.Origin || before.OriginPresent != input.OriginPresent {
 		changed |= ArtifactOrigin
 	}
-	previousSource, _ := record.effective.(*SourceArtifact)
-	nextSource, _ := value.(*SourceArtifact)
 	acquisitionChanged := previousSource != nextSource
 	if acquisitionChanged {
 		changed |= 1 << (acquisitionFacet - contentFacet)

@@ -396,7 +396,10 @@ func (p *entryPlanner) source(
 		return nil, err
 	}
 	binding := p.session.resolvedSources.snapshot()[id]
-	if !binding.artifact.SameMaterial(before.artifact) {
+	if !binding.artifact.SameMaterial(
+		before.artifact,
+		store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+	) {
 		p.parsed = nil
 	}
 	if binding.artifact != nil {

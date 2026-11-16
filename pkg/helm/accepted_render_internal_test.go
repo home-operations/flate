@@ -1,8 +1,11 @@
 package helm
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
+	"os"
 	"sync/atomic"
 	"testing"
 
@@ -202,10 +205,49 @@ func TestPrepareTemplate_RetainedValuesReplacement(t *testing.T) {
 
 func TestPrepareTemplate_SourceBinding(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"revision", "url", "observed_content"} {
+	for _, name := range []string{"revision", "url", "observed_content", "mutable_wrapper", "missing_source"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			testPrepareTemplateSourceBinding(t, name)
+		})
+	}
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tracked revision/disabled=%t", disabled), func(t *testing.T) {
+			t.Parallel()
+			sources, hr, root := ociRenderFixture(t)
+			assert.Equal(t, hr.TracksDigest(), true)
+			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+			original := &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(root)),
+				Content: "immutable", Digest: digest, Revision: "6.15.0@" + digest,
+			}
+			sources.SetArtifact(hr.ChartSource(), original)
+			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			var preparation Preparation
+			defer preparation.Retire()
+			var recorder manifest.WorkRecorder
+			recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+			input := RenderOptions{
+				Preparation: &preparation, Sources: NewSources(sources), Work: recorder.Scope().RenderWork(),
+				DisableChartDigestTracking: disabled,
+			}
+			first, err := client.prepareTemplate(t.Context(), hr, nil, &input)
+			assert.NoError(t, err)
+			replacement := *original
+			replacement.Revision = "latest@" + digest
+			sources.SetArtifact(hr.ChartSource(), &replacement)
+			next, err := client.prepareTemplate(t.Context(), hr, nil, &input)
+			assert.NoError(t, err)
+			assert.Equal(t, next.source, &replacement)
+			assert.Equal(t, next.loaded.oci.Revision, replacement.Revision)
+			assert.Equal(t, next.loaded.oci.DisableTracking, disabled)
+			assert.Equal(t, first.loaded.oci.Revision, original.Revision)
+			assert.Equal(t, first.source, original)
+			var prepares uint64
+			for _, record := range recorder.Scope().Snapshot(0) {
+				prepares += record.Counts.OwnerPrepares
+			}
+			assert.Equal(t, prepares, uint64(2))
 		})
 	}
 }
@@ -221,7 +263,7 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	sources := store.New()
 	original := *localChartResolver(t, "chart-repo", "flux-system", root).chartInput(hr)
 	original.Revision = "first"
-	if name != "observed_content" {
+	if name != "observed_content" && name != "mutable_wrapper" {
 		original.Content = "immutable-source"
 	}
 	sources.SetArtifact(hr.ChartSource(), &original)
@@ -239,11 +281,25 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	assert.NoError(t, err)
 	assert.Equal(t, &first.binding.Options.SkipKinds[0] != &input.SkipKinds[0], true)
 	current := &original
-	if name == "observed_content" {
+	if name == "missing_source" {
+		sources.SetArtifact(hr.ChartSource(), nil)
+		_, missing := client.prepareTemplate(t.Context(), hr, nil, &input)
+		assert.Equal(t, errors.Is(missing, manifest.ErrObjectNotFound), true)
+		assert.Equal(t, errors.Is(missing, manifest.ErrFlux), true)
+		assert.Equal(t, missing.Error(), "GitRepository flux-system-chart-repo artifact content unavailable")
+		assert.Equal(t, preparation.source, &original)
+		assert.Equal(t, first.source, &original)
+		return
+	}
+	switch name {
+	case "mutable_wrapper":
+		current = original.WithReads(&store.ReadSet{}).WithReads(&store.ReadSet{})
+		sources.SetArtifact(hr.ChartSource(), current)
+	case "observed_content":
 		preparation.binding.Revision, preparation.loaded.artifact.Revision = "stale", "stale"
 		preparation.binding.URL, preparation.loaded.artifact.URL = "stale", "stale"
 		first.Preparation = preparation
-	} else {
+	default:
 		replacement := original
 		if name == "revision" {
 			replacement.Revision = "second"
@@ -289,4 +345,42 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	}
 	assert.Equal(t, counts, manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1, RawKeyPrepares: 3})
 	t.Logf("preparation work: %+v", counts)
+	if name == "mutable_wrapper" {
+		var renderRecorder manifest.WorkRecorder
+		renderRecorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+		input.Work = renderRecorder.Scope().RenderWork()
+		initial, _, err := client.Template(t.Context(), hr, nil, input)
+		assert.NoError(t, err)
+		initialBytes, err := manifest.EncodeRender(initial)
+		assert.NoError(t, err)
+		testutil.WriteFile(
+			t,
+			root,
+			"mychart/templates/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed}\n",
+		)
+		changed, _, err := client.Template(t.Context(), hr, nil, input)
+		assert.NoError(t, err)
+		changedBytes, err := manifest.EncodeRender(changed)
+		assert.NoError(t, err)
+		repeated, _, err := client.Template(t.Context(), hr, nil, input)
+		assert.NoError(t, err)
+		repeatedBytes, err := manifest.EncodeRender(repeated)
+		assert.NoError(t, err)
+		assert.Equal(t, string(changedBytes) != string(initialBytes), true)
+		assert.Equal(t, string(repeatedBytes), string(changedBytes))
+		assert.Equal(t, preparation.key != first.key, true)
+		assert.Equal(t, first.source, &original)
+		var prepares, engines uint64
+		records := renderRecorder.Scope().Snapshot(0)
+		for i := range records {
+			record := &records[i]
+			prepares += record.Counts.OwnerPrepares
+			if record.Key.Phase == manifest.WorkHelm {
+				engines += record.Counts.Attempts
+			}
+		}
+		assert.Equal(t, prepares, uint64(1))
+		assert.Equal(t, engines, uint64(2))
+	}
 }

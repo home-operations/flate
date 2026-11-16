@@ -69,7 +69,10 @@ func TestAdmission_Publish(t *testing.T) {
 			assert.Equal(t, resolution.object == offered, true)
 			assert.Equal(t, st.GetObject(id) == offered, true)
 			publishedArtifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-			assert.Equal(t, publishedArtifact.SameMaterial(resolution.artifact), true)
+			sameMaterial := publishedArtifact.SameMaterial(
+				resolution.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+			)
+			assert.Equal(t, sameMaterial, true)
 			assert.Equal(t, publishedArtifact.Reads != nil, true)
 			assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 			assert.Equal(t, resolution.input == a.input, true)
@@ -234,7 +237,10 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 			assertResolution(t, owner.snapshot()[object.Named()], complete)
 			assert.Equal(t, st.GetObject(object.Named()) == complete.object, true)
 			publishedArtifact := st.GetArtifact(object.Named(), store.ArtifactContent).(*store.SourceArtifact)
-			assert.Equal(t, publishedArtifact.SameMaterial(complete.artifact), true)
+			sameMaterial := publishedArtifact.SameMaterial(
+				complete.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+			)
+			assert.Equal(t, sameMaterial, true)
 			assert.Equal(t, publishedArtifact.Reads != nil, true)
 			assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 		})
@@ -268,7 +274,10 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.NoError(t, err)
 		assertResolution(t, d.resolvedSources.snapshot()[id], before)
 		publishedBefore := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		assert.Equal(t, publishedBefore.SameMaterial(before.artifact), true)
+		sameMaterial := publishedBefore.SameMaterial(
+			before.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		)
+		assert.Equal(t, sameMaterial, true)
 		assert.Equal(t, publishedBefore.Reads != nil, true)
 		assert.Equal(t, publishedBefore.Reads.Valid(), true)
 		assert.Equal(t, d.aliasViews[before.viewKey] == before.artifact, true)
@@ -287,7 +296,10 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.Equal(t, after.viewKey, before.viewKey)
 		assert.Equal(t, after.artifact.Revision, "refreshed")
 		publishedAfter := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		assert.Equal(t, publishedAfter.SameMaterial(after.artifact), true)
+		sameMaterial = publishedAfter.SameMaterial(
+			after.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		)
+		assert.Equal(t, sameMaterial, true)
 		assert.Equal(t, publishedAfter.Reads != nil, true)
 		assert.Equal(t, publishedAfter.Reads.Valid(), true)
 		assert.Equal(t, len(d.aliasViews), 0)
@@ -387,7 +399,11 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 		assert.Equal(t, got.viewKey, expected[i].viewKey)
 		assert.Diff(t, got.warnings, expected[i].warnings)
 		artifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		assert.Equal(t, artifact.SameMaterial(got.artifact), true)
+		assert.Equal(
+			t,
+			artifact.SameMaterial(got.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin),
+			true,
+		)
 		assert.Equal(t, artifact.Reads != nil, true)
 		assert.Equal(t, artifact.Reads.Valid(), true)
 		for _, value := range []*store.SourceArtifact{got.artifact, artifact} {
@@ -618,7 +634,10 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), root))
 	assert.Equal(t, st.GetObject(id) == alias.object, true)
 	publishedArtifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	assert.Equal(t, publishedArtifact.SameMaterial(alias.artifact), true)
+	sameMaterial := publishedArtifact.SameMaterial(
+		alias.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+	)
+	assert.Equal(t, sameMaterial, true)
 	assert.Equal(t, publishedArtifact.Reads != nil, true)
 	assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 	status, ok := st.GetStatus(id)

@@ -141,15 +141,6 @@ func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) boo
 	return p.cache == cache && owner && policy && location
 }
 
-func (p *Preparation) matchesSource(source *store.SourceArtifact) bool {
-	if p.source == source {
-		return true
-	}
-	return p.source != nil && source != nil && source.Content != "" &&
-		p.source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ==
-			source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
-}
-
 type renderRequest struct {
 	Preparation
 
@@ -158,22 +149,18 @@ type renderRequest struct {
 	maxAge  time.Duration
 }
 
-func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) (renderRequest, error) {
-	req := *incoming
+func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (renderRequest, error) {
 	work := req.Work.Preparation()
-	if c == nil {
-		err := manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
-		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-		work.Finish(err)
-		return renderRequest{}, err
+	var err error
+	switch {
+	case c == nil:
+		err = manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
+	case ctx.Err() != nil:
+		err = ctx.Err()
+	case req.Source == nil || req.Source.FS == nil:
+		err = manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
 	}
-	if err := ctx.Err(); err != nil {
-		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-		work.Finish(err)
-		return renderRequest{}, err
-	}
-	if req.Source == nil || req.Source.FS == nil {
-		err := manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
+	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, err
@@ -181,34 +168,43 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
 	var ignore any
 	if req.ApplyIgnore {
-		input, err := c.sourceRootFor(ctx, req.Source, root)
-		if err != nil {
+		input, inputErr := c.sourceRootFor(ctx, req.Source, root)
+		if inputErr != nil {
 			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-			work.Finish(err)
-			return renderRequest{}, err
+			work.Finish(inputErr)
+			return renderRequest{}, inputErr
 		}
 		lower, ignore = input.fs, input.ignore
 	}
-	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
-	if previous := req.Preparation; previous != nil && previous.complete {
-		inputs := previous.root == root && previous.subPath == req.SubPath && previous.applyIgnore == req.ApplyIgnore
-		if inputs && previous.matchesOwner(c, &req) && previous.matchesSource(req.Source) {
-			req.Work.Fingerprint(previous.key)
-			previous.bindSource(&req)
-			return renderRequest{Preparation: *previous}, nil
+	previous, key := req.Preparation, ""
+	if previous != nil && previous.complete && previous.root == root {
+		if previous.matchesOwner(c, req) && previous.source.SameMaterial(
+			req.Source,
+			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		) {
+			key = previous.key
 		}
 	}
-	if req.Preparation != nil {
-		req.Preparation.Retire()
+	if key != "" && req.ApplyIgnore && previous.lower != lower {
+		key = renderKey(req, root, ignore)
+		previous.lower = lower
 	}
+	if key != "" && key == previous.key {
+		req.Work.Fingerprint(key)
+		previous.bindSource(req)
+		return renderRequest{Preparation: *previous}, nil
+	}
+	req.Preparation.Retire()
 	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-	key := renderKey(&req, root, ignore)
+	if key == "" {
+		key = renderKey(req, root, ignore)
+	}
 	req.Work.Fingerprint(key)
 	work.Finish(nil)
 	prepared := Preparation{
@@ -216,7 +212,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 		applyIgnore: req.ApplyIgnore,
 		lower:       lower, root: root, key: key,
 	}
-	prepared.bindSource(&req)
+	prepared.bindSource(req)
 	if req.Preparation != nil {
 		*req.Preparation = prepared
 	}

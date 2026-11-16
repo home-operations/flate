@@ -44,7 +44,11 @@ func TestAdmission_ReplacementKeepsSelfSourceMaterial(t *testing.T) {
 	child, material, err := result.Admission.Resolve(t.Context(), id, replacement, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, child.Obj == replacement, true)
-	assert.Equal(t, material.SameMaterial(before), true)
+	assert.Equal(
+		t,
+		material.SameMaterial(before, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin),
+		true,
+	)
 	assert.Equal(t, material.Reads.Valid(), true)
 	data, err := fs.ReadFile(material.FS, "apps/file")
 	assert.NoError(t, err)

@@ -40,20 +40,15 @@ func (q *entryQualification) close() {
 	*q = entryQualification{}
 }
 
-// TakePreparation MUST run only on the matching owner after construction freezes.
-func (r *Result) TakePreparation(
-	cache *kustomize.TreeCache,
-	request *kustomize.RenderRequest,
-	destination *kustomize.Preparation,
-) bool {
-	if r == nil || request.Spec == nil {
-		return false
+// Preparation MUST be accessed only by the matching owner after construction freezes.
+func (r *Result) Preparation(id manifest.NamedResource) *kustomize.Preparation {
+	if r == nil {
+		return nil
 	}
-	id := request.Spec.Named()
-	if frame := r.prepared[id]; frame != nil && destination.Take(&frame.preparation, cache, request) {
-		return true
+	if frame := r.prepared[id]; frame != nil {
+		return &frame.preparation
 	}
-	return false
+	return nil
 }
 
 func (p *declarationPreparation) captureSupport(st *store.Store, source manifest.NamedResource) {
@@ -72,7 +67,7 @@ func (p *declarationPreparation) retireSupport(st *store.Store) {
 }
 
 func (p *declarationPreparation) retire(st *store.Store) {
-	p.preparation.Retire()
+	p.preparation = kustomize.Preparation{}
 	p.retireSupport(st)
 	p.work, p.owner, p.source, p.receipt, p.content = nil, nil, nil, nil, nil
 	p.children, p.warnings = nil, nil
@@ -95,7 +90,7 @@ func (r *Result) Close() {
 		if q := r.Admission.qualification; q != nil {
 			q.close()
 		}
-		r.Admission.entryPreparation.Retire()
+		r.Admission.entryPreparation = kustomize.Preparation{}
 		r.Admission.entryRequest = kustomize.RenderRequest{}
 		r.Admission.acceptedEntry = nil
 	}
@@ -130,7 +125,7 @@ func (d *Session) Close() {
 		if q := d.entryAdmission.qualification; q != nil {
 			q.close()
 		}
-		d.entryAdmission.entryPreparation.Retire()
+		d.entryAdmission.entryPreparation = kustomize.Preparation{}
 		d.entryAdmission.entryRequest = kustomize.RenderRequest{}
 		d.entryAdmission.acceptedEntry = nil
 	}

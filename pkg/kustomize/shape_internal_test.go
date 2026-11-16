@@ -410,7 +410,7 @@ func testRenderRequestContentUnprovedAlwaysCase(
 		},
 	}
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{Spec: ks, Source: &store.SourceArtifact{}, Preparation: &preparation}
 	shaping := PrepareShape(&req, docs)
 	content := shaping.Content()
@@ -457,7 +457,7 @@ func TestShaping_ReusesPreparedDocuments(t *testing.T) {
 				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "readable"}},
 			}
 			var preparation Preparation
-			t.Cleanup(preparation.Retire)
+			t.Cleanup(func() { preparation = Preparation{} })
 			request := RenderRequest{Spec: ks, Preparation: &preparation}
 			shaping := PrepareShape(&request, docs)
 			before := manifest.Fingerprint(shaping.Content())

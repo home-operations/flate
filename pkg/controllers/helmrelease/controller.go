@@ -28,32 +28,15 @@ type Controller struct {
 type execution struct {
 	*Controller
 
-	preparation helm.Preparation
+	base.Preparation[helm.Preparation]
 
-	run  base.Execution
-	data values.Provider
+	run base.Execution
 }
 
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.run.Preparation = execution
-	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
-}
-
-func (c *execution) Retire() {
-	c.preparation.Retire()
-	c.data = nil
-}
-
-func (c *execution) prepareRequest(declaration *manifest.HelmRelease, request *helm.RenderOptions) {
-	if previous, ok := c.run.Preparation.(*execution); ok && previous != c {
-		c.preparation.Take(&previous.preparation, c.Helm, declaration, request)
-		previous.Retire()
-	}
-	c.run.Preparation = c
-	request.Preparation = &c.preparation
 }
 
 // New constructs a HelmRelease controller.
@@ -150,7 +133,9 @@ func (c *execution) render(
 		}
 		return false, nil
 	}
-	c.prepareRequest(hr, &input)
+	input.Preparation = c.run.Prepare(&c.Preparation, nil, func(p *helm.Preparation) bool {
+		return p.Matches(c.Helm, hr, &input)
+	})
 	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if err != nil {
 		if _, rendering := errors.AsType[*helm.RenderError](err); rendering {
@@ -219,28 +204,12 @@ func (c *Controller) PreviousRender(
 	if !ok || ctx.Err() != nil {
 		return base.History{}
 	}
-	ex := &execution{Controller: c}
-	ex.run.InitProbe(c.Controller, obj)
-	ex.run.Preparation = ex
-	ex.run.Take(previous)
-	reads := &ex.run.Reads
-	history := base.History{Assessment: &ex.run}
-	data := values.NewStoreProvider(reads)
-	ex.data = data
-	inputs, err := ex.run.DataInputs(ctx, hr, data)
+	var ex execution
+	history, results, err := ex.run.Probe(ctx, c.Controller, obj, previous)
 	if err != nil {
 		return history
 	}
-	var results []values.Result
-	if err = ex.run.AwaitData(ctx, base.DataWait{
-		Inputs: inputs,
-		Resume: func(_ context.Context, _ manifest.DrainLevel, inputs []values.Result) error {
-			results = inputs
-			return nil
-		},
-	}, manifest.DrainNone); err != nil {
-		return history
-	}
+	reads := &ex.run.Reads
 	hr, err = helm.Prepare(hr, helm.NewSources(reads).Declaration, results, c.Helm.ValuesCache())
 	if err != nil {
 		return history
@@ -250,7 +219,9 @@ func (c *Controller) PreviousRender(
 		Sources: helm.NewSources(reads), PreparationTasks: c.Tasks,
 		Omitted: values.OmittedIDs(results),
 	}
-	ex.prepareRequest(hr, &request)
+	request.Preparation = ex.run.Prepare(&ex.Preparation, nil, func(p *helm.Preparation) bool {
+		return p.Matches(c.Helm, hr, &request)
+	})
 	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)
 	if !found {
 		return history

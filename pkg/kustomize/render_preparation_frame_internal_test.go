@@ -14,7 +14,7 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 	t.Parallel()
 	cache := newTestTreeCache(t, "")
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	var previous *byte
 	for _, value := range []string{"first", "second"} {
 		output := testRenderEncoding(t, []map[string]any{{"value": value}})
@@ -56,9 +56,10 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 	}
 	preparation.cache, preparation.complete = cache, true
 	var next Preparation
-	assert.Equal(t, next.Take(&preparation, cache, &RenderRequest{}), true)
+	assert.Equal(t, preparation.Matches(cache, &RenderRequest{}), true)
+	next, preparation = preparation, Preparation{}
 	assert.Equal(t, preparation.decoded == nil, true)
 	assert.Equal(t, &next.decoded.frame.Output[0] == previous, true)
-	next.Retire()
+	next = Preparation{}
 	assert.Equal(t, next.decoded == nil, true)
 }

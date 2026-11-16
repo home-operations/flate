@@ -26,7 +26,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	assert.Equal(t, cache.owner.CanPersistRenders(), persistent)
 	spec := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	var cell Preparation
-	t.Cleanup(cell.Retire)
+	t.Cleanup(func() { cell = Preparation{} })
 	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: ".", Preparation: &cell}
 	cold := cache.PreviousEntry(t.Context(), request)
 	assert.Equal(t, cold.Application == nil, true)
@@ -142,7 +142,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	testutil.WriteFile(t, root, "generator.yaml", "original producer input")
 	testutil.WriteFile(t, root, "optional.yaml", "new producer input")
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Application == nil, true)
-	cell.Retire()
+	cell = Preparation{}
 	assert.Equal(t, cell.complete || cell.source != nil || cell.spec != nil || cell.lower != nil, false)
 }
 
@@ -157,8 +157,8 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 			renderer := newTestTreeCache(t, t.TempDir())
 			assert.Equal(t, renderer.owner.CanPersistRenders(), persistent)
 			var preparation, successor Preparation
-			t.Cleanup(preparation.Retire)
-			t.Cleanup(successor.Retire)
+			t.Cleanup(func() { preparation = Preparation{} })
+			t.Cleanup(func() { successor = Preparation{} })
 			source := localSource(t, root)
 			source.Content, source.Revision, source.URL = "equal-entry-content", "same-revision", "https://example.test/before"
 			request := RenderRequest{Source: source, SubPath: ".", Preparation: &preparation}
@@ -185,7 +185,8 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 			_, err = prior.publication.WriteTo(&priorWire)
 			assert.NoError(t, err)
 			if lifetime == "transferred" {
-				assert.Equal(t, successor.Take(&preparation, renderer, &request), true)
+				assert.Equal(t, preparation.Matches(renderer, &request), true)
+				successor, preparation = preparation, Preparation{}
 				assert.Equal(t, preparation.complete || preparation.source != nil, false)
 				request.Preparation = &successor
 			}

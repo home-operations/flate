@@ -67,9 +67,8 @@ func TestPrepare_AuthoredReferencePolicy(t *testing.T) {
 		"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 	})
 	client := NewClient(cachetest.New(t, "", cache.New))
-	var previous, next Preparation
-	defer previous.Retire()
-	defer next.Retire()
+	var previous Preparation
+	defer func() { previous = Preparation{} }()
 	request := RenderOptions{
 		Preparation: &previous,
 		Sources:     localChartResolver(t, "chart-repo", "flux-system", root),
@@ -78,9 +77,8 @@ func TestPrepare_AuthoredReferencePolicy(t *testing.T) {
 	_, err := client.prepareTemplate(t.Context(), releases[0], releases[0].Values, &request)
 	assert.NoError(t, err)
 	request.Omitted = values.OmittedIDs(inputs[1])
-	assert.Equal(t, next.Take(&previous, client, releases[1], &request), true)
+	assert.Equal(t, previous.Matches(client, releases[1], &request), true)
 	assert.Equal(t, manifest.Equal(hr, before), true)
-	next.Retire()
 	assert.FatalIf(t, len(releases[0].ValuesFrom) != 1, "authored reference was removed")
 	releases[0].ValuesFrom[0].Name = "mutated"
 	assert.Equal(t, hr.ValuesFrom[0].Name, "late")

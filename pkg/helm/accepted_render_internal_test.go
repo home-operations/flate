@@ -68,7 +68,7 @@ func testPrepareTemplateInputGeneration(t *testing.T, first string) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 	var preparation Preparation
-	defer preparation.Retire()
+	defer func() { preparation = Preparation{} }()
 	input := RenderOptions{
 		Preparation: &preparation,
 		Sources:     localChartResolver(t, "chart-repo", "flux-system", root),
@@ -144,7 +144,7 @@ func TestPrepareTemplate_MutableSuppliedValues(t *testing.T) {
 			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			hr := newHR()
 			var preparation Preparation
-			defer preparation.Retire()
+			defer func() { preparation = Preparation{} }()
 			input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 			if retained {
 				input.Preparation = &preparation
@@ -153,7 +153,7 @@ func TestPrepareTemplate_MutableSuppliedValues(t *testing.T) {
 			first, err := client.prepareTemplate(t.Context(), hr, values, &input)
 			assert.NoError(t, err)
 			if retained {
-				preparation.Retire()
+				preparation = Preparation{}
 			}
 			values["answer"] = "second"
 			second, err := client.prepareTemplate(t.Context(), hr.Clone(), values, &input)
@@ -177,13 +177,14 @@ func TestPrepareTemplate_RetainedValuesReplacement(t *testing.T) {
 	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	hr := newHR()
 	var preparation, successor Preparation
-	defer preparation.Retire()
-	defer successor.Retire()
+	defer func() { preparation = Preparation{} }()
+	defer func() { successor = Preparation{} }()
 	input := RenderOptions{Preparation: &preparation, Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	original := map[string]any{"nested": map[string]any{"answer": "first"}, "list": []any{"first"}}
 	first, err := client.prepareTemplate(t.Context(), hr, original, &input)
 	assert.NoError(t, err)
-	assert.Equal(t, successor.Take(&preparation, client, hr, &input), true)
+	assert.Equal(t, preparation.Matches(client, hr, &input), true)
+	successor, preparation = preparation, Preparation{}
 	assert.Equal(t, preparation.complete, false)
 	input.Preparation = &successor
 	repeated, err := client.prepareTemplate(t.Context(), hr.Clone(), original, &input)
@@ -194,7 +195,7 @@ func TestPrepareTemplate_RetainedValuesReplacement(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, next.key != first.key, true)
 	assert.Diff(t, original, map[string]any{"nested": map[string]any{"answer": "first"}, "list": []any{"first"}})
-	successor.Retire()
+	successor = Preparation{}
 	assert.Equal(t, successor.values == nil, true)
 	replacement["nested"].(map[string]any)["answer"] = "third"
 	replacement["list"].([]any)[0] = "third"
@@ -224,7 +225,7 @@ func TestPrepareTemplate_SourceBinding(t *testing.T) {
 			sources.SetArtifact(hr.ChartSource(), original)
 			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			var preparation Preparation
-			defer preparation.Retire()
+			defer func() { preparation = Preparation{} }()
 			var recorder manifest.WorkRecorder
 			recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 			input := RenderOptions{
@@ -270,7 +271,7 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 	var preparation Preparation
-	defer preparation.Retire()
+	defer func() { preparation = Preparation{} }()
 	input := RenderOptions{
 		Preparation: &preparation,
 		Sources:     NewSources(sources),

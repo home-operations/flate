@@ -40,7 +40,7 @@ func TestShaping_ReuseBoundaries(t *testing.T) {
 				return ks
 			}
 			var preparation Preparation
-			t.Cleanup(preparation.Retire)
+			t.Cleanup(func() { preparation = Preparation{} })
 			first := RenderRequest{Spec: spec(tc.before), Preparation: &preparation}
 			PrepareShape(&first, documents(tc.first))
 			second := RenderRequest{Spec: spec(tc.after), Preparation: &preparation}

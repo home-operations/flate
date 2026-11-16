@@ -117,26 +117,11 @@ type Preparation struct {
 	binding        sourcecache.RenderBinding[renderPolicy]
 }
 
-// Retire MUST follow the final consumer and clears retained input references.
-func (p *Preparation) Retire() {
-	if p != nil {
-		*p = Preparation{}
-	}
-}
-
-// Take MUST NOT move a live capture or grant publication authority.
-func (p *Preparation) Take(previous *Preparation, cache *TreeCache, request *RenderRequest) bool {
-	if p == nil || p.complete || previous == nil || !previous.complete {
+// Matches MUST NOT grant publication authority or validate current source bytes.
+func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
+	if p == nil || !p.complete {
 		return false
 	}
-	if !previous.matchesOwner(cache, request) {
-		return false
-	}
-	*p, *previous = *previous, Preparation{}
-	return true
-}
-
-func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) bool {
 	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
 	policy := p.binding.Policy.Strict == request.StrictSubstitutions &&
 		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
@@ -186,8 +171,8 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
 	previous, key := req.Preparation, ""
-	if previous != nil && previous.complete && previous.root == root {
-		if previous.matchesOwner(c, req) && previous.source.SameMaterial(
+	if previous.Matches(c, req) && previous.root == root {
+		if previous.source.SameMaterial(
 			req.Source,
 			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
 		) {
@@ -203,7 +188,9 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		previous.bindSource(req)
 		return renderRequest{Preparation: *previous}, nil
 	}
-	req.Preparation.Retire()
+	if req.Preparation != nil {
+		*req.Preparation = Preparation{}
+	}
 	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	if key == "" {
 		key = renderKey(req, root, ignore)

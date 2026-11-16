@@ -23,7 +23,7 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 	scope := recorder.Scope()
 	h.req.Work = scope.RenderWork()
 	var cell Preparation
-	defer cell.Retire()
+	defer func() { cell = Preparation{} }()
 	h.req.Preparation = &cell
 	_, receipt, available := h.cache.PreviousRender(t.Context(), h.req)
 	_, complete := h.cache.RenderHistory(h.req.Spec.Named(), receipt, h.content)
@@ -63,6 +63,6 @@ func TestPreviousRender_RecordsHistory(t *testing.T) {
 		wantPreparation = 0
 	}
 	assert.Equal(t, preparation.OwnerPrepares, wantPreparation)
-	cell.Retire()
+	cell = Preparation{}
 	assert.Equal(t, cell.complete || cell.source != nil || cell.spec != nil || cell.lower != nil, false)
 }

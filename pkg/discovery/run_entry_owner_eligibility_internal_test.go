@@ -27,13 +27,106 @@ import (
 func TestRun_EntryOwnerEligibility(t *testing.T) {
 	t.Parallel()
 	t.Run("independent", func(t *testing.T) { t.Parallel(); testRunEntryOwnerEligibilityIndependent(t) })
-	for _, scenario := range []string{"transitive_index_only", "transitive_admitted", "effective_batch", "generated_target", "production_declaration", "owner_production", "foreign_production", "cycle", "self_cycle", "deferred_required", "deferred_optional", "stable_then_changed"} {
+	for _, scenario := range []string{"transitive_index_only", "transitive_admitted", "effective_batch", "generated_target", "production_declaration", "owner_production", "foreign_production", "cycle", "self_cycle", "deferred_required", "deferred_optional", "stable_then_changed", "source_absent_independent", "source_absent_dependent"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			testRunEntryOwnerEligibilityCase(t, &scenario)
 		},
 		)
 	}
+}
+
+func TestEntryCandidateReady_SourcePublication(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/pending-entry-owner"
+	owner := &manifest.Kustomization{
+		Name: "owner", Namespace: "apps", Path: "./entry",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pending"},
+	}
+	encoded, err := json.Marshal(testutil.ObjectDocument(owner))
+	assert.NoError(t, err)
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, cm.yaml]\n")},
+		"entry/owner.yaml":         {Data: encoded},
+		"entry/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {source: published}\n",
+			),
+		},
+	}}
+	st := store.New()
+	st.AddObject(owner)
+	d := newDiscoverer(new(testConfig(t, Config{Store: st, Input: input, Path: root + "/entry"})))
+	t.Cleanup(d.Close)
+	_, err = d.resolveTestSources(t.Context(), false)
+	assert.NoError(t, err)
+	d.loader.SourceRoot = root
+	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	_, err = d.resolveEntrySources(t.Context(), true)
+	assert.Equal(t, errors.Is(err, errPendingSources), true)
+	sourceID := owner.EffectiveSourceID()
+	published := d.resolvedSources.snapshot()[sourceID].artifact
+	assert.FatalIf(t, published == nil, "missing selected local source")
+	assert.Equal(t, st.GetArtifact(sourceID, store.ArtifactContent) == nil, true)
+	var reads store.ReadSet
+	reads.Init(st, owner.Named(), nil)
+	t.Cleanup(reads.ReleaseCapture)
+	t.Cleanup(reads.Retire)
+	assert.Equal(t, d.entryCandidateReady(t.Context(), &reads, owner), true)
+	assert.Equal(t, reads.Valid(), true)
+	assert.Equal(t, bindEntryForTest(t, d, root), owner)
+	assessment := d.admission().assessment
+	assert.FatalIf(t, assessment == nil || !assessment.Valid(), "missing accepted entry assessment")
+	assert.Equal(t, d.prepared[owner.Named()] == nil, true)
+	_, _, emission := st.GetEmission(owner.Named())
+	assert.Equal(t, emission.Complete, false)
+	assert.Equal(t, len(emission.Manifests), 0)
+	emission.Finish()
+
+	st.SetArtifact(sourceID, published)
+	st.UpdateStatus(sourceID, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSucceeded})
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, assessment.Valid(), false)
+	prepared, err := d.prepareStandaloneEntry(t.Context(), root, d.loader)
+	assert.NoError(t, err)
+	assert.Equal(t, prepared, true)
+	assert.Equal(t, d.binding.Producer, owner.Named())
+	assert.Equal(t, d.binding.Source, sourceID)
+	assert.Equal(t, st.GetDeclaration(owner.Named()), manifest.BaseManifest(owner))
+	assert.Equal(t, d.admission().assessment != assessment, true)
+	assert.Equal(t, d.admission().assessment.Valid(), true)
+	frame := d.prepared[owner.Named()]
+	assert.FatalIf(
+		t,
+		frame == nil || !frame.complete || !frame.registered,
+		"published source did not prepare retained owner",
+	)
+	assert.Equal(t, frame.source, published)
+	children := make([]manifest.NamedResource, 0, len(frame.children))
+	for _, child := range frame.children {
+		children = append(children, child.Obj.Named())
+	}
+	output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "output"}
+	want := []manifest.NamedResource{output}
+	slices.SortFunc(children, manifest.NamedResource.Compare)
+	slices.SortFunc(want, manifest.NamedResource.Compare)
+	assert.Diff(t, children, want)
+	record, ok := d.loader.Index.Lookup(output)
+	assert.Equal(t, ok, true)
+	assert.Equal(t, record.Parent, owner.Named())
+	assert.Diff(
+		t,
+		record.Productions,
+		[]manifest.Production{{Owner: owner.Named(), Authored: output, Source: sourceID, File: "entry/cm.yaml"}},
+	)
+	body, err := fs.ReadFile(frame.source.FS, "entry/cm.yaml")
+	assert.NoError(t, err)
+	assert.Equal(
+		t,
+		string(body),
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {source: published}\n",
+	)
 }
 
 func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
@@ -516,6 +609,12 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 			},
 		}
 	}
+	if strings.HasPrefix(*testCaseInput, "source_absent_") {
+		owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pending"}
+		if *testCaseInput == "source_absent_independent" {
+			owner.DependsOn = nil
+		}
+	}
 	st := store.New()
 	encoded, err := json.Marshal(testutil.ObjectDocument(owner))
 	assert.NoError(t, err)
@@ -537,6 +636,9 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: ready}
+	if strings.HasPrefix(*testCaseInput, "source_absent_") {
+		st.SetArtifact(owner.EffectiveSourceID(), nil)
+	}
 	if (*testCaseInput) == "cycle" {
 		loop := &manifest.Kustomization{Name: "loop", Namespace: "apps"}
 		loop.DependsOn = []kustomizev1.DependencyReference{{Name: ready.Name}}
@@ -596,7 +698,8 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 	selected, err := (*tailCaseInput.d).bindEntry(t.Context(), tailCaseInput.root)
 	assert.NoError(t, err)
 	wantOwner := (*(*tailCaseInput.testCaseInput)) == "cycle" || (*(*tailCaseInput.testCaseInput)) == "self_cycle" ||
-		(*(*tailCaseInput.testCaseInput)) == "foreign_production"
+		(*(*tailCaseInput.testCaseInput)) == "foreign_production" ||
+		(*(*tailCaseInput.testCaseInput)) == "source_absent_independent"
 	assert.Equal(t, selected == (*tailCaseInput.owner), wantOwner)
 	assert.FatalIf(
 		t,
@@ -610,6 +713,20 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 			_, prepared := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()]
 			assert.FatalIf(t, prepared, "%v", "referenced substitution admitted an incomplete preparation")
 		}
+	}
+	if strings.HasPrefix(*(*tailCaseInput.testCaseInput), "source_absent_") {
+		owner, st, d := *tailCaseInput.owner, *tailCaseInput.st, *tailCaseInput.d
+		assert.Equal(t, st.GetDeclaration(owner.Named()), manifest.BaseManifest(owner))
+		assert.Equal(
+			t,
+			st.GetDeclaration(owner.Named()).(*manifest.Kustomization).EffectiveSourceID(),
+			owner.EffectiveSourceID(),
+		)
+		assert.Equal(t, d.prepared[owner.Named()] == nil, true)
+		_, _, emission := st.GetEmission(owner.Named())
+		defer emission.Finish()
+		assert.Equal(t, emission.Complete, false)
+		assert.Equal(t, len(emission.Manifests), 0)
 	}
 	if (*(*tailCaseInput.testCaseInput)) == "effective_batch" {
 		assert.FatalIf(t, !slices.ContainsFunc((*tailCaseInput.d).

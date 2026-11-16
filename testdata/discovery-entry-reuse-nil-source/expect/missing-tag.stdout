@@ -1,0 +1,60 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: podinfo
+  namespace: flux-system
+spec:
+  interval: 1h
+  ref:
+    tag: 6.5.99
+  url: https://github.com/stefanprodan/podinfo.git
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: root
+  namespace: flux-system
+spec:
+  interval: 1h
+  ref:
+    branch: main
+  url: https://github.com/example/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: podinfo
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kustomize
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: podinfo
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: root
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./clusters/test
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: root

@@ -587,7 +587,10 @@ func (d *Session) entryCandidateReady(
 	if d.cfg.Trees == nil {
 		return len(candidate.DependsOn) == 0
 	}
-	sourceID, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
+	sourceID, _, err := kustomize.SourceInput(reads, candidate)
+	if err != nil {
+		return len(candidate.DependsOn) == 0
+	}
 	prepared, err := d.prepareDocuments(ctx, candidate, sourceID, nil)
 	if err != nil {
 		slog.Debug("discovery: entry candidate preparation deferred", "err", err)

@@ -1,0 +1,693 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "7a7954c1e4f8a93a88191aef71120c763330abee",
+    "paths": [
+      "pkg/discovery/discovery.go",
+      "testdata/discovery-entry-reuse-nil-source"
+    ],
+    "reductions": "Issue #1588 cluster layout with a minimal offline podinfo repository. Complete expectations follow authored resources and the output contract."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "cluster",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "cluster",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "remote",
+      "directory": "remote",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/stefanprodan/podinfo.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "remote",
+      "name": "podinfo-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/6.5.0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "podinfo-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "podinfo-before"
+      ],
+      "overlay": "remote-after",
+      "refs": [
+        "refs/tags/6.5.1"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "reported-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "reported-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "reported-before"
+      ],
+      "overlay": "after",
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "reported-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "no-patches-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "no-patches"
+    },
+    {
+      "repository": "repo",
+      "name": "no-patches-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "no-patches-before"
+      ],
+      "overlay": "after",
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "no-patches-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "no-patches",
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "no-root-declarations-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "no-root-declarations"
+    },
+    {
+      "repository": "repo",
+      "name": "no-root-declarations-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "no-root-declarations-before"
+      ],
+      "overlay": "after",
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "no-root-declarations-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "no-root-declarations",
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "missing-tag",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-tag",
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "remote-after",
+      "directory": "overlays/remote-after"
+    },
+    {
+      "name": "no-patches",
+      "directory": "overlays/no-patches"
+    },
+    {
+      "name": "no-root-declarations",
+      "directory": "overlays/no-root-declarations",
+      "operations": [
+        {
+          "delete": "repo/clusters/test/sources/root.yaml"
+        },
+        {
+          "delete": "repo/clusters/test/kustomizations/root.yaml"
+        },
+        {
+          "delete": "baseline/clusters/test/sources/root.yaml"
+        },
+        {
+          "delete": "baseline/clusters/test/kustomizations/root.yaml"
+        }
+      ]
+    },
+    {
+      "name": "after",
+      "directory": "overlays/after"
+    },
+    {
+      "name": "missing-tag",
+      "directory": "overlays/missing-tag"
+    }
+  ],
+  "cases": [
+    {
+      "name": "reported",
+      "description": "Offline tag and workload changes for the reported layout.",
+      "setup": [
+        {
+          "commit": "podinfo-after"
+        },
+        {
+          "commit": "reported-after"
+        },
+        {
+          "commit": "reported-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/test",
+              "--path-orig",
+              "@@baseline@@/clusters/test",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "forward",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/reported-forward.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/clusters/test",
+              "--path-orig",
+              "@@repo@@/clusters/test",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "reverse",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/reported-reverse.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/test",
+              "--output",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "build",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/reported-build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-patches",
+      "description": "Offline tag and workload changes for the no-patches layout.",
+      "setup": [
+        {
+          "commit": "podinfo-after"
+        },
+        {
+          "commit": "no-patches-after"
+        },
+        {
+          "commit": "no-patches-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/test",
+              "--path-orig",
+              "@@baseline@@/clusters/test",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "forward",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/no-patches-forward.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-root-declarations",
+      "description": "Offline tag and workload changes for the no-root-declarations layout.",
+      "setup": [
+        {
+          "commit": "podinfo-after"
+        },
+        {
+          "commit": "no-root-declarations-after"
+        },
+        {
+          "commit": "no-root-declarations-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/test",
+              "--path-orig",
+              "@@baseline@@/clusters/test",
+              "--output",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "forward",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/no-root-declarations-forward.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-tag",
+      "description": "The reused entry retains actionable external source acquisition failure.",
+      "setup": [
+        {
+          "commit": "podinfo-after"
+        },
+        {
+          "commit": "missing-tag"
+        },
+        {
+          "commit": "reported-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/test",
+              "--output",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "missing",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/missing-tag.stdout",
+              "stderr": "expect/missing-tag.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "cluster/clusters/test/kustomization.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/kustomizations/kustomization.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/kustomizations/podinfo.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/kustomizations/root.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/sources/kustomization.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/sources/podinfo.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "cluster/clusters/test/sources/root.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/after/repo/clusters/test/sources/podinfo.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/missing-tag/repo/clusters/test/sources/podinfo.yaml",
+      "cases": [
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-patches/baseline/clusters/test/kustomization.yaml",
+      "cases": [
+        "no-patches"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-patches/repo/clusters/test/kustomization.yaml",
+      "cases": [
+        "no-patches"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-root-declarations/baseline/clusters/test/kustomizations/kustomization.yaml",
+      "cases": [
+        "no-root-declarations"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-root-declarations/baseline/clusters/test/sources/kustomization.yaml",
+      "cases": [
+        "no-root-declarations"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-root-declarations/repo/clusters/test/kustomizations/kustomization.yaml",
+      "cases": [
+        "no-root-declarations"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/no-root-declarations/repo/clusters/test/sources/kustomization.yaml",
+      "cases": [
+        "no-root-declarations"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "overlays/remote-after/remote/kustomize/deployment.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "remote/kustomize/deployment.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "remote/kustomize/kustomization.yaml",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations",
+        "missing-tag"
+      ],
+      "purpose": "Cluster declarations or offline external source content."
+    },
+    {
+      "path": "expect/missing-tag.stderr",
+      "cases": [
+        "missing-tag"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/missing-tag.stdout",
+      "cases": [
+        "missing-tag"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/no-patches-forward.stdout",
+      "cases": [
+        "no-patches"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/no-root-declarations-forward.stdout",
+      "cases": [
+        "no-root-declarations"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "reported",
+        "no-patches",
+        "no-root-declarations"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/reported-build.stdout",
+      "cases": [
+        "reported"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/reported-forward.stdout",
+      "cases": [
+        "reported"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    },
+    {
+      "path": "expect/reported-reverse.stdout",
+      "cases": [
+        "reported"
+      ],
+      "purpose": "Independently authored complete output and exit contract."
+    }
+  ]
+}

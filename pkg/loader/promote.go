@@ -219,22 +219,26 @@ func (l *Loader) builtRecord(
 			raw, _ = l.Index.Lookup(bare)
 		}
 	}
+	same := false
 	if raw.File != "" {
 		original := l.IndexedObject(id, raw)
 		if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
 			authored = original
 			l.retainBuiltDeclaration(&record, &raw, id)
 		}
-		same := manifest.Equal(obj, original.Obj)
+		same = manifest.Equal(obj, original.Obj)
 		if !same {
 			same = l.builtInputsUnchanged(&raw, input, inputs)
 		}
 		if !same && original.Obj != nil {
 			same = l.stampedBuiltEqual(obj, &original, input)
 		}
-		if same {
-			record.File, record.Inputs = raw.File, inputs.shared
-		}
+	}
+	if same {
+		record.File = raw.File
+	}
+	if same && raw.File != raw.Builder {
+		record.Inputs = inputs.shared
 	}
 	if raw.Authored == id {
 		record.Authored = id
@@ -505,6 +509,9 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 			manifest.ParseDocOptions{},
 		)
 		same = err == nil && manifest.Equal(obj, parsed.Object)
+		if err == nil && !same {
+			same, _ = manifest.OutputEqual(obj, parsed.Object, [2]map[string]any{})
+		}
 	}
 	return same
 }

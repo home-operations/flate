@@ -1,0 +1,10 @@
+
+  ✗  ConfigMap  flux-system/first-vars  not found
+         required by flux-system/apps
+  ✗  ConfigMap  flux-system/second-vars  not found
+         required by flux-system/apps
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
+  ✗ 2 failed · 1 blocked

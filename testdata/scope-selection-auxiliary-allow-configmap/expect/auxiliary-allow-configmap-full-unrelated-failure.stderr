@@ -1,8 +1,9 @@
 
-  ✗  HelmRelease  other/unrelated  valuesFrom Secret other/external not found; supply it with --supply
+  ✗  Secret  other/external  not found
+         required by other/unrelated
 
   ⚠ warnings (<PERSISTENCE:1|2>)
 <PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
 >    [OmittedValues] HelmRelease apps/selected: required valuesFrom ConfigMap/apps/external omitted from offline render
 
-  ✗ 1 failed
+  ✗ 1 failed · 1 blocked

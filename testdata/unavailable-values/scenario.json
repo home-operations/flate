@@ -75,6 +75,22 @@
     {
       "name": "requested-key-isolation",
       "directory": "overlays/requested-key-isolation"
+    },
+    {
+      "name": "missing-secret",
+      "directory": "overlays/missing-secret"
+    },
+    {
+      "name": "encrypted-then-missing",
+      "directory": "overlays/encrypted-then-missing"
+    },
+    {
+      "name": "missing-then-encrypted",
+      "directory": "overlays/missing-then-encrypted"
+    },
+    {
+      "name": "two-missing-secrets",
+      "directory": "overlays/two-missing-secrets"
     }
   ],
   "cases": [
@@ -589,6 +605,266 @@
           }
         }
       ]
+    },
+    {
+      "name": "missing-secret",
+      "description": "One absent required Helm values Secret uses the dependency form.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-secret"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/missing-empty.stdout",
+              "stderr": "expect/one-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/one-missing-test.stdout",
+              "stderr": "expect/missing-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "encrypted-then-missing",
+      "description": "An encrypted reference before an absent Secret preserves the missing-input report.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "encrypted-then-missing"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/missing-empty.stdout",
+              "stderr": "expect/one-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/one-missing-test.stdout",
+              "stderr": "expect/missing-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-then-encrypted",
+      "description": "An encrypted reference after an absent Secret preserves the missing-input report.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-then-encrypted"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/missing-empty.stdout",
+              "stderr": "expect/one-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/one-missing-test.stdout",
+              "stderr": "expect/missing-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "two-missing-secrets",
+      "description": "Two absent required Helm values Secrets each get one failure in one run.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "two-missing-secrets"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/missing-empty.stdout",
+              "stderr": "expect/two-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/two-missing-test.stdout",
+              "stderr": "expect/missing-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -935,7 +1211,11 @@
         "produced-strict",
         "missing-key-allowed",
         "missing-key-strict",
-        "missing-key-supply"
+        "missing-key-supply",
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
     },
@@ -952,7 +1232,11 @@
         "produced-strict",
         "missing-key-allowed",
         "missing-key-strict",
-        "missing-key-supply"
+        "missing-key-supply",
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
     },
@@ -969,7 +1253,11 @@
         "produced-strict",
         "missing-key-allowed",
         "missing-key-strict",
-        "missing-key-supply"
+        "missing-key-supply",
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
     },
@@ -986,7 +1274,11 @@
         "produced-strict",
         "missing-key-allowed",
         "missing-key-strict",
-        "missing-key-supply"
+        "missing-key-supply",
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
     },
@@ -1003,7 +1295,11 @@
         "produced-strict",
         "missing-key-allowed",
         "missing-key-strict",
-        "missing-key-supply"
+        "missing-key-supply",
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
       ],
       "purpose": "Shared local chart and Flux producer for every case."
     },
@@ -1048,6 +1344,114 @@
         "strict-encryption"
       ],
       "purpose": "Complete stderr with authored persistence alternatives for cached invocations."
+    },
+    {
+      "path": "overlays/missing-secret/repo/app/kustomization.yaml",
+      "cases": [
+        "missing-secret"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/missing-secret/repo/app/release.yaml",
+      "cases": [
+        "missing-secret"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/encrypted-then-missing/repo/app/input.yaml",
+      "cases": [
+        "encrypted-then-missing"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/encrypted-then-missing/repo/app/release.yaml",
+      "cases": [
+        "encrypted-then-missing"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/missing-then-encrypted/repo/app/input.yaml",
+      "cases": [
+        "missing-then-encrypted"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/missing-then-encrypted/repo/app/release.yaml",
+      "cases": [
+        "missing-then-encrypted"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/two-missing-secrets/repo/app/kustomization.yaml",
+      "cases": [
+        "two-missing-secrets"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "overlays/two-missing-secrets/repo/app/release.yaml",
+      "cases": [
+        "two-missing-secrets"
+      ],
+      "purpose": "Authored local-chart references and material for missing-input reporting."
+    },
+    {
+      "path": "expect/missing-empty.stdout",
+      "cases": [
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
+    },
+    {
+      "path": "expect/missing-test.stderr",
+      "cases": [
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted",
+        "two-missing-secrets"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
+    },
+    {
+      "path": "expect/one-missing.stderr",
+      "cases": [
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
+    },
+    {
+      "path": "expect/one-missing-test.stdout",
+      "cases": [
+        "missing-secret",
+        "encrypted-then-missing",
+        "missing-then-encrypted"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
+    },
+    {
+      "path": "expect/two-missing.stderr",
+      "cases": [
+        "two-missing-secrets"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
+    },
+    {
+      "path": "expect/two-missing-test.stdout",
+      "cases": [
+        "two-missing-secrets"
+      ],
+      "purpose": "Hand-authored complete output for missing-input dependency reports."
     }
   ]
 }

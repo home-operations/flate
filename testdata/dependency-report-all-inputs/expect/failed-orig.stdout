@@ -1,0 +1,82 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "flux-system",
+        "path": "clusters/a"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "flux-system",
+      "name": "first-vars",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "A": "first"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "first-vars",
+          "namespace": "flux-system"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "flux-system",
+        "path": "clusters/a"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "flux-system",
+      "name": "second-vars",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "B": "second"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "second-vars",
+          "namespace": "flux-system"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps/a"
+      },
+      "side": "orig",
+      "count": 1,
+      "reason": "dependencies failed: ConfigMap/flux-system/first-vars: not found; supply it with --supply; ConfigMap/flux-system/second-vars: not found; supply it with --supply"
+    }
+  ]
+}

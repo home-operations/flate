@@ -285,10 +285,19 @@ func testExecutionSyntheticDependencyReasonsCase(
 		return
 	}
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	assert.FatalIf(t, !ok || !slices.Contains(failed.Failed, owner.Named()) ||
-		failed.Reasons[owner.Named()].Subject.Resource != testutil.KustomizationID("flux-system", "sync") ||
-		strings.Contains(
-			err.Error(),
-			owner.Named().String(),
-		), "%s lost raw/display context: %#v %v", (*testCaseInput), failed, err)
+	assert.FatalIf(t, !ok, "expected dependency failure, got %v", err)
+	id := owner.Named()
+	reason := failed.Reasons[id]
+	if *testCaseInput == "data" {
+		id = manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
+		assert.Diff(t, failed.Failed, []manifest.NamedResource{id})
+		assert.Equal(t, failed.Reasons[id].Message, "not found; supply it with --supply")
+		assert.Equal(t, len(failed.Reasons[id].Causes), 1)
+		reason = failed.Reasons[id].Causes[0]
+	}
+	assert.FatalIf(t, !slices.Contains(failed.Failed, id), "missing failure %s: %#v", id, failed)
+	assert.Equal(t, reason.Subject.ID, owner.Named())
+	assert.Equal(t, reason.Subject.Resource, testutil.KustomizationID("flux-system", "sync"))
+	assert.Equal(t, reason.Subject.Path, "clusters/test")
+	assert.FatalIf(t, strings.Contains(err.Error(), owner.Named().String()), "raw identity in error: %v", err)
 }

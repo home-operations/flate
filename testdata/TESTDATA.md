@@ -40,6 +40,22 @@ The diff cases omit Flux declarations from output and retain complete failure di
 | `discovery-remote-source-walk/reference-added` | The current side adds the remote reference without admitting cluster B. |
 | `discovery-remote-source-walk/reference-removed` | The original side retains the remote reference without admitting cluster B. |
 
+`dependency-report-all-inputs/` covers complete missing-input diagnostics for one Kustomization.
+The committed bootstrap declares the root and apps consumers in `clusters/a/sync.yaml`.
+The apps consumer requires `first-vars` and `second-vars` and renders `${A}` and `${B}`.
+Healthy history supplies both ConfigMaps, and failing history removes both.
+The full build requires two failed inputs and one blocked consumer.
+Each case compares complete streams and exit code 1 across two replays with fresh caches and two workers.
+The diff cases retain input changes and suppress the failed consumer output.
+Expected streams follow the authored resources and diagnostic format independently of command output.
+
+| Case | Behavior |
+| --- | --- |
+| `dependency-report-all-inputs/full-build` | Report both missing inputs and their consumer. |
+| `dependency-report-all-inputs/changed-only` | Retain both diagnostics after input removal. |
+| `dependency-report-all-inputs/failed-current` | Report both inputs and suppress current consumer output. |
+| `dependency-report-all-inputs/failed-orig` | Report both inputs and suppress original consumer output. |
+
 `diff-generator-pairing/` covers issue #1560 through `cli.Run`.
 The bare cases generate a ConfigMap or a synthetic Secret.
 The Flux case generates both kinds and supplies them to a local Helm chart.
@@ -121,6 +137,10 @@ Readable siblings, missing keys, kind permission, and supplied precedence retain
 | `unavailable-values/missing-key-strict` | missing key strict. |
 | `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
 | `unavailable-values/requested-key-isolation` | Strict and permitted satisfied references omit the encrypted key silently. Supply resolves only the selected key without propagating unrelated encrypted values. |
+| `unavailable-values/missing-secret` | One absent required Helm values Secret uses the dependency form. Build and test assert complete output and exit code 1. |
+| `unavailable-values/encrypted-then-missing` | An encrypted reference before an absent Secret preserves the missing-input report. Build and test assert complete output and exit code 1. |
+| `unavailable-values/missing-then-encrypted` | An encrypted reference after an absent Secret preserves the missing-input report. Build and test assert complete output and exit code 1. |
+| `unavailable-values/two-missing-secrets` | Two absent required Helm values Secrets each get one failure in one run. Build and test assert complete output and exit code 1. |
 
 `component-secret-producer/shared-file-ordered` and `component-secret-producer/shared-file-unordered` model a shared-file parent with and without `dependsOn`.
 A native Component holds an ExternalSecret whose metadata and target names resolve through `${BUCKET}` substitution.

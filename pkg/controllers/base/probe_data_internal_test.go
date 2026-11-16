@@ -3,6 +3,7 @@ package base
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -321,4 +322,431 @@ func TestAwaitData_OrderedAssessments(t *testing.T) {
 	assert.Equal(t, resumed, true)
 	e.Reads.Accept(store.AssessmentReconciled)
 	assert.Equal(t, len(st.Warnings()), 0)
+}
+
+func TestAwaitData_MalformedMaterialReturnsDirectly(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		missingFirst bool
+	}{
+		{name: "single malformed input"},
+		{name: "missing then malformed input", missingFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := &manifest.Kustomization{
+				Name: "consumer", Namespace: "apps",
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: "input"},
+				}},
+			}
+			if tc.missingFirst {
+				owner.PostBuild.SubstituteFrom = append([]manifest.SubstituteReference{{
+					Kind: manifest.KindConfigMap, Name: "absent",
+				}}, owner.PostBuild.SubstituteFrom...)
+			}
+			st.AddObjects([]manifest.BaseManifest{owner, &manifest.ConfigMap{
+				Name: "input", Namespace: "apps",
+				Data: map[string]any{"VALUE": map[string]any{"nested": "invalid"}},
+			}})
+			var e Execution
+			e.Init(New(st, task.NewBounded(2)), owner.Named())
+			defer e.Close()
+			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+			assert.NoError(t, err)
+			assert.Equal(t, len(inputs), len(owner.PostBuild.SubstituteFrom))
+			assert.FatalIf(
+				t,
+				inputs[len(inputs)-1].Result.MaterialError() == nil,
+				"expected malformed material before settlement",
+			)
+			resumed := false
+			err = e.AwaitData(t.Context(), DataWait{
+				Inputs: inputs,
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+					resumed = true
+					return nil
+				},
+			}, manifest.DrainForce)
+			assert.Equal(t, resumed, false)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			domain, ok := errors.AsType[*manifest.Error](err)
+			assert.FatalIf(t, !ok, "expected direct material error, got %T: %v", err, err)
+			assert.Equal(t, err, error(domain))
+			assert.Equal(t, domain.Category(), manifest.ErrInput)
+			assert.Equal(t, domain.Error(), "data[VALUE]: unsupported value type map[string]interface {}")
+			assert.Equal(t, domain.Cause().Error(), "data[VALUE]: unsupported value type map[string]interface {}")
+			_, aggregate := errors.AsType[*manifest.DependencyFailedError](err)
+			assert.Equal(t, aggregate, false)
+		})
+	}
+}
+
+func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		level manifest.DrainLevel
+	}{
+		{name: "pending producer", level: manifest.DrainCascade},
+		{name: "forced producer failure", level: manifest.DrainForce},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
+			produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
+			st.AddObjects([]manifest.BaseManifest{owner, producer})
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+			resumed := false
+			assess := func() error {
+				var e Execution
+				e.Init(New(st, task.NewBounded(2)), owner.Named())
+				defer e.Close()
+				return e.AwaitData(t.Context(), DataWait{
+					Inputs: []depwait.DataDependency{
+						{NamedResource: missing},
+						{NamedResource: produced, Input: store.ReferenceFacts{
+							Materializers: []manifest.NamedResource{producer.Named()},
+						}},
+					},
+					Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+						resumed = true
+						return nil
+					},
+				}, tc.level)
+			}
+			err := assess()
+			assert.Equal(t, resumed, false)
+			if tc.level < manifest.DrainForce {
+				pending, ok := errors.AsType[*pendingDataError](err)
+				assert.FatalIf(t, !ok, "expected pending settlement, got %v", err)
+				assert.Diff(t, pending.blocked, []manifest.NamedResource{producer.Named()})
+				assert.Diff(t, pending.failed.Failed, []manifest.NamedResource{missing})
+				_, terminal := errors.AsType[*manifest.DependencyFailedError](err)
+				assert.Equal(t, terminal, false)
+			} else {
+				failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+				assert.FatalIf(t, !ok, "expected dependency failure, got %v", err)
+				assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
+				assert.Diff(t, failed.Reasons[produced], manifest.DiagnosticReason{
+					Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply it with --supply",
+					Causes: []manifest.DiagnosticReason{{
+						Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
+					}},
+				})
+			}
+			st.RecordEmitted(producer.Named(), &store.Emission{Complete: true}, nil)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+			err = assess()
+			assert.Equal(t, resumed, false)
+			failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+			assert.FatalIf(t, !ok, "expected both absent inputs after producer settlement, got %v", err)
+			assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
+			for _, id := range failed.Failed {
+				assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
+					Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+				})
+			}
+		})
+	}
+	t.Run("retained assessment", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+		producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
+		produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
+		st.AddObjects([]manifest.BaseManifest{owner, producer})
+		st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+		var e Execution
+		e.Init(New(st, task.NewBounded(2)), owner.Named())
+		defer e.Close()
+		resumed := false
+		err := e.AwaitData(t.Context(), DataWait{
+			Inputs: []depwait.DataDependency{
+				{NamedResource: missing, Use: "substituteFrom"},
+				{NamedResource: produced, Use: "substituteFrom", Optional: true, Input: store.ReferenceFacts{
+					Materializers: []manifest.NamedResource{producer.Named()},
+				}},
+			},
+			Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+				resumed = true
+				return nil
+			},
+		}, manifest.DrainCascade)
+		pending, ok := errors.AsType[*pendingDataError](err)
+		assert.FatalIf(t, !ok, "expected retained assessment, got %T: %v", err, err)
+		assert.Equal(t, e.Reads.Valid(), true)
+		err = pending.Settle(t.Context(), manifest.DrainCascade)
+		next, ok := errors.AsType[*pendingDataError](err)
+		assert.FatalIf(t, !ok, "expected pending settlement, got %T: %v", err, err)
+		assert.Equal(t, next, pending)
+		assert.Equal(t, e.Reads.Valid(), true)
+		err = pending.Settle(t.Context(), manifest.DrainForce)
+		assert.Equal(t, resumed, false)
+		domain, ok := errors.AsType[*manifest.Error](err)
+		assert.FatalIf(t, !ok, "expected sole input error, got %T: %v", err, err)
+		assert.Equal(t, err, error(domain))
+		failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+		assert.FatalIf(t, !ok, "expected missing input error, got %T: %v", err, err)
+		assert.Diff(t, failed.Failed, []manifest.NamedResource{missing})
+		assert.Equal(t, err.Error(), "dependencies failed: ConfigMap/apps/missing: not found; supply it with --supply")
+	})
+}
+
+func TestAwaitData_GateFailureWithDataInputs(t *testing.T) {
+	t.Parallel()
+	const (
+		gateMessage = "dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed"
+		firstCause  = "dependencies failed: ConfigMap/apps/first-vars: not found; supply it with --supply"
+		secondCause = "dependencies failed: ConfigMap/apps/second-vars: not found; supply it with --supply"
+		combined    = "dependencies failed: ConfigMap/apps/first-vars: not found; supply it with --supply; ConfigMap/apps/second-vars: not found; supply it with --supply; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed"
+	)
+	for _, tc := range []struct {
+		name         string
+		failedCount  int
+		inputMessage string
+		message      string
+		details      string
+	}{
+		{
+			name: "healthy inputs", message: gateMessage,
+			details: gateMessage + "\n  input error",
+		},
+		{
+			name: "one failed input", failedCount: 1,
+			message:      firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed",
+			inputMessage: "not found; supply it with --supply",
+			details: strings.Join([]string{
+				firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed",
+				"  " + firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed", firstCause,
+				"    " + firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed", "      input error",
+				"    " + firstCause, "      " + firstCause, "        " + firstCause, "          input error",
+			}, "\n"),
+		},
+		{
+			name: "two failed inputs", failedCount: 2, message: combined,
+			inputMessage: "not found; supply it with --supply",
+			details: strings.Join([]string{
+				combined,
+				"  " + combined, firstCause, secondCause,
+				"    " + combined, "      input error",
+				"    " + firstCause, secondCause,
+				"      " + firstCause, "        " + firstCause, "          input error",
+				"      " + secondCause, "        " + secondCause, "          input error",
+			}, "\n"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			gate := &manifest.Kustomization{Name: "gate", Namespace: "apps"}
+			healthy := &manifest.ConfigMap{Name: "healthy", Namespace: "apps", Data: map[string]any{"VALUE": "ready"}}
+			st.AddObjects([]manifest.BaseManifest{owner, gate, healthy})
+			st.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "gate render failed"})
+			var e Execution
+			e.Init(New(st, task.NewBounded(2)), owner.Named())
+			defer e.Close()
+			gateErr := e.Require(
+				t.Context(),
+				[]manifest.DependencyRef{{NamedResource: gate.Named()}},
+				manifest.DrainForce,
+			)
+			assert.Equal(t, gateErr != nil, true)
+			inputs := make([]depwait.DataDependency, 1, 1+tc.failedCount)
+			inputs[0] = depwait.DataDependency{
+				NamedResource: healthy.Named(),
+				Input:         store.ReferenceFacts{Data: manifest.Data(healthy)},
+			}
+			ids := make([]manifest.NamedResource, 0, 1+tc.failedCount)
+			for _, name := range []string{"first-vars", "second-vars"}[:tc.failedCount] {
+				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}
+				inputs = append(inputs, depwait.DataDependency{NamedResource: id, Use: "substituteFrom"})
+				ids = append(ids, id)
+			}
+			ids = append(ids, gate.Named())
+			resumed := false
+			err := e.AwaitData(t.Context(), DataWait{
+				Inputs: inputs,
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+					resumed = true
+					return nil
+				},
+			}, manifest.DrainForce)
+			assert.Equal(t, resumed, false)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrObjectNotFound), tc.failedCount != 0)
+			failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+			assert.FatalIf(t, !ok, "expected dependency failure, got %v", err)
+			concrete := error(failed)
+			if tc.failedCount != 0 {
+				domain, classified := errors.AsType[*manifest.Error](err)
+				assert.FatalIf(t, !classified, "expected classified input error, got %T: %v", err, err)
+				concrete = domain
+			}
+			assert.Equal(t, err, concrete)
+			assert.Equal(t, failed.Parent, owner.Named())
+			assert.Diff(t, failed.Subject, manifest.DiagnosticFor(owner.Named(), owner))
+			assert.Diff(t, failed.Failed, ids)
+			assert.Equal(t, len(failed.Reasons), len(ids))
+			for _, id := range ids {
+				message := tc.inputMessage
+				if id == gate.Named() {
+					message = "gate render failed"
+				}
+				assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
+					Subject: manifest.DiagnosticFor(id, nil), Message: message,
+				})
+			}
+			assert.Equal(t, err.Error(), tc.message)
+			assert.Equal(t, manifest.ErrorDetails(err), tc.details)
+		})
+	}
+}
+
+func TestAwaitData_MultipleFailuresRetainSyntheticProducer(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	producer := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", manifest.NamedResource{
+		Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "sync",
+	})
+	owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+	missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
+	produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
+	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending, Message: "root failure"})
+	var e Execution
+	e.Init(New(st, task.NewBounded(2)), owner.Named())
+	defer e.Close()
+	err := e.AwaitData(t.Context(), DataWait{
+		Inputs: []depwait.DataDependency{
+			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced", Input: store.ReferenceFacts{
+				Materializers: []manifest.NamedResource{producer.Named()},
+			}},
+			{NamedResource: missing},
+		},
+		Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+			t.Fatal("failed inputs resumed")
+			return nil
+		},
+	}, manifest.DrainForce)
+	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	assert.FatalIf(t, !ok, "expected aggregate, got %v", err)
+	assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
+	assert.Equal(t, len(failed.Reasons), 2)
+	assert.Diff(t, failed.Reasons[produced], manifest.DiagnosticReason{
+		Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply it with --supply",
+		Causes: []manifest.DiagnosticReason{{
+			Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
+		}},
+	})
+	assert.Diff(t, failed.Reasons[missing], manifest.DiagnosticReason{
+		Subject: manifest.DiagnosticFor(missing, nil), Message: "not found; supply it with --supply",
+	})
+	assert.Equal(
+		t,
+		failed.Error(),
+		"dependencies failed: ConfigMap/apps/missing: not found; supply it with --supply; ConfigMap/apps/produced: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/sync (entry path \"clusters/test\"): not ready",
+	)
+}
+
+func TestAwaitData_SharedPendingProducer(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	ids := []manifest.NamedResource{
+		{Kind: manifest.KindSecret, Namespace: "apps", Name: "first"},
+		{Kind: manifest.KindSecret, Namespace: "apps", Name: "second"},
+	}
+	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+	assess := func(level manifest.DrainLevel) (*Execution, error) {
+		e := new(Execution)
+		e.Init(New(st, task.NewBounded(2)), owner.Named())
+		t.Cleanup(e.Close)
+		inputs := make([]depwait.DataDependency, 0, len(ids))
+		for _, id := range ids {
+			inputs = append(inputs, depwait.DataDependency{
+				NamedResource: id, Use: "valuesFrom", Key: "uri",
+				Input: store.ReferenceFacts{Materializers: []manifest.NamedResource{producer.Named()}},
+			})
+		}
+		err := e.AwaitData(t.Context(), DataWait{
+			Inputs: inputs,
+			Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+				t.Fatal("missing inputs resumed")
+				return nil
+			},
+		}, level)
+		return e, err
+	}
+	e, err := assess(manifest.DrainCascade)
+	pending, ok := errors.AsType[*pendingDataError](err)
+	assert.FatalIf(t, !ok, "expected producer wait, got %T: %v", err, err)
+	assert.Diff(t, pending.blocked, []manifest.NamedResource{producer.Named()})
+	assert.Equal(t, e.Reads.Valid(), true)
+	err = pending.Settle(t.Context(), manifest.DrainForce)
+	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	assert.FatalIf(t, !ok, "expected both missing inputs, got %T: %v", err, err)
+	assert.Diff(t, failed.Failed, ids)
+	assert.Equal(t, len(failed.Reasons), len(ids))
+	for _, id := range ids {
+		assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
+			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+			Causes: []manifest.DiagnosticReason{{
+				Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
+			}},
+		})
+	}
+	st.RecordEmitted(producer.Named(), &store.Emission{Complete: true}, nil)
+	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+	assert.Equal(t, e.Reads.Valid(), false)
+	fresh, err := assess(manifest.DrainForce)
+	assert.Equal(t, fresh.Reads.Valid(), true)
+	failed, ok = errors.AsType[*manifest.DependencyFailedError](err)
+	assert.FatalIf(t, !ok, "expected fresh missing inputs, got %T: %v", err, err)
+	assert.Diff(t, failed.Failed, ids)
+	for _, id := range ids {
+		assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
+			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+		})
+	}
+}
+
+func TestAwaitData_ExistingInputMissingKeyReturnsDirectly(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{
+		Kind: manifest.KindSecret, Name: "input", ValuesKey: "uri",
+	}}}
+	st.AddObjects([]manifest.BaseManifest{owner, &manifest.Secret{
+		Name: "input", Namespace: "apps", StringData: map[string]any{"other": "value"},
+	}})
+	var e Execution
+	e.Init(New(st, task.NewBounded(2)), owner.Named())
+	defer e.Close()
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	assert.NoError(t, err)
+	assert.Equal(t, inputs[0].Result.NeedsInput(), false)
+	err = e.AwaitData(t.Context(), DataWait{
+		Inputs: inputs,
+		Resume: func(context.Context, manifest.DrainLevel, []values.Result) error {
+			t.Fatal("missing key resumed")
+			return nil
+		},
+	}, manifest.DrainForce)
+	assert.Equal(t, errors.Is(err, manifest.ErrInvalidValuesReference), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrObjectNotFound), false)
+	assert.Equal(t, err.Error(), "valuesFrom Secret apps/input key \"uri\" not found")
+	_, aggregate := errors.AsType[*manifest.DependencyFailedError](err)
+	assert.Equal(t, aggregate, false)
 }

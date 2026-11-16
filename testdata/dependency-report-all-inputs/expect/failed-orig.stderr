@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: ConfigMap  flux-system/first-vars  not found
+         orig snapshot: required by flux-system/apps
+  ✗  orig snapshot: ConfigMap  flux-system/second-vars  not found
+         orig snapshot: required by flux-system/apps
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] Kustomization flux-system/apps: 1 object not rendered on the orig side; diff suppressed (dependencies failed: ConfigMap/flux-system/first-vars: not found; supply it with --supply; ConfigMap/flux-system/second-vars: not found; supply it with --supply)
+
+  ✗ 2 failed · 1 blocked

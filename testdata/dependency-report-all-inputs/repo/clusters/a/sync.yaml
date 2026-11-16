@@ -1,0 +1,31 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  interval: 10m
+  url: https://example.test/cluster.git
+  ref: {branch: main}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./clusters/a
+  prune: false
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./apps/a
+  prune: false
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: first-vars
+      - kind: ConfigMap
+        name: second-vars

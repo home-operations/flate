@@ -44,6 +44,29 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		return availability{Err: err}
 	}
 	failure, _ := errors.AsType[*manifest.DependencyFailedError](request.Settlement.Failure)
+	if dep.Result.NeedsInput() && failure != nil {
+		message := dep.Result.Cause()
+		if domain, ok := errors.AsType[*manifest.Error](dep.Result.Err()); ok && domain.Cause() != nil {
+			message = domain.Cause().Error()
+		}
+		var causes []manifest.DiagnosticReason
+		for _, id := range failure.Failed {
+			reason := failure.Reasons[id]
+			if id == dep.NamedResource {
+				causes = append(causes, reason.Causes...)
+				continue
+			}
+			causes = append(causes, reason)
+		}
+		slices.SortFunc(causes, manifest.DiagnosticReason.Compare)
+		causes = slices.CompactFunc(causes, func(a, b manifest.DiagnosticReason) bool { return a.Compare(b) == 0 })
+		failure.Failed = []manifest.NamedResource{dep.NamedResource}
+		failure.Reasons = map[manifest.NamedResource]manifest.DiagnosticReason{dep.NamedResource: {
+			Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+			Message: message, Causes: causes,
+		}}
+		request.Settlement.Failure = manifest.NewError(manifest.ErrObjectNotFound, failure, failure.Error())
+	}
 	result := values.Resolve(&request)
 	switch result.Effect() {
 	case values.Deferred:
@@ -51,22 +74,26 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 	case values.Used, values.Omitted:
 		return availability{Kind: schedule.Terminal, Result: result}
 	case values.Failed:
-		var failed []manifest.NamedResource
-		if failure != nil {
-			failed = failure.Failed
-		}
-		return availability{
-			Kind:   schedule.DependencyFailed,
-			Failed: failed,
-			Result: result,
-			Reason: manifest.DiagnosticReason{
-				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-				Message: result.Cause(),
-			},
-		}
 	default:
 		panic("depwait: unresolved values assessment")
 	}
+	reason := manifest.DiagnosticReason{
+		Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+		Message: result.Cause(),
+	}
+	var failed []manifest.NamedResource
+	if failure != nil {
+		failed = failure.Failed
+		for _, id := range failed {
+			captured := failure.Reasons[id]
+			if id == dep.NamedResource {
+				reason = captured
+				continue
+			}
+			reason.Causes = append(reason.Causes, captured)
+		}
+	}
+	return availability{Kind: schedule.DependencyFailed, Failed: failed, Result: result, Reason: reason}
 }
 
 func (w *Waiter) settleMaterializers(
@@ -115,9 +142,6 @@ func (w *Waiter) captureMaterializerFailure(
 	if materialized && (status.Status != store.StatusFailed || !blocks) {
 		return
 	}
-	if status.Status == store.StatusFailed {
-		cl.Message, cl.Causes = "not ready", nil
-	}
 	failure, _ := errors.AsType[*manifest.DependencyFailedError](request.Settlement.Failure)
 	if failure == nil {
 		failure = &manifest.DependencyFailedError{
@@ -127,13 +151,12 @@ func (w *Waiter) captureMaterializerFailure(
 	}
 	failedID := producer
 	reason := cl.DiagnosticReason(producer)
-	if !blocks && status.Status == store.StatusFailed {
+	if !dep.Result.NeedsInput() && !blocks && status.Status == store.StatusFailed {
 		failedID = dep.NamedResource
 		previous := failure.Reasons[failedID]
 		reason = manifest.DiagnosticReason{
 			Subject: manifest.DiagnosticFor(failedID, w.Store.GetObject(failedID)),
-			Message: dep.Result.Cause(),
-			Causes:  append(previous.Causes, reason),
+			Message: dep.Result.Cause(), Causes: append(previous.Causes, reason),
 		}
 	}
 	if _, exists := failure.Reasons[failedID]; !exists {
@@ -173,26 +196,13 @@ func (w *Waiter) settleAbsent(
 	if cl.Kind != schedule.DependencyFailed {
 		return nil
 	}
-	cause := assessment.Err()
-	if domain, ok := errors.AsType[*manifest.Error](cause); ok {
-		cause = domain.Cause()
-	}
-	message := assessment.Cause()
-	if cause != nil {
-		message = cause.Error()
-	}
-	failure := &manifest.DependencyFailedError{
+	request.Settlement.Failure = &manifest.DependencyFailedError{
 		Parent: w.Parent, Subject: manifest.DiagnosticFor(w.Parent, w.Store.GetObject(w.Parent)),
 		Failed: []manifest.NamedResource{dep.NamedResource},
-		Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{dep.NamedResource: {
-			Subject: manifest.DiagnosticFor(
-				dep.NamedResource,
-				w.Store.GetObject(dep.NamedResource),
-			),
-			Message: message,
-		}},
+		Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{
+			dep.NamedResource: cl.DiagnosticReason(dep.NamedResource),
+		},
 	}
-	request.Settlement.Failure = manifest.NewError(manifest.ErrObjectNotFound, failure, failure.Error())
 	return nil
 }
 

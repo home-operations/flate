@@ -36,6 +36,8 @@ type admissionIdentity struct {
 }
 
 type admissionClosure struct {
+	declarationContents func(map[string]any) store.DeclarationContent
+
 	changes            *change.Set
 	configuredInput    *store.SourceArtifact
 	publication        uint64
@@ -355,10 +357,10 @@ func (c *admissionClosure) matchesDeclarationContent(
 			manifest.ValueEqual(previousChild.Doc, incoming.Doc) && slices.Equal(state.productions, productions)
 	} else {
 		current, document, output := c.objects.GetEmission(id)
-		output.Finish()
 		if incoming.Doc == nil {
 			incoming.Doc = document
 		}
+		output.Finish()
 		matched = matched && manifest.Equal(current, incoming.Obj) &&
 			manifest.ValueEqual(document, incoming.Doc)
 	}

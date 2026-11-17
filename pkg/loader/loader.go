@@ -118,18 +118,27 @@ const (
 
 // New initializes discovery state.
 func New(s *store.Store) *Loader {
-	return &Loader{
+	state := new(struct {
+		Loader
+
+		index   manifest.DiscoveryIndex
+		missing depwait.MissingPolicy
+	})
+	state.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
+	state.Loader = Loader{
 		work:  s.WorkScope().Traversal(manifest.BootstrapSourceID),
-		Store: s, Options: options{Work: s.WorkScope(), Missing: depwait.NewMissingPolicy(nil)},
-		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+		Store: s, Options: options{Work: s.WorkScope(), Missing: &state.missing},
+		Index:     &state.index,
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}
+	return &state.Loader
 }
 
 // AdmitDeclarations retains pathless reference evidence before repository discovery.
 func (l *Loader) AdmitDeclarations(children []store.Declaration) {
-	for _, child := range children {
-		l.Store.AddDeclaration(child)
+	for i := range children {
+		child := &children[i]
+		l.Store.AddDeclaration(*child)
 		id := child.Obj.Named()
 		r := l.Index.Records[id]
 		if r.Path == "" && r.Builder == "" {
@@ -212,8 +221,8 @@ func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(s
 			continue
 		}
 		_, doc, emission := l.Store.GetEmission(id)
-		emission.Finish()
 		yield(store.Child{Obj: obj, Doc: doc})
+		emission.Finish()
 	}
 	l.eachIndexedKustomization(yield)
 }
@@ -449,7 +458,7 @@ func (l *Loader) loadFile(ctx context.Context, path string, reader *documentRead
 	if reader.compact {
 		objs, err = reader.censusFile(ctx, path, manifest.ParseDocOptions{})
 	} else {
-		objs, err = reader.fileObjects(path, manifest.ParseDocOptions{})
+		objs, err = reader.fileObjects(ctx, path, manifest.ParseDocOptions{})
 	}
 	if err != nil {
 		return 0, err
@@ -480,7 +489,7 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string, reader *doc
 	if l.documents.compact {
 		return l.recordCompactDataFile(ctx, absPath, reader)
 	}
-	objs, err := reader.fileObjects(
+	objs, err := reader.fileObjects(ctx,
 		absPath,
 		manifest.ParseDocOptions{DefaultNamespace: ""},
 	)
@@ -521,7 +530,6 @@ func (l *Loader) recordOccurrence(path string, o *authoredOccurrence) {
 	l.locations[o.Identity] = *o
 	r := manifest.DiscoveryRecord{
 		Authored: o.Authored,
-		Declared: o.facts.declared,
 		Path:     path,
 		File:     l.fileCoordinate(path),
 	}
@@ -578,14 +586,6 @@ func (l *Loader) fileCoordinate(absPath string) string {
 		}
 	}
 	return filepath.ToSlash(absPath)
-}
-
-func isManifestFile(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".yaml", ".yml", ".json":
-		return true
-	}
-	return false
 }
 
 func (l *Loader) replayFile(ctx context.Context, fileValue *fileAdmission, reader *documentReader) (int, error) {
@@ -891,9 +891,4 @@ func (l *Loader) declarationLocated(id manifest.NamedResource, objects admission
 	record, _ := l.Index.Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
 		selection.Root(l.roots.get(record.Parent).view()).Independent
-}
-
-func (l *Loader) configureDocuments() {
-	l.documents.compact = l.Options.Session != nil || l.Options.ParsedInputs != nil && l.Options.ParsedInputs.compact
-	l.documents.eager = l.Options.Session.Snapshot().Output(manifest.NamedResource{})
 }

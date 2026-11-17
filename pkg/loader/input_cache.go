@@ -1,12 +1,11 @@
 package loader
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
-	"iter"
 	"maps"
 	"path"
 	"path/filepath"
@@ -38,15 +37,30 @@ type inputCoordinate struct {
 }
 
 type cachedInput struct {
-	Projection *cachedProjection     `json:"Projection,omitempty"`
-	Parsed     bool                  `json:"Parsed,omitempty"`
-	Name       string                `json:"Name,omitempty"`
-	Digest     string                `json:"Digest,omitempty"`
-	Builder    string                `json:"Builder,omitempty"`
-	Body       *types.Kustomization  `json:"Body,omitzero"`
-	Coverage   manifest.DocumentRole `json:"Coverage,omitempty"`
-	Possible   bool                  `json:"Possible,omitempty"`
-	Objects    []cachedOccurrence    `json:"Objects,omitempty"`
+	declarations      *inputPayload
+	DeclarationOffset int64                 `json:"DeclarationOffset,omitempty"`
+	DeclarationSize   int                   `json:"DeclarationSize,omitempty"`
+	Projection        *cachedProjection     `json:"Projection,omitempty"`
+	Parsed            bool                  `json:"Parsed,omitempty"`
+	Name              string                `json:"Name,omitempty"`
+	Digest            string                `json:"Digest,omitempty"`
+	Builder           string                `json:"Builder,omitempty"`
+	Body              *types.Kustomization  `json:"Body,omitzero"`
+	Coverage          manifest.DocumentRole `json:"Coverage,omitempty"`
+	Possible          bool                  `json:"Possible,omitempty"`
+	Objects           []cachedOccurrence    `json:"Objects,omitempty"`
+}
+
+type cachedFileDeclarations struct {
+	Limited  bool                `json:"Limited,omitempty"`
+	Present  bool                `json:"Present"`
+	Complete bool                `json:"Complete"`
+	Objects  []cachedDeclaration `json:"Objects"`
+}
+
+type cachedDeclaration struct {
+	Identity    manifest.NamedResource `json:"Identity"`
+	Fingerprint string                 `json:"Fingerprint"`
 }
 
 type cachedProjection struct {
@@ -72,7 +86,6 @@ type cachedOccurrence struct {
 }
 
 type cachedOccurrenceFacts struct {
-	Declared           string                    `json:"Declared,omitempty"`
 	Source             manifest.NamedResource    `json:"Source"`
 	Path               string                    `json:"Path,omitempty"`
 	HasPath            bool                      `json:"HasPath,omitempty"`
@@ -92,18 +105,6 @@ type cachedOccurrenceFacts struct {
 	Labels             map[string]string         `json:"Labels,omitempty"`
 	Labeled            bool                      `json:"Labeled,omitempty"`
 }
-
-type inputFrame struct {
-	Visits  []cachedVisit `json:"Visits,omitempty"`
-	frame   *cache.Frame
-	Files   []cachedInput          `json:"Files,omitempty"`
-	Walks   []cachedWalk           `json:"Walks,omitempty"`
-	Loads   []cachedLoad           `json:"Loads,omitempty"`
-	Digests map[string]string      `json:"Digests,omitempty"`
-	Types   map[string]fs.FileMode `json:"Types,omitempty"`
-}
-
-type inputFrameContent struct{ Origin, URL, Content string }
 
 func (l *Loader) restoreCachedInputs(ctx context.Context) error {
 	if !l.documents.compact || l.documents.eager || l.Options.Cache == nil || !l.Options.Cache.CanPersistRenders() {
@@ -147,7 +148,12 @@ func (r documentReader) restoreCachedFile(absolute string) {
 	if file == nil {
 		return
 	}
-	doc.deferred, doc.parsed = nil, nil
+	doc.deferred, doc.parsed, doc.declarations = nil, nil, nil
+	doc.declarationsData = nil
+	if file.declarations != nil {
+		doc.declarationsData = file.declarations.data
+		doc.declarations = file.declarations.observation
+	}
 	defer func() { r.cache[absolute] = doc }()
 	origin := new(r).localPath(absolute)
 	source := new(r).mountedRoot(origin)
@@ -165,7 +171,7 @@ func (r documentReader) restoreCachedFile(absolute string) {
 		}
 		f := &saved.Facts
 		facts := &occurrenceFacts{
-			declared: f.Declared, source: f.Source, path: f.Path, hasPath: f.HasPath,
+			source: f.Source, path: f.Path, hasPath: f.HasPath,
 			namespaced: f.Namespaced, uncertain: f.Uncertain, retained: f.Retained,
 			catalog: catalog, reverse: f.Reverse, refs: f.Refs, templateInputs: f.TemplateInputs,
 			roots: f.Roots, targets: f.Targets, authoredTargets: f.AuthoredTargets,
@@ -198,6 +204,31 @@ func (r documentReader) restoreCachedFile(absolute string) {
 	}
 	doc.objects, doc.coverage, doc.possible = objects, file.Coverage, file.Possible
 	doc.parsed = nil
+}
+
+// Snapshot publication MUST materialize inventory maps before independent readers share them.
+func (d *document) restoreDeclarations() error {
+	if d.declarationsData == nil {
+		return nil
+	}
+	var saved *cachedFileDeclarations
+	if err := json.Unmarshal(d.declarationsData, &saved); err != nil {
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode declaration inventory: %w", err), "")
+	}
+	data := d.declarationsData
+	d.declarationsData = nil
+	if saved == nil {
+		return nil
+	}
+	d.declarations = &fileObservation{Present: saved.Present, Complete: saved.Complete, limited: saved.Limited}
+	d.declarations.payload.data = data
+	if len(saved.Objects) != 0 {
+		d.declarations.Objects = make(map[manifest.NamedResource]string, len(saved.Objects))
+		for _, object := range saved.Objects {
+			d.declarations.Objects[object.Identity] = object.Fingerprint
+		}
+	}
+	return nil
 }
 
 // PersistInputs publishes only content-certified authored facts through the cache owner.
@@ -272,7 +303,8 @@ func (l *Loader) persistSourceInputs(ctx context.Context, state *inputCache) err
 		state.loads[load.context(input.LocalPath)] = load.Coverage
 	}
 	state.files = map[inputCoordinate]inputEvidence{}
-	for _, file := range frame.Files {
+	for i := range frame.Files {
+		file := &frame.Files[i]
 		state.files[inputCoordinate{name: file.Name, builder: file.Builder != ""}] = inputEvidence{
 			digest: file.Digest, coverage: file.Coverage, projection: file.projectionPayload(),
 		}
@@ -297,15 +329,24 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 		Possible: doc.possible,
 		Parsed:   doc.objects != nil,
 	}
+	if doc.declarations != nil {
+		saved.declarations = &doc.declarations.payload
+	} else if doc.declarationsData != nil {
+		saved.declarations = &inputPayload{data: doc.declarationsData}
+	}
 	if doc.projection != nil && doc.projection.payload != nil {
 		saved.Projection = &cachedProjection{Known: doc.projection.Known, payload: doc.projection.payload}
 	}
-	if doc.body != nil {
+	switch {
+	case doc.body != nil:
 		saved.Builder = filepath.Base(name)
 		return saved, true, nil
-	}
-	if doc.objects == nil && doc.projection == nil || doc.decodeErr != nil {
+	case doc.decodeErr != nil, doc.objects == nil && doc.projection == nil &&
+		doc.declarations == nil && doc.declarationsData == nil:
 		return cachedInput{}, false, nil //nolint:nilerr // Incomplete or failed facts remain ordinary construction work.
+	case doc.unprepared:
+		saved.Parsed = false
+		return saved, true, nil
 	}
 	for i := range doc.objects {
 		object := &doc.objects[i]
@@ -323,7 +364,6 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 			Identity: occurrence.Identity, Authored: occurrence.Authored, RequiresBuild: occurrence.requiresBuild,
 			Catalog: catalog, payload: object.payload,
 			Facts: cachedOccurrenceFacts{
-				Declared:           facts.declared,
 				Source:             facts.source,
 				Path:               facts.path,
 				HasPath:            facts.hasPath,
@@ -515,133 +555,6 @@ func (l *Loader) cacheSourceInputs(state *inputCache) (*inputFrame, error) {
 	}
 	frame.captureEvidence(state)
 	return frame, nil
-}
-
-// Payloads MUST remain separate from the compact index and hydrate only on demand.
-type inputPayload struct {
-	frame  *cache.Frame
-	offset int64
-	size   int
-	data   []byte
-}
-
-func (p *inputPayload) read(ctx context.Context) ([]byte, error) {
-	if p.data != nil {
-		return p.data, nil
-	}
-	return p.frame.ReadPayload(ctx, p.offset, p.size)
-}
-
-func readInputFrame(ctx context.Context, generation fs.FS) (*inputFrame, error) {
-	var frame inputFrame
-	content, err := cache.OpenFrame(ctx, "loader-inputs", generation, &frame)
-	if err != nil {
-		return nil, err
-	}
-	for i := range frame.Walks {
-		walk := &frame.Walks[i]
-		walk.dictionary = frame.Visits
-		if slices.ContainsFunc(walk.VisitIDs, func(id int) bool { return id < 0 || id >= len(frame.Visits) }) {
-			return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid visit reference")
-		}
-	}
-	frame.frame = content
-	for i := range frame.Files {
-		file := &frame.Files[i]
-		for j := range file.Objects {
-			saved := &file.Objects[j]
-			if saved.Size != 0 {
-				saved.payload = &inputPayload{frame: content, offset: saved.Offset, size: saved.Size}
-			}
-		}
-		if projection := file.Projection; projection != nil {
-			projection.payload = &inputPayload{
-				frame: content, offset: projection.Offset, size: projection.Size,
-			}
-		}
-	}
-	return &frame, nil
-}
-
-func (f *inputFrame) prepare(ctx context.Context) (*cache.Frame, error) {
-	f.Visits = nil
-	visits := map[cachedVisit]int{}
-	for i := range f.Walks {
-		walk := &f.Walks[i]
-		var ids []int
-		for visit := range walk.visits() {
-			id, known := visits[*visit]
-			if !known {
-				id = len(f.Visits)
-				visits[*visit] = id
-				f.Visits = append(f.Visits, *visit)
-			}
-			ids = append(ids, id)
-		}
-		walk.VisitIDs = ids
-		walk.dictionary = nil
-	}
-	for i := range f.Walks {
-		f.Walks[i].dictionary = f.Visits
-		f.Walks[i].Visits = nil
-	}
-	var offset int64
-	for reference := range f.payloads() {
-		*reference.offset, *reference.size = offset, reference.payload.size
-		if reference.payload.data != nil {
-			*reference.size = len(reference.payload.data)
-		}
-		offset += int64(*reference.size)
-	}
-
-	var payload bytes.Buffer
-	for reference := range f.payloads() {
-		data, err := reference.payload.read(ctx)
-		if err != nil {
-			return nil, err
-		}
-		payload.Write(data)
-	}
-	return cache.NewFrame("loader-inputs", f, payload.Bytes())
-}
-
-func (f *cachedInput) projectionPayload() *inputPayload {
-	if f.Projection != nil {
-		return f.Projection.payload
-	}
-	return nil
-}
-
-type inputPayloadReference struct {
-	payload *inputPayload
-	offset  *int64
-	size    *int
-}
-
-func (f *inputFrame) payloads() iter.Seq[inputPayloadReference] {
-	return func(yield func(inputPayloadReference) bool) {
-		for i := range f.Files {
-			file := &f.Files[i]
-			if projection := file.Projection; projection != nil && projection.payload != nil {
-				if !yield(
-					inputPayloadReference{
-						payload: projection.payload,
-						offset:  &projection.Offset,
-						size:    &projection.Size,
-					},
-				) {
-					return
-				}
-			}
-			for j := range file.Objects {
-				object := &file.Objects[j]
-				if object.payload != nil &&
-					!yield(inputPayloadReference{payload: object.payload, offset: &object.Offset, size: &object.Size}) {
-					return
-				}
-			}
-		}
-	}
 }
 
 func (l *Loader) restoreCachedBuilder(root string, state *inputCache, file *cachedInput, absolute string) error {

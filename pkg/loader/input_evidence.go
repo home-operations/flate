@@ -19,7 +19,8 @@ type inputEvidence struct {
 
 func (s *inputCache) certify(ctx context.Context, frame *inputFrame) error {
 	requested := slices.Collect(maps.Keys(frame.Digests))
-	for _, file := range frame.Files {
+	for i := range frame.Files {
+		file := &frame.Files[i]
 		requested = append(requested, file.Name)
 	}
 	//nolint:errcheck // Only native source owners create input cache state.
@@ -40,7 +41,8 @@ func (s *inputCache) certify(ctx context.Context, frame *inputFrame) error {
 			return manifest.NewError(manifest.ErrInput, nil, "discovery walk inputs changed during construction")
 		}
 	}
-	for _, file := range frame.Files {
+	for i := range frame.Files {
+		file := &frame.Files[i]
 		mode, observed := current.Types[file.Name]
 		if current.Files[file.Name] != file.Digest || !observed || !mode.IsRegular() {
 			return manifest.NewError(manifest.ErrInput, nil, "discovery inputs changed during construction")

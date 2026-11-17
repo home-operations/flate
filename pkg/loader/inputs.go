@@ -41,17 +41,19 @@ type parsedDocuments struct {
 }
 
 type parsedDocument struct {
-	deferred   *cachedInput
-	projection *projectionInputs
-	coverage   manifest.DocumentRole
-	possible   bool
-	body       *types.Kustomization
-	file       string
-	objects    []parsedObject
-	state      pathState
-	searched   bool
-	plugins    *[]pluginInputs
-	decodeErr  error
+	declarations *fileObservation
+	deferred     *cachedInput
+	projection   *projectionInputs
+	coverage     manifest.DocumentRole
+	unprepared   bool
+	possible     bool
+	body         *types.Kustomization
+	file         string
+	objects      []parsedObject
+	state        pathState
+	searched     bool
+	plugins      *[]pluginInputs
+	decodeErr    error
 }
 
 type physicalWalk struct {
@@ -172,7 +174,8 @@ func (d *document) hasParsedFacts() bool {
 }
 
 func (d *document) hasObservations() bool {
-	return d.searched || d.pathState != pathUnknown || d.decodeErr != nil
+	declared := d.declarations != nil || d.declarationsData != nil
+	return d.searched || d.pathState != pathUnknown || d.decodeErr != nil || declared
 }
 
 func (s *parsedDocuments) lookup(file string) *parsedDocument {
@@ -222,7 +225,8 @@ func (r documentReader) restore(file string) {
 		cached.body, cached.file, cached.sourceRoot = doc.body, doc.file, root
 		if cached.objects == nil || covers(doc.coverage, cached.coverage) {
 			cached.objects = cloneInputObjects(doc.objects)
-			cached.coverage, cached.possible = doc.coverage, doc.possible
+			cached.declarations, cached.declarationsData = doc.declarations, nil
+			cached.coverage, cached.possible, cached.unprepared = doc.coverage, doc.possible, doc.unprepared
 		}
 		cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
 		cached.parsed, cached.projection, cached.deferred = doc, doc.projection, doc.deferred
@@ -384,8 +388,13 @@ func appendSourceVisibilities(
 }
 
 func (d *document) snapshot() {
-	sameParse := d.parsed != nil && d.parsed.coverage == d.coverage &&
-		d.parsed.possible == d.possible && d.parsed.deferred == d.deferred
+	if d.declarationsData != nil {
+		if err := d.restoreDeclarations(); err != nil {
+			d.decodeErr = err
+		}
+	}
+	samePolicy := d.parsed != nil && d.parsed.coverage == d.coverage && d.parsed.possible == d.possible
+	sameParse := samePolicy && d.parsed.deferred == d.deferred && d.parsed.unprepared == d.unprepared
 	sameBuilder := sameParse && d.parsed.body == d.body && d.parsed.file == d.file
 	if sameBuilder && d.parsed.matchesObservation(d) {
 		return
@@ -398,14 +407,16 @@ func (d *document) snapshot() {
 	}
 	d.parsed = &parsedDocument{
 		body: d.body, file: d.file, objects: objects, projection: d.projection, deferred: d.deferred,
-		coverage: d.coverage, possible: d.possible,
-		state: d.pathState, searched: d.searched, plugins: d.plugins, decodeErr: d.decodeErr,
+		coverage: d.coverage, possible: d.possible, unprepared: d.unprepared,
+		declarations: d.declarations,
+		state:        d.pathState, searched: d.searched, plugins: d.plugins, decodeErr: d.decodeErr,
 	}
 }
 
 func (p *parsedDocument) matchesObservation(doc *document) bool {
-	return p.state == doc.pathState && p.searched == doc.searched &&
-		p.plugins == doc.plugins && p.projection == doc.projection
+	sameInputs := p.plugins == doc.plugins && p.projection == doc.projection
+	return p.declarations == doc.declarations && p.state == doc.pathState && p.searched == doc.searched &&
+		sameInputs
 }
 
 // Frozen map layers MUST remain immutable while independent roots borrow them.

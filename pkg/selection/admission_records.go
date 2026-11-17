@@ -241,13 +241,18 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 
 func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
 	declared := c.declarationChanged(id, object)
+	record := c.record(id)
+	produced := owner != (manifest.NamedResource{}) || record.Builder != ""
+	authoritative := declared.Known || record.Authored == id
+	if comparison := c.outputChanged(
+		id,
+		new(manifest.Reference{NamedResource: id}),
+		object,
+	); produced && comparison.Known && authoritative {
+		return !comparison.Changed
+	}
 	if declared.Known && declared.Changed {
 		return false
-	}
-	record := c.record(id)
-	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known &&
-		(declared.Known || record.Authored == id) {
-		return !comparison.Changed
 	}
 	if declared.Known &&
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {

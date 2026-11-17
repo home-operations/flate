@@ -124,6 +124,7 @@ func TestFingerprint_UnsupportedContent(t *testing.T) {
 			{
 				got := Fingerprint(tt.payload)
 				assert.FatalIf(t, got != "", "Fingerprint = %q, want empty key", got)
+				assert.Equal(t, Fingerprint("next"), SHA256Hex([]byte(`"next"`)))
 			}
 		})
 	}

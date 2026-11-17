@@ -48,11 +48,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	assert.NoError(t, err)
 	for side, reader := range readers {
 		reader.opens.Store(0)
-		declared, localErr := collectInput(t.Context(), reader, "changed.yaml")
-		assert.NoError(t, localErr)
-		record := indexes[side].Records[changed]
-		record.Declared = declared[changed]
-		indexes[side].Records[changed] = record
+		completeTestInventory(t, changes, inputs[side], indexes[side])
 	}
 	qualified, err := changes.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
@@ -171,17 +167,7 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	oldReader := testutil.KustomizationID("apps", "old")
 	newReader := testutil.KustomizationID("apps", "new")
 	set := NewSet([]string{"removed.yaml"})
-	assert.NoError(
-		t,
-		set.CollectInputs(
-			t.Context(),
-			fstest.MapFS{
-				"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\n")},
-			},
-			"removed.yaml",
-			true,
-		),
-	)
+
 	visible := manifest.InputVisibility{
 		Source:   manifest.BootstrapSourceID,
 		Root:     ".",
@@ -365,7 +351,12 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 	replaced, err := Qualify(t.Context(), first, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	assert.Equal(t, replaced.Len(), 0)
-	assert.Equal(t, len(replaced.oneSided[0])+len(replaced.oneSided[1]), 0)
+	for file := range replaced.paths {
+		for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+			present, known := replaced.Present(side, file)
+			assert.Equal(t, present || known, false)
+		}
+	}
 	assert.Equal(t, len(maps.Collect(replaced.Inputs(manifest.NamedResource{}))), 0)
 	assert.Diff(
 		t,

@@ -4,16 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
-	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/inputprojection"
@@ -24,7 +21,7 @@ import (
 
 func TestSet_WithReadersUnindexedDeclarationMove(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"equal", "changed", "namespace", "partial"} {
+	for _, scenario := range []string{"equal", "changed", "namespace", "partial", "unknown", "malformed", "duplicate_equal", "duplicate_conflict", "duplicate_reverse", "indexed_peer"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			testSetWithReadersUnindexedDeclarationMoveCase(
@@ -73,11 +70,11 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		t.Run(strconv.FormatBool(before), func(t *testing.T) {
 			t.Parallel()
 			set := NewSet([]string{"entry/root.yaml", "leaf/kustomization.yaml"})
-			set.oneSided[0] = map[string]map[manifest.NamedResource]string{"leaf/kustomization.yaml": nil}
+			set.paths["leaf/kustomization.yaml"] = [2]filePresence{filePresent, fileUnknown}
 			indexes := [2]*manifest.DiscoveryIndex{index, nil}
 			if !before {
 				indexes = [2]*manifest.DiscoveryIndex{nil, index}
-				set.oneSided[1], set.oneSided[0] = set.oneSided[0], nil
+				set.paths["leaf/kustomization.yaml"] = [2]filePresence{fileUnknown, filePresent}
 			}
 			resolved, err := set.WithReaders(
 				t.Context(), [2]*manifest.DiscoveryIndex{
@@ -170,6 +167,9 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		}
 		set, err := Detect(t.Context(), artifacts[0], artifacts[1], DetectConfig{})
 		assert.NoError(t, err)
+		for side := range indexes {
+			completeTestInventory(t, set, artifacts[side], indexes[side])
+		}
 		set, err = set.WithReaders(
 			t.Context(), [2]*manifest.DiscoveryIndex{
 				indexes[0],
@@ -326,132 +326,6 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 	assert.Diff(t, set.inputs, map[manifest.NamedResource]InputChange(nil))
 }
 
-func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
-	var set Set
-	err := set.CollectInputs(ctx, input, "input.yaml", false)
-
-	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
-
-	assert.Equal(t, input.opened.Load(), int32(0))
-}
-
-type inputCheckContext func() context.Context
-
-func (c inputCheckContext) Deadline() (time.Time, bool) { return c().Deadline() }
-
-func (c inputCheckContext) Done() <-chan struct{} { return c().Done() }
-
-func (c inputCheckContext) Err() error { return c().Err() }
-
-func (c inputCheckContext) Value(key any) any { return c().Value(key) }
-
-func TestCollectInputs_CancelAfterOpen(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	reads := 0
-	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
-	input.read = func([]byte) (int, error) {
-		reads++
-		return 0, io.EOF
-	}
-	checked := inputCheckContext(func() context.Context {
-		if input.opened.Load() != 0 {
-			cancel()
-		}
-		return ctx
-	})
-	var set Set
-	err := set.CollectInputs(checked, input, "input.yaml", false)
-
-	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
-
-	assert.Equal(t, reads, 0)
-	assert.Equal(t, input.opened.Load(), int32(1))
-	assert.Equal(t, input.closed.Load(), int32(1))
-	assert.Equal(t, len(set.inputs), 0)
-}
-
-func TestCollectInputs_ReadResults(t *testing.T) {
-	t.Parallel()
-	body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
-	cause := errors.New("input read failed")
-	wrappedEOF := fmt.Errorf("unexpected EOF: %w", io.EOF)
-	for _, tc := range []struct {
-		name    string
-		readErr error
-		cancel  bool
-		wantErr error
-		reads   int
-	}{
-		{name: "bytes then EOF", reads: 2},
-		{name: "bytes with EOF", readErr: io.EOF, reads: 1},
-		{name: "bytes with error", readErr: cause, wantErr: cause, reads: 1},
-		{name: "wrapped EOF", readErr: wrappedEOF, wantErr: wrappedEOF, reads: 1},
-		{name: "cancel with bytes", cancel: true, wantErr: context.Canceled, reads: 1},
-		{name: "cancel with EOF", readErr: io.EOF, cancel: true, wantErr: context.Canceled, reads: 1},
-		{name: "cancel with error", readErr: cause, cancel: true, wantErr: context.Canceled, reads: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testCollectInputsReadResultsCase(t, testCollectInputsReadResultsCaseInputs{body: &body, tc: &tc})
-		},
-
-		// Final cancellation resolution must not mask a missing read-boundary check.
-
-		)
-	}
-}
-
-func TestCollectInputs_ParseFailureDrain(t *testing.T) {
-	t.Parallel()
-	const malformed = "\x00invalid\n"
-	cause := errors.New("later read failed")
-	probeReads := 0
-	probe := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
-	probe.read = func(p []byte) (int, error) {
-		probeReads++
-		if probeReads == 1 {
-			return copy(p, malformed), nil
-		}
-		return 0, cause
-	}
-	f, err := probe.Open("input.yaml")
-	assert.NoError(t, err)
-	_, err = testutil.DecodeDocs(f)
-	assert.NoError(t, f.Close())
-
-	assert.FatalIf(
-		t,
-		err == nil || probeReads != 1,
-		"malformed fixture must stop before the later read: reads=%d error=%v",
-		probeReads,
-		err,
-	)
-
-	t.Logf("pinned decoder rejects malformed prefix after %d read; later read remains pending", probeReads)
-	for _, tc := range []struct {
-		name    string
-		readErr error
-		cancel  bool
-		wantErr error
-	}{
-		{name: "malformed ending at EOF", readErr: io.EOF},
-		{name: "later read error", readErr: cause, wantErr: cause},
-		{name: "later cancellation", cancel: true, wantErr: context.Canceled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testCollectInputsParseFailureDrainCase(t, &tc)
-		},
-		)
-	}
-}
-
 type digestReadFS struct {
 	fs.FS
 
@@ -577,6 +451,7 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			},
 		},
 	}
+	configureUnindexedMove(*testCaseInput, inputs, indexes)
 	changes, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
 	for _, reverse := range []bool{false, true} {
@@ -585,6 +460,15 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			before, after = after, before
 			changes, err = Detect(t.Context(), inputs[1], inputs[0], DetectConfig{})
 			assert.NoError(t, err)
+		}
+		pair := inputs
+		if reverse {
+			pair = [2]*store.SourceArtifact{inputs[1], inputs[0]}
+		}
+		completeTestInventory(t, changes, pair[0], before)
+		completeTestInventory(t, changes, pair[1], after)
+		if *testCaseInput == "unknown" {
+			delete(indexes[0].Declarations[manifest.BootstrapSourceID], "outside/source.yaml")
 		}
 		qualified, err := changes.WithReaders(
 			t.Context(),
@@ -595,9 +479,12 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 		assert.NoError(t, err)
 		declarationChangedResult := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
 		changed, known := declarationChangedResult.Changed, declarationChangedResult.Known
-		assert.Equal(t, known, (*testCaseInput) != "partial")
+		uncertain := *testCaseInput == "partial" || *testCaseInput == "unknown" || *testCaseInput == "malformed"
+		uncertain = uncertain || *testCaseInput == "duplicate_conflict" || *testCaseInput == "duplicate_reverse"
+		equal := *testCaseInput == "equal" || *testCaseInput == "duplicate_equal" || *testCaseInput == "indexed_peer"
+		assert.Equal(t, known, !uncertain)
 		if known {
-			assert.Equal(t, changed, (*testCaseInput) != "equal")
+			assert.Equal(t, changed, !equal)
 		}
 		prepared := manifest.DeepCopyMap(docs[0].Document)
 		manifest.EnsureMetadata(prepared)["namespace"] = id.Namespace
@@ -605,13 +492,22 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 		if reverse {
 			side = manifest.TreeBase
 		}
-		declarationChangedResult2 := qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
+		declarationChangedResult2 := qualified.DeclarationChanged(
+			side,
+			manifest.BootstrapSourceID,
+			id,
+			&store.DeclarationContent{
+				Exact:            manifest.Fingerprint(manifest.WithoutOwnershipLabels(prepared)),
+				WithoutNamespace: manifest.Fingerprint(manifest.WithoutOwnershipLabels(docs[0].Document)),
+				Namespace:        id.Namespace,
+			},
+		)
 		changed, known = declarationChangedResult2.Changed, declarationChangedResult2.Known
 		if known {
-			assert.Equal(t, changed, (*testCaseInput) != "equal")
+			assert.Equal(t, changed, !equal)
 		}
 		_, selected := maps.Collect(qualified.Inputs(manifest.NamedResource{}))[reader]
-		assert.Equal(t, selected, (*testCaseInput) != "equal")
+		assert.Equal(t, selected, !equal)
 	}
 }
 
@@ -639,125 +535,125 @@ func testDetectOneSidedInputIgnorePoliciesCase(
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), (*testCaseInput) != "both")
 	if (*testCaseInput) != "both" {
-		side, name := 1, "after"
+		side := 1
 		if (*testCaseInput) == "after" {
-			side, name = 0, "before"
+			side = 0
 		}
-		assert.Diff(
-			t,
-			slices.SortedFunc(maps.Keys(set.oneSided[side]["input.yaml"]), manifest.NamedResource.Compare),
-			[]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}},
-		)
+		present, known := set.Present(manifest.TreeSide(side), "input.yaml")
+		assert.Equal(t, present && known, true)
 	}
 	assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 }
 
-type testCollectInputsReadResultsCaseInputs struct {
-	body *string
-	tc   *struct {
-		name string
-
-		readErr error
-		cancel  bool
-		wantErr error
-		reads   int
+func TestDeclarationChanged_PreparedEvidence(t *testing.T) {
+	t.Parallel()
+	id := testutil.KustomizationID("apps", "child")
+	for _, tc := range []struct {
+		name                     string
+		content                  *store.DeclarationContent
+		implicit, changed, known bool
+	}{
+		{name: "comparison only", known: true},
+		{name: "empty evidence", content: &store.DeclarationContent{}},
+		{name: "exact", content: &store.DeclarationContent{Exact: "authored"}, known: true},
+		{name: "defaulted", content: &store.DeclarationContent{Exact: "prepared", WithoutNamespace: "authored", Namespace: "apps"}, implicit: true, known: true},
+		{name: "explicit", content: &store.DeclarationContent{Exact: "prepared", WithoutNamespace: "authored", Namespace: "apps"}, changed: true, known: true},
+		{name: "transformed", content: &store.DeclarationContent{Exact: "prepared", WithoutNamespace: "authored", Namespace: "other"}, implicit: true, changed: true, known: true},
+		{name: "missing namespace evidence", content: &store.DeclarationContent{Exact: "prepared", Namespace: "apps"}, implicit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			set := &Set{declarations: map[comparisonKey]declarationComparison{
+				{source: manifest.BootstrapSourceID, owner: id, input: id}: {
+					declared: [2]string{
+						"authored",
+						"authored",
+					},
+					declaredKnown:     true,
+					implicitNamespace: [2]bool{tc.implicit, tc.implicit},
+				},
+			}}
+			for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+				assert.Diff(
+					t,
+					set.DeclarationChanged(side, manifest.BootstrapSourceID, id, tc.content),
+					Comparison{Changed: tc.changed, Known: tc.known},
+				)
+			}
+		})
 	}
 }
 
-func testCollectInputsReadResultsCase(t *testing.T, testCaseInput testCollectInputsReadResultsCaseInputs) {
-	t.Helper()
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	cancellationChecks := 0
-	checked := inputCheckContext(func() context.Context {
-		if ctx.Err() != nil {
-			cancellationChecks++
-		}
-		return ctx
-	})
-	reads := 0
-	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
-	input.read = func(p []byte) (int, error) {
-		reads++
-		if reads > 1 {
-			return 0, io.EOF
-		}
-		if testCaseInput.tc.cancel {
-			cancel()
-		}
-		return copy(p, (*testCaseInput.body)), testCaseInput.tc.readErr
+func configureUnindexedMove(scenario string, inputs [2]*store.SourceArtifact, indexes [2]*manifest.DiscoveryIndex) {
+	body := string(inputs[0].FS.(fstest.MapFS)["outside/source.yaml"].Data)
+	if scenario == "malformed" {
+		inputs[0].FS.(fstest.MapFS)["outside/source.yaml"].Data = []byte(body + "---\nbroken: [")
 	}
-	var set Set
-	err := set.CollectInputs(checked, input, "input.yaml", false)
-	if testCaseInput.tc.wantErr == nil {
-		assert.NoError(t, err)
-		assert.Diff(
-			t,
-			slices.SortedFunc(maps.Keys(set.oneSided[1]["input.yaml"]), manifest.NamedResource.Compare),
-			[]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}},
-		)
-	} else {
-		assert.FatalIf(
-			t,
-			!errors.Is(err, testCaseInput.tc.wantErr) || len(set.inputs) != 0,
-			"collected inputs=%v error=%v",
-			set.inputs,
-			err,
-		)
-
-		assert.FatalIf(t, !testCaseInput.tc.cancel &&
-			(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")), "read failure classification=%v", err)
+	if strings.HasPrefix(scenario, "duplicate_") {
+		second := body
+		if scenario != "duplicate_equal" {
+			second = strings.ReplaceAll(body, "fixture.invalid/chart", "fixture.invalid/other")
+		}
+		if scenario == "duplicate_reverse" {
+			body, second = second, body
+		}
+		inputs[0].FS.(fstest.MapFS)["outside/source.yaml"].Data = []byte(body + "---\n" + second)
 	}
-	assert.Equal(t, reads, testCaseInput.tc.reads)
-	assert.Equal(t, input.closed.Load(), int32(1))
-	if testCaseInput.tc.cancel {
-		assert.Equal(t, cancellationChecks, 2)
+	if scenario == "indexed_peer" {
+		for id := range indexes[1].Records {
+			record := indexes[1].Records[id]
+			indexes[0].Records[id] = manifest.DiscoveryRecord{Authored: record.Authored, File: "outside/source.yaml"}
+		}
+		inputs[0].FS.(fstest.MapFS)["outside/unrelated.yaml"] = &fstest.MapFile{
+			Data: []byte(strings.ReplaceAll(body, "fixture.invalid/chart", "fixture.invalid/other")),
+		}
 	}
 }
 
-func testCollectInputsParseFailureDrainCase(t *testing.T, testCaseInput *struct {
-	name string
-
-	readErr error
-	cancel  bool
-	wantErr error
-},
-) {
-	t.Helper()
-	const malformed = "\x00invalid\n"
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	reads := 0
-	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
-	input.read = func(p []byte) (int, error) {
-		reads++
-		if reads == 1 {
-			return copy(p, malformed), nil
-		}
-		if testCaseInput.cancel {
-			cancel()
-		}
-		return copy(p, "later content"), testCaseInput.readErr
+func TestSet_WithReadersInventoryOnlyMoves(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []struct{ version, kind string }{{"apps/v1", "Deployment"}, {"example.io/v1", "Widget"}} {
+		t.Run(kind.kind, func(t *testing.T) {
+			t.Parallel()
+			body := fmt.Sprintf(
+				"apiVersion: %s\nkind: %s\nmetadata: {name: resource, namespace: apps}\nspec: {value: same}\n",
+				kind.version,
+				kind.kind,
+			)
+			group, _, _ := strings.Cut(kind.version, "/")
+			id := manifest.NamedResource{Group: group, Kind: kind.kind, Namespace: "apps", Name: "resource"}
+			reader := testutil.KustomizationID("apps", "reader")
+			inputs := [2]*store.SourceArtifact{
+				{FS: fstest.MapFS{"old.yaml": {Data: []byte(body)}}},
+				{FS: fstest.MapFS{"new.yaml": {Data: []byte(body)}}},
+			}
+			indexes := [2]*manifest.DiscoveryIndex{}
+			changes, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
+			assert.NoError(t, err)
+			for side, file := range []string{"old.yaml", "new.yaml"} {
+				indexes[side] = &manifest.DiscoveryIndex{
+					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+					Readers: map[string][]manifest.FileReader{
+						file: {{Reader: reader, Source: manifest.BootstrapSourceID, Exact: true}},
+					},
+				}
+				completeTestInventory(t, changes, inputs[side], indexes[side])
+			}
+			resolved, err := changes.WithReaders(
+				t.Context(),
+				indexes,
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			assert.Diff(
+				t,
+				resolved.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil),
+				Comparison{Known: true},
+			)
+			_, selected := resolved.inputs[reader]
+			assert.Equal(t, selected, true)
+			assert.Equal(t, len(indexes[0].Records)+len(indexes[1].Records), 0)
+		})
 	}
-	var set Set
-	err := set.CollectInputs(ctx, input, "input.yaml", false)
-	switch {
-	case testCaseInput.wantErr == nil:
-		assert.NoError(t, err)
-	case !errors.Is(err, testCaseInput.wantErr):
-		t.Fatalf("drained error=%v, want %v", err, testCaseInput.wantErr)
-	default:
-		assert.FatalIf(
-			t,
-			!testCaseInput.cancel &&
-				(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")),
-			"drained failure classification=%v",
-			err,
-		)
-	}
-	assert.Equal(t, len(set.inputs), 0)
-	assert.Equal(t, reads, 2)
-	assert.Equal(t, input.closed.Load(), int32(1))
 }

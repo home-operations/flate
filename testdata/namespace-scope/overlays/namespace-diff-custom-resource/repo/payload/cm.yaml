@@ -1,0 +1,10 @@
+{
+  "apiVersion": "example.test/v1",
+  "kind": "Widget",
+  "metadata": {
+    "name": "config"
+  },
+  "spec": {
+    "value": "changed"
+  }
+}

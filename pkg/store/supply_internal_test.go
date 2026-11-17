@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -69,6 +70,44 @@ func TestDeclaration_Authority(t *testing.T) {
 			assert.Equal(t, obj, last)
 			assert.Equal(t, len(s.ListObjects("", kind)), 1)
 			assert.Equal(t, s.ReportHidden(id), true)
+		})
+	}
+}
+
+func TestDeclaration_ContentReplacement(t *testing.T) {
+	t.Parallel()
+	for _, origin := range []manifest.DeclarationOrigin{manifest.RepositoryDeclaration, manifest.SuppliedDeclaration} {
+		t.Run(fmt.Sprint(origin), func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			obj := &manifest.Kustomization{Name: "input", Namespace: "apps"}
+			first := testutil.ObjectDocument(obj)
+			st.AddDeclaration(Declaration{Obj: obj, Doc: first, Origin: origin})
+			var reads ReadSet
+			reads.Init(st, ownerID("reader"), nil)
+			defer reads.Retire()
+			_, _, before := reads.GetEmission(obj.Named())
+			defer before.Finish()
+			assert.Diff(t, before.inputDoc, first)
+			second := manifest.DeepCopyMap(first)
+			second["unmodeled"] = "replacement"
+			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Origin: origin})
+			_, document, current := st.GetEmission(obj.Named())
+			assert.Diff(t, document, second)
+			assert.Diff(t, current.inputDoc, second)
+			current.Finish()
+			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Origin: origin})
+			_, document, unknown := st.GetEmission(obj.Named())
+			assert.Diff(t, document, second)
+			assert.Diff(t, unknown.inputDoc, second)
+			unknown.Finish()
+			st.AddDeclaration(Declaration{Obj: obj, Origin: origin})
+			_, document, missing := st.GetEmission(obj.Named())
+			assert.Equal(t, document == nil, true)
+			assert.Equal(t, missing.inputDoc == nil, true)
+			missing.Finish()
+			assert.Diff(t, before.inputDoc, first)
+			assert.Equal(t, before.inputDoc["unmodeled"], nil)
 		})
 	}
 }

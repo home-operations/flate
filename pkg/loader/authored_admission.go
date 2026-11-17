@@ -54,7 +54,9 @@ func (l *Loader) publishAdmittedObject(child *store.Child) bool {
 		(policy.Origin == manifest.SuppliedDeclaration || policy.Root && obj.ProjectionCompatible(existing)) {
 		return false
 	}
-	l.Store.AddDeclaration(store.Declaration{Obj: obj, Doc: child.Doc, Warnings: child.Warnings})
+	l.Store.AddDeclaration(
+		store.Declaration{Obj: obj, Doc: child.Doc, Warnings: child.Warnings},
+	)
 	l.admitted[id] = obj
 	return true
 }

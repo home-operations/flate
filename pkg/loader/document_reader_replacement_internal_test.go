@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -30,6 +31,7 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 			t.Parallel()
 			st := store.New()
 			l := New(st)
+			l.Options.Changes = change.NewSet(nil)
 			l.SourceRoot = (*testCaseInput)
 			var previous fs.FS
 			var replacement *store.SourceArtifact
@@ -165,6 +167,7 @@ func replaceSourceView(
 	replacement **store.SourceArtifact,
 ) {
 	t.Helper()
+	prior := fixture.loader.Index.Declarations[manifest.BootstrapSourceID]
 	input := fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("namespace: " + fixture.name + "\nresources: [ks.yaml, child]\n")},
 		"ks.yaml": {
@@ -192,6 +195,17 @@ func replaceSourceView(
 	{
 		n, err := loadForTest(t.Context(), t, fixture.loader, (*fixture.root))
 		assert.FatalIf(t, err != nil || n != 1, "%s Load = %d, %v; want one object", fixture.name, n, err)
+	}
+	assert.NoError(t, fixture.loader.indexDeclarations())
+	current := fixture.loader.Index.Declarations[manifest.BootstrapSourceID]["ks.yaml"]
+	authored := testutil.KustomizationID("", fixture.name)
+	assert.Equal(t, current.Complete, true)
+	assert.Equal(t, current.Objects[authored] != "", true)
+	if fixture.name == "second" {
+		old := testutil.KustomizationID("", "first")
+		assert.Equal(t, prior["ks.yaml"].Objects[old] != "", true)
+		_, retained := current.Objects[old]
+		assert.Equal(t, retained, false)
 	}
 	view := fixture.loader.documents.views[(*fixture.root)]
 	if fixture.native {

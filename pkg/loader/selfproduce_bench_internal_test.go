@@ -48,6 +48,6 @@ func BenchmarkSelfProduceBuilder_ArtifactJoin(b *testing.B) {
 			store:  s,
 			reader: reader,
 		}
-		builder.joinProductions([]producerDeclaration{declaration}, scope)
+		builder.joinProductions(b.Context(), []producerDeclaration{declaration}, scope)
 	}
 }

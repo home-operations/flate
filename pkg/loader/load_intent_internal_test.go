@@ -134,11 +134,13 @@ spec:
 	load()
 	assert.Equal(t, reads["objects.yaml"].Load(), count)
 	assert.Equal(t, directories.Load(), listings)
+	var narrow *fileObservation
 	if !physicalFirst {
 		cached := l.documents.cache[filepath.Join(root, "objects.yaml")]
 		assert.Equal(t, cached.coverage, manifest.ApplicationDocuments)
 		assert.Equal(t, len(cached.objects), 1)
-		assert.Equal(t, cached.objects[0].fact.facts.declared, "")
+		assert.Equal(t, cached.declarations.Complete, false)
+		narrow = cached.declarations
 		assert.Equal(t, len(cached.objects[0].fact.facts.targets), 0)
 		assert.Equal(t, len(l.inputVisibility()), 0)
 		assert.Equal(t, l.documents.cache[filepath.Join(root, "negative.yaml")].objects != nil, true)
@@ -150,6 +152,12 @@ spec:
 	assert.Equal(t, directories.Load(), listings)
 	cached := l.documents.cache[filepath.Join(root, "objects.yaml")]
 	assert.Equal(t, cached.coverage, manifest.IncidentalDocuments)
+	assert.Equal(t, cached.declarations.Complete, true)
+	if narrow != nil {
+		assert.Equal(t, narrow.Complete, false)
+		assert.Equal(t, len(narrow.Objects), 0)
+		assert.Equal(t, narrow == cached.declarations, false)
+	}
 	assert.Equal(t, len(cached.objects), 4)
 	supplier := l.CatalogObject(testutil.KustomizationID("apps", "supplier")).(*manifest.Kustomization)
 	assert.Equal(t, supplier.PostBuild.Substitute["PREFIX"], "prod-")
@@ -192,10 +200,9 @@ func TestDecodeFileObjects_ApplicationPrecondition(t *testing.T) {
 			reader := l.documents
 			reader.intent = manifest.ApplicationDocuments
 			var objects []parsedObject
-			err := reader.decodeFileObjects(
+			err := reader.decodeFileObjects(t.Context(),
 				filepath.Join(root, "application.yaml"),
 				manifest.ParseDocOptions{},
-				true,
 				func(object parsedObject) {
 					objects = append(objects, object)
 				},

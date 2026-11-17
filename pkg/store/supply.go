@@ -2,6 +2,13 @@ package store
 
 import "github.com/home-operations/flate/pkg/manifest"
 
+// DeclarationContent MUST come from loader comparison of an immutable document.
+type DeclarationContent struct {
+	Exact            string
+	WithoutNamespace string
+	Namespace        string
+}
+
 // Declaration associates an immutable input object with its origin and provenance.
 type Declaration struct {
 	Obj       manifest.BaseManifest
@@ -38,7 +45,8 @@ func (s *Store) AddDeclaration(child Declaration) {
 		cell.reference.Obj == child.Obj &&
 		cell.reference.InputPath == child.InputPath &&
 		cell.reference.Ordinal == child.Ordinal {
-		if warningsEqual(cell.reference.Warnings, child.Warnings) {
+		if warningsEqual(cell.reference.Warnings, child.Warnings) &&
+			manifest.ValueEqual(cell.reference.Doc, child.Doc) {
 			sh.mu.Unlock()
 			return
 		}

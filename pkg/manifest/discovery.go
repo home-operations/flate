@@ -45,7 +45,6 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 type DiscoveryRecord struct {
 	Application   string                     `json:"Application"`   // Accepted applier document; valid only for its owning render receipt.
 	Declaration   BaseManifest               `json:"-"`             // Immutable parsed input; absence does not imply publication.
-	Declared      string                     `json:"-"`             // Complete authored fingerprint; empty when declaration evidence is unknown.
 	Authored      NamedResource              `json:"Authored"`      // Proven raw identity; zero for generated records.
 	Path          string                     `json:"Path"`          // Absolute raw resource path; empty for generated or projected records.
 	File          string                     `json:"File"`          // Diff coordinate; generator records use the declaration file.
@@ -98,9 +97,17 @@ type InputVisibility struct {
 	Inputs   map[NamedResource][]string
 }
 
+// FileDeclarations is immutable evidence and MUST NOT grant discovery authority.
+type FileDeclarations struct {
+	Present  bool
+	Complete bool
+	Objects  map[NamedResource]string
+}
+
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
+	Declarations    map[NamedResource]map[string]FileDeclarations
 	Records         map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims          map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
 	Readers         map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.

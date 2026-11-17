@@ -160,7 +160,7 @@ spec:
 				cached := l.documents.cache[filepath.Join(root, "objects.yaml")]
 				assert.Equal(t, cached.coverage, manifest.ApplicationDocuments)
 				assert.Equal(t, len(cached.objects), 1)
-				assert.Equal(t, cached.objects[0].fact.facts.declared, "")
+				assert.Equal(t, cached.declarations.Complete, false)
 				assert.Equal(t, len(cached.objects[0].fact.facts.targets), 0)
 				assert.Equal(t, len(l.inputVisibility()), 0)
 				assert.Equal(t, l.documents.cache[filepath.Join(root, "negative.yaml")].objects != nil, true)

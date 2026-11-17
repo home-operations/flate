@@ -52,6 +52,15 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
+			assert.Equal(t, l.scopes == nil && l.documents.parsed == nil && l.Options.ParsedInputs == nil, true)
+			prior := l.Index
+			completed, completionErr := l.CompleteDeclarations(
+				t.Context(),
+				selection.DemandDeclarations(manifest.TreeSide(side), l.Options.Changes, l.Index),
+			)
+			assert.NoError(t, completionErr)
+			assert.Equal(t, completed.Declarations[manifest.BootstrapSourceID]["changed.yaml"].Complete, true)
+			assert.Equal(t, len(prior.Declarations[manifest.BootstrapSourceID]), 0)
 			var reads store.ReadSet
 			reads.Init(st, manifest.NamedResource{}, nil)
 			defer reads.Retire()

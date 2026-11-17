@@ -63,7 +63,8 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "A"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
-	s.AddObject(parent)
+	parentContent := testutil.ObjectDocument(parent)
+	s.AddDeclaration(store.Declaration{Obj: parent, Doc: parentContent})
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 	}
@@ -75,12 +76,16 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	filter := filterLoader.Options.Session
 	c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 	run := newExecution(c, parent.Named())
-	_, _, captured := run.Reads.GetEmission(parent.Named())
+	_, capturedDoc, captured := run.Reads.GetEmission(parent.Named())
+	assert.Diff(t, capturedDoc, parentContent)
 	next := &captured
 	next.Children, next.Complete = []store.Child{{Obj: child}}, true
 	replacement := parent.Clone()
 	replacement.Path = "B"
-	s.AddObject(replacement)
+	replacementContent := testutil.ObjectDocument(replacement)
+	s.AddDeclaration(
+		store.Declaration{Obj: replacement, Doc: replacementContent},
+	)
 	run.Emit(t.Context(), parent.Named(), next, nil)
 	assert.FatalIf(t, run.Reads.Valid(), "%v", "stale input succeeded")
 	assert.FatalIf(
@@ -96,6 +101,9 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 		parent.Named(),
 		&store.Emission{Children: []store.Child{{Obj: accepted}}, Complete: true},
 	)
+	_, freshDoc, input := s.GetEmission(parent.Named())
+	input.Finish()
+	assert.Diff(t, freshDoc, replacementContent)
 	newExecution(c, parent.Named()).Emit(t.Context(), parent.Named(), fresh, nil)
 	assert.FatalIf(
 		t,

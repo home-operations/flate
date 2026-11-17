@@ -122,7 +122,17 @@ func TestRecordEmitted_EqualDeclarationRetainsCapture(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	input := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
 	st.AddObject(parent)
-	accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: input}}, Fingerprint: "parent-A", Complete: true})
+	inputDoc := testutil.ObjectDocument(input)
+	accept(
+		t,
+		st,
+		parent.Named(),
+		&Emission{
+			Children:    []Child{{Obj: input, Doc: inputDoc}},
+			Fingerprint: "parent-A",
+			Complete:    true,
+		},
+	)
 	captured, _, inventory := st.GetEmission(input.Named())
 	defer inventory.Finish()
 	assert.FatalIf(t, captured != input, "%s", "fixture did not capture accepted child")
@@ -138,11 +148,17 @@ func TestRecordEmitted_EqualDeclarationRetainsCapture(t *testing.T) {
 		t,
 		st,
 		parent.Named(),
-		&Emission{Children: []Child{{Obj: equivalent}}, Fingerprint: "parent-B", Complete: true},
+		&Emission{
+			Children:    []Child{{Obj: equivalent, Doc: inputDoc}},
+			Fingerprint: "parent-B",
+			Complete:    true,
+		},
 	)
 	if !manifest.Equal(st.GetDeclaration(input.Named()), captured) || arrivals.Load() != 0 {
 		t.Fatalf("equal publication invalidated capture without arrival: arrivals=%d", arrivals.Load())
 	}
+	assert.Equal(t, manifest.Fingerprint(inventory.inputDoc), manifest.Fingerprint(inputDoc))
+	assert.Diff(t, inventory.inputDoc, inputDoc)
 	inventory.Fingerprint, inventory.Complete = "child-A", true
 	st.RecordEmitted(input.Named(), &inventory, nil)
 }
@@ -151,7 +167,7 @@ func TestRecordEmitted_SameOutputUsesCurrentInput(t *testing.T) {
 	t.Parallel()
 	s := New()
 	a := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "A"}
-	s.AddObject(a)
+	s.AddDeclaration(Declaration{Obj: a, Doc: testutil.ObjectDocument(a)})
 	_, _, first := s.GetEmission(a.Named())
 	defer first.Finish()
 	first.Children = []Child{emissionChild("child", "same")}
@@ -159,12 +175,15 @@ func TestRecordEmitted_SameOutputUsesCurrentInput(t *testing.T) {
 	s.RecordEmitted(a.Named(), &first, nil)
 	b := a.Clone()
 	b.Path = "B"
-	s.AddObject(b)
+	s.AddDeclaration(Declaration{Obj: b, Doc: testutil.ObjectDocument(b)})
 	_, _, next := s.GetEmission(b.Named())
 	defer next.Finish()
 	next.Complete, next.Fingerprint = true, first.Fingerprint
 	s.RecordEmitted(b.Named(), &next, nil)
 	current := s.GetArtifact(b.Named(), ArtifactContent).(*Emission)
+	assert.Diff(t, first.inputDoc, testutil.ObjectDocument(a))
+	assert.Equal(t, manifest.Fingerprint(current.inputDoc), manifest.Fingerprint(testutil.ObjectDocument(b)))
+	assert.Diff(t, current.inputDoc, testutil.ObjectDocument(b))
 	if current.input != b || current.Fingerprint != first.Fingerprint ||
 		s.GetObject(first.Children[0].Obj.Named()) == nil {
 		t.Fatalf("equal output retained obsolete input: input=%v fingerprint=%q", current.input, current.Fingerprint)
@@ -280,7 +299,15 @@ func testRecordEmittedReplacedInputRejectedCase(
 			},
 		},
 	)
-	accept(t, st, peer.Named(), &Emission{Children: []Child{{Obj: input}}, Complete: true})
+	accept(
+		t,
+		st,
+		peer.Named(),
+		&Emission{
+			Children: []Child{{Obj: input, Doc: testutil.ObjectDocument(input)}},
+			Complete: true,
+		},
+	)
 	child := emissionChild("prior", "A")
 	accept(
 		t,
@@ -300,6 +327,7 @@ func testRecordEmittedReplacedInputRejectedCase(
 		defer reads.Retire()
 		_, _, next := reads.GetEmission(input.Named())
 		defer next.Finish()
+		assert.Diff(t, next.inputDoc, testutil.ObjectDocument(input))
 		next.Fingerprint = "stale"
 		if strings.HasSuffix((*testCaseInput.route), "replacement") {
 			next.Children = []Child{emissionChild("stale", "A")}
@@ -354,7 +382,20 @@ func testRecordEmittedReplacedInputRejectedCase(
 		} else {
 			replacement := input.Clone()
 			replacement.Path = "B"
-			accept(t, st, peer.Named(), &Emission{Children: []Child{{Obj: replacement}}, Complete: true})
+			accept(
+				t,
+				st,
+				peer.Named(),
+				&Emission{
+					Children: []Child{
+						{
+							Obj: replacement,
+							Doc: testutil.ObjectDocument(replacement),
+						},
+					},
+					Complete: true,
+				},
+			)
 		}
 		close(replaced)
 	})
@@ -365,5 +406,12 @@ func testRecordEmittedReplacedInputRejectedCase(
 	assert.FatalIf(t, retained.Fingerprint == "stale" || len(retained.Children) != 1 ||
 		retained.Children[0].Obj != child.Obj, "%s", "rejection replaced accepted output")
 	assert.Diff(t, retained.Children[0].Doc, child.Doc)
+	replacement := input.Clone()
+	replacement.Path = "B"
+	wantContent := testutil.ObjectDocument(replacement)
+	if *testCaseInput.loss {
+		wantContent = nil
+	}
+	assert.Diff(t, retained.inputDoc, wantContent)
 	assert.Diff(t, testutil.DocumentMaps(retained.Manifests), []map[string]any{child.Doc})
 }

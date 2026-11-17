@@ -148,3 +148,58 @@ spec:
 		})
 	}
 }
+
+func TestDecodeDocs_ApplicationProjectionRetainsLists(t *testing.T) {
+	t.Parallel()
+	input := `apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: List
+  items:
+  - apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: one, namespace: apps}
+    spec:
+      path: ./one
+      sourceRef: {kind: GitRepository, name: one, namespace: sources}
+      dependsOn: [{name: prerequisite}]
+  - apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: two, namespace: apps}
+    spec: {path: ./two, sourceRef: {kind: GitRepository, name: two}}
+- apiVersion: fluxcd.controlplane.io/v1
+  kind: FluxInstance
+  metadata: {name: flux, namespace: apps}
+  spec:
+    sync: {kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./three}
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: absent, namespace: apps}
+`
+	docs, err := DecodeDocs(strings.NewReader(input), ApplicationDocuments)
+	assert.NoError(t, err)
+	assert.NoError(t, DocumentFailure(docs))
+	assert.Equal(t, len(docs), 2)
+	outer := docs[0].Document["items"].([]any)
+	assert.Equal(t, len(outer), 2)
+	nested := outer[0].(map[string]any)["items"].([]any)
+	assert.Equal(t, len(nested), 2)
+	for i, name := range []string{"one", "two"} {
+		parsed, parseErr := ParseDoc(nested[i].(map[string]any), ParseDocOptions{})
+		assert.NoError(t, parseErr)
+		object := parsed.Object.(*Kustomization)
+		assert.Equal(t, object.Path, "./"+name)
+		assert.Equal(t, object.SourceRef.Name, name)
+		assert.Equal(t, object.SourceRef.Namespace, []string{"sources", ""}[i])
+		assert.Equal(t, len(object.DependsOn), []int{1, 0}[i])
+	}
+	parsed, err := ParseDoc(outer[1].(map[string]any), ParseDocOptions{})
+	assert.NoError(t, err)
+	application, present := ApplicationFor(parsed.Object)
+	assert.Equal(t, present, true)
+	assert.Equal(t, application.Path, "./three")
+	_, hasSpec := docs[1].Document["spec"]
+	assert.Equal(t, hasSpec, false)
+}

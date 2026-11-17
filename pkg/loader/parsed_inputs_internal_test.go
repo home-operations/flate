@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -231,6 +232,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
+		l.Options.Changes = change.NewSet(nil)
 		l.Options.ParsedInputs = inputs
 		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
@@ -279,6 +281,13 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 	if empty := l.documents.cache[filepath.Join(root, "empty.yaml")].objects; empty == nil || len(empty) != 0 {
 		t.Fatalf("snapshot lost completed empty read: %+v", empty)
 	}
+	parsed := inputs.sources[root]
+	for _, name := range []string{"secret.yaml", "empty.yaml", "broken.yaml"} {
+		observation := l.documents.cache[filepath.Join(root, name)].declarations
+		assert.Equal(t, observation != nil, true)
+		assert.Equal(t, observation.Complete, name != "broken.yaml")
+		assert.Equal(t, observation == parsed.lookup(filepath.Join(root, name)).declarations, true)
+	}
 	other, _, err := gittree.New(
 		t.Context(),
 		nil,
@@ -294,6 +303,14 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 	assert.NoError(t, err)
 	l = load(&store.SourceArtifact{LocalPath: root, FS: other}, inputs)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.Named().Name, "authoritative")
+	current := l.documents.cache[filepath.Join(root, "secret.yaml")].declarations
+	prior := parsed.lookup(filepath.Join(root, "secret.yaml")).declarations
+	assert.Equal(t, current == prior, false)
+	assert.Equal(t, prior.Objects[manifest.NamedResource{Kind: manifest.KindSecret, Name: "secret"}] != "", true)
+	_, retained := current.Objects[manifest.NamedResource{Kind: manifest.KindSecret, Name: "secret"}]
+	assert.Equal(t, retained, false)
+	authoritative := manifest.NamedResource{Kind: manifest.KindSecret, Name: "authoritative"}
+	assert.Equal(t, current.Objects[authoritative] != "", true)
 	if failures := retainedErrorsForTest(l); len(failures) != 0 {
 		t.Fatalf("replaced source retained obsolete failures: %v", failures)
 	}
@@ -472,7 +489,8 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 			body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps, labels: {kustomize.toolkit.fluxcd.io/name: owner}}\ndata: {KEY: 'ENC[AES256_GCM,data:original,iv:iv,tag:tag,type:str]'}\n"
 			documents, err := manifest.DecodeDocs(strings.NewReader(body), manifest.IncidentalDocuments)
 			assert.NoError(t, err)
-			want := manifest.Fingerprint(manifest.WithoutOwnershipLabels(documents[0].Document))
+			raw := manifest.Fingerprint(manifest.WithoutOwnershipLabels(documents[0].Document))
+			want := raw
 			if conflict {
 				body += "---\n" + strings.ReplaceAll(body, "data:original", "data:different") + "---\n" + body
 			}
@@ -488,28 +506,26 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data", Namespace: "apps"}
-			record, found := l.Index.Lookup(id)
+			_, found := l.Index.Lookup(id)
 			assert.Equal(t, found, true)
 			if conflict {
 				want = ""
 			}
-			assert.Equal(t, record.Declared, want)
-			assert.NoError(
-				t,
-				(&documentReader{compact: true}).prepareStream(
-					strings.NewReader(body),
-					manifest.ParseDocOptions{},
-					func(object parsedObject) {
-						assert.NoError(t, object.outcome.Err)
-						_, present := object.Doc["data"].(map[string]any)["KEY"]
-						assert.Equal(t, present, true)
-						assert.FatalIf(t, object.declared == "" ||
-							object.declared != manifest.Fingerprint(
-								manifest.WithoutOwnershipLabels(object.Doc),
-							), "%s", "preparation lost the original declaration fingerprint")
-					},
-				),
+			assert.Equal(t, l.Index.Declarations[manifest.BootstrapSourceID]["objects.yaml"].Objects[id], want)
+			observation, err := (&documentReader{compact: true}).prepareStream(t.Context(),
+				strings.NewReader(body),
+				manifest.ParseDocOptions{},
+				func(object parsedObject) {
+					assert.NoError(t, object.outcome.Err)
+					_, present := object.Doc["data"].(map[string]any)["KEY"]
+					assert.Equal(t, present, true)
+					assert.FatalIf(t, raw == "" || l.DeclarationContents()(object.Doc).Exact != manifest.Fingerprint(
+						manifest.WithoutOwnershipLabels(object.Doc),
+					), "%s", "preparation lost the original declaration fingerprint")
+				},
 			)
+			assert.NoError(t, err)
+			assert.Equal(t, observation.Objects[id], want)
 		})
 	}
 }
@@ -618,7 +634,7 @@ func TestParsedInputs_LoadInvalidatesOnlyNewScopeFacts(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, planning.documents.artifacts[root])
 	l := New(st)
-	defer l.Close()
+	t.Cleanup(l.Close)
 	l.SourceRoot, l.Options.ParsedInputs = root, planning.ParsedInputs()
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
@@ -649,7 +665,7 @@ func TestParsedInputs_FactSnapshotIsolation(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
-	defer l.Close()
+	t.Cleanup(l.Close)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
 	left, right := filepath.Join(root, "left"), filepath.Join(root, "right")
@@ -660,6 +676,12 @@ func TestParsedInputs_FactSnapshotIsolation(t *testing.T) {
 	assert.NoError(t, err)
 	second := l.ParsedInputs()
 	before, after := first.sources[root], second.sources[root]
+	leftFile := filepath.Join(left, "object.yaml")
+	rightFile := filepath.Join(right, "object.yaml")
+	assert.Equal(t, before.lookup(leftFile).declarations.Complete, true)
+	assert.Equal(t, before.lookup(rightFile) == nil, true)
+	assert.Equal(t, after.lookup(leftFile).declarations == before.lookup(leftFile).declarations, true)
+	assert.Equal(t, after.lookup(rightFile).declarations.Complete, true)
 	_, existed := before.load(loadContext{path: right})
 	assert.Equal(t, existed, false)
 	for _, path := range []string{left, right} {

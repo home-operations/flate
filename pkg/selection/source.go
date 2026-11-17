@@ -55,6 +55,7 @@ type ProducerFacts struct {
 }
 
 type census interface {
+	DeclarationContents() func(map[string]any) store.DeclarationContent
 	ResolveRoot(context.Context, *store.ReadSet, manifest.NamedResource, string) (string, bool, error)
 	OccurrenceObject(context.Context, *OccurrenceFacts, *store.SourceArtifact) (store.Child, error)
 	SelectionIndex() *manifest.DiscoveryIndex

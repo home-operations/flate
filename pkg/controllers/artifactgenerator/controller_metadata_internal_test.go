@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -203,6 +204,16 @@ func (f *metadataFixture) prepare(t *testing.T, tc *metadataCase) {
 
 func checkCapturedMetadata(t *testing.T, st *store.Store, target manifest.NamedResource, want string) {
 	t.Helper()
+	_, document, emission := st.GetEmission(target)
+	defer emission.Finish()
+	prepared, outcome, _ := loader.Prepare(manifest.DocOccurrence{Document: document}, manifest.ParseDocOptions{})
+	assert.NoError(t, outcome.Err)
+	assert.Equal(
+		t,
+		new(loader.Loader).DeclarationContents()(document),
+		new(loader.Loader).DeclarationContents()(prepared.Doc),
+	)
+	assert.Equal(t, new(loader.Loader).DeclarationContents()(document).Exact != "", true)
 	artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 	assert.FatalIf(t, !ok, "missing %s output", want)
 	data, err := fs.ReadFile(artifact.FS, "file")
@@ -245,6 +256,17 @@ func (f *metadataFixture) assertMetadata(t *testing.T, tc *metadataCase) *store.
 	)
 	emission, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(t, !ok, "%v", "missing complete generator inventory")
+	prepared, outcome, _ := loader.Prepare(
+		manifest.DocOccurrence{Document: emission.Children[0].Doc},
+		manifest.ParseDocOptions{},
+	)
+	assert.NoError(t, outcome.Err)
+	assert.Equal(
+		t,
+		new(loader.Loader).DeclarationContents()(emission.Children[0].Doc),
+		new(loader.Loader).DeclarationContents()(prepared.Doc),
+	)
+	assert.Equal(t, new(loader.Loader).DeclarationContents()(emission.Children[0].Doc).Exact != "", true)
 	metadata := emission.Children[0].Doc["metadata"].(map[string]any)
 	uid := ""
 	if tc.uid {

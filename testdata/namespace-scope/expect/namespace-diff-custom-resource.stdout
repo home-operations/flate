@@ -1,0 +1,51 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "selected",
+        "path": "payload"
+      },
+      "apiVersion": "example.test/v1",
+      "kind": "Widget",
+      "namespace": "apps",
+      "name": "config",
+      "status": "changed",
+      "old": {
+        "apiVersion": "example.test/v1",
+        "kind": "Widget",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "selected",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "config",
+          "namespace": "apps"
+        },
+        "spec": {
+          "value": "original"
+        }
+      },
+      "new": {
+        "apiVersion": "example.test/v1",
+        "kind": "Widget",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "selected",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "config",
+          "namespace": "apps"
+        },
+        "spec": {
+          "value": "changed"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

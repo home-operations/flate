@@ -418,7 +418,7 @@ metadata: {name: pending}
 	opts := manifest.ParseDocOptions{DefaultNamespace: "apps"}
 	var ordinals []int
 	var failures []manifest.DocOccurrence
-	err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child parsedObject) {
+	err := reader.decodeFileObjects(t.Context(), filepath.Join(root, "mixed.yaml"), opts, func(child parsedObject) {
 		if child.outcome.Err != nil {
 			failures = append(failures, child.outcome)
 			return

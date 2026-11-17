@@ -1082,6 +1082,11 @@ Its invocation sequence is declared in `namespace-scope/scenario.json`.
 `namespace-scope/namespace-diff-renamed` compares complete JSON changes, empty stderr, and exit zero.
 Its invocation sequence is declared in `namespace-scope/scenario.json`.
 
+`namespace-scope/namespace-diff-deployment` and `namespace-scope/namespace-diff-custom-resource` retain changes from ordinary and custom resources.
+Each change names its owning Kustomization and excludes the independently changed monitoring peer.
+Two replays compare complete JSON bytes, empty stderr, and exit zero with two workers.
+The expected objects follow the authored documents and Flux ownership labels.
+
 `namespace-scope/namespace-diff-empty` compares complete JSON changes, empty stderr, and exit zero.
 Its invocation sequence is declared in `namespace-scope/scenario.json`.
 

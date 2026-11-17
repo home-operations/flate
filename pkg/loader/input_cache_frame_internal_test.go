@@ -9,6 +9,7 @@ import (
 	"maps"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,9 +56,10 @@ func TestRestoreFrameFiles_IndependentLifetime(t *testing.T) {
 func TestInputFrame_LazyPayload(t *testing.T) {
 	t.Parallel()
 	payload := bytes.Repeat([]byte("declaration"), 8192)
-	frame := inputFrame{Files: []cachedInput{{Name: "object.yaml", Objects: []cachedOccurrence{{
-		Ordinal: 3, payload: &inputPayload{data: payload},
-	}}}}}
+	frame := inputFrame{Files: []cachedInput{{
+		Name: "object.yaml", Projection: &cachedProjection{},
+		Objects: []cachedOccurrence{{Ordinal: 3, payload: &inputPayload{data: payload}}},
+	}}}
 	visit := cachedVisit{Context: cachedGraphContext{Root: "."}, File: "object.yaml"}
 	frame.Walks = []cachedWalk{{Visits: []cachedVisit{visit}}, {Visits: []cachedVisit{visit}}}
 	encoded := encodeInputFrame(t, &frame)
@@ -111,6 +113,12 @@ func TestInputFrame_RejectsInvalidIndex(t *testing.T) {
 	}{
 		{name: "negative-visit", index: `{"Walks":[{"Visits":[-1]}]}`},
 		{name: "missing-visit", index: `{"Walks":[{"Visits":[0]}]}`},
+		{name: "negative-declaration-block", index: `{"DeclarationBytes":-1}`},
+		{name: "missing-declaration-block", index: `{"DeclarationBytes":1}`},
+		{name: "negative-declaration-offset", index: `{"Files":[{"DeclarationOffset":-1,"DeclarationSize":1}]}`},
+		{name: "negative-declaration-size", index: `{"Files":[{"DeclarationSize":-1}]}`},
+		{name: "declaration-past-block", index: `{"Files":[{"DeclarationOffset":1,"DeclarationSize":1}]}`},
+		{name: "declaration-exceeds-block", index: `{"Files":[{"DeclarationSize":1}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -285,6 +293,72 @@ func TestInputFrame_RejectsInvalidCoordinates(t *testing.T) {
 				err = l.restoreFrameTraversal(state, &frame)
 			}
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		})
+	}
+}
+
+func TestInputCache_FileDeclarations(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		"",
+		"apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: z}\n---\napiVersion: example.io/v1\nkind: Widget\nmetadata: {name: a}\n",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '${NAME}'}\n",
+	} {
+		t.Run(strconv.Itoa(len(body)), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			reader := readerForTest(root)
+			reader.compact = true
+			reader.views[root] = fstest.MapFS{"input.yaml": {Data: []byte(body)}}
+			file := filepath.Join(root, "input.yaml")
+			_, err := reader.censusFile(t.Context(), file, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			doc := reader.cache[file]
+			saved, known, err := cacheInput("input.yaml", "digest", &doc)
+			assert.NoError(t, err)
+			assert.Equal(t, known, true)
+			assert.Equal(t, saved.declarations == &doc.declarations.payload, true)
+			frame := inputFrame{Files: []cachedInput{saved, {
+				Name: "empty.yaml", declarations: &inputPayload{
+					observation: &fileObservation{Present: true, Complete: true},
+				},
+			}}}
+			data := encodeInputFrame(t, &frame)
+			owner, err := cache.New(t.Context(), "")
+			assert.NoError(t, err)
+			defer func() { assert.NoError(t, owner.Close()) }()
+			generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: "declarations"}, &cache.Policy{},
+				func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
+					_, writeErr := out.Write(data)
+					return cache.ProducerResult{}, writeErr
+				})
+			assert.NoError(t, err)
+			restoredFrame, err := readInputFrame(t.Context(), generation)
+			assert.NoError(t, err)
+			restored := restoredFrame.Files[0]
+			var encoded cachedFileDeclarations
+			assert.NoError(t, json.Unmarshal(restored.declarations.data, &encoded))
+			assert.Equal(t, slices.IsSortedFunc(encoded.Objects, func(a, b cachedDeclaration) int {
+				return a.Identity.Compare(b.Identity)
+			}), true)
+			var empty cachedFileDeclarations
+			assert.NoError(t, json.Unmarshal(restoredFrame.Files[1].declarations.data, &empty))
+			assert.Equal(t, empty.Present && empty.Complete, true)
+			assert.Equal(t, len(empty.Objects), 0)
+			reader.cache[file] = document{deferred: &restored}
+			reader.restoreCachedFile(file)
+			pending := reader.cache[file]
+			assert.Equal(t, pending.declarations == nil, true)
+			assert.Equal(t, pending.declarationsData != nil, true)
+			assert.NoError(t, pending.restoreDeclarations())
+			assert.Equal(t, pending.declarationsData == nil, true)
+			reader.cache[file] = pending
+			observation := reader.cache[file].declarations
+			assert.Diff(t, observation.FileDeclarations, doc.declarations.FileDeclarations)
+			reader.restoreCachedFile(file)
+			assert.Equal(t, reader.cache[file].declarations == observation, true)
+			assert.NoError(t, pending.restoreDeclarations())
+			assert.Equal(t, pending.declarations == observation, true)
 		})
 	}
 }

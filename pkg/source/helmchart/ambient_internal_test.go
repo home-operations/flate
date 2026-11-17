@@ -307,8 +307,8 @@ func testFetcherLocalHelmContinuationCase1(
 					Origin: manifest.SuppliedDeclaration,
 				},
 			}
-			for _, declaration := range supplied {
-				st.AddDeclaration(declaration)
+			for i := range supplied {
+				st.AddDeclaration(supplied[i])
 			}
 			if (*inputs.tier) == "supply" {
 				(*inputs.username) = "supply"

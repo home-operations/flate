@@ -1,0 +1,305 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "9a8bb1ae0b6e9826c15402ffe234463061d91849",
+    "paths": [
+      "pkg/controllers/base/dependencies.go"
+    ],
+    "reductions": "Authored from the reported bootstrap and apps layout. Healthy history adds both required ConfigMaps, and failing history removes them."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "healthy",
+      "overlay": "healthy",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/healthy"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "failed",
+      "overlay": "failed",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "healthy"
+      ],
+      "refs": [
+        "refs/heads/failed",
+        "refs/remotes/origin/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "healthy",
+      "directory": "overlays/healthy"
+    },
+    {
+      "name": "failed",
+      "operations": [
+        {
+          "delete": "repo/clusters/a/vars.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "full-build",
+      "description": "Report both absent inputs and their consumer in one full build.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "failed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only",
+      "description": "Report both inputs after their removal from the healthy base.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "failed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "healthy"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-current",
+      "description": "Suppress the failed current output and retain both missing inputs.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "failed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "failed-current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "healthy",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/failed-current.stdout",
+              "stderr": "expect/failed-current.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-orig",
+      "description": "Suppress the failed original output and retain both missing inputs.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "healthy"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "failed-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "clusters/a",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "failed",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/failed-orig.stdout",
+              "stderr": "expect/failed-orig.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Independently authored root output from sync.yaml, including Flux ownership labels."
+    },
+    {
+      "path": "expect/failed-current.stderr",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "expect/failed-current.stdout",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "expect/failed-orig.stderr",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "expect/failed-orig.stdout",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "overlays/healthy/repo/clusters/a/vars.yaml",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "repo/apps/a/cm.yaml",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    },
+    {
+      "path": "repo/clusters/a/sync.yaml",
+      "cases": [
+        "full-build",
+        "changed-only",
+        "failed-current",
+        "failed-orig"
+      ],
+      "purpose": "Authored reproduction input or independently derived complete stream expectation."
+    }
+  ]
+}

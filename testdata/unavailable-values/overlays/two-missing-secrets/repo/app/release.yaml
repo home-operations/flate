@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: default}
+spec:
+  interval: 1m
+  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}
+  valuesFrom:
+    - {kind: Secret, name: demo-db-app, valuesKey: uri, targetPath: db.uri}
+    - {kind: Secret, name: demo-cache-app, valuesKey: uri, targetPath: cache.uri}

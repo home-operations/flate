@@ -204,7 +204,11 @@ type pendingDataError struct {
 	wait      DataWait
 	blocked   []manifest.NamedResource
 	results   []values.Result
-	failed    *manifest.DependencyFailedError
+	// failed merges diagnostics; causes preserves original error classifications.
+	// A sole non-absence cause MUST retain its error shape.
+	// The aggregate MUST precede causes so errors.AsType finds every failed input.
+	failed *manifest.DependencyFailedError
+	causes []error
 }
 
 func (p *pendingDataError) Error() string { return "waiting for values inputs" }
@@ -215,6 +219,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 
 	w := e.dependencyWaiter()
 	p.results = p.results[:0]
+	p.causes = p.causes[:0]
 	e.Unreadable = e.Unreadable[:0]
 	p.failed, _ = errors.AsType[*manifest.DependencyFailedError](gateErr)
 	p.blocked = p.blocked[:0]
@@ -230,9 +235,15 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 		p.blocked = compactDataIDs(p.blocked)
 		return p
 	}
+	if len(p.causes) == 1 && !errors.Is(p.causes[0], manifest.ErrObjectNotFound) {
+		return p.causes[0]
+	}
 	if p.failed != nil {
 		p.failed.Failed = compactDataIDs(p.failed.Failed)
-		return p.failed
+		if len(p.causes) == 0 {
+			return p.failed
+		}
+		return manifest.NewError(manifest.ErrInput, errors.Join(p.failed, errors.Join(p.causes...)), p.failed.Error())
 	}
 	if gateErr != nil {
 		return gateErr
@@ -290,27 +301,41 @@ func (e *Execution) readDataInput(
 }
 
 func (p *pendingDataError) addFailure(
-	failed *manifest.DependencyFailedError,
 	causes []manifest.NamedResource,
 	reason *manifest.DiagnosticReason,
-	input *depwait.DataDependency,
-) *manifest.DependencyFailedError {
+	err error,
+) {
 	e := p.execution
-	if failed == nil {
-		failed = &manifest.DependencyFailedError{
+	if p.failed == nil {
+		p.failed = &manifest.DependencyFailedError{
 			Parent:  e.Reads.ID(),
 			Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
 			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
 		}
 	}
 	if len(causes) == 0 {
-		causes = []manifest.NamedResource{input.NamedResource}
+		causes = []manifest.NamedResource{reason.Subject.ID}
 	}
 	for _, cause := range causes {
-		failed.Failed = append(failed.Failed, cause)
-		failed.Reasons[cause] = *reason
+		captured := *reason
+		if cause != reason.Subject.ID {
+			for i := range reason.Causes {
+				if reason.Causes[i].Subject.ID == cause {
+					captured = reason.Causes[i]
+					break
+				}
+			}
+		}
+		previous := p.failed.Reasons[cause]
+		captured.Causes = append(slices.Clone(previous.Causes), captured.Causes...)
+		slices.SortFunc(captured.Causes, manifest.DiagnosticReason.Compare)
+		captured.Causes = slices.CompactFunc(captured.Causes, func(a, b manifest.DiagnosticReason) bool {
+			return a.Compare(b) == 0
+		})
+		p.failed.Failed = append(p.failed.Failed, cause)
+		p.failed.Reasons[cause] = captured
 	}
-	return failed
+	p.causes = append(p.causes, err)
 }
 
 func (p *pendingDataError) settleInput(
@@ -336,10 +361,10 @@ func (p *pendingDataError) settleInput(
 	case schedule.Blocked:
 		p.blocked = append(p.blocked, result.Blocked...)
 	case schedule.DependencyFailed:
-		if result.Result.Err() != nil {
-			return result.Result.Err()
+		if err := result.Result.MaterialError(); err != nil {
+			return err
 		}
-		p.failed = p.addFailure(p.failed, result.Failed, &result.Reason, input)
+		p.addFailure(result.Failed, &result.Reason, result.Result.Err())
 	case schedule.Terminal:
 		if result.Result.UnreadableInput() {
 			e.Unreadable = append(e.Unreadable, result.Result.ID())

@@ -12,6 +12,7 @@ func TestE2E_UnavailableValues(t *testing.T) {
 		"combined-secret", "combined-configmap", "strict-encryption", "wrong-kind-permission",
 		"supply", "configmap-supply", "produced-allowed", "produced-strict", "missing-key-allowed", "missing-key-strict",
 		"missing-key-supply", "requested-key-isolation",
+		"missing-secret", "encrypted-then-missing", "missing-then-encrypted", "two-missing-secrets",
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixture := harness.Open(t, "unavailable-values", name)

@@ -89,3 +89,9 @@ func TestE2E_ComponentSecretProducerSelection(t *testing.T) {
 		"renamed-producer-reverse",
 	)
 }
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_DependencyInputs_AllFailures(t *testing.T) {
+	runSubstitutionCases(t, "dependency-report-all-inputs",
+		"full-build", "changed-only", "failed-current", "failed-orig")
+}

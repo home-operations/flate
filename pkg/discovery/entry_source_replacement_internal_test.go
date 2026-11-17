@@ -157,3 +157,45 @@ func TestResolveEntrySources_RefreshPreservesSuppliedArtifact(t *testing.T) {
 	assert.Equal(t, child.Obj == nil, true)
 	assert.Equal(t, artifact == nil, true)
 }
+
+func TestEntrySourceObject_DeclarationContent(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"scoped", "synthetic replacement", "referenced"} {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+			document := map[string]any{
+				"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository",
+				"metadata": map[string]any{"name": "source", "namespace": "apps"},
+				"spec":     map[string]any{"url": "oci://fixture.invalid/chart"},
+			}
+			child, _, _ := loader.Prepare(manifest.DocOccurrence{Document: document}, manifest.ParseDocOptions{})
+			st := store.New()
+			requester := &manifest.Kustomization{Name: "requester", Namespace: "apps"}
+			st.AddObject(requester)
+			session := &Session{
+				cfg:             Config{Store: st},
+				resolvedSources: &entrySourcePublisher{mutable: map[manifest.NamedResource]entryResolution{}},
+			}
+			group := &entrySourceGroup{
+				object:   child.Obj,
+				document: child.Doc,
+				refs:     []manifest.NamedResource{requester.Named()},
+				scoped:   route == "scoped",
+			}
+			if route == "synthetic replacement" {
+				previous := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
+				st.AddObject(previous)
+				session.resolvedSources.mutable[previous.Named()] = entryResolution{object: previous, synthetic: true}
+			}
+			object := session.entrySourceObject(child.Obj.Named(), group)
+			assert.Equal(t, object, child.Obj)
+			current, doc, emission := st.GetEmission(child.Obj.Named())
+			defer emission.Finish()
+			assert.Equal(t, current, child.Obj)
+			assert.Diff(t, doc, child.Doc)
+			content := new(loader.Loader).DeclarationContents()
+			assert.Diff(t, content(doc), content(child.Doc))
+			assert.Equal(t, content(doc).Exact != "", true)
+		})
+	}
+}

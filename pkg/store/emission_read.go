@@ -416,7 +416,7 @@ func compareProduction(a, b manifest.Production) int {
 // SetDiscoveryIndex installs frozen source-qualified evidence before reconciliation.
 // Discovery is never rebuilt on the render path.
 func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
-	if index == nil || s.index.Load() == index {
+	if index == nil || s.index.Load() != nil {
 		return
 	}
 	coverage := s.discoveryCoverage(index)

@@ -209,7 +209,11 @@ func (l *Loader) desiredAuthored(
 				record := l.authoredManifestRecord(new(r), id, previous.Obj, projected)
 				next[id] = record
 				if manifest.KindOf(projected).Discovery {
-					objects[id] = store.Child{Obj: projected, Doc: authored.Doc, Warnings: authored.Warnings}
+					objects[id] = store.Child{
+						Obj:      projected,
+						Doc:      authored.Doc,
+						Warnings: authored.Warnings,
+					}
 				}
 			}
 		}
@@ -325,7 +329,11 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 			for childIndex := range childValues {
 				child := childValues[childIndex]
 				if child.fact != nil && child.fact.Authored == id && child.fact.object != nil {
-					return store.Child{Obj: child.fact.object, Doc: child.Doc, Warnings: child.Warnings}
+					return store.Child{
+						Obj:      child.fact.object,
+						Doc:      child.Doc,
+						Warnings: child.Warnings,
+					}
 				}
 				if child.fact != nil && child.fact.Authored == id && child.fact.facts.structural != nil {
 					return store.Child{Obj: child.fact.facts.structural}

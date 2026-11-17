@@ -375,7 +375,11 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		st.RecordEmitted(producer, &Emission{Children: []Child{{Obj: obj, Doc: doc}}, Complete: true}, nil)
 		shard := st.shardFor(obj.Named())
 		shard.mu.RLock()
-		update := objectUpdate{obj: obj, document: doc, cell: shard.cells[obj.Named()]}
+		update := objectUpdate{
+			obj:      obj,
+			document: doc,
+			cell:     shard.cells[obj.Named()],
+		}
 		shard.captureLocked(obj.Named(), new(update.cell), &update.effective)
 		shard.mu.RUnlock()
 		update.compare()

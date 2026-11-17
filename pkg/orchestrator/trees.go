@@ -325,24 +325,9 @@ func (r *renderInvocation) qualifyConstructionReaders(
 
 func (r *renderInvocation) qualifyReaders(ctx context.Context, i int) error {
 	current := r.results[i].Orchestrator
-	other, j, _ := r.opposite(i)
+	other, j, found := r.opposite(i)
 	if other != nil && j < i {
 		return nil
-	}
-	before, after := current.index, (*manifest.DiscoveryIndex)(nil)
-	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{}
-	if current.loader != nil {
-		inputs[0] = current.loader.InputContent
-	}
-	if other != nil {
-		after = other.index
-		if other.loader != nil {
-			inputs[1] = other.loader.InputContent
-		}
-	}
-	if r.results[i].ID.Side == manifest.TreeHead {
-		before, after = after, before
-		inputs[0], inputs[1] = inputs[1], inputs[0]
 	}
 	changes := current.cfg.ExternalChanges
 	if other != nil && (changes != nil || current.cfg.Input != other.cfg.Input) {
@@ -365,6 +350,25 @@ func (r *renderInvocation) qualifyReaders(ctx context.Context, i int) error {
 			return nil
 		}
 		changes = qualified
+	}
+	if err := current.completeDeclarations(ctx, other, changes); err != nil {
+		r.stopDeclarationFailures(i, j, found, err)
+		return nil
+	}
+	before, after := current.index, (*manifest.DiscoveryIndex)(nil)
+	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{}
+	if current.loader != nil {
+		inputs[0] = current.loader.InputContent
+	}
+	if other != nil {
+		after = other.index
+		if other.loader != nil {
+			inputs[1] = other.loader.InputContent
+		}
+	}
+	if r.results[i].ID.Side == manifest.TreeHead {
+		before, after = after, before
+		inputs[0], inputs[1] = inputs[1], inputs[0]
 	}
 	resolved, err := changes.WithReaders(
 		ctx,
@@ -459,12 +463,14 @@ func (r *renderInvocation) qualifyDeclarations(ctx context.Context) error {
 			ctx,
 			change.DeclarationInputs{Stores: [2]*store.Store{base, head}, Prepared: prepared, Work: o.cfg.work.Scope()},
 		)
+		if err == nil {
+			err = o.bindDeclaredReaders(ctx, other, changes)
+		}
 		if err != nil {
 			r.stopDeclarationFailures(i, j, found, err)
-			continue
-		}
-		if err := o.bindDeclaredReaders(ctx, other, changes); err != nil {
-			return err
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -527,7 +533,25 @@ func (o *Orchestrator) promotionChildren() map[manifest.NamedResource]store.Chil
 	return prepared
 }
 
+func (o *Orchestrator) completeDeclarations(ctx context.Context, other *Orchestrator, changes *change.Set) error {
+	for _, current := range []*Orchestrator{o, other} {
+		if current == nil || current.loader == nil {
+			continue
+		}
+		demand := selection.DemandDeclarations(current.cfg.ID.Side, changes, current.loader.Index)
+		index, err := current.loader.CompleteDeclarations(ctx, demand)
+		if err != nil {
+			return err
+		}
+		current.index = index
+	}
+	return nil
+}
+
 func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestrator, changes *change.Set) error {
+	if err := o.completeDeclarations(ctx, other, changes); err != nil {
+		return err
+	}
 	if other == nil {
 		before, after := o.index, (*manifest.DiscoveryIndex)(nil)
 		inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, nil}

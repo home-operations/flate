@@ -74,7 +74,9 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 		},
 		"spec": map[string]any{"path": "${VALUE}", "targetNamespace": "${VALUE}"},
 	}
-	child := new(documentReader).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: doc})
+	child := new(
+		documentReader,
+	).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: doc})
 	assert.NoError(t, child.outcome.Err)
 	fact := compactOccurrence(child.Obj, manifest.TemplateProjection{})
 	fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "shared/child.yaml"}

@@ -246,18 +246,18 @@ func TestReadSet_DeclarationFreeze(t *testing.T) {
 	defer before.Retire()
 	defer after.Retire()
 	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
-	st.SetDiscoveryIndex(
-		&manifest.DiscoveryIndex{
-			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				raw.Named(): {Productions: []manifest.Production{{Owner: ownerID("owner")}}},
-			},
+	index := &manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			raw.Named(): {Productions: []manifest.Production{{Owner: ownerID("owner")}}},
 		},
-	)
+	}
+	st.SetDiscoveryIndex(index)
 	assert.FatalIf(t, after.Matches(&before), "%s", "matching reclassified the immutable pre-index declaration")
 	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
 	assert.Equal(t, after.GetDeclaration(raw.Named()), nil)
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
 	assert.Equal(t, st.GetDeclaration(raw.Named()), nil)
+	assert.Equal(t, st.index.Load() == index, true)
 }
 
 func testReadSetBoundDeclarationAuthorityCase(

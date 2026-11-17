@@ -439,7 +439,7 @@ func (w *traversal) scanBootstrapFile(ctx context.Context, abs string, reader *d
 	if reader.compact {
 		objs, err = reader.censusFile(ctx, abs, opts)
 	} else {
-		objs, err = reader.fileObjects(abs, opts)
+		objs, err = reader.fileObjects(ctx, abs, opts)
 	}
 	if err != nil {
 		warning := manifest.Warning{

@@ -64,7 +64,11 @@ func (l *Loader) publishAuthoredObject(
 			object.ProjectionCompatible(previous.Obj) {
 			object = previous.Obj
 		}
-		objects[identity] = store.Child{Obj: object, Doc: authored.Doc, Warnings: authored.Warnings}
+		objects[identity] = store.Child{
+			Obj:      object,
+			Doc:      authored.Doc,
+			Warnings: authored.Warnings,
+		}
 	}
 }
 

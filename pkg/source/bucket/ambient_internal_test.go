@@ -537,9 +537,9 @@ func testFetcherMachineContinuationCase1Part1(access, tier **string, st **store.
 				Origin: manifest.SuppliedDeclaration,
 			},
 		}
-		for _, declaration := range supplied {
+		for i := range supplied {
 			(*st).
-				AddDeclaration(declaration)
+				AddDeclaration(supplied[i])
 		}
 		if (*(*tier)) == "supply" {
 			(*(*access)) = "supply"

@@ -55,8 +55,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return err
 	}
 	l.retainUnknownOwnerReach()
-	l.completeIndexInputs(repoRoot)
-	if err := l.captureNativeRoots(repoRoot); err != nil {
+	if err := l.completeIndexInputs(repoRoot); err != nil {
 		return err
 	}
 
@@ -250,6 +249,11 @@ func (l *Loader) Close() {
 	l.Retire()
 	for root := range files {
 		doc := files[root]
+		if doc.unprepared {
+			for i := range doc.objects {
+				manifest.ReleaseDoc(doc.objects[i].Doc)
+			}
+		}
 		if doc.builtInput != nil {
 			l.Store.Retire(doc.builtInput.Support)
 		}
@@ -396,8 +400,11 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 	}
 }
 
-func (l *Loader) completeIndexInputs(repoRoot string) {
+func (l *Loader) completeIndexInputs(repoRoot string) error {
 	l.markCompleteSources()
+	if err := l.indexDeclarations(); err != nil {
+		return err
+	}
 	if l.documents.compact {
 		l.Index.Visibility = l.inputVisibility()
 	}
@@ -421,6 +428,70 @@ func (l *Loader) completeIndexInputs(repoRoot string) {
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
+	return l.captureNativeRoots(repoRoot)
+}
+
+func (l *Loader) indexDeclarations() error {
+	observed := len(l.Index.Declarations) != 0
+	if !observed {
+		for file := range l.documents.cache {
+			if doc := l.documents.cache[file]; doc.declarations != nil || doc.declarationsData != nil {
+				observed = true
+				break
+			}
+		}
+	}
+	if !observed {
+		return nil
+	}
+	bootstrap, _ := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	declarations, err := l.indexDeclarationSource(manifest.BootstrapSourceID, bootstrap, nil)
+	if err != nil {
+		return err
+	}
+	if l.scopes != nil {
+		for i := range l.scopes.sources {
+			scope := &l.scopes.sources[i]
+			declarations, err = l.indexDeclarationSource(scope.id, scope.artifact, declarations)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	for source := range l.Options.Changes.Sources() {
+		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+		declarations, err = l.indexDeclarationSource(source, input, declarations)
+		if err != nil {
+			return err
+		}
+	}
+	index := *l.Index
+	index.Declarations = declarations
+	l.Index = &index
+	return nil
+}
+
+func (l *Loader) indexDeclarationSource(
+	source manifest.NamedResource,
+	input *store.SourceArtifact,
+	declarations map[manifest.NamedResource]map[string]manifest.FileDeclarations,
+) (map[manifest.NamedResource]map[string]manifest.FileDeclarations, error) {
+	previous, known := declarations[source]
+	if !known {
+		previous = l.Index.Declarations[source]
+	}
+	files, err := l.documents.sourceDeclarations(input, previous)
+	if err != nil {
+		return nil, err
+	}
+	if files == nil {
+		return declarations, nil
+	}
+	if declarations == nil {
+		declarations = map[manifest.NamedResource]map[string]manifest.FileDeclarations{}
+	}
+	declarations[source] = files
+	return declarations, nil
 }
 
 func (l *Loader) indexClaimOwners() map[manifest.NamedResource]map[string]struct{} {

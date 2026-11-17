@@ -30,6 +30,6 @@ func TestDocumentReader_DeferredCatalogErrorRetainsFailure(t *testing.T) {
 		Objects: []cachedOccurrence{{Catalog: json.RawMessage(`{"Identity":{"Kind":"invalid"}}`)}},
 	}}}
 	assert.NoError(t, l.restoreFrameFiles(state, &frame))
-	_, err := l.documents.fileObjects(file, manifest.ParseDocOptions{})
+	_, err := l.documents.fileObjects(t.Context(), file, manifest.ParseDocOptions{})
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux), "deferred catalog error lost: %v", err)
 }

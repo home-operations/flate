@@ -146,6 +146,17 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	custom := o.store.GetObject(id).(*manifest.RawObject)
 	assert.Equal(t, custom.Spec["payload"].(map[string]any)["value"], any("owned"))
 	for _, child := range o.cfg.Supply {
+		preparedChild, outcome, _ := loader.Prepare(
+			manifest.DocOccurrence{Document: child.Doc},
+			manifest.ParseDocOptions{RequiredIdentity: true},
+		)
+		assert.NoError(t, outcome.Err)
+		assert.Equal(t, o.loader.DeclarationContents()(child.Doc), o.loader.DeclarationContents()(preparedChild.Doc))
+		assert.Equal(t, o.loader.DeclarationContents()(child.Doc).Exact != "", true)
+		_, document, captured := o.store.GetEmission(child.Obj.Named())
+		assert.Diff(t, document, child.Doc)
+		assert.Equal(t, o.loader.DeclarationContents()(document), o.loader.DeclarationContents()(child.Doc))
+		captured.Finish()
 		if manifest.DocKind(child.Doc) == "Widget" {
 			assert.Equal(t, child.Doc["extra"].(map[string]any)["retained"], any(true))
 		}

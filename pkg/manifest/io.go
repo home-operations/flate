@@ -63,32 +63,29 @@ const (
 	ApplicationDocuments
 )
 
+// The preset contains immutable options and stateless plugins shared by independent decoders.
+//
+//nolint:gochecknoglobals // Independent decoders share immutable upstream options.
+var documentDecodeOptions = yaml.WithV3Defaults()
+
 // DecodeDocs retains document and read failures, returning cancellation and deadline errors.
 // Returned maps belong to the caller and MUST remain live while retained.
 func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 	stream := &documentStream{Reader: r}
-	dec := yaml.NewDecoder(stream)
-	var priorAliases, priorConstructs, lastAliases, lastConstructs int
-	guard := loaderlimits.New()
-	// Node.Load creates a constructor per document; the decoder's alias policy
-	// requires cumulative stream counts, including skipped documents.
-	constructionOption := yaml.WithPlugin(loaderlimits.New(loaderlimits.AliasFunc(func(aliases, constructs int) error {
-		if constructs == 1 {
-			priorAliases += lastAliases
-			priorConstructs += lastConstructs
-		}
-		lastAliases, lastConstructs = aliases, constructs
-		return guard.CheckAlias(priorAliases+aliases, priorConstructs+constructs)
-	})))
+	// The fixed upstream preset cannot fail option construction.
+	dec, _ := yaml.NewLoader(stream, documentDecodeOptions)
+	constructionOption := yaml.WithPlugin(&stream.limits)
 	var out []DocOccurrence
 	for ordinal := 0; ; ordinal++ {
-		var node yaml.Node
-		err := dec.Decode(&node)
+		stream.node = yaml.Node{}
+		err := dec.Load(&stream.node)
 		if err != nil {
 			return stream.finishDecode(out, err, ordinal)
 		}
-		preserveTimestampStrings(&node)
-		loaded, err := loadDocumentNode(&node, role, constructionOption)
+		preserveTimestampStrings(&stream.node)
+		loaded, err := stream.loadDocumentNode(role, constructionOption)
+		// Clear the borrowed header before a failed document returns to the pool.
+		stream.document = nil
 		m, shapeFailure := loaded.document, loaded.shapeFailure
 		if err != nil {
 			ReleaseDoc(m)
@@ -106,6 +103,24 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 	}
 }
 
+// Node.Load creates a constructor per document; alias limits MUST count the entire stream.
+type documentLimits struct {
+	loaderlimits.Plugin
+
+	priorAliases, priorConstructs int
+	lastAliases, lastConstructs   int
+}
+
+func (l *documentLimits) CheckAlias(aliases, constructs int) error {
+	if constructs == 1 {
+		l.priorAliases += l.lastAliases
+		l.priorConstructs += l.lastConstructs
+	}
+	l.lastAliases, l.lastConstructs = aliases, constructs
+	//nolint:wrapcheck // Preserve upstream diagnostics.
+	return l.Plugin.CheckAlias(l.priorAliases+aliases, l.priorConstructs+constructs)
+}
+
 func preserveTimestampStrings(n *yaml.Node) {
 	if n.Kind == yaml.ScalarNode && n.ShortTag() == "!!timestamp" && n.Style&yaml.TaggedStyle == 0 {
 		n.Tag = "!!str"
@@ -119,7 +134,10 @@ func preserveTimestampStrings(n *yaml.Node) {
 type documentStream struct {
 	io.Reader
 
-	err error
+	err      error
+	document map[string]any
+	limits   documentLimits
+	node     yaml.Node
 }
 
 func (s *documentStream) Read(p []byte) (int, error) {
@@ -168,11 +186,11 @@ type loadedDocument struct {
 	shapeFailure bool
 }
 
-func loadDocumentNode(
-	node *yaml.Node,
+func (s *documentStream) loadDocumentNode(
 	role DocumentRole,
 	constructionOption yaml.Option,
 ) (loadedDocument, error) {
+	node := &s.node
 	mapping := node
 	if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
 		mapping = mapping.Content[0]
@@ -184,8 +202,9 @@ func loadDocumentNode(
 		if role == ApplicationDocuments {
 			m, err = applicationDocument(node, constructionOption)
 		} else {
-			m = getDecodedMap()
-			err = node.Load(&m, constructionOption)
+			s.document = getDecodedMap()
+			err = node.Load(&s.document, constructionOption)
+			m = s.document
 		}
 	} else {
 		var value any

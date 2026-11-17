@@ -213,7 +213,7 @@ func (p *substitutionResolution) resolveVisit(
 	if reader.compact {
 		objects, err = reader.censusFile(ctx, visit.file, manifest.ParseDocOptions{})
 	} else {
-		objects, err = reader.fileObjects(visit.file, manifest.ParseDocOptions{})
+		objects, err = reader.fileObjects(ctx, visit.file, manifest.ParseDocOptions{})
 	}
 	if err != nil {
 		return err

@@ -221,7 +221,7 @@ func (b *selfProduceBuilder) recordProduced(
 	if reader.compact {
 		objects, err = reader.censusFile(ctx, pr.visit.file, manifest.ParseDocOptions{})
 	} else {
-		objects, err = reader.fileObjects(pr.visit.file, manifest.ParseDocOptions{})
+		objects, err = reader.fileObjects(ctx, pr.visit.file, manifest.ParseDocOptions{})
 	}
 	if err != nil {
 		return pr.declarations, err
@@ -239,7 +239,11 @@ func (b *selfProduceBuilder) recordProduced(
 	return pr.declarations, pr.projectionErr
 }
 
-func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration, scope []graphVisit) {
+func (b *selfProduceBuilder) joinProductions(
+	ctx context.Context,
+	declarations []producerDeclaration,
+	scope []graphVisit,
+) {
 	if len(declarations) == 0 {
 		return
 	}
@@ -259,7 +263,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 			if cached := reader.cache[v.file]; cached.objects != nil {
 				reader.intent = cached.coverage
 			}
-			objects, err := reader.fileObjects(v.file, manifest.ParseDocOptions{})
+			objects, err := reader.fileObjects(ctx, v.file, manifest.ParseDocOptions{})
 			if err != nil {
 				if b.err == nil {
 					b.err = err

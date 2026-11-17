@@ -130,9 +130,14 @@ func TestInputCache_ParsesOnlyEditedFile(t *testing.T) {
 				}
 				reads[name] = new(atomic.Int64)
 			}
+			files["empty.yaml"] = &fstest.MapFile{}
+			files["workload.yaml"] = &fstest.MapFile{
+				Data: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: work}\n"),
+			}
+			reads["empty.yaml"], reads["workload.yaml"] = new(atomic.Int64), new(atomic.Int64)
 			fixture := inputCacheFixture{root: root, backing: backing, files: files, reads: reads}
 
-			fixture.run(t, count, persistent)
+			fixture.run(t, count+2, persistent)
 			fixture.run(t, 0, persistent)
 			files["cm-000.yaml"] = &fstest.MapFile{
 				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm-000}\ndata: {value: blue}\n"),
@@ -221,7 +226,14 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 		}
 	}
 	assert.Equal(t, parsed, wantReads)
-	assert.Equal(t, len(l.Index.Records), count)
+	assert.Equal(t, len(l.Index.Records), count-2)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	declarations := l.Index.Declarations[manifest.BootstrapSourceID]
+	assert.Equal(t, declarations["empty.yaml"].Present, true)
+	assert.Equal(t, declarations["empty.yaml"].Complete, true)
+	assert.Equal(t, len(declarations["empty.yaml"].Objects), 0)
+	assert.Equal(t, declarations["workload.yaml"].Complete, true)
+	assert.Equal(t, len(declarations["workload.yaml"].Objects), 1)
 	if warm {
 		occurrence, known := l.Occurrence(manifest.NamedResource{Kind: "ConfigMap", Name: "cm-000"})
 		assert.Equal(t, known, true)

@@ -82,10 +82,32 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
+				_, err = loaders[0].CompleteDeclarations(
+					t.Context(),
+					selection.DemandDeclarations(manifest.TreeBase, changes, loaders[0].Index),
+				)
+				assert.NoError(t, err)
+				_, err = loaders[1].CompleteDeclarations(
+					t.Context(),
+					selection.DemandDeclarations(manifest.TreeHead, changes, loaders[1].Index),
+				)
+				assert.NoError(t, err)
+				assert.NoError(t, loaders[0].FinalizeIndex(t.Context(), loaders[0].SourceRoot, true))
+				assert.NoError(t, loaders[1].FinalizeIndex(t.Context(), loaders[1].SourceRoot, true))
 				for _, input := range inputs {
 					input.opens.Store(0)
 				}
 				for range 2 {
+					_, err = loaders[0].CompleteDeclarations(
+						t.Context(),
+						selection.DemandDeclarations(manifest.TreeBase, changes, loaders[0].Index),
+					)
+					assert.NoError(t, err)
+					_, err = loaders[1].CompleteDeclarations(
+						t.Context(),
+						selection.DemandDeclarations(manifest.TreeHead, changes, loaders[1].Index),
+					)
+					assert.NoError(t, err)
 					changes, err = changes.WithReaders(
 						t.Context(),
 						[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},
@@ -158,6 +180,13 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	}
 	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], change.DetectConfig{})
 	assert.NoError(t, err)
+	for side, l := range loaders {
+		_, err = l.CompleteDeclarations(
+			t.Context(),
+			selection.DemandDeclarations(manifest.TreeSide(side), changes, l.Index),
+		)
+		assert.NoError(t, err)
+	}
 	changes, err = changes.WithReaders(t.Context(),
 		[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},
 		[2]map[manifest.NamedResource]inputprojection.Projection{loaders[0].InputContent, loaders[1].InputContent},
@@ -214,6 +243,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					child, err := l.OccurrenceObject(t.Context(), new(occurrenceView(&occurrence)), input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
+					child, _, _ = Prepare(manifest.DocOccurrence{Document: child.Doc}, manifest.ParseDocOptions{})
 					proposal, err = prepareSelection(
 						t.Context(),
 						t,

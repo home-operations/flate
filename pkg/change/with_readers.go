@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -28,7 +27,6 @@ type readerScope struct {
 	roots, origins [2]string
 	usable         [2]bool
 	qualified      [2]map[manifest.NamedResource]bool
-	contents       [2]map[string]map[manifest.NamedResource]string
 	work           *manifest.WorkRecord
 	out            *Set
 }
@@ -42,9 +40,7 @@ func (s *Set) withReaders(
 	r := readerScope{changes: s, bindings: bindings, evidence: evidence, indexes: indexes, work: work}
 	r.initialize()
 	r.resetDeclaredKnown()
-	r.contents = s.oneSided
 	if r.completeSources() {
-		r.collectDeclaredContents()
 		r.compareDeclarations()
 	}
 	out := *s
@@ -132,33 +128,6 @@ func (r *readerScope) fileAt(side int, file string) string {
 	return relative
 }
 
-func (r *readerScope) collectDeclaredContents() {
-	for side, index := range r.indexes {
-		r.contents[side] = maps.Clone(r.contents[side])
-		for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
-			file := r.fileAt(side, record.File)
-			if !r.changes.Contains(file) || !r.qualifiedRecord(side, &record) {
-				continue
-			}
-			if _, known := r.changes.oneSided[side][file]; known || record.Declared == "" {
-				continue
-			}
-			if r.contents[side] == nil {
-				r.contents[side] = map[string]map[manifest.NamedResource]string{}
-			}
-			if r.contents[side][file] == nil {
-				r.contents[side][file] = map[manifest.NamedResource]string{}
-			}
-			authored := record.Authored
-			if authored == (manifest.NamedResource{}) {
-				authored = id
-			}
-			r.contents[side][file][authored] = record.Declared
-		}
-	}
-}
-
 func (r *readerScope) compareDeclarations() {
 	if r.bindings.declarations == nil {
 		r.bindings.declarations = map[comparisonKey]declarationComparison{}
@@ -167,6 +136,23 @@ func (r *readerScope) compareDeclarations() {
 		for id, record := range index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 			r.compareDeclared(side, id, &record)
+		}
+		production := [1]manifest.Production{{Source: r.evidence.source}}
+		for file, observation := range index.Declarations[r.evidence.source] {
+			if !r.changes.Contains(file) {
+				continue
+			}
+			for id := range observation.Objects {
+				if _, indexed := index.Lookup(id); indexed {
+					continue
+				}
+				record := manifest.DiscoveryRecord{
+					Authored:    id,
+					File:        r.coordinate(side, file),
+					Productions: production[:],
+				}
+				r.compareDeclared(side, id, &record)
+			}
 		}
 	}
 }
@@ -190,7 +176,7 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 	if authored == (manifest.NamedResource{}) {
 		authored = id
 	}
-	fingerprint := r.contents[side][file][authored]
+	fingerprint := r.declaredContent(side, id, authored, file)
 	if fingerprint == "" {
 		return
 	}
@@ -204,39 +190,73 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 		if peerAuthored == (manifest.NamedResource{}) {
 			peerAuthored = id
 		}
-		comparison.declared[1-side] = r.contents[1-side][peerFile][peerAuthored]
+		comparison.declared[1-side] = r.observation(1-side, peerFile).Objects[peerAuthored]
 		if comparison.declared[1-side] == "" {
 			return
 		}
 		comparison.implicitNamespace[1-side] = peer.Authored != (manifest.NamedResource{}) &&
 			peer.Authored.Namespace == ""
-	} else if !indexed && !r.observeOppositeDeclaration(side, authored, &comparison) {
-		return
+	} else if !indexed {
+		var known bool
+		comparison.declared[1-side], known = r.observeDeclaration(1-side, authored)
+		if !known {
+			return
+		}
+		comparison.implicitNamespace[1-side] = authored.Namespace == ""
 	}
 
 	comparison.declaredKnown = true
 	r.bindings.declarations[key] = comparison
 }
 
-func (r *readerScope) observeOppositeDeclaration(
-	side int,
-	authored manifest.NamedResource,
-	comparison *declarationComparison,
-) bool {
+func (r *readerScope) declaredContent(side int, id, authored manifest.NamedResource, file string) string {
+	fingerprint := r.observation(side, file).Objects[authored]
+	_, currentIndexed := r.indexes[side].Lookup(id)
+	peerPresent, peerKnown := r.changes.present(1-side, file)
+	if !currentIndexed && peerKnown && !peerPresent {
+		var known bool
+		fingerprint, known = r.observeDeclaration(side, authored)
+		if !known {
+			return ""
+		}
+	}
+	return fingerprint
+}
+
+func (r *readerScope) observeDeclaration(side int, authored manifest.NamedResource) (string, bool) {
 	observed := false
-	for _, declarations := range r.changes.oneSided[1-side] {
-		fingerprint, found := declarations[authored]
+	content := ""
+	for file := range r.changes.paths {
+		present, known := r.changes.present(side, file)
+		peer, peerKnown := r.changes.present(1-side, file)
+		if !known || !peerKnown {
+			return "", false
+		}
+		if !present || peer {
+			continue
+		}
+		declarations := r.observation(side, file)
+		if !declarations.Complete {
+			return "", false
+		}
+		fingerprint, found := declarations.Objects[authored]
 		if !found {
 			continue
 		}
-		if observed && comparison.declared[1-side] != fingerprint {
-			comparison.declared[1-side] = ""
-			break
+		if fingerprint == "" || observed && content != fingerprint {
+			return "", false
 		}
-		comparison.declared[1-side], observed = fingerprint, true
-		comparison.implicitNamespace[1-side] = authored.Namespace == ""
+		content, observed = fingerprint, true
 	}
-	return !observed || comparison.declared[1-side] != ""
+	return content, true
+}
+
+func (r *readerScope) observation(side int, file string) manifest.FileDeclarations {
+	observation := r.indexes[side].Declarations[r.evidence.source][file]
+	if !observation.Complete {
+		return manifest.FileDeclarations{}
+	}
+	return observation
 }
 
 func (r *readerScope) coordinate(side int, name string) string {
@@ -319,12 +339,17 @@ func (r *readerScope) routeReaders() {
 			r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 			r.routeRecord(side, id, &record, files)
 		}
-		r.routeOneSided(side, index)
+		r.routeFiles(side, index)
 	}
 }
 
-func (r *readerScope) routeOneSided(side int, index *manifest.DiscoveryIndex) {
-	for name := range r.changes.oneSided[side] {
+func (r *readerScope) routeFiles(side int, index *manifest.DiscoveryIndex) {
+	for name := range r.changes.paths {
+		present, known := r.changes.present(side, name)
+		peer, peerKnown := r.changes.present(1-side, name)
+		if known && (!present || peerKnown && peer) {
+			continue
+		}
 		r.work.Add(&manifest.WorkCounts{FileEntries: 1})
 		for reader := range index.ReadersOfFile(r.coordinate(side, name)) {
 			r.work.Add(&manifest.WorkCounts{ReaderEdges: 1})
@@ -635,29 +660,24 @@ func (s *Set) declaredChanged(source, id manifest.NamedResource) Comparison {
 	return Comparison{Changed: fact.declared[0] != fact.declared[1], Known: fact.declaredKnown}
 }
 
-// DeclarationChanged compares complete declared content and the current prepared document.
-// A nil document grants no authority over preparation or additional build inputs.
+// DeclarationChanged MUST retain comparison-only behavior for a nil content value.
 func (s *Set) DeclarationChanged(
 	side manifest.TreeSide,
 	source, id manifest.NamedResource,
-	document map[string]any,
+	content *store.DeclarationContent,
 ) Comparison {
 	comparison := s.declaredChanged(source, id)
-	if !comparison.Known || comparison.Changed || document == nil || side > manifest.TreeHead {
+	if content != nil && content.Exact == "" {
+		return Comparison{}
+	}
+	if !comparison.Known || comparison.Changed || content == nil || side > manifest.TreeHead {
 		return comparison
 	}
 	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
-	// Namespace defaulting MUST NOT change identical authored content.
-	if metadata := manifest.DocMetadata(document); fact.implicitNamespace[side] && metadata.Namespace != "" &&
-		metadata.Namespace == id.Namespace {
-		document = maps.Clone(document)
-		metadata := maps.Clone(
-			document["metadata"].(map[string]any), //nolint:errcheck // ObjectDocument always creates metadata as a map.
-		)
-		delete(metadata, "namespace")
-		document["metadata"] = metadata
+	current := content.Exact
+	if fact.implicitNamespace[side] && content.Namespace != "" && content.Namespace == id.Namespace {
+		current = content.WithoutNamespace
 	}
-	current := manifest.Fingerprint(manifest.WithoutOwnershipLabels(document))
 	if current == "" {
 		return Comparison{}
 	}

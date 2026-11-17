@@ -201,8 +201,8 @@ type treeConfig struct {
 func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task.Service) (*Orchestrator, error) {
 	tree := *treeInput
 	st := store.New()
-	for _, child := range cfg.Supply {
-		st.AddDeclaration(child)
+	for i := range cfg.Supply {
+		st.AddDeclaration(cfg.Supply[i])
 	}
 	o := &Orchestrator{
 		cfg:    treeConfig{Config: *cfg, Tree: tree},

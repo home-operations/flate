@@ -130,3 +130,7 @@ func decisionNames(d *Decision) []string {
 	slices.Sort(names)
 	return names
 }
+
+func (*publicationFacts) DeclarationContents() func(map[string]any) store.DeclarationContent {
+	return new(solverFacts).DeclarationContents()
+}

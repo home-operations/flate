@@ -16,7 +16,8 @@ func LoadDocuments(ctx context.Context, r io.Reader, path string) ([]store.Decla
 	}
 	var children []store.Declaration
 	var failure error
-	err := (&documentReader{compact: true}).prepareStream(
+	_, err := (&documentReader{compact: true, skipDeclarations: true}).prepareStream(
+		ctx,
 		r,
 		manifest.ParseDocOptions{RequiredIdentity: true},
 		func(object parsedObject) {

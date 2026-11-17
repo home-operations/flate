@@ -19,7 +19,8 @@ func snapshotSubstitutions(cfg *Config) error {
 		return nil
 	}
 	inputs := make(map[manifest.NamedResource]store.Declaration, len(cfg.Supply))
-	for _, input := range cfg.Supply {
+	for i := range cfg.Supply {
+		input := &cfg.Supply[i]
 		path := cmp.Or(input.InputPath, "SDK input")
 		warnings := slices.Clone(input.Warnings)
 		for i := range warnings {

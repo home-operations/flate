@@ -34,6 +34,14 @@
     {
       "name": "namespace-diff-renamed",
       "directory": "overlays/namespace-diff-renamed"
+    },
+    {
+      "name": "namespace-diff-deployment",
+      "directory": "overlays/namespace-diff-deployment"
+    },
+    {
+      "name": "namespace-diff-custom-resource",
+      "directory": "overlays/namespace-diff-custom-resource"
     }
   ],
   "cases": [
@@ -895,6 +903,400 @@
           }
         }
       ]
+    },
+    {
+      "name": "namespace-diff-deployment",
+      "description": "The Deployment edit reaches its owning Kustomization and excludes the monitoring peer.",
+      "setup": [
+        {
+          "overlay": "namespace-diff-deployment"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "0-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "0"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "0-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "0"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "1-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "1"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "1-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "1"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "2-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "selected",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "2"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "2-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "selected",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "2"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-deployment.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-diff-custom-resource",
+      "description": "The Widget edit reaches its owning Kustomization and excludes the monitoring peer.",
+      "setup": [
+        {
+          "overlay": "namespace-diff-custom-resource"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "0-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "0"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "0-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "0"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "1-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "1"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "1-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "1"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "2-first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "selected",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "2"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "2-second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "selected",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "2"
+            },
+            "expect": {
+              "stdout": "expect/namespace-diff-custom-resource.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -905,7 +1307,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -916,7 +1320,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -927,7 +1333,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -1099,7 +1507,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -1110,7 +1520,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -1121,7 +1533,9 @@
         "namespace-diff-added",
         "namespace-diff-removed",
         "namespace-diff-renamed",
-        "namespace-diff-empty"
+        "namespace-diff-empty",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "Selected lifecycle resource or changed peer exclusion control."
     },
@@ -1132,9 +1546,109 @@
         "namespace-diff-changed",
         "namespace-diff-empty",
         "namespace-diff-removed",
-        "namespace-diff-renamed"
+        "namespace-diff-renamed",
+        "namespace-diff-deployment",
+        "namespace-diff-custom-resource"
       ],
       "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/baseline/flux/selected.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/baseline/payload/kustomization.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/baseline/payload/cm.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/repo/flux/selected.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/repo/payload/kustomization.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-deployment/repo/payload/cm.yaml",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Authored Deployment change and unchanged owner declaration."
+    },
+    {
+      "path": "expect/namespace-diff-deployment.stdout",
+      "cases": [
+        "namespace-diff-deployment"
+      ],
+      "purpose": "Complete expected diff derived from the authored documents and ownership labels."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/baseline/flux/selected.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/baseline/payload/kustomization.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/baseline/payload/cm.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/repo/flux/selected.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/repo/payload/kustomization.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "overlays/namespace-diff-custom-resource/repo/payload/cm.yaml",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Authored Widget change and unchanged owner declaration."
+    },
+    {
+      "path": "expect/namespace-diff-custom-resource.stdout",
+      "cases": [
+        "namespace-diff-custom-resource"
+      ],
+      "purpose": "Complete expected diff derived from the authored documents and ownership labels."
     }
   ]
 }

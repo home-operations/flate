@@ -451,7 +451,7 @@ func testSelfProduceBuilderArtifactDocumentVisitCase(
 			return true
 		},
 	), "%s", "walk stopped before completing")
-	b.joinProductions(declarations, scope)
+	b.joinProductions(t.Context(), declarations, scope)
 	want := map[string]int{"app-api": 1, "app-document": 0, "app-hidden": 0}
 	if (*testCaseInput) == "explicit" || (*testCaseInput) == "transformed" {
 		want["app-hidden"] = 1

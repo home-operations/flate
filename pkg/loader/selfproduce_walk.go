@@ -48,7 +48,7 @@ func (ds *productionDeclarations) recordContributions(
 					}
 				}
 			}
-			b.joinProductions(*ds, contribution.visits)
+			b.joinProductions(ctx, *ds, contribution.visits)
 			*ds = nil
 		}
 	}
@@ -73,7 +73,7 @@ func (ds *productionDeclarations) recordStandalone(
 			}
 		}
 	}
-	b.joinProductions(*ds, contribution.visits)
+	b.joinProductions(ctx, *ds, contribution.visits)
 	*ds = nil
 	return nil
 }

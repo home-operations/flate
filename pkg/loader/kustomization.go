@@ -3,6 +3,7 @@ package loader
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,6 +21,8 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
+	declarationsData []byte
+	declarations     *fileObservation
 	deferred         *cachedInput
 	projection       *projectionInputs
 	parsed           *parsedDocument
@@ -27,6 +30,7 @@ type document struct {
 	file             string
 	sourceRoot       string
 	coverage         manifest.DocumentRole
+	unprepared       bool
 	possible         bool
 	objects          []parsedObject
 	decodeErr        error
@@ -57,6 +61,14 @@ type document struct {
 	searched         bool
 }
 
+type fileObservation struct {
+	manifest.FileDeclarations
+
+	payload inputPayload
+	err     error
+	limited bool
+}
+
 type parsedObject struct {
 	store.Child
 
@@ -67,7 +79,6 @@ type parsedObject struct {
 	collection         bool
 	fact               *authoredOccurrence
 	version            string
-	declared           string
 	substituteDisabled bool
 }
 
@@ -88,18 +99,20 @@ type documentReader struct {
 	projections *manifest.ProducerProjections
 	cache       map[string]document
 	// Views MUST stay shared when discovery copies a reader.
-	views        map[string]fs.FS
-	artifacts    map[string]*store.SourceArtifact
-	parsed       *ParsedInputs
-	compact      bool
-	eager        bool
-	recordInputs bool
-	intent       manifest.DocumentRole
-	coordinate   *occurrenceID
-	regular      bool
-	changed      []string
-	bootstrap    string
-	edgesDirty   bool
+	views            map[string]fs.FS
+	artifacts        map[string]*store.SourceArtifact
+	parsed           *ParsedInputs
+	compact          bool
+	eager            bool
+	recordInputs     bool
+	declarationsOnly bool
+	skipDeclarations bool
+	intent           manifest.DocumentRole
+	coordinate       *occurrenceID
+	regular          bool
+	changed          []string
+	bootstrap        string
+	edgesDirty       bool
 }
 
 func (r *documentReader) scanExcluded(file string) bool {
@@ -176,10 +189,14 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	for root := range r.artifacts {
 		if mounted[root] == nil {
 			changed = append(changed, root)
-			delete(r.views, root)
 		}
 	}
-	r.invalidateSourceDocuments(changed)
+	if len(changed) != 0 && r.declarationsOnly {
+		// Failed completion MUST retain the documents of the previously mounted material.
+		r.cache = maps.Clone(r.cache)
+		r.views = maps.Clone(r.views)
+	}
+	r.invalidateSources(changed, mounted)
 	if len(changed) != 0 {
 		r.edgesDirty = true
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
@@ -205,8 +222,11 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	return changed
 }
 
-func (r *documentReader) invalidateSourceDocuments(changed []string) {
+func (r *documentReader) invalidateSources(changed []string, mounted map[string]*store.SourceArtifact) {
 	for _, root := range changed {
+		if mounted[root] == nil {
+			delete(r.views, root)
+		}
 		for file := range r.cache {
 			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
 				cached := r.cache[file]
@@ -237,6 +257,10 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 	changed := l.documents.mountSources(l.Store, input, l.Index)
 	if len(changed) == 0 {
 		return
+	}
+	if len(l.Index.Declarations) != 0 {
+		//nolint:errcheck // Encoded document errors remain pending until FinalizeIndex can report them.
+		defer l.indexDeclarations()
 	}
 	for _, root := range changed {
 		l.roots.removeSource(root)
@@ -448,4 +472,20 @@ func isKustomizeComponent(k *types.Kustomization) bool {
 type pluginInputs struct {
 	references          []kustomizeinput.Reference
 	known, metadataOnly bool
+}
+
+func (l *Loader) configureDocuments() {
+	_, bootstrap, _ := l.Options.Changes.ForSource(manifest.BootstrapSourceID)
+	qualified := bootstrap[0] != nil && bootstrap[1] != nil
+	l.documents.skipDeclarations = qualified || l.Options.Changes == nil && !l.Options.Session.ComparesDeclarations()
+	l.documents.compact = l.Options.Session != nil || l.Options.ParsedInputs != nil && l.Options.ParsedInputs.compact
+	l.documents.eager = l.Options.Session.Snapshot().Output(manifest.NamedResource{})
+}
+
+func isManifestFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml", ".json":
+		return true
+	}
+	return false
 }

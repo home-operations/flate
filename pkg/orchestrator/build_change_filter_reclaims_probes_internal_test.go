@@ -499,17 +499,7 @@ func testRenderChangedPathUsesStaticReadersCase(
 ) {
 	t.Helper()
 	testCaseInput.tree.ExternalChanges = change.NewSet([]string{(*testCaseInput.file)})
-	if strings.HasSuffix((*testCaseInput.file), ".yaml") {
-		assert.NoError(
-			t,
-			testCaseInput.tree.ExternalChanges.CollectInputs(
-				t.Context(),
-				os.DirFS((*testCaseInput.root)),
-				(*testCaseInput.file),
-				true,
-			),
-		)
-	}
+
 	for range 2 {
 		testCaseInput.logs.Reset()
 		o, err := newTestOrchestrator(t, (*testCaseInput.tree), Config{CacheDir: t.TempDir(), Concurrency: 2})

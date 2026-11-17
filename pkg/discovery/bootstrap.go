@@ -273,7 +273,9 @@ func (d *Session) entrySourceObject(
 	}
 	if group.scoped {
 		if group.object != nil {
-			d.cfg.Store.AddObject(group.object, group.document)
+			d.cfg.Store.AddDeclaration(
+				store.Declaration{Obj: group.object, Doc: group.document},
+			)
 			return d.cfg.Store.GetObject(id)
 		} else if previous := d.resolvedSources.snapshot()[id]; !previous.ownsDeclaration(d.cfg.Store.GetObject(id)) {
 			d.cfg.Store.DeleteObject(id)
@@ -286,7 +288,7 @@ func (d *Session) entrySourceObject(
 		obj == previous.object &&
 		group.object != nil {
 		obj = group.object
-		d.cfg.Store.AddObject(obj, group.document)
+		d.cfg.Store.AddDeclaration(store.Declaration{Obj: obj, Doc: group.document})
 	}
 	if obj != nil {
 		return obj
@@ -298,7 +300,7 @@ func (d *Session) entrySourceObject(
 	}
 	if obj != nil &&
 		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {
-		d.cfg.Store.AddObject(obj, group.document)
+		d.cfg.Store.AddDeclaration(store.Declaration{Obj: obj, Doc: group.document})
 	}
 	return obj
 }

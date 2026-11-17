@@ -31,6 +31,11 @@ func New(st *store.Store, facts census, request Request) (*Session, error) {
 	return s, nil
 }
 
+// ComparesDeclarations MUST follow the immutable invocation request.
+func (s *Session) ComparesDeclarations() bool {
+	return s != nil && s.request.Changed
+}
+
 // Snapshot permits nil sessions and returns an immutable decision.
 func (s *Session) Snapshot() *Decision {
 	if s == nil {

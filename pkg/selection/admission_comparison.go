@@ -115,19 +115,36 @@ func (c *admissionClosure) declarationChanged(
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
 ) change.Comparison {
+	if c.proposal.Request.Changes == nil {
+		return change.Comparison{}
+	}
 	var document map[string]any
 	if c.context.SideKnown && object != nil {
-		if c.incoming(id).Obj == object {
-			document = c.incoming(id).Doc
+		if child := c.incoming(id); child.Obj == object {
+			document = child.Doc
 		} else if c.objects.GetDeclaration(id) == object {
 			_, current, output := c.objects.GetEmission(id)
 			document = current
 			output.Finish()
 		} else if record, _ := c.facts.SelectionIndex().Lookup(id); record.Declaration == object && record.Builder != "" {
-			document = c.preparedObject(id).Doc
+			child := c.preparedObject(id)
+			document = child.Doc
 		}
 	}
-	return c.proposal.Request.Changes.DeclarationChanged(c.context.Side, c.source(id), id, document)
+	source := c.source(id)
+	comparison := c.proposal.Request.Changes.DeclarationChanged(c.context.Side, source, id, nil)
+	if !comparison.Known {
+		return comparison
+	}
+	var evidence *store.DeclarationContent
+	if document != nil {
+		if c.declarationContents == nil {
+			c.declarationContents = c.facts.DeclarationContents()
+		}
+		content := c.declarationContents(document)
+		evidence = &content
+	}
+	return c.proposal.Request.Changes.DeclarationChanged(c.context.Side, source, id, evidence)
 }
 
 func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.BaseManifest) bool {

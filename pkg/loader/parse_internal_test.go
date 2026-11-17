@@ -138,7 +138,7 @@ func TestParseFile_ReadFailures(t *testing.T) {
 			}
 			reader := readerForTest(root)
 			reader.views[root] = input
-			objects, err := reader.fileObjects(file, manifest.ParseDocOptions{})
+			objects, err := reader.fileObjects(t.Context(), file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			want := 1
 			if tc.stream {
@@ -152,11 +152,65 @@ func TestParseFile_ReadFailures(t *testing.T) {
 				!errors.Is(failure.outcome.Err, tc.cause) ||
 				!errors.Is(failure.outcome.Err, manifest.ErrInput) ||
 				!errors.Is(failure.outcome.Err, manifest.ErrFlux), "invalid retained failure: %+v", failure)
-			again, err := reader.fileObjects(file, manifest.ParseDocOptions{})
+			again, err := reader.fileObjects(t.Context(), file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assert.Equal(t, len(again), want)
 			assert.Equal(t, again[len(again)-1].outcome.Err, failure.outcome.Err)
 			assert.Equal(t, input.opens, 1)
+		})
+	}
+}
+
+func TestDocumentReader_ObservationReadResults(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("later read failed")
+	wrappedEOF := fmt.Errorf("unexpected EOF: %w", io.EOF)
+	for _, tc := range []struct {
+		name    string
+		readErr error
+		cancel  bool
+		wantErr error
+	}{
+		{name: "exact EOF", readErr: io.EOF},
+		{name: "later error", readErr: cause, wantErr: cause},
+		{name: "wrapped EOF", readErr: wrappedEOF, wantErr: wrappedEOF},
+		{name: "later cancellation", cancel: true, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reads := 0
+			reader := inputReadFunc(func(p []byte) (int, error) {
+				reads++
+				if reads == 1 {
+					return copy(p, "\x00invalid\n"), nil
+				}
+				if tc.cancel {
+					cancel()
+				}
+				return 0, tc.readErr
+			})
+			var objects []parsedObject
+			observation, err := new(documentReader).prepareStream(ctx, reader, manifest.ParseDocOptions{},
+				func(object parsedObject) { objects = append(objects, object) })
+			assert.Equal(t, reads, 2)
+			assert.Equal(t, observation.Complete, false)
+			assert.Equal(t, len(observation.Objects), 0)
+			if tc.cancel {
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+				assert.Equal(t, len(objects), 0)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, len(objects), 1)
+			if tc.wantErr == nil {
+				assert.NoError(t, observation.err)
+			} else {
+				assert.Equal(t, errors.Is(observation.err, tc.wantErr), true)
+				assert.Equal(t, errors.Is(observation.err, manifest.ErrInput), true)
+				assert.Equal(t, errors.Is(observation.err, manifest.ErrFlux), true)
+			}
 		})
 	}
 }
@@ -172,7 +226,7 @@ func TestParseFile_RunFailures(t *testing.T) {
 			reader := readerForTest(root)
 			reader.views[root] = input
 			for range 2 {
-				objects, err := reader.fileObjects(file, manifest.ParseDocOptions{})
+				objects, err := reader.fileObjects(t.Context(), file, manifest.ParseDocOptions{})
 				assert.FatalIf(
 					t,
 					objects != nil || !errors.Is(err, cause) || reader.cache[file].objects != nil,
@@ -200,7 +254,7 @@ func TestParseFile_OpenRegularRejection(t *testing.T) {
 	assert.NoError(t, err)
 	reader := readerForTest(root)
 	reader.views[root], reader.regular = input, true
-	objects, err := reader.fileObjects(filepath.Join(root, "pipe.yaml"), manifest.ParseDocOptions{})
+	objects, err := reader.fileObjects(t.Context(), filepath.Join(root, "pipe.yaml"), manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(objects) != 1 || objects[0].Obj != nil || objects[0].Doc != nil ||
 		!errors.Is(objects[0].outcome.Err, fs.ErrNotExist), "OpenRegular rejection not retained: %+v", objects)
@@ -393,3 +447,7 @@ func testParseFileResultOwnershipCaseCompletion(t *testing.T, scope *testParseFi
 		assert.Equal(t, cached.loaded, scope.header.loaded)
 	}
 }
+
+type inputReadFunc func([]byte) (int, error)
+
+func (r inputReadFunc) Read(p []byte) (int, error) { return r(p) }

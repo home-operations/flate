@@ -320,3 +320,9 @@ func sourceFilesForTest(paths []string) []SourceFile {
 	}
 	return files
 }
+
+func (*solverFacts) DeclarationContents() func(map[string]any) store.DeclarationContent {
+	return func(document map[string]any) store.DeclarationContent {
+		return store.DeclarationContent{Exact: manifest.Fingerprint(document)}
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -271,7 +272,7 @@ func BenchmarkDetect(b *testing.B) {
 	}
 }
 
-func BenchmarkCollectInputs_LargeFile(b *testing.B) {
+func BenchmarkCompleteDeclarations_LargeFile(b *testing.B) {
 	root := b.TempDir()
 	testutil.WriteFile(
 		b,
@@ -282,15 +283,28 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 			256*1024,
 		)+"\n",
 	)
-	input := os.DirFS(root)
+	input := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	set, err := change.Detect(b.Context(), &store.SourceArtifact{FS: fstest.MapFS{}}, input,
+		change.DetectConfig{Candidates: map[string]bool{"input.yaml": false}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "large"}
-	var set change.Set
+	var index *manifest.DiscoveryIndex
 	b.ReportAllocs()
 	for b.Loop() {
-		set = change.Set{}
-		if err := set.CollectInputs(b.Context(), input, "input.yaml", false); err != nil {
+		l := New(st)
+		l.SourceRoot = root
+		index, err = l.CompleteDeclarations(b.Context(), selection.DemandDeclarations(manifest.TreeHead, set, l.Index))
+		if err != nil {
 			b.Fatal(err)
 		}
+		l.Close()
+	}
+	if index.Declarations[manifest.BootstrapSourceID]["input.yaml"].Objects[id] == "" {
+		b.Fatal("missing declaration content")
 	}
 	visible := &manifest.DiscoveryIndex{
 		Visibility: []manifest.InputVisibility{

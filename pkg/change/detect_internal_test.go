@@ -407,63 +407,6 @@ func (f *hashReadFile) Close() error {
 	return f.File.Close()
 }
 
-func TestDetect_OneSidedInputEvidence(t *testing.T) {
-	t.Parallel()
-	cm := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
-	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\n"
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}
-	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	for _, tc := range []struct {
-		name, file, body string
-		after            bool
-		want             []manifest.NamedResource
-	}{
-		{"before", "input.yaml", cm, false, []manifest.NamedResource{cmID}},
-		{"after", "input.yaml", cm, true, []manifest.NamedResource{cmID}},
-		{"multiple documents", "input.YML", cm + "---\n- noise\n---\n" + secret, false, []manifest.NamedResource{cmID, secretID}},
-		{"json", "input.JSON", `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"optional","namespace":"apps"}}`, false, []manifest.NamedResource{cmID}},
-		{"wrong suffix", "input.txt", cm, false, nil},
-		{"foreign group", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: foreign.test/v1", 1), false, []manifest.NamedResource{{Group: "foreign.test", Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}}},
-		{"noncanonical core", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: v2", 1), false, []manifest.NamedResource{cmID}},
-		{"nondata", "input.yaml", strings.Replace(cm, "kind: ConfigMap", "kind: Pod", 1), false, []manifest.NamedResource{{Kind: "Pod", Namespace: "apps", Name: "optional"}}},
-		{"empty name", "input.yaml", strings.Replace(cm, "name: optional", "name: ''", 1), false, nil},
-		{"template name", "input.yaml", strings.Replace(cm, "name: optional", "name: '${NAME}'", 1), false, nil},
-		{"template namespace", "input.yaml", strings.Replace(cm, "namespace: apps", "namespace: '${NAMESPACE}'", 1), false, nil},
-		{"empty namespace exact", "input.yaml", strings.Replace(cm, "namespace: apps", "namespace: ''", 1), false, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "optional"}}},
-		{"malformed", "input.yaml", cm + "---\nmalformed: [", false, nil},
-		{"empty", "input.yaml", "", false, nil},
-		{"incomplete", "input.yaml", "hello: world\n", false, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			before, after := fstest.MapFS{}, fstest.MapFS{}
-			if tc.after {
-				after[tc.file] = &fstest.MapFile{Data: []byte(tc.body)}
-			} else {
-				before[tc.file] = &fstest.MapFile{Data: []byte(tc.body)}
-			}
-			set, err := Detect(
-				t.Context(),
-				&store.SourceArtifact{FS: before},
-				&store.SourceArtifact{FS: after},
-				DetectConfig{},
-			)
-			assert.NoError(t, err)
-			assert.Diff(t, set.Paths(), []string{tc.file})
-			side := 0
-			if tc.after {
-				side = 1
-			}
-			assert.Diff(
-				t,
-				slices.SortedFunc(maps.Keys(set.oneSided[side][tc.file]), manifest.NamedResource.Compare),
-				tc.want,
-			)
-			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
-		})
-	}
-}
-
 func TestSet_WithReaders(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"move", "changed", "added", "removed", "partial", "ambiguous content"} {
@@ -709,6 +652,9 @@ func testSetWithReadersCase(t *testing.T, testCaseInput *string,
 	}
 	set, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
+	for side := range indexes {
+		completeTestInventory(t, set, inputs[side], indexes[side])
+	}
 	resolved, err := set.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
 			indexes[0],
@@ -805,4 +751,75 @@ func testSetWithReadersCase2(t *testing.T, testCaseInput *struct {
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, repeated.inputs, want)
+}
+
+func completeTestInventory(t *testing.T, changes *Set, input *store.SourceArtifact, index *manifest.DiscoveryIndex) {
+	t.Helper()
+	side := manifest.TreeBase
+	if changes.origins[1] == input {
+		side = manifest.TreeHead
+	}
+	if index.Declarations == nil {
+		index.Declarations = map[manifest.NamedResource]map[string]manifest.FileDeclarations{}
+	}
+	files := map[string]manifest.FileDeclarations{}
+	for _, file := range changes.Paths() {
+		present, known := changes.Present(side, file)
+		if !known {
+			continue
+		}
+		observation := manifest.FileDeclarations{Present: present, Complete: true}
+		if present {
+			data, err := fs.ReadFile(input.FS, file)
+			assert.NoError(t, err)
+			docs, err := manifest.DecodeDocs(strings.NewReader(string(data)), manifest.IncidentalDocuments)
+			observation.Complete = err == nil && manifest.DocumentFailure(docs) == nil
+			observation.Objects = map[manifest.NamedResource]string{}
+			for _, occurrence := range docs {
+				id := manifest.DocIdentity(occurrence.Document)
+				fingerprint := manifest.Fingerprint(manifest.WithoutOwnershipLabels(occurrence.Document))
+				if previous, found := observation.Objects[id]; found && previous != fingerprint {
+					fingerprint = ""
+				}
+				observation.Objects[id] = fingerprint
+				manifest.ReleaseDoc(occurrence.Document)
+			}
+		}
+		files[file] = observation
+	}
+	index.Declarations[manifest.BootstrapSourceID] = files
+}
+
+func TestSet_Present(t *testing.T) {
+	t.Parallel()
+	requested := NewSet([]string{"same.yaml", "absent.yaml"})
+	for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+		present, known := requested.Present(side, "same.yaml")
+		assert.Equal(t, present || known, false)
+	}
+	stores := [2]*store.Store{store.New(), store.New()}
+	inputs := [2]*digestReadFS{}
+	for side, st := range stores {
+		inputs[side] = &digestReadFS{FS: fstest.MapFS{"same.yaml": {Data: []byte("same")}}}
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: inputs[side]})
+	}
+	qualified, err := Qualify(t.Context(), requested, stores, manifest.WorkScope{})
+	assert.NoError(t, err)
+	assert.Diff(t, qualified.Paths(), requested.Paths())
+	for _, input := range inputs {
+		input.opens.Store(0)
+		input.lists.Store(0)
+		input.stats.Store(0)
+	}
+	for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+		present, known := qualified.Present(side, "same.yaml")
+		assert.Equal(t, present && known, true)
+		present, known = qualified.Present(side, "absent.yaml")
+		assert.Equal(t, !present && known, true)
+		present, known = qualified.Present(side, "unobserved.yaml")
+		assert.Equal(t, present || known, false)
+	}
+	for _, input := range inputs {
+		assert.Equal(t, input.opens.Load()+input.lists.Load()+input.stats.Load(), int64(0))
+	}
 }

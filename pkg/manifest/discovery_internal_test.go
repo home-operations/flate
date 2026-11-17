@@ -179,6 +179,24 @@ func TestDiscoveryIndex_IsFileIndexed(t *testing.T) {
 			}
 		})
 	}
+	id := NamedResource{Group: "apps", Kind: "Deployment", Name: "inventory-only"}
+	accepted := discoveryRecordFixture(t)
+	indexWithEvidence := &DiscoveryIndex{
+		Records: map[NamedResource]DiscoveryRecord{{Name: "accepted"}: accepted},
+		Declarations: map[NamedResource]map[string]FileDeclarations{
+			BootstrapSourceID: {
+				"outside.yaml": {Present: true, Complete: true, Objects: map[NamedResource]string{id: "fingerprint"}},
+			},
+		},
+	}
+	assert.Equal(t, indexWithEvidence.IsFileIndexed(id), false)
+	_, found := indexWithEvidence.Lookup(id)
+	assert.Equal(t, found, false)
+	assert.Equal(t, len(indexWithEvidence.Claims), 0)
+	assert.Equal(t, len(indexWithEvidence.OwnersOfFile("outside.yaml").Owners), 0)
+	assert.Equal(t, len(indexWithEvidence.Readers), 0)
+	assert.Equal(t, accepted.Equal(indexWithEvidence.Records[NamedResource{Name: "accepted"}]), true)
+	assert.Equal(t, indexWithEvidence.Records[NamedResource{Name: "accepted"}].Equal(accepted), true)
 	var index *DiscoveryIndex
 	assert.FatalIf(
 		t,

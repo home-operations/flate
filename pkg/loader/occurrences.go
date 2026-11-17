@@ -49,7 +49,6 @@ type occurrenceFacts struct {
 	// Census identity MUST survive projection and change when a declaration is reparsed.
 	census                          *occurrenceFacts
 	projection                      []string
-	declared                        string
 	source                          manifest.NamedResource
 	path                            string
 	hasPath, namespaced, uncertain  bool
@@ -791,7 +790,9 @@ func (l *Loader) readOccurrence(
 			object := &objects[i]
 			if object.outcome.Ordinal == reader.coordinate.Document && object.item == reader.coordinate.item {
 				if object.fact != nil && object.fact.object != nil {
-					return []store.Child{{Obj: object.fact.object, Doc: object.Doc, Warnings: object.Warnings}}, nil
+					return []store.Child{
+						{Obj: object.fact.object, Doc: object.Doc, Warnings: object.Warnings},
+					}, nil
 				}
 				payload = object.payload
 				warnings = object.Warnings

@@ -50,10 +50,9 @@ items:
 		},
 	)
 	var expanded []parsedObject
-	err = reader.decodeFileObjects(
+	err = reader.decodeFileObjects(t.Context(),
 		filepath.Join(root, "input.yaml"),
 		manifest.ParseDocOptions{},
-		true,
 		func(child parsedObject) { expanded = append(expanded, child) },
 	)
 	assert.NoError(t, err)
@@ -98,7 +97,7 @@ func TestExpandDocuments_CollectionPolicy(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, _, err := expandDocuments(manifest.DocOccurrence{Document: tt.doc, Ordinal: 7})
+			got, _, err := expandDocuments(manifest.DocOccurrence{Document: tt.doc, Ordinal: 7}, nil)
 			if tt.failure {
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "error = %v, want ErrInput", err)
 				return
@@ -132,7 +131,7 @@ items:
   data: {VALUE: second}
 `)}}},
 	})
-	complete, err := reader.fileObjects(file, manifest.ParseDocOptions{})
+	complete, err := reader.fileObjects(t.Context(), file, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.Equal(t, len(complete), 2)
 	reader.coordinate = &occurrenceID{Document: 1, item: 1}
@@ -141,4 +140,58 @@ items:
 	assert.FatalIf(t, len(children) != 1, "exact children=%d, want 1", len(children))
 	assert.Equal(t, children[0].Obj.(*manifest.ConfigMap).Data["VALUE"], "second")
 	assert.Equal(t, len(reader.cache[file].objects), 2)
+}
+
+func TestPrepare_DeclarationContent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, namespace, defaultNamespace string
+		ownership                         bool
+	}{
+		{name: "no namespace"},
+		{name: "default namespace", defaultNamespace: "apps"},
+		{name: "explicit namespace", namespace: "explicit"},
+		{name: "ownership labels", namespace: "apps", ownership: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			metadata := map[string]any{"name": "settings"}
+			if tc.namespace != "" {
+				metadata["namespace"] = tc.namespace
+			}
+			if tc.ownership {
+				metadata["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": "sync", "custom": "retained"}
+			}
+			doc := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   metadata,
+				"data":       map[string]any{"KEY": "value"},
+			}
+			before := manifest.DeepCopyMap(doc)
+			child, outcome, _ := Prepare(
+				manifest.DocOccurrence{Document: doc},
+				manifest.ParseDocOptions{DefaultNamespace: tc.defaultNamespace},
+			)
+			assert.NoError(t, outcome.Err)
+			exact := manifest.WithoutOwnershipLabels(child.Doc)
+			withoutNamespace := manifest.DeepCopyMap(exact)
+			delete(withoutNamespace["metadata"].(map[string]any), "namespace")
+			assert.Equal(t, new(Loader).DeclarationContents()(child.Doc), store.DeclarationContent{
+				Exact:            manifest.Fingerprint(exact),
+				WithoutNamespace: manifest.Fingerprint(withoutNamespace),
+				Namespace:        manifest.DocMetadata(child.Doc).Namespace,
+			})
+			assert.Diff(t, doc, before)
+			if tc.namespace == "" && tc.defaultNamespace == "" {
+				assert.Equal(
+					t,
+					new(Loader).DeclarationContents()(child.Doc).Exact,
+					new(Loader).DeclarationContents()(child.Doc).WithoutNamespace,
+				)
+			}
+		})
+	}
+	child, _, _ := Prepare(manifest.DocOccurrence{}, manifest.ParseDocOptions{})
+	assert.Equal(t, new(Loader).DeclarationContents()(child.Doc), store.DeclarationContent{})
 }

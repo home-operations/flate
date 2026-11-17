@@ -111,6 +111,10 @@ func (c *objectCell) visible(needsRoot bool) bool {
 	return !c.hidden && !c.retired && !needsRoot
 }
 
+func (c *objectCell) stableAuthority(needsRoot bool) bool {
+	return c.binding != nil || c.visible(needsRoot)
+}
+
 func (c *objectCell) bound() bool {
 	return (c.binding == nil || c.binding.sourceCurrent()) && (c.support == nil || c.support.productionCurrent())
 }
@@ -302,8 +306,9 @@ type objectUpdate struct {
 	inventory                   *registration
 }
 
-func (u *objectUpdate) equalVisible() bool {
-	return u.staticEqual && u.effectiveEqual && u.cell.visible(u.needsRoot) &&
+func (u *objectUpdate) unchanged() bool {
+	stableAuthority := u.cell.stableAuthority(u.needsRoot)
+	return u.staticEqual && stableAuthority &&
 		(!u.explicit || manifest.ValueEqual(u.cell.document, u.document))
 }
 
@@ -393,8 +398,8 @@ func (s *Store) addObject(update *objectUpdate) {
 		sameObject := !update.explicit && cell.static == obj && warningsEqual(cell.warnings, update.warnings) &&
 			cell.classified == update.classified
 		sameAuthority := cell.binding == binding && cell.support == support
-		visible := cell.visible(needsRoot)
-		if supplied || sameObject && sameAuthority && visible {
+		stableAuthority := cell.stableAuthority(needsRoot)
+		if supplied || sameObject && sameAuthority && stableAuthority {
 			sh.mu.RUnlock()
 			return
 		}
@@ -411,7 +416,7 @@ func (s *Store) addObject(update *objectUpdate) {
 			(rawDeclarationAuthority(index, id, true) || preparedDeclaration(&record, obj))
 		u.independent = rawDeclarationAuthority(index, id, false)
 		u.compare()
-		if u.equalVisible() {
+		if u.unchanged() {
 			return
 		}
 		if s.commitObjectUpdate(sh, id, &u, index) != publicationRetry {
@@ -873,7 +878,7 @@ func (s *Store) refreshObjectAnchors(anchors []objectUpdate) []objectUpdate {
 		u.compare()
 	}
 	anchors = slices.DeleteFunc(anchors, func(u objectUpdate) bool {
-		return u.equalVisible()
+		return u.unchanged()
 	})
 	return anchors
 }

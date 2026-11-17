@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: velero-s3-credentials, namespace: velero}
+stringData: {cloud: supplied}

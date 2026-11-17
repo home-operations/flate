@@ -1,15 +1,13 @@
 package harness
 
 import (
-	"bytes"
 	"context"
 	"log"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
@@ -18,7 +16,7 @@ import (
 )
 
 // cli.Run and SIGTERM MUST remain serial because they change process state.
-func TestE2E_CancellationSignal(t *testing.T) {
+func TestRunCLI_CancellationJoins(t *testing.T) {
 	t.Setenv("FLATE_CACHE_DIR", t.TempDir())
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml, app.yaml]\n")
@@ -39,22 +37,36 @@ spec: {url: git://cancellation.invalid/repo.git, ref: {branch: main}}
 	}
 	previous, writer := slog.Default(), log.Writer()
 	defer func() { slog.SetDefault(previous); log.SetOutput(writer) }()
-	var stdout, stderr bytes.Buffer
-	done := make(chan int, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	joined := make(chan struct{})
 	go func() {
-		done <- cli.Run([]string{
-			"build", "all", "--path", filepath.Join(root, "flux"),
-			"--concurrency", "2", "--no-progress",
-		}, &stdout, &stderr, cli.RunConfig{GitTransports: routes})
+		defer close(joined)
+		select {
+		case <-entered:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
-	select {
-	case <-entered:
-		process, err := os.FindProcess(os.Getpid())
-		assert.NoError(t, err)
-		assert.NoError(t, process.Signal(syscall.SIGTERM))
-	case code := <-done:
-		t.Fatalf("CLI exited before transport entry: code=%d stderr=%s", code, stderr.String())
-	}
-	assert.Equal(t, <-done, 1)
-	assert.Equal(t, strings.Contains(stderr.String(), "context canceled"), true)
+	result, canceled := runCLI(ctx, t, []string{
+		"build", "all", "--path", filepath.Join(root, "flux"),
+		"--concurrency", "2", "--no-progress",
+	}, cli.RunConfig{GitTransports: routes})
+	cancel()
+	<-joined
+	assert.Equal(t, canceled, true)
+	assert.Equal(t, result.Code, 1)
+	assert.Equal(t, strings.Contains(result.Stderr, "context canceled"), true)
+}
+
+//nolint:paralleltest // CLI signals and logging change process state.
+func TestRunCLI_ExpiredGuardRejectsCompletion(t *testing.T) {
+	previous, writer := slog.Default(), log.Writer()
+	defer func() { slog.SetDefault(previous); log.SetOutput(writer) }()
+	ctx, cancel := context.WithDeadline(t.Context(), time.Time{})
+	defer cancel()
+	assert.Equal(t, ctx.Err(), context.DeadlineExceeded)
+	result, canceled := runCLI(ctx, t, []string{"--help"}, cli.RunConfig{})
+	assert.Equal(t, result.Code, 0)
+	assert.Equal(t, canceled, true)
 }

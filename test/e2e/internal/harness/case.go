@@ -2,7 +2,6 @@
 package harness
 
 import (
-	"bytes"
 	"log"
 	"log/slog"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
 	"github.com/home-operations/flate/internal/testfixture"
 )
@@ -69,15 +69,21 @@ func (c *Case) Run(t *testing.T) []Result {
 			}
 			previous, writer := slog.Default(), log.Writer()
 			defer func() { slog.SetDefault(previous); log.SetOutput(writer) }()
-			var stdout, stderr bytes.Buffer
-			code := cli.Run(args, &stdout, &stderr, cli.RunConfig{GitTransports: c.transport.git})
+			result, canceled := runCLI(t.Context(), t, args, cli.RunConfig{GitTransports: c.transport.git})
+			assert.FatalIf(
+				t,
+				canceled,
+				"CLI did not finish before the test guard: code=%d stderr=%s",
+				result.Code,
+				result.Stderr,
+			)
 			results = append(
 				results,
 				Result{
 					Step:   step.ID,
-					Stdout: testDuration(args, stdout.String()),
-					Stderr: testDuration(args, stderr.String()),
-					Code:   code,
+					Stdout: testDuration(args, result.Stdout),
+					Stderr: testDuration(args, result.Stderr),
+					Code:   result.Code,
 				},
 			)
 		})

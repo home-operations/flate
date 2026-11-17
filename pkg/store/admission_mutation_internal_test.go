@@ -5,6 +5,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -117,6 +118,97 @@ func TestReadSet_AdmissionPreservesStaleEvidence(t *testing.T) {
 			reads.Admit(Child{Obj: second, SourceSupport: source}, source, manifest.NamedResource{})
 			assert.Equal(t, reads.Valid(), false)
 			assert.Equal(t, s.GetDeclaration(second.Named()), nil)
+		})
+	}
+}
+
+func TestReadSet_AdmissionStableHiddenDeclaration(t *testing.T) {
+	t.Parallel()
+	for _, replacement := range []string{"source", "declaration"} {
+		t.Run(replacement, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := manifest.BootstrapSourceID
+			owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			repository := &manifest.ConfigMap{
+				Name: "input", Namespace: "apps", Data: map[string]any{"key": "repository"},
+			}
+			supplied := &manifest.ConfigMap{
+				Name: repository.Name, Namespace: repository.Namespace, Data: map[string]any{"key": "supplied"},
+			}
+			id := repository.Named()
+			s.AddObject(owner)
+			s.SetArtifact(source, &SourceArtifact{Content: "first", FS: fstest.MapFS{}})
+			s.AddDeclaration(
+				Declaration{
+					Obj:    supplied,
+					Doc:    testutil.ObjectDocument(supplied),
+					Origin: manifest.SuppliedDeclaration,
+				},
+			)
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {Parent: owner.Named(), Productions: []manifest.Production{{Owner: owner.Named(), Source: source}}},
+			}})
+			assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(supplied))
+			assert.Equal(t, s.shardFor(id).cells[id].static, manifest.BaseManifest(nil))
+			var initial ReadSet
+			initial.Init(s, ownerID("initial"), nil)
+			defer initial.Close()
+			initial.Admit(Child{Obj: repository}, source, manifest.NamedResource{})
+			_, _, emission := s.GetEmission(owner.Named())
+			emission.Complete = true
+			s.RecordEmitted(owner.Named(), &emission, nil)
+			emission.Finish()
+
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Close()
+			assert.Equal(t, reads.GetDeclaration(id), manifest.BaseManifest(supplied))
+			reads.GetArtifact(source, ArtifactContent)
+			initial.Admit(Child{Obj: repository}, source, manifest.NamedResource{})
+			assert.Equal(t, reads.Valid(), true)
+			for range 2 {
+				var retry ReadSet
+				retry.Init(s, ownerID("retry"), nil)
+				retry.GetDeclaration(id)
+				same := *repository
+				retry.Admit(Child{Obj: &same}, source, manifest.NamedResource{})
+				assert.Equal(t, retry.Valid(), true)
+				retry.Close()
+				assert.Equal(t, reads.Valid(), true)
+				assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(supplied))
+				assert.Equal(t, s.Policy(id).Origin, manifest.SuppliedDeclaration)
+			}
+			next := *repository
+			if replacement == "declaration" {
+				next.Data = map[string]any{"key": "replacement"}
+			}
+			changed := make(chan struct{})
+			go func() {
+				defer close(changed)
+				if replacement == "source" {
+					s.SetArtifact(source, &SourceArtifact{Content: "second", FS: fstest.MapFS{}})
+					return
+				}
+				var update ReadSet
+				update.Init(s, ownerID("replacement"), nil)
+				defer update.Close()
+				update.Admit(Child{Obj: &next}, source, manifest.NamedResource{})
+			}()
+			<-changed
+			assert.Equal(t, reads.Valid(), false)
+			var replacementReads ReadSet
+			replacementReads.Init(s, ownerID("replacement-admission"), nil)
+			defer replacementReads.Close()
+			replacementReads.Admit(Child{Obj: &next}, source, manifest.NamedResource{})
+			assert.Equal(t, replacementReads.Valid(), true)
+			var current ReadSet
+			current.Init(s, ownerID("current"), nil)
+			defer current.Close()
+			assert.Equal(t, current.GetDeclaration(id), manifest.BaseManifest(supplied))
+			current.GetArtifact(source, ArtifactContent)
+			current.Admit(Child{Obj: &next}, source, manifest.NamedResource{})
+			assert.Equal(t, current.Valid(), true)
 		})
 	}
 }

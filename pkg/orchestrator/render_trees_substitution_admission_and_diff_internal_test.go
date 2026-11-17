@@ -614,6 +614,9 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
 		id := (*inputs.cfg).Supply[0].Obj.Named()
 		assert.Equal(t, (*inputs.paired)[i].Store().Policy(id).Origin, origin)
 		assert.Equal(t, full[0].Store().Policy(id).Origin, origin)
+		if origin == manifest.SuppliedDeclaration {
+			assert.Equal(t, (*inputs.paired)[i].selection.Snapshot().Output(id), false)
+		}
 		for _, result := range []*Result{(*inputs.paired)[i].Result, full[0].Result} {
 			testSuppliedOutputData(t, result, id, (*(*inputs.transition))[i])
 		}

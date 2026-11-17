@@ -416,12 +416,12 @@ func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
 	return true
 }
 
-// Authored input replaces synthetic aliases and their ready artifacts.
 func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	if !l.PreferExisting {
 		return true
 	}
-	if l.Index.Records[id].Path != "" {
+	record := l.Index.Records[id]
+	if record.Path != "" || record.Builder != "" {
 		return false
 	}
 	if obj, policy := l.Store.Lookup(id); obj == nil || !policy.Root {

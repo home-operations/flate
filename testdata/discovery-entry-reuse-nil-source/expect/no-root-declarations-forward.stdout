@@ -1,0 +1,21 @@
+--- GitRepository flux-system/podinfo (clusters/test)
++++ GitRepository flux-system/podinfo (clusters/test)
+@@ -6,6 +6,6 @@
+ spec:
+   interval: 1h
+   ref:
+-    tag: 6.5.0
++    tag: 6.5.1
+   url: https://github.com/stefanprodan/podinfo.git
+ 
+
+--- Deployment flux-system/podinfo (kustomize)
++++ Deployment flux-system/podinfo (kustomize)
+@@ -16,6 +16,6 @@
+         app: podinfo
+     spec:
+       containers:
+-      - image: ghcr.io/stefanprodan/podinfo:6.5.0
++      - image: ghcr.io/stefanprodan/podinfo:6.5.1
+         name: podinfo
+ 

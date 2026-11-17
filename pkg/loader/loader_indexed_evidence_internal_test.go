@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,6 +31,34 @@ func TestLoader_PreferExistingIndexedObject(t *testing.T) {
 		l.Kustomizations()[0].Obj.(*manifest.Kustomization).Path != "./first" {
 		t.Fatalf("first indexed object was replaced: %+v, %+v", record, l.Kustomizations())
 	}
+}
+
+func TestLoader_PreferExistingPreparedSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(
+		t,
+		root,
+		"source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source, namespace: apps}\nspec: {url: https://fixture.invalid/raw}\n",
+	)
+	st := store.New()
+	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+	st.AddObject(source)
+	artifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), InputAlias: true}
+	st.SetArtifact(source.Named(), artifact)
+	l := New(st)
+	l.SourceRoot, l.PreferExisting = root, true
+	record := manifest.DiscoveryRecord{Declaration: source, Builder: "kustomization.yaml"}
+	l.Index.Records[source.Named()] = record
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, l.Admit(t.Context(), root))
+	assert.Equal(t, st.GetDeclaration(source.Named()), manifest.BaseManifest(source))
+	assert.Equal(t, st.GetArtifact(source.Named(), store.ArtifactContent), store.Artifact(artifact))
+	got, ok := l.Index.Lookup(source.Named())
+	assert.Equal(t, ok, true)
+	assert.Diff(t, got, record)
 }
 
 func TestLoader_ProjectedEvidence(t *testing.T) {

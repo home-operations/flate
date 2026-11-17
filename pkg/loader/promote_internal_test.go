@@ -297,6 +297,15 @@ spec:
 		assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
 		assert.Equal(t, generated.File, "kustomization.yaml")
 		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
+		assert.NoError(t, l.RegisterBuilt(t.Context(),
+			supportedBuiltInputForTest(l, &BuiltInput{
+				Root: root, Source: manifest.BootstrapSourceID,
+				Owner: testutil.KustomizationID("apps", "entry"),
+			}),
+			docs,
+		))
+		generated, _ = l.Index.Lookup(docs[1].Obj.Named())
+		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
 		assert.Diff(
 			t,
 			hr.Refs,

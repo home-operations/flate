@@ -16,6 +16,23 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`discovery-entry-reuse-nil-source/` covers issue #1588 through `cli.Run`.
+Two committed cluster trees use origin `https://github.com/example/cluster.git`.
+The offline external repository contains tags `6.5.0` and `6.5.1` with different Deployment images.
+The existing file Git transport supplies both tags without network access.
+Each case uses two workers and compares complete streams and exit codes twice.
+The first sequence starts with a cold private cache.
+The second sequence reuses that cache.
+Each command in the reported sequence owns a separate private cache.
+Expected streams follow the authored resources, Flux ownership rules, and formatter contract independently of command output.
+
+| Case | Behavior |
+| --- | --- |
+| `discovery-entry-reuse-nil-source/reported` | A patched scan root and both root declarations retain forward and reverse diffs and a full current build. |
+| `discovery-entry-reuse-nil-source/no-patches` | The layout without scan root patches retains both forward changes. |
+| `discovery-entry-reuse-nil-source/no-root-declarations` | The patched layout without both root declarations retains both forward changes. |
+| `discovery-entry-reuse-nil-source/missing-tag` | A valid source declaration with an absent tag retains the complete acquisition error and exit 1. |
+
 `discovery-remote-source-walk/` covers issue #1583 through `cli.Run`.
 The committed repository contains two clusters and one remote OCI source.
 Only cluster A reaches the entry path.

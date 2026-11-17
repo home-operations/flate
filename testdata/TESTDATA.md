@@ -1888,3 +1888,17 @@ These expectations are authored source changes, independent of actual test outpu
 
 The normalization-only ciphertext diff uses a separate complete expectation.
 Image and kind filters retain empty output.
+
+### Supplied and SOPS Secret collision
+
+`diff-supply-sops-hang/reported` retains the nested Flux Kustomizations from issue #1597.
+Two commits change one Helm value.
+The local chart reads fake Secret data through `valuesKey` and `targetPath`.
+The matching supplied Secret fills the encrypted key.
+
+`diff-supply-sops-hang/no-supply`, `diff-supply-sops-hang/unchanged`, and `diff-supply-sops-hang/no-parent` remove one trigger each.
+`diff-supply-sops-hang/build` covers unrestricted rendering.
+`diff-supply-sops-hang/reversed` exchanges the snapshots and asserts the inverse change.
+Every case asserts complete output and an explicit exit status twice with reset caches.
+The harness reserves half the remaining test lifetime for cancellation and cleanup.
+A fired guard fails the test after the CLI terminates.

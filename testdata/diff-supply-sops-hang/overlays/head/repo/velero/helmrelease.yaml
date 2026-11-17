@@ -1,0 +1,13 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: velero, namespace: velero}
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  valuesFrom:
+    - {kind: Secret, name: velero-s3-credentials, valuesKey: cloud, targetPath: credentials.secretContents.cloud}
+  values:
+    snapshotsEnabled: false

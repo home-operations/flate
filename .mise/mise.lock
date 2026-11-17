@@ -17,7 +17,7 @@ checksum = "sha256:91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0
 url = "https://dl.google.com/go/go1.27.4.darwin-arm64.tar.gz"
 
 [[tools."go:golang.org/x/tools/cmd/deadcode"]]
-version = "0.52.0"
+version = "0.53.0"
 backend = "go:golang.org/x/tools/cmd/deadcode"
 
 [[tools."go:golang.org/x/vuln/cmd/govulncheck"]]

@@ -21,7 +21,7 @@ version = "0.53.0"
 backend = "go:golang.org/x/tools/cmd/deadcode"
 
 [[tools."go:golang.org/x/vuln/cmd/govulncheck"]]
-version = "1.9.0"
+version = "1.10.0"
 backend = "go:golang.org/x/vuln/cmd/govulncheck"
 
 [[tools.golangci-lint]]

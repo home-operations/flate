@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/pkg/store"
@@ -145,13 +146,9 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 	captures *testFetcherConcurrentCustomTLSCaseCompletionInputs,
 ) {
 	t.Helper()
-	for range *captures.repos {
-		select {
-		case <-(*captures.arrived):
-		case <-(*captures.ctx).Done():
-			t.Fatal("custom TLS acquisitions did not overlap")
-		}
-	}
+	assert.NoError(t, waitForTLSFetchOverlap(
+		*captures.ctx, *captures.arrived, *captures.done, len(*captures.repos),
+	))
 	_, err := fetchtest.Fetch(
 		(*captures.ctx),
 		(*captures.f).Fetch,
@@ -207,4 +204,111 @@ type testFetcherConcurrentCustomTLSCaseCompletionInputs struct {
 	unblock *func()
 	done    *chan error
 	proxies *[]*atomic.Int32
+}
+
+func waitForTLSFetchOverlap(ctx context.Context, arrived <-chan struct{}, done <-chan error, count int) error {
+	for range count {
+		select {
+		case <-arrived:
+		case err := <-done:
+			if err != nil {
+				return err
+			}
+			return errors.New("custom TLS acquisition completed before release")
+		case <-ctx.Done():
+			return fmt.Errorf("custom TLS acquisitions did not overlap: %w", ctx.Err())
+		}
+	}
+	return nil
+}
+
+func TestFetcher_ConcurrentCustomTLSFailure(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		arrived := make(chan struct{}, 2)
+		done := make(chan error, 2)
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		var workers sync.WaitGroup
+		defer func() {
+			cancel()
+			unblock()
+			workers.Wait()
+		}()
+
+		secret := &manifest.Secret{StringData: map[string]any{
+			"username": "alice", "password": "p",
+			"tls.crt": "invalid", "tls.key": "invalid",
+		}}
+		inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+			return store.ReferenceFacts{Data: secret, Original: secret}
+		}}
+		repo := gitRepoWithSecret("failure", "https://example.invalid/repo.git", "tls")
+		reads := inputs.readSet(repo)
+		f := &Fetcher{}
+		workers.Go(func() {
+			arrived <- struct{}{}
+			<-release
+			done <- nil
+		})
+		synctest.Wait()
+
+		var fetchErr error
+		workers.Go(func() {
+			_, fetchErr = f.Fetch(ctx, repo, reads, &sourcecache.Policy{})
+			done <- fetchErr
+		})
+		result := make(chan error, 1)
+		workers.Go(func() {
+			result <- waitForTLSFetchOverlap(ctx, arrived, done, 2)
+		})
+		synctest.Wait()
+
+		select {
+		case err := <-result:
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, err, fetchErr)
+		default:
+			t.Fatal("overlap wait did not report the TLS setup error")
+		}
+		assert.NoError(t, ctx.Err())
+		select {
+		case err := <-done:
+			t.Fatalf("worker completed before release: %v", err)
+		default:
+		}
+		unblock()
+		workers.Wait()
+		assert.NoError(t, <-done)
+	})
+}
+
+func TestWaitForTLSFetchOverlap_Completion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		want   string
+	}{
+		{name: "completed before release", want: "custom TLS acquisition completed before release"},
+		{name: "cancelled", cancel: true, want: "custom TLS acquisitions did not overlap: context canceled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			arrived := make(chan struct{})
+			done := make(chan error, 1)
+			if tc.cancel {
+				cancel()
+			} else {
+				done <- nil
+			}
+			err := waitForTLSFetchOverlap(ctx, arrived, done, 1)
+			assert.FatalIf(t, err == nil, "overlap wait accepted %s", tc.name)
+			assert.Equal(t, err.Error(), tc.want)
+			assert.Equal(t, errors.Is(err, context.Canceled), tc.cancel)
+		})
+	}
 }

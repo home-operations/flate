@@ -246,6 +246,10 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 		t.Fatalf("missing identity = %s", missing.Secret)
 	}
 	artifact, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
+	if *(*captures.shape) == "bad ref" {
+		assert.FatalIf(t, err == nil || sourcecache.CredentialsUnavailable(err), "noncredential ref failure: %v", err)
+		assert.ErrorIf(t, !strings.Contains(err.Error(), "absent"), "missing ref cause: %v", err)
+	}
 	success := (*(*captures.shape)) == "fallback" || (*(*captures.shape)) == "accepted" ||
 		(*(*captures.shape)) == "source only" ||
 		(*(*captures.shape)) == "retry" ||

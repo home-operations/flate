@@ -1,0 +1,11 @@
+
+spec.sourceRef.kind  (kustomize.toolkit.fluxcd.io/v1/Kustomization/flux-system/load)
+  ± value change
+    - OCIRepository
+    + GitRepository
+
+spec.sourceRef.name  (kustomize.toolkit.fluxcd.io/v1/Kustomization/flux-system/load)
+  ± value change
+    - bundle
+    + flux-system
+

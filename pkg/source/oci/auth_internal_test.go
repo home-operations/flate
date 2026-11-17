@@ -255,6 +255,14 @@ func TestFetcher_CorruptDockerConfig(t *testing.T) {
 		"malformed machine config admitted acquisition or lost classification: %v",
 		err,
 	)
+	assert.Equal(t, err.Error(), "machine credential acquisition failed")
+	assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
+	domain, ok := errors.AsType[*manifest.Error](err)
+	assert.FatalIf(t, !ok, "malformed store lost domain category: %v", err)
+	assert.Equal(t, domain.Category(), manifest.ErrFlux)
+	t.Logf("display=%q category=%v flux=%t missingSecret=%t unavailable=%t",
+		err.Error(), domain.Category(), errors.Is(err, manifest.ErrFlux),
+		errors.Is(err, manifest.ErrMissingSecret), sourcecache.CredentialsUnavailable(err))
 }
 
 //nolint:paralleltest // testFetcherMachineCredentialsCase changes HOME, PATH, DOCKER_CONFIG, HELM_REGISTRY_CONFIG, and FLATE_HELPER_MARKER.

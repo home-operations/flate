@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: bundle
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: oci://registry.fixture.invalid/bundle
+  ref:
+    tag: missing

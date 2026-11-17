@@ -98,7 +98,7 @@ func AcquireMachine(
 	acquire func(context.Context, *cache.Policy, *store.SourceArtifact) (*store.SourceArtifact, error),
 ) (PreparedFetch, error) {
 	policy := *policyValue
-	classify := func(err error) error {
+	classifyPreparation := func(err error) error {
 		if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
 			if _, cached := errors.AsType[*cache.Error](err); !cached {
 				if !errors.Is(err, manifest.ErrFlux) {
@@ -110,9 +110,8 @@ func AcquireMachine(
 		return err
 	}
 	if err := ctx.Err(); err != nil {
-		return PreparedFetch{}, classify(err)
+		return PreparedFetch{}, classifyPreparation(err)
 	}
-	policy.Machine = true
 	var preparation context.Context
 	var cancel context.CancelFunc
 	if policy.Timeout != nil {
@@ -126,11 +125,14 @@ func AcquireMachine(
 	}
 	cancel()
 	if err != nil {
-		return PreparedFetch{}, classify(err)
+		return PreparedFetch{}, classifyPreparation(err)
 	}
 	return PreparedFetch{Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
 		artifact, fetchErr := acquire(ctx, &policy, local)
-		return artifact, classify(fetchErr)
+		if fetchErr != nil && !errors.Is(fetchErr, manifest.ErrFlux) {
+			fetchErr = manifest.NewError(manifest.ErrFlux, fetchErr, "")
+		}
+		return artifact, fetchErr
 	}}, nil
 }
 

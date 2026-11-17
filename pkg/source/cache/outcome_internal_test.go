@@ -489,7 +489,7 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 		root := t.TempDir()
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "machine-cooldown"}
-		policy := Policy{Retry: fastRetry(2), Machine: true}
+		policy := Policy{Retry: fastRetry(2)}
 		calls := 0
 		produce := func(context.Context, ProducerInput) (ProducerResult, error) {
 			calls++
@@ -506,6 +506,12 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 				err,
 			)
 		}
+		assert.Equal(t, err.Error(), connReset().Error())
+		assert.Equal(t, CredentialsUnavailable(err), false)
+		_, _, _, replayErr := c.Blob(t.Context(), key, &policy, produce)
+		terminal, ok := errors.AsType[*TerminalError](replayErr)
+		assert.FatalIf(t, !ok || terminal.Attempted || calls != 2, "in-memory cooldown: %v", replayErr)
+		assert.Equal(t, errors.Is(replayErr, syscall.ECONNRESET), true)
 		{
 			closeErr2 := c.Close()
 			assert.NoError(t, closeErr2)
@@ -542,30 +548,10 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 			assert.FatalIf(t, !ok, "%s", "cooldown lost syscall cause")
 		}
 
-		var count func(error) int
-		count = func(err error) int {
-			n := 0
-			if _, ok := err.(*machineError); ok { //nolint:errorlint // Count concrete nodes, including duplicate wrappers, rather than wrapped matches.
-				n++
-			}
-			switch e := err.(type) { //nolint:errorlint // Count each concrete node exactly once.
-			case interface{ Unwrap() []error }:
-				for _, child := range e.Unwrap() {
-					n += count(child)
-				}
-			case interface{ Unwrap() error }:
-				n += count(e.Unwrap())
-			}
-			return n
-		}
-		assert.FatalIf(t, count(MachineCredentialErr(err)) != 1, "%s", "replayed outcome gained a machine wrapper")
-
 		{
-			machine, ok := errors.AsType[*machineError](
-				err,
-			)
-			assert.FatalIf(t, !ok || machine.Error() != "machine credential acquisition failed" ||
-				err.Error() != machine.Error(), "cooldown masking: %v", err)
+			_, ok := errors.AsType[*machineError](err)
+			assert.FatalIf(t, ok || CredentialsUnavailable(err) || errors.Is(err, manifest.ErrMissingSecret),
+				"noncredential cooldown classified as credentials: %v", err)
 		}
 	})
 }

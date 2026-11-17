@@ -164,6 +164,13 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 		"publication" && !strings.Contains(err.Error(), "blobs") || (*phase) ==
 		"view" &&
 		!errors.Is(err, manifest.ErrInput), "ambient %s failure = %v, %v", (*phase), artifact, err)
+	assert.Equal(t, sourcecache.CredentialsUnavailable(err), false)
+	assert.ErrorIf(
+		t,
+		err.Error() == "machine credential acquisition failed",
+		"post-authentication cause masked: %v",
+		err,
+	)
 	<-closed
 	if opened.Load() != 1 || tr.Authenticated.Load() == 0 {
 		t.Fatalf("post-auth failure: opened=%d authenticated=%d", opened.Load(), tr.Authenticated.Load())

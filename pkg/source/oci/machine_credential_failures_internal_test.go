@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,6 +84,27 @@ func testFetcherMachineFailureCausesCase(t *testing.T, name *string,
 		"failure lost source classification: %v",
 		err,
 	)
+	t.Logf("display=%q type=%T flux=%t missingSecret=%t unavailable=%t notFound=%t basicAbsent=%t",
+		err.Error(), err, errors.Is(err, manifest.ErrFlux),
+		errors.Is(err, manifest.ErrMissingSecret), sourcecache.CredentialsUnavailable(err),
+		errors.Is(err, errdef.ErrNotFound), errors.Is(err, auth.ErrBasicCredentialNotFound))
+	t.Logf("typed causes: %s", manifest.ErrorDetails(err))
+	switch *name {
+	case "missing content":
+		assert.Equal(t, err.Error(), fmt.Sprintf("resolve latest: %s/app:latest: not found", mustURL(t, srv.URL).Host))
+		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
+	case "transport":
+		request, ok := errors.AsType[*url.Error](err)
+		assert.FatalIf(t, !ok, "transport cause lost: %v", err)
+		assert.Equal(t, request.Op, "Head")
+		assert.Equal(t, request.URL, srv.URL+"/v2/app/manifests/latest")
+		assert.Equal(t, errors.Is(err, io.EOF), true)
+		assert.Equal(t, err.Error(), fmt.Sprintf("resolve latest: Head %q: EOF", request.URL))
+		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
+	case "Basic absence", "bearer absence", "rejected credential", "forbidden":
+		assert.Equal(t, err.Error(), "machine credential acquisition failed")
+		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
+	}
 	wantAdvice := false
 	for _, text := range []string{"no login entry for " + mustURL(t, srv.URL).Host, "Docker config", "Helm's registry file", "credential helpers are not run", "--registry-config", "plain auths entry", "supplied Secret"} {
 		assert.ErrorIf(t, strings.Contains(err.Error(), text) != wantAdvice, "advice %q: %v", text, err)
@@ -102,6 +124,12 @@ func testFetcherMachineFailureCausesCase(t *testing.T, name *string,
 		(*name) == "forbidden" {
 		response, ok := errors.AsType[*errcode.ErrorResponse](err)
 		assert.ErrorIf(t, !ok || response.StatusCode == 0, "ORAS response chain lost: %v", err)
+		wantStatus := http.StatusUnauthorized
+		if *name == "forbidden" {
+			wantStatus = http.StatusForbidden
+		}
+		assert.Equal(t, response.StatusCode, wantStatus)
+		t.Logf("registry status=%d", response.StatusCode)
 		{
 			_, ok := errors.AsType[*fetcherr.ResponseError](err)
 			assert.ErrorIf(t, !ok, "neutral response chain lost: %v", err)

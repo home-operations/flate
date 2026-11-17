@@ -249,10 +249,12 @@ spec:
 	// The registry returns 404. Reaching its handler proves the OCI fetcher
 	// read the rendered CA Secret and passed TLS verification.
 	assert.FatalIf(t, requests.Load() == 0, "OCI fetch never reached the TLS server: %v", err)
+	want := "resolve 0.1.0: " + strings.TrimPrefix(server.URL, "https://") + "/charts:0.1.0: not found"
 	assert.FatalIf(
 		t,
-		err == nil || !strings.Contains(err.Error(), "machine credential acquisition failed"),
-		"Render error = %v, want a masked registry failure after successful TLS",
+		err == nil || !strings.Contains(err.Error(), want),
+		"Render error = %v, want registry not-found cause %q after successful TLS",
 		err,
+		want,
 	)
 }

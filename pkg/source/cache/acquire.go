@@ -612,7 +612,7 @@ func (c *Cache) producePayload(
 		if producer, ok := errors.AsType[*producerError](
 			err,
 		); ok && errors.Is(producer, err) &&
-			(key.policy.Machine || CredentialsUnavailable(producer.error)) {
+			CredentialsUnavailable(producer.error) {
 			err = newProducerError(MachineCredentialErr(producer.error))
 		}
 		return nil, repairName, err

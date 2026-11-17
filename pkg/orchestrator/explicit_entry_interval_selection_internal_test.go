@@ -34,14 +34,21 @@ func TestRenderTrees_ExplicitEntryIntervalSelection(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Each selection mode MUST retain both resource sides and the independent two-run byte comparison.
 func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 	t.Helper()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	name := "entry-application-rendered-" + kind
 	head := testfixture.Materialize(t, "entry-applicator", name)
+	wantTemplates := 0
+	if mode == "cold" || mode == "invalidated" {
+		wantTemplates = 1
+	}
+	wantAdmissions := int64(1)
+	if mode == "workload" {
+		wantAdmissions = 0
+	}
 	var oracle [2][]byte
-	for range 2 {
+	for run := range 2 {
 		head.Restore(t)
 		cache, err := sourcecache.New(t.Context(), t.TempDir())
 		assert.NoError(t, err)
@@ -99,23 +106,15 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 		results, err := renderTreesForTest(t.Context(), t, trees, selected)
 		slog.SetDefault(previous)
 		assert.NoError(t, err)
-		wantTemplates := 0
-		if mode == "cold" || mode == "invalidated" {
-			wantTemplates = 1
-		}
 		assert.Equal(t, entryReceiptTemplateCount(logs.String(), generator), wantTemplates)
-		wantAdmissions := int64(1)
-		if mode == "workload" {
-			wantAdmissions = 0
-		}
 		for _, result := range results {
 			assert.Equal(t, admissions[result.ID.Side].Load(), wantAdmissions)
 		}
 		output := assertExplicitEntryResults(t, results, mode, persistent)
-		for side := range output {
-			if oracle[side] == nil {
-				oracle[side] = output[side]
-			} else {
+		if run == 0 {
+			oracle = output
+		} else {
+			for side := range output {
 				assert.Equal(t, bytes.Equal(output[side], oracle[side]), true)
 			}
 		}

@@ -207,14 +207,15 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			assert.Diff(t, reused, initial)
 			assert.Equal(t, observed.Accepted, false)
 			assert.Equal(t, updated.Equal(receipt), false)
+			wantAttempts := uint64(0)
+			if !persistent && regime == "disk" {
+				wantAttempts = 1
+			}
 			for _, row := range work.Scope().Snapshot(0) {
-				if row.Key.Phase == manifest.WorkHelm {
-					wantAttempts := uint64(0)
-					if !persistent && regime == "disk" {
-						wantAttempts = 1
-					}
-					assert.Equal(t, row.Counts.Attempts, wantAttempts)
+				if row.Key.Phase != manifest.WorkHelm {
+					continue
 				}
+				assert.Equal(t, row.Counts.Attempts, wantAttempts)
 			}
 			assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 				Owner:   hr.Named(),

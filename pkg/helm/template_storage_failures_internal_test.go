@@ -28,7 +28,6 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // Storage faults MUST retain normal-render and publication assertions in both persistence modes.
 func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
@@ -56,7 +55,9 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	cli := NewClient(owner)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", chartDir)
 	hr := newHR()
-	if (*testCaseInput) == "lookup" || (*testCaseInput) == "read" {
+	var contentKey string
+	switch *testCaseInput {
+	case "lookup", "read":
 		testTemplateCacheStorageFailuresCaseLoop(t, struct {
 			cli        **Client
 			hr         **manifest.HelmRelease
@@ -65,34 +66,35 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(t, d.record == nil, "%s", "lookup fault fixture did not warm a typed record")
-		if (*testCaseInput) == "read" {
-			r, _, _, err := owner.Blob(
-				t.Context(),
-				cache.BlobKey{
-					Content: d.record.key,
-					Render:  cache.RenderAccepted,
-				},
-				&cache.Policy{MaxAge: cache.Forever},
-				nil,
-			)
-			if persistent {
-				assert.NoError(t, err)
-				data, readErr := fs.ReadFile(r, "content")
-				assert.NoError(t, readErr)
-
-				sum := digest.FromBytes(data)
-				blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
-				assert.NoError(t, os.Remove(blob))
-				assert.NoError(t, os.Mkdir(blob, 0o750))
-				cli = NewClient(owner)
-				cliSources = localChartResolver(t, "chart-repo", "flux-system", chartDir)
-			} else {
-				assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
-				assert.Equal(t, r == nil, true)
-			}
-		}
+		contentKey = d.record.key
 	}
-	if (*testCaseInput) != "read" {
+	switch *testCaseInput {
+	case "read":
+		r, _, _, err := owner.Blob(
+			t.Context(),
+			cache.BlobKey{
+				Content: contentKey,
+				Render:  cache.RenderAccepted,
+			},
+			&cache.Policy{MaxAge: cache.Forever},
+			nil,
+		)
+		if persistent {
+			assert.NoError(t, err)
+			data, readErr := fs.ReadFile(r, "content")
+			assert.NoError(t, readErr)
+
+			sum := digest.FromBytes(data)
+			blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
+			assert.NoError(t, os.Remove(blob))
+			assert.NoError(t, os.Mkdir(blob, 0o750))
+			cli = NewClient(owner)
+			cliSources = localChartResolver(t, "chart-repo", "flux-system", chartDir)
+		} else {
+			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+			assert.Equal(t, r == nil, true)
+		}
+	default:
 		assert.NoError(t, os.RemoveAll(root))
 	}
 	for range 2 {
@@ -128,10 +130,8 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		}
 
 		if (*testCaseInput) == "read" {
-			{
-				pathErr, ok := errors.AsType[*fs.PathError](err)
-				assert.FatalIf(t, !ok || pathErr.Op != "read", "read fault did not precede decoding: %v", err)
-			}
+			pathErr, ok := errors.AsType[*fs.PathError](err)
+			assert.FatalIf(t, !ok || pathErr.Op != "read", "read fault did not precede decoding: %v", err)
 		}
 		assert.FatalIf(
 			t, (*testCaseInput) ==

@@ -136,8 +136,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			t.Parallel()
 			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			var preparation, successor Preparation
-			t.Cleanup(preparation.Retire)
-			t.Cleanup(successor.Retire)
+			t.Cleanup(func() { preparation = Preparation{} })
+			t.Cleanup(func() { successor = Preparation{} })
 			var work manifest.WorkRecorder
 			work.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
@@ -164,7 +164,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			if lifetime == "transferred" {
-				assert.Equal(t, successor.Take(&preparation, renderer, hr, &current), true)
+				assert.Equal(t, preparation.Matches(renderer, hr, &current), true)
+				successor, preparation = preparation, Preparation{}
 				assert.Equal(t, preparation.complete || preparation.source != nil, false)
 				current.Preparation = &successor
 			}

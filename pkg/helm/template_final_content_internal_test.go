@@ -28,8 +28,8 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			client := NewClient(cachetest.New(t, "", cache.New))
 			hr := newHR()
 			var preparation, successor Preparation
-			defer preparation.Retire()
-			defer successor.Retire()
+			defer func() { preparation = Preparation{} }()
+			defer func() { successor = Preparation{} }()
 			input := RenderOptions{
 				Preparation: &preparation,
 				Sources:     localChartResolver(t, "chart-repo", "flux-system", root),
@@ -47,7 +47,8 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			omitted := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "missing"}
 			current.Omitted = []manifest.NamedResource{omitted, omitted}
 			if regime == "transferred preparation" {
-				assert.Equal(t, successor.Take(&preparation, client, hr, &current), true)
+				assert.Equal(t, preparation.Matches(client, hr, &current), true)
+				successor, preparation = preparation, Preparation{}
 				current.Preparation = &successor
 			}
 			next, err := client.prepareTemplate(t.Context(), hr, nil, &current)
@@ -133,8 +134,8 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			client := NewClient(cachetest.New(t, cacheDir, cache.New))
 			hr := newHR()
 			var preparation, successor Preparation
-			defer preparation.Retire()
-			defer successor.Retire()
+			defer func() { preparation = Preparation{} }()
+			defer func() { successor = Preparation{} }()
 			input := RenderOptions{
 				Preparation: &preparation,
 				Sources:     localChartResolver(t, "chart-repo", "flux-system", root),
@@ -161,7 +162,8 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 				current.Preparation = nil
 			}
 			if regime == "transferred preparation" {
-				assert.Equal(t, successor.Take(&preparation, client, hr.Clone(), &current), true)
+				assert.Equal(t, preparation.Matches(client, hr.Clone(), &current), true)
+				successor, preparation = preparation, Preparation{}
 				current.Preparation = &successor
 			}
 			request, err := client.prepareTemplate(t.Context(), hr.Clone(), nil, &current)

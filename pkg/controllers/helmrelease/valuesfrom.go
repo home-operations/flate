@@ -13,7 +13,7 @@ func (c *execution) resolvePreRenderValuesFrom(
 	hr *manifest.HelmRelease,
 	level manifest.DrainLevel,
 ) error {
-	inputs, err := c.run.DataInputs(ctx, hr, c.data)
+	inputs, err := c.run.DataInputs(ctx, hr, c.run.Data())
 	if err != nil {
 		return err
 	}

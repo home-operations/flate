@@ -14,19 +14,19 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type offlineRenderError struct{ error }
 
 func (e *offlineRenderError) Unwrap() error { return e.error }
 
-type preparation interface{ Retire() }
-
 // Execution MUST retain its input capture through every output borrower.
 type Execution struct {
 	*Controller
 
-	Preparation           preparation
+	preparation           preparation
+	data                  *values.StoreProvider
 	AdmissionPreparation  *selection.Preparation
 	ProbeLeft, ProbeRight *Execution
 	ProbeConsumed         bool
@@ -138,7 +138,7 @@ func (e *Execution) Take(previous schedule.Result) {
 	if !prior.matchesDeclaration(e.declaration) {
 		return
 	}
-	e.Preparation, prior.Preparation = prior.Preparation, nil
+	e.preparation, prior.preparation = prior.preparation, nil
 	e.generated, prior.generated = prior.generated, nil
 	e.generationKnown, prior.generationKnown = prior.generationKnown, false
 	e.generationErr, prior.generationErr = prior.generationErr, nil
@@ -165,10 +165,11 @@ func (e *Execution) Valid() bool {
 // Retire releases superseded assessment cells while retaining borrowed output.
 func (e *Execution) Retire() {
 	e.closeAcquisition()
-	if e.Preparation != nil {
-		e.Preparation.Retire()
-		e.Preparation = nil
+	if e.preparation != nil {
+		e.preparation.retire()
+		e.preparation = nil
 	}
+	e.data = nil
 	e.AdmissionPreparation.Retire()
 	e.AdmissionPreparation = nil
 	e.generated, e.generationObject, e.generationErr, e.declaration = nil, nil, nil, nil

@@ -513,7 +513,7 @@ func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
 	cache := newTestTreeCache(t, t.TempDir())
 	source := &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root}
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
 		Preparation: &preparation, ApplyIgnore: true, Label: root, SubPath: ".",
 		Spec: &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"},

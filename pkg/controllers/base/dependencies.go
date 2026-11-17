@@ -114,6 +114,39 @@ func (e *Execution) dependencyWaiter() depwait.Waiter {
 	return w
 }
 
+// Data MUST remain bound to this execution's input capture.
+func (e *Execution) Data() *values.StoreProvider {
+	if e.data == nil {
+		e.data = values.NewStoreProvider(&e.Reads)
+	}
+	return e.data
+}
+
+// Probe MUST return its live assessment after capture starts, including on errors.
+func (e *Execution) Probe(
+	ctx context.Context,
+	controller *Controller,
+	object manifest.BaseManifest,
+	previous schedule.Result,
+) (History, []values.Result, error) {
+	e.InitProbe(controller, object)
+	history := History{Assessment: e}
+	e.Take(previous)
+	inputs, err := e.DataInputs(ctx, object, e.Data())
+	if err != nil {
+		return history, nil, err
+	}
+	var results []values.Result
+	err = e.AwaitData(ctx, DataWait{
+		Inputs: inputs,
+		Resume: func(_ context.Context, _ manifest.DrainLevel, inputs []values.Result) error {
+			results = inputs
+			return nil
+		},
+	}, manifest.DrainNone)
+	return history, results, err
+}
+
 // DataInputs MUST assess promotion before capturing values for either render path.
 func (e *Execution) DataInputs(
 	ctx context.Context,

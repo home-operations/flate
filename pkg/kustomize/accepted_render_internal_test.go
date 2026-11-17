@@ -136,8 +136,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			t.Parallel()
 			renderer := newTestTreeCache(t, t.TempDir())
 			var preparation, successor Preparation
-			t.Cleanup(preparation.Retire)
-			t.Cleanup(successor.Retire)
+			t.Cleanup(func() { preparation = Preparation{} })
+			t.Cleanup(func() { successor = Preparation{} })
 			var work manifest.WorkRecorder
 			work.Init(&manifest.WorkKey{Owner: owner}, manifest.WorkScope{})
 			source := *req.Source
@@ -159,7 +159,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, fiel
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			if lifetime == "transferred" {
-				assert.Equal(t, successor.Take(&preparation, renderer, &current), true)
+				assert.Equal(t, preparation.Matches(renderer, &current), true)
+				successor, preparation = preparation, Preparation{}
 				assert.Equal(t, preparation.complete || preparation.source != nil, false)
 				current.Preparation = &successor
 			}
@@ -465,7 +466,7 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newTestTreeCache(t, cacheDir)
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
 		Preparation: &preparation,
 		Source:      &store.SourceArtifact{LocalPath: root, FS: input},

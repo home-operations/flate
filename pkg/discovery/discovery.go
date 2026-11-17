@@ -633,6 +633,9 @@ func (d *Session) renderPreparation(
 	ctx context.Context,
 	frame, previous *declarationPreparation,
 ) error {
+	if previous != nil {
+		frame.preparation, previous.preparation = previous.preparation, kustomize.Preparation{}
+	}
 	ks, input := frame.owner, frame.source
 	sourceID := ks.EffectiveSourceID()
 	provider := values.NewStoreProvider(&frame.support)
@@ -679,9 +682,6 @@ func (d *Session) renderPreparation(
 		SkipKinds:           d.cfg.SkipKinds,
 	}
 	request.Preparation = &frame.preparation
-	if previous != nil {
-		frame.preparation.Take(&previous.preparation, d.cfg.Trees, &request)
-	}
 	docs, receipt, found := d.cfg.Trees.PreviousRender(ctx, request)
 	if !found {
 		var err error

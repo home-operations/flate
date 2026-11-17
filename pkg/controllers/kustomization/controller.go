@@ -51,35 +51,15 @@ type Options struct {
 type execution struct {
 	*Controller
 
-	preparation kustomize.Preparation
+	base.Preparation[kustomize.Preparation]
 
-	run  base.Execution
-	data *values.StoreProvider
+	run base.Execution
 }
 
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.run.Preparation = execution
-	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
-}
-
-func (c *execution) Retire() {
-	c.preparation.Retire()
-	c.data = nil
-}
-
-func (c *execution) prepareRequest(request *kustomize.RenderRequest) {
-	if previous, ok := c.run.Preparation.(*execution); ok && previous != c {
-		c.preparation.Take(&previous.preparation, c.Trees, request)
-		previous.Retire()
-	}
-	c.run.Preparation = c
-	request.Preparation = &c.preparation
-	if c.Discovery != nil {
-		c.Discovery.TakePreparation(c.Trees, request, &c.preparation)
-	}
 }
 
 // New constructs a Kustomization controller.
@@ -139,7 +119,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
-	inputs, err := c.run.DataInputs(ctx, ks, c.data)
+	inputs, err := c.run.DataInputs(ctx, ks, c.run.Data())
 	if err != nil {
 		return err
 	}
@@ -192,7 +172,13 @@ func (c *execution) render(
 		SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
 		UnreadableSubstitutions: unreadable,
 	}
-	c.prepareRequest(&request)
+	request.Preparation = c.run.Prepare(
+		&c.Preparation,
+		c.Discovery.Preparation(ks.Named()),
+		func(p *kustomize.Preparation) bool {
+			return p.Matches(c.Trees, &request)
+		},
+	)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {
 		return err
@@ -263,28 +249,12 @@ func (c *Controller) PreviousRender(
 	if !ok || ctx.Err() != nil {
 		return base.History{}
 	}
-	ex := &execution{Controller: c}
-	ex.run.InitProbe(c.Controller, obj)
-	ex.run.Preparation = ex
-	ex.run.Take(previous)
-	reads := &ex.run.Reads
-	history := base.History{Assessment: &ex.run}
-	data := values.NewStoreProvider(reads)
-	ex.data = data
-	inputs, err := ex.run.DataInputs(ctx, ks, data)
+	var ex execution
+	history, results, err := ex.run.Probe(ctx, c.Controller, obj, previous)
 	if err != nil {
 		return history
 	}
-	var results []values.Result
-	if err = ex.run.AwaitData(ctx, base.DataWait{
-		Inputs: inputs,
-		Resume: func(_ context.Context, _ manifest.DrainLevel, inputs []values.Result) error {
-			results = inputs
-			return nil
-		},
-	}, manifest.DrainNone); err != nil {
-		return history
-	}
+	reads := &ex.run.Reads
 	unreadable := values.UnreadableSubstitutions(ks, results)
 	prepared, err := kustomize.Prepare(ks, results)
 	if err != nil {
@@ -305,7 +275,13 @@ func (c *Controller) PreviousRender(
 		SubstitutionActive:      values.ResolvedSubstitutionActive(results),
 		UnreadableSubstitutions: unreadable,
 	}
-	ex.prepareRequest(&request)
+	request.Preparation = ex.run.Prepare(
+		&ex.Preparation,
+		c.Discovery.Preparation(prepared.Named()),
+		func(p *kustomize.Preparation) bool {
+			return p.Matches(c.Trees, &request)
+		},
+	)
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
 	if !found {
 		return history

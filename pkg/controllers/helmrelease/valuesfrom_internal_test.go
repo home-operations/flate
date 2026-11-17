@@ -682,7 +682,7 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 		testutil.KustomizationID("apps", "producer-root"),
 		store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
 	)
-	input := execution.data.Lookup(target)
+	input := execution.run.Data().Lookup(target)
 	w := depwait.Waiter{
 		Store:   &execution.run.Reads,
 		Parent:  execution.run.Reads.ID(),

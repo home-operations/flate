@@ -51,7 +51,7 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			input := execution.data.Lookup(
+			input := execution.run.Data().Lookup(
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"},
 			)
 			assert.FatalIf(t, (input.Data != nil) != tc.accepted, "input=%+v accepted=%t", input, tc.accepted)
@@ -133,7 +133,7 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := execution.data
+			provider := execution.run.Data()
 			id := source.Named()
 			assert.FatalIf(t, provider.Lookup(id).Data == nil, "%v", "provider lost supplied identity")
 			{

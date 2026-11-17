@@ -13,7 +13,6 @@ import (
 
 // Preparation MUST stay with one logical renderer owner until transfer or retirement.
 // Retained input graphs MUST stay immutable for the full ownership lifetime.
-// Take transfers that lifetime to its destination; clearing the source does not end it.
 type Preparation struct {
 	client        *Client
 	declaration   *manifest.HelmRelease
@@ -27,31 +26,11 @@ type Preparation struct {
 	values        map[string]any
 }
 
-// Retire MUST follow the final consumer and clears retained input references.
-func (p *Preparation) Retire() {
-	if p != nil {
-		*p = Preparation{}
-	}
-}
-
-// Take MUST NOT move a live capture or grant publication authority.
-func (p *Preparation) Take(
-	previous *Preparation,
-	client *Client,
-	declaration *manifest.HelmRelease,
-	request *RenderOptions,
-) bool {
-	if p == nil || p.complete || previous == nil || !previous.complete {
+// Matches MUST NOT grant publication authority or validate current source bytes.
+func (p *Preparation) Matches(client *Client, declaration *manifest.HelmRelease, request *RenderOptions) bool {
+	if p == nil || !p.complete {
 		return false
 	}
-	if !previous.matchesOwner(client, declaration, request) {
-		return false
-	}
-	*p, *previous = *previous, Preparation{}
-	return true
-}
-
-func (p *Preparation) matchesOwner(client *Client, declaration *manifest.HelmRelease, request *RenderOptions) bool {
 	if p.client != client || declaration == nil || !manifest.Equal(p.declaration, declaration) {
 		return false
 	}
@@ -88,7 +67,7 @@ func (c *Client) prepareTemplate(
 	}
 	source := input.Sources.chartInput(hr)
 	previous := input.Preparation
-	reusable := previous != nil && previous.complete && previous.matchesOwner(c, hr, input)
+	reusable := previous.Matches(c, hr, input)
 	if reusable {
 		read := store.ArtifactContent
 		if hr.TracksDigest() {
@@ -129,7 +108,7 @@ func (c *Client) prepareTemplate(
 		return previous.request(hr, input), nil
 	}
 	if previous != nil {
-		previous.Retire()
+		*previous = Preparation{}
 	}
 	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	caps, capabilityErr := opts.capabilities()

@@ -89,7 +89,7 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{Owner: owner.Named()}, manifest.WorkScope{})
 	var preparation Preparation
-	defer preparation.Retire()
+	defer func() { preparation = Preparation{} }()
 	req := RenderRequest{
 		Preparation: &preparation,
 		Source: localSource(
@@ -133,7 +133,7 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 		counts,
 		manifest.WorkCounts{Attempts: prepares, Completed: prepares, OwnerPrepares: prepares},
 	)
-	preparation.Retire()
+	preparation = Preparation{}
 	assert.Equal(
 		t,
 		preparation.complete || preparation.source != nil || preparation.spec != nil || preparation.lower != nil,
@@ -150,7 +150,7 @@ func TestPrepareRender_FilteredAdmission(t *testing.T) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{}, manifest.WorkScope{})
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
 		Preparation: &preparation, Source: original.WithReads(&store.ReadSet{}),
 		ApplyIgnore: true, Label: root, SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
@@ -218,7 +218,7 @@ func TestPrepareRender_UncomparableSourceFS(t *testing.T) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{}, manifest.WorkScope{})
 	var preparation Preparation
-	t.Cleanup(preparation.Retire)
+	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
 		Preparation: &preparation, Source: original.WithReads(&store.ReadSet{}),
 		ApplyIgnore: false, SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
@@ -275,7 +275,7 @@ func testPrepareRenderSourceBinding(t *testing.T, name string) {
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{Owner: owner.Named()}, manifest.WorkScope{})
 	var preparation Preparation
-	defer preparation.Retire()
+	defer func() { preparation = Preparation{} }()
 	req := RenderRequest{
 		Preparation: &preparation, Source: &original, Spec: owner,
 		SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),

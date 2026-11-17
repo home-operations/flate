@@ -293,7 +293,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			assert.FatalIf(t, history.Assessment == nil, "missing probe assessment")
 			normal := c.newExecution(owner.Named())
 			defer normal.run.Close()
-			_, err := normal.run.DataInputs(t.Context(), owner, normal.data)
+			_, err := normal.run.DataInputs(t.Context(), owner, normal.run.Data())
 			assert.NoError(t, err)
 			var unreadable []manifest.NamedResource
 			if tc.mixed || !tc.optional && tc.object == nil && len(tc.allowed) != 0 {
@@ -326,7 +326,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 				assert.Equal(t, replay.Complete, persistent)
 				assert.Diff(t, replay.Assessment.Unreadable, normal.run.Unreadable)
 				actualFacts := replay.Assessment.Reads.ReferenceFacts(input, nil, owner.Named())
-				wantFacts := normal.data.Lookup(input)
+				wantFacts := normal.run.Data().Lookup(input)
 				assertCapturedReferenceFacts(t, &actualFacts, &wantFacts)
 				replay.Assessment.Close()
 				t.Logf("%s history: complete=%t, output and warning assertions evaluated", regime, replay.Complete)
@@ -442,7 +442,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			assert.Equal(t, c.Tasks.Failures(), int64(0))
 			normal := c.newExecution(owner.Named())
 			defer normal.run.Close()
-			inputs, inputErr := normal.run.DataInputs(t.Context(), owner, normal.data)
+			inputs, inputErr := normal.run.DataInputs(t.Context(), owner, normal.run.Data())
 			assert.NoError(t, inputErr)
 			resumed := false
 			waitErr := normal.run.AwaitData(t.Context(), base.DataWait{
@@ -522,7 +522,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	assert.Equal(t, fresh.Assessment.Reads.Valid(), true)
 	normal := c.newExecution(owner.Named())
 	defer normal.run.Close()
-	inputs, err := normal.run.DataInputs(t.Context(), owner, normal.data)
+	inputs, err := normal.run.DataInputs(t.Context(), owner, normal.run.Data())
 	assert.NoError(t, err)
 	resumed := false
 	assert.NoError(
@@ -538,7 +538,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	)
 	assert.Equal(t, resumed, true)
 	captured := fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named())
-	expected := normal.data.Lookup(input.Named())
+	expected := normal.run.Data().Lookup(input.Named())
 	assert.Diff(t, captured.Data.Snapshot(), expected.Data.Snapshot())
 	assert.Equal(t, captured.Data.KeysKnown(), expected.Data.KeysKnown())
 	if captured.Original != nil && expected.Original != nil {

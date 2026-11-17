@@ -156,14 +156,15 @@ type inputCacheFixture struct {
 //nolint:gocognit // The owner lifetime MUST cover restored inputs, source reads, projections, and publication in both modes.
 func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	t.Helper()
-	root, backing, files, reads := f.root, f.backing, f.files, f.reads
-	count := len(files)
+	count := len(f.files)
 	warm := want != count
+	wantRestored := want == 0 && persistent
+	wantUncached := want == 0 && !persistent
 	wantReads := want
 	if !persistent {
 		wantReads = count
 	}
-	owner, err := cache.New(t.Context(), backing)
+	owner, err := cache.New(t.Context(), f.backing)
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, owner.Close()) }()
 	assert.Equal(t, owner.CanPersistRenders(), persistent)
@@ -171,27 +172,27 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 		t.Context(),
 		nil,
 		plumbing.ZeroHash,
-		gittree.ViewOptions{Mode: gittree.Direct, Current: parsedReadFS{FS: files, reads: reads}},
+		gittree.ViewOptions{Mode: gittree.Direct, Current: parsedReadFS{FS: f.files, reads: f.reads}},
 	)
 	assert.NoError(t, err)
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: f.root, FS: view})
 	l := New(st)
 	defer l.Close()
-	l.SourceRoot, l.Options.Cache = root, owner
+	l.SourceRoot, l.Options.Cache = f.root, owner
 	l.Options.Changes = change.NewSet([]string{"cm-000.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	l.documents.compact = true
 	l.mountSources()
 	assert.NoError(t, l.restoreCachedInputs(t.Context()))
-	if want == 0 && persistent {
-		for name := range files {
-			doc := l.documents.cache[filepath.Join(root, name)]
+	if wantRestored {
+		for name := range f.files {
+			doc := l.documents.cache[filepath.Join(f.root, name)]
 			assert.Equal(t, doc.deferred != nil, true)
 			assert.Equal(t, len(doc.objects), 0)
 		}
-		source := l.sourceFacts(root)
-		key := loadContext{path: root}
+		source := l.sourceFacts(f.root)
+		key := loadContext{path: f.root}
 		pending, known, _ := source.loads.get(key)
 		assert.Equal(t, known, true)
 		assert.Equal(t, pending.cached != nil, true)
@@ -202,32 +203,33 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 		again, _ := source.load(key)
 		assert.Equal(t, &load.files[0] == &again.files[0], true)
 	}
-	if want == 0 && !persistent {
-		for name := range files {
-			_, known := l.documents.cache[filepath.Join(root, name)]
+	if wantUncached {
+		for name := range f.files {
+			_, known := l.documents.cache[filepath.Join(f.root, name)]
 			assert.Equal(t, known, false)
 		}
-		source := l.sourceFacts(root)
-		_, known, _ := source.loads.get(loadContext{path: root})
+		source := l.sourceFacts(f.root)
+		_, known, _ := source.loads.get(loadContext{path: f.root})
 		assert.Equal(t, known, false)
 	}
-	for _, read := range reads {
+	for _, read := range f.reads {
 		read.Store(0)
 	}
-	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	_, err = l.Load(t.Context(), f.root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	parsed := 0
-	for name, read := range reads {
-		if read.Load() != 0 {
-			parsed++
-			if warm && persistent {
-				assert.Equal(t, name, "cm-000.yaml")
-			}
+	for name, read := range f.reads {
+		if read.Load() == 0 {
+			continue
+		}
+		parsed++
+		if warm && persistent {
+			assert.Equal(t, name, "cm-000.yaml")
 		}
 	}
 	assert.Equal(t, parsed, wantReads)
 	assert.Equal(t, len(l.Index.Records), count-2)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), f.root, false))
 	declarations := l.Index.Declarations[manifest.BootstrapSourceID]
 	assert.Equal(t, declarations["empty.yaml"].Present, true)
 	assert.Equal(t, declarations["empty.yaml"].Complete, true)
@@ -245,11 +247,11 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 		}
 		assert.Equal(t, child.Doc["data"].(map[string]any)["value"], any(value))
 	}
-	for _, read := range reads {
+	for _, read := range f.reads {
 		read.Store(0)
 	}
-	input := l.documents.artifacts[root]
-	for name := range files {
+	input := l.documents.artifacts[f.root]
+	for name := range f.files {
 		projection, err := l.projectionFile(t.Context(), input, name, true)
 		assert.NoError(t, err)
 		assert.Equal(t, projection.known, true)
@@ -257,7 +259,7 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 		assert.Diff(t, projection.inputs.Names, map[string]struct{}{})
 	}
 	projected := 0
-	for _, read := range reads {
+	for _, read := range f.reads {
 		if read.Load() != 0 {
 			projected++
 		}
@@ -265,7 +267,7 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	assert.Equal(t, projected, wantReads)
 	assert.NoError(t, l.PersistInputs(t.Context()))
 	if warm {
-		restored := l.documents.cache[filepath.Join(root, "cm-001.yaml")]
+		restored := l.documents.cache[filepath.Join(f.root, "cm-001.yaml")]
 		assert.Equal(t, len(restored.objects), 1)
 	}
 }

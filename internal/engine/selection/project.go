@@ -192,8 +192,8 @@ func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]b
 
 func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, other *selectionSide) error {
 	s.result = &Result{Counts: make(map[string]int, len(roots))}
-	if binding := s.run.Entry; binding.Producer != (manifest.NamedResource{}) {
-		s.result.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{binding.Producer: binding.Key}
+	if s.run.Index != nil {
+		s.result.ProducerKeys = s.run.Index.ProducerKeys
 	}
 	c := selectionCollection{side: s, intent: Request{Roots: roots}, labels: labels, other: other}
 	c.collectObjects()
@@ -281,7 +281,7 @@ func (s *selectionSide) selectedObject(obj manifest.BaseManifest) bool {
 	if selected || s.run.Store.GetObject(id) == nil {
 		return true
 	}
-	parent, owned := s.run.parentOf(id)
+	parent, owned := s.run.Store.Parent(id, s.run.Index)
 	parentSelected := s.run.Decision.Output(parent)
 	return owned && parentSelected
 }
@@ -404,6 +404,13 @@ func (b *batchSelection) selectScopedDocuments(scoped bool, identity func(int) m
 	b.batch.Identities = nil
 	for i, doc := range documents {
 		id := identity(i)
+		included, err := b.scopeIncludes(id)
+		if err != nil {
+			return err
+		}
+		if !included {
+			continue
+		}
 		if s.run.Decision.restricted() && !scoped {
 			selected, err := b.declarationSelected(id, compared)
 			if err != nil {
@@ -454,7 +461,7 @@ func (s *selectionSide) unchangedDeclaration(
 	if restricted {
 		return s.catalogObject(id)
 	}
-	parent, ok := s.run.parentOf(id)
+	parent, ok := s.run.Store.Parent(id, s.run.Index)
 	status, known := s.run.Store.GetStatus(parent)
 	if !ok || !known || status.Outcome() != store.OutcomeUnchanged {
 		return nil
@@ -479,7 +486,7 @@ func (s *selectionSide) statusOf(id manifest.NamedResource) (store.StatusInfo, b
 			}, true
 		}
 	}
-	if parent, found := s.run.parentOf(id); found {
+	if parent, found := s.run.Store.Parent(id, s.run.Index); found {
 		if inherited, known := s.run.Store.GetStatus(parent); known && inherited.Outcome() == store.OutcomeUnchanged {
 			return inherited, true
 		}
@@ -734,8 +741,10 @@ func (s *selectionSide) walkUnavailable(
 		resolved[id] = store.StatusInfo{}
 		path = append(path, id)
 		actual := id
-		if binding := owner.Entry; binding.Producer == id {
-			actual = s.actualProducer(binding.Key)
+		if owner.Index != nil {
+			if key, ok := owner.Index.ProducerKeys[id]; ok {
+				actual = s.actualProducer(key)
+			}
 		}
 		info := s.localStatus(actual)
 		if info.IsUnavailable() {
@@ -746,7 +755,7 @@ func (s *selectionSide) walkUnavailable(
 		if actual != id {
 			ancestry = &s.run
 		}
-		parent, ok := ancestry.parentOf(actual)
+		parent, ok := ancestry.Store.Parent(actual, ancestry.Index)
 		if !ok {
 			break
 		}
@@ -759,15 +768,21 @@ func (s *selectionSide) walkUnavailable(
 }
 
 func (s *selectionSide) comparisonKey(id manifest.NamedResource) manifest.NamedResource {
-	if key, ok := s.result.ProducerKeys[id]; ok {
-		return key
+	if s.run.Index != nil {
+		if key, ok := s.run.Index.ProducerKeys[id]; ok {
+			return key
+		}
 	}
 	return id
 }
 
 func (s *selectionSide) actualProducer(key manifest.NamedResource) manifest.NamedResource {
-	if binding := s.run.Entry; binding.Producer != (manifest.NamedResource{}) && binding.Key == key {
-		return binding.Producer
+	if s.run.Index != nil {
+		for actual, comparison := range s.run.Index.ProducerKeys {
+			if comparison == key {
+				return actual
+			}
+		}
 	}
 	return key
 }

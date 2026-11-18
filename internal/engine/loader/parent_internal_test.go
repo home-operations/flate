@@ -309,16 +309,14 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	)
 
 	{
-		parent, ok := manifest.StrictParent(
-			Claims(
+		parent, ok := claimParentForTest(
+			claimsForTest(
 				s,
 				repoRoot,
 				s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 			),
 			"kubernetes/other/bad.yaml",
-			manifest.NamedResource{},
-			nil,
-		)
+			manifest.NamedResource{})
 		assert.FatalIf(t, !ok ||
 			parent != external.Named(), "final reporting must retain external-source ownership: parent=%v, found=%t", parent, ok)
 	}
@@ -334,8 +332,8 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		for _, claim := range l.claims(repoRoot) {
 			assert.ErrorIf(t, claim.ID == generated.Named(), "unavailable artifact claimed bootstrap files: %v", claim)
 		}
-		parent, found := manifest.StrictParent(Claims(s, repoRoot, []*manifest.Kustomization{&generated}),
-			"renamed-artifact/child.yaml", manifest.NamedResource{}, nil)
+		parent, found := claimParentForTest(claimsForTest(s, repoRoot, []*manifest.Kustomization{&generated}),
+			"renamed-artifact/child.yaml", manifest.NamedResource{})
 		assert.Equal(t, found, true)
 		assert.Equal(t, parent, generated.Named())
 	}

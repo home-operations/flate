@@ -724,6 +724,10 @@ func TestCompleteDeclarations_Coverage(t *testing.T) {
 			) + "---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: work}\n"
 			input := &declarationReadFS{FS: fstest.MapFS{"input.yaml": {Data: []byte(body)}}}
 			l, changes := completionFixture(t, input)
+			producer := testutil.KustomizationID("apps", "app")
+			key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
+			l.Index.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{producer: key}
+			borrowed := l.Index
 			l.documents.mountSources(l.Store, nil, l.Index)
 			reader := l.documents
 			if limited == "application" {
@@ -744,6 +748,9 @@ func TestCompleteDeclarations_Coverage(t *testing.T) {
 				selection.DemandDeclarations(manifest.TreeHead, changes, l.Index),
 			)
 			assert.NoError(t, err)
+			assert.Equal(t, completed == borrowed, false)
+			assert.Diff(t, completed.ProducerKeys, borrowed.ProducerKeys)
+			assert.Diff(t, completed.ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{producer: key})
 			observation := completed.Declarations[manifest.BootstrapSourceID]["input.yaml"]
 			assert.Equal(t, observation.Complete, true)
 			assert.Equal(t, len(observation.Objects), 2)

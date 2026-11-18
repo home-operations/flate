@@ -59,6 +59,7 @@ type admissionClosure struct {
 	historyOwners      map[manifest.NamedResource][]manifest.SourceEvidence
 	missing            missingPolicy
 	objects            admissionReader
+	rootReads          admissionRootReader
 	nextGeneration     map[manifest.NamedResource]int
 	generation         []store.Child
 	owner              manifest.NamedResource
@@ -68,7 +69,8 @@ type admissionClosure struct {
 	collecting         bool
 	ownerCandidates    []RootCoveringOwner
 	ownersKnown        bool
-	capturedRoots      map[manifest.NamedResource]*RootEvidence
+	capturedRoots      map[manifest.NamedResource]*capturedRootEvidence
+	ownerClaims        map[ownerClaimKey]*manifest.DiscoveryIndex
 	children           map[manifest.NamedResource]store.Child
 	queue              []manifest.NamedResource
 	roots              []string
@@ -121,6 +123,7 @@ func (l *Session) Prepare(
 	closure.proposal, closure.objects, closure.deriving, closure.decision = proposal, proposal.reads, false, l.Snapshot()
 	defer func() {
 		closure.capturedRoots, closure.ownerCandidates, closure.candidates = nil, nil, [2][2][]*OccurrenceFacts{}
+		closure.ownerClaims = nil
 	}()
 	if !l.guardCurrent(proposal) {
 		proposal.stale = true
@@ -176,7 +179,7 @@ func (a *Admission) captureReads(s *Session) {
 	if a.Request.Reads != nil {
 		owner = a.Request.Reads.ID()
 	}
-	a.reads.Init(s.store, owner, nil)
+	a.reads.Init(s.store, owner, a.inputStorage[:])
 }
 
 // Full reuse requires a completed execution result and valid retained authority, unlike prerequisite recapture.
@@ -245,6 +248,7 @@ func (c *admissionClosure) refreshPrerequisites(
 ) error {
 	c.ownerCandidates, c.ownersKnown = c.ownerCandidates[:0], false
 	clear(c.capturedRoots)
+	clear(c.ownerClaims)
 	if previous == nil {
 		//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 		for id, state := range c.states {

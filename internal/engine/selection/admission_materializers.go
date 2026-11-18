@@ -383,17 +383,6 @@ func (c *admissionClosure) materializerTargetsMatch(
 	matches materializerMatch,
 ) bool {
 	target := demand.target
-	match := c.coversDeclaration(new(c.rootOwnerFacts(facts.Catalog)), target)
-	if demand.application != "" {
-		applies := func(object manifest.BaseManifest) bool {
-			if object.Named().Namespace == "" {
-				object = object.WithNamespace(id.Namespace)
-			}
-			return matches(object.Named(), object, nil)
-		}
-		match = match || slices.ContainsFunc(facts.TemplateObjects, applies) ||
-			slices.ContainsFunc(c.context.TemplateProjections[id].Objects, applies)
-	}
 	targets := facts.Targets
 	if extra := c.context.TemplateProjections[id].Targets; len(extra) != 0 {
 		targets = append(slices.Clone(targets), extra...)
@@ -408,11 +397,23 @@ func (c *admissionClosure) materializerTargetsMatch(
 		if (target.Kind == "" || ref.Group == target.Group && ref.Kind == target.Kind) &&
 			(target.Name == "" || ref.Name == target.Name) &&
 			(target.Namespace == "" || ref.Namespace == target.Namespace || ref.Namespace == "") {
-			match = true
-			break
+			return true
 		}
 	}
-	return match
+	if c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target) {
+		return true
+	}
+	if demand.application == "" {
+		return false
+	}
+	applies := func(object manifest.BaseManifest) bool {
+		if object.Named().Namespace == "" {
+			object = object.WithNamespace(id.Namespace)
+		}
+		return matches(object.Named(), object, nil)
+	}
+	return slices.ContainsFunc(facts.TemplateObjects, applies) ||
+		slices.ContainsFunc(c.context.TemplateProjections[id].Objects, applies)
 }
 
 func (c *admissionClosure) materializerPending(
@@ -575,7 +576,7 @@ func (c *admissionClosure) matchComparedInputs(
 		if !evidence.Paired {
 			continue
 		}
-		for id := range evidence.Delta.Inputs(ref.NamedResource) {
+		for id := range c.comparisonInputs(evidence.Delta, ref.NamedResource) {
 			matches(evidence.Source, id)
 		}
 	}
@@ -672,7 +673,7 @@ func (c *admissionClosure) candidateMaterializerFacts(
 	}
 	unconstrained := target.Kind == "" || demand.application != ""
 	fixedPath := facts.HasPath && !slices.ContainsFunc(facts.Roots, manifest.HasEnvsubstReference)
-	if unconstrained && fixedPath && !c.coversDeclaration(new(c.rootOwnerFacts(c.object(id))), consumer) {
+	if unconstrained && fixedPath && !c.coversDeclaration(new(rootOwnerFact(c.object(id), c.rootReader())), consumer) {
 		return nil
 	}
 	return facts

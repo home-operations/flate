@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"maps"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -163,6 +164,11 @@ func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {
 	assert.Equal(t, candidate.Named(), firstMatch.Named())
 	binding = acceptEntryForTest(t, a, &binding)
 	assert.Equal(t, binding.Producer, firstMatch.Named())
+	assert.Diff(
+		t,
+		l.Index.ProducerKeys,
+		map[manifest.NamedResource]manifest.NamedResource{firstMatch.Named(): binding.Key},
+	)
 	assert.Equal(t, len(a.EntryProducers()), 0)
 	assert.Equal(t, len(st.Warnings()), 0)
 	unchanged, proposal, err := a.BindEntry(t.Context(), st)
@@ -177,8 +183,24 @@ func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {
 	assert.FatalIf(t, candidate == nil, "ordinary publication did not replace the binding")
 	assert.Equal(t, candidate.Named(), laterMatch.Named())
 	assert.Equal(t, len(st.Warnings()), 0)
+	borrowed := l.Index
+	borrowedReaders := maps.Clone(borrowed.Readers)
+	borrowedRecords := maps.Clone(borrowed.Records)
 	binding = acceptEntryForTest(t, a, &binding)
 	assert.Equal(t, binding.Producer, laterMatch.Named())
+	assert.Equal(t, borrowed == l.Index, false)
+	assert.Diff(
+		t,
+		borrowed.ProducerKeys,
+		map[manifest.NamedResource]manifest.NamedResource{firstMatch.Named(): binding.Key},
+	)
+	assert.Diff(
+		t,
+		l.Index.ProducerKeys,
+		map[manifest.NamedResource]manifest.NamedResource{laterMatch.Named(): binding.Key},
+	)
+	assert.Diff(t, borrowed.Readers, borrowedReaders)
+	assert.Diff(t, borrowed.Records, borrowedRecords)
 	warnings := st.Warnings()
 	assert.FatalIf(t, len(warnings) != 1, "conflicts=%+v", warnings)
 	assert.Equal(t, warnings[0].Category, manifest.WarnConflictingProducers)

@@ -14,7 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
+func (o *Orchestrator) reportingIndex() *manifest.DiscoveryIndex {
 	candidates := o.store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	snapshot := selection.Snapshot{Store: o.store, Index: o.index, Decision: o.selection.Snapshot()}
 	if o.selection != nil {
@@ -29,38 +29,23 @@ func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
 	return loader.Claims(o.store, o.repoRoot, candidates)
 }
 
-// External sources cannot parent local-tree orphans.
-func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSClaim {
-	local := make([]manifest.KSClaim, 0, len(claims))
-	for _, claim := range claims {
-		obj := o.store.GetObject(claim.ID)
-		if obj == nil {
-			obj = o.catalogObject(claim.ID)
-		}
-		source, _, _ := obj.SourcePath()
-		if !loader.SourceView(o.store, source, o.repoRoot).External {
-			local = append(local, claim)
-		}
-	}
-	return local
-}
-
 // detectOrphans finds failed resources a successful covering parent never emitted.
 // Flux never sees these local files; failed-parent cascade victims remain failures.
 func (o *Orchestrator) detectOrphans(
 	failed map[manifest.NamedResource]store.StatusInfo,
-	prefixes []manifest.KSClaim,
+	index *manifest.DiscoveryIndex,
 ) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
 	for id, info := range failed {
 		if !id.KindInfo().Render {
 			continue
 		}
-		// Any parent's emission proves that Flux saw this resource.
-		if slices.ContainsFunc(o.store.Productions(id, o.index), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) &&
-				p.Declaration == (manifest.NamedResource{})
-		}) {
+		emitted := false
+		for range o.store.RenderedParents(id, o.index) {
+			emitted = true
+			break
+		}
+		if emitted {
 			continue
 		}
 		record, _ := o.index.Lookup(id)
@@ -68,8 +53,16 @@ func (o *Orchestrator) detectOrphans(
 		if file == "" {
 			continue
 		}
-		parent, ok := manifest.StrictParent(prefixes, file, id, nil)
-		if !ok {
+		var parent manifest.NamedResource
+		for owners := range index.ClaimOwners(file, manifest.NamedResource{}, id, func(owner manifest.NamedResource) bool {
+			object := index.Records[owner].Declaration
+			source, _, _ := object.SourcePath()
+			return !loader.SourceView(o.store, source, o.repoRoot).External
+		}) {
+			parent = owners[0]
+			break
+		}
+		if parent == (manifest.NamedResource{}) {
 			continue
 		}
 		// A failed covering parent emitted nothing. Its children are cascade
@@ -96,8 +89,7 @@ func (o *Orchestrator) classifyCompleted() {
 	if len(failed) == 0 {
 		return
 	}
-	claims := o.reportingClaims()
-	orphans := o.detectOrphans(failed, o.reportOwnership(claims))
+	orphans := o.detectOrphans(failed, o.reportingIndex())
 	o.controllers.CompleteOrphans(orphans, orphanedMessage)
 	if len(orphans) != 0 && o.orphans == nil {
 		o.orphans = make(map[manifest.NamedResource]string)
@@ -238,11 +230,11 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"failed", len(failed),
 		"work", &o.work)
 	if !o.selection.Snapshot().Output(manifest.NamedResource{}) && ksCount == 0 && hrCount == 0 {
-		if o.entryBinding.Producer != (manifest.NamedResource{}) {
+		if o.loader.RootEvidence(o.entryBinding.Producer, nil).Scope.NativeEntry {
 			return
 		}
 		for id := range o.index.Records {
-			if id.KindInfo().Render && o.index.Records[id].Origin.Policy(id, nil).Root {
+			if id.KindInfo().Render && !id.ReportHidden() && o.index.Records[id].Origin.Policy(id, nil).Root {
 				return
 			}
 		}

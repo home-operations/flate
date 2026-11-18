@@ -375,7 +375,7 @@ func (o *Orchestrator) collectionParent(
 	parent := id
 	if parentAttributed {
 		var ok bool
-		parent, ok = o.parentOf(id)
+		parent, ok = o.store.Parent(id, o.index)
 		if !ok {
 			if manifest.KindOf(obj).Parent {
 				return parent, false

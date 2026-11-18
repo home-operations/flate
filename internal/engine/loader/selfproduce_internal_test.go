@@ -49,8 +49,12 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 		)
 	}
 	target := filepath.Join(root, "target")
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "target", manifest.NamedResource{}).Named()
+	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+		Root: target, Owner: owner, Source: manifest.BootstrapSourceID,
+	}), nil))
 	doc := l.documents.cache[target]
-	doc.selected, doc.built = true, []store.Child{}
+	doc.selected = true
 	l.documents.cache[target] = doc
 	mounted := map[string]*store.SourceArtifact{root: bootstrap}
 	for _, name := range []string{"a", "a", "b"} {
@@ -81,7 +85,11 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	}
 	{
 		doc := l.documents.cache[target]
-		assert.FatalIf(t, !doc.selected || doc.built == nil, "%s", "cold replay discarded selected/built state")
+		var reads store.ReadSet
+		reads.Init(st, manifest.NamedResource{}, nil)
+		defer reads.Retire()
+		_, built := l.BuiltChildren(target, owner, &reads)
+		assert.FatalIf(t, !doc.selected || !built, "%s", "cold replay discarded selected/built state")
 	}
 	l.documents.setSources(map[string]*store.SourceArtifact{root: bootstrap})
 	l.packageRoots(root, nil)

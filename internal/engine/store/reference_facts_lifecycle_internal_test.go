@@ -95,7 +95,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 				"%s",
 				"replacement did not leave only the declaration",
 			)
-			parent, ok := s.RenderedParent(target, nil)
+			parent, ok := s.Parent(target, nil)
 			assert.Equal(t, parent, manifest.NamedResource{})
 			assert.Equal(t, ok, false)
 		})

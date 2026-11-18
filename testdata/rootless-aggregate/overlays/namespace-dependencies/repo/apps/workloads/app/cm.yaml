@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: workloads, namespace: workloads}
+data: {value: before}

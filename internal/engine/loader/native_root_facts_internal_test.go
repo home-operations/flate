@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -42,7 +43,7 @@ spec:
 	before := l.SourceFacts(manifest.BootstrapSourceID, nil).Context.Roots
 	assert.FatalIf(t, len(before) != 1, "native roots = %v", before)
 	assert.Equal(t, before[0].Path, "entry")
-	claims := slices.Clone(before[0].Claims)
+	claims := maps.Clone(before[0].Index.Claims)
 	assert.FatalIf(t, len(claims) == 0, "missing physical owner claim")
 	assert.Equal(t, slices.Contains(before[0].Identities, testutil.HelmReleaseID("apps", "release")), true)
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &before[0]}).Construction, true)
@@ -63,6 +64,6 @@ spec:
 	st.DeleteObject(owner.Named())
 	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	assert.Equal(t, len(l.SourceFacts(manifest.BootstrapSourceID, nil).Context.Roots[0].Claims), 0)
-	assert.Diff(t, before[0].Claims, claims)
+	assert.Equal(t, len(l.SourceFacts(manifest.BootstrapSourceID, nil).Context.Roots[0].Index.Claims), 0)
+	assert.Diff(t, before[0].Index.Claims, claims)
 }

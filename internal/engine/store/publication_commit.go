@@ -66,13 +66,11 @@ func (s *Store) commitReplacement(
 	}
 	var storage [4]regionState
 	changed := s.changedTargets(prev, proposal, storage[:])
-	if proposal.shadows(new(s.contributionBinding(id))) {
-		{
-			fValues2 := proposal.coverage
-			for fIndex2 := range fValues2 {
-				f := fValues2[fIndex2]
-				changed = changed.add(f.id, true, f.independent)
-			}
+	contributor := s.coverage[id]
+	for i := range proposal.coverage {
+		f := &proposal.coverage[i]
+		if contributor.covers(f, proposal, manifest.NamedResource{}) {
+			changed = changed.add(f.id, true, f.independent)
 		}
 	}
 	independent := rawDeclarationAuthority(s.index.Load(), id, false)
@@ -336,6 +334,7 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 }
 
 func (s *Store) retireSourceSupportLocked(id manifest.NamedResource, proposal *Emission, region *objectRegion) {
+	contributor := s.coverage[id]
 	for stateIndex1 := range region.states {
 		state := region.states[stateIndex1]
 		sh := s.shardFor(state.id)
@@ -344,8 +343,9 @@ func (s *Store) retireSourceSupportLocked(id manifest.NamedResource, proposal *E
 			cell.binding.Ref.NamedResource != proposal.binding.source {
 			continue
 		}
-		covered := proposal.shadows(new(s.contributionBinding(id))) &&
-			slices.ContainsFunc(proposal.coverage, func(f footprint) bool { return f.id == state.id })
+		covered := slices.ContainsFunc(proposal.coverage, func(f footprint) bool {
+			return f.id == state.id && contributor.covers(&f, proposal, proposal.binding.source)
+		})
 		if !covered {
 			covered = slices.ContainsFunc(proposal.entries, func(entry admission) bool {
 				return entry.child.Obj.Named() == state.id

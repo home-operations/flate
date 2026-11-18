@@ -147,42 +147,41 @@ func (s *Store) prepareAdmissions(
 		}
 		proven[declaration] = append(proven[declaration], target)
 	}
-	binding := s.contributionBinding(id)
+	contributor := s.coverage[id]
 	coverage := next.coverage
-	if next.family != nil && next.family != s.index.Load() {
-		binding = next.binding
+	prospective := next.family != nil && next.family != s.index.Load()
+	if prospective {
 		coverage = nil
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for target, record := range next.family.Records {
 			if slices.ContainsFunc(
 				record.Productions,
-				func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source },
+				func(p manifest.Production) bool { return p.Owner == id && p.Source == next.binding.source },
 			) {
 				coverage = append(coverage, footprint{id: target, record: record})
 			}
 		}
 	}
-	if next.binding.equal(&binding) {
-		shadowed := prev.shadows(new(next.binding))
-		{
-			fValues := coverage
-			for fIndex := range fValues {
-				f := fValues[fIndex]
-				{
-					pValues6 := f.record.Productions
-					for pIndex5 := range pValues6 {
-						p := pValues6[pIndex5]
-						if p.Owner != id || p.Source != next.binding.source {
-							continue
-						}
-						if p.File == f.record.File && p.Path == f.record.Path {
-							references = new(f).appendCoverageReferences(byID, shadowed, references)
-						}
-						if !shadowed && p.Declaration != (manifest.NamedResource{}) {
-							retain(p.Declaration, f.id)
-						}
-					}
+	shadowed := prev.shadows(&next.binding)
+	for i := range coverage {
+		f := &coverage[i]
+		for j := range f.record.Productions {
+			p := &f.record.Productions[j]
+			if p.Owner != id {
+				continue
+			}
+			if prospective {
+				if p.Source != next.binding.source {
+					continue
 				}
+			} else if binding := contributor.binding(p.Source); binding == nil || !binding.equal(&next.binding) {
+				continue
+			}
+			if p.File == f.record.File && p.Path == f.record.Path {
+				references = f.appendCoverageReferences(byID, shadowed, references)
+			}
+			if !shadowed && p.Declaration != (manifest.NamedResource{}) {
+				retain(p.Declaration, f.id)
 			}
 		}
 	}

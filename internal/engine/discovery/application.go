@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	"github.com/home-operations/flate/internal/engine/kustomize"
@@ -415,8 +416,12 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 
 //nolint:nilnil // A directory without a builder supplies no literal entry.
 func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, error) {
+	input := a.input.FS
+	if overlay, ok := input.(*inputprojection.Overlay); ok && !a.entryDemand {
+		input = overlay.Authored.FS
+	}
 	for _, filename := range manifest.KustomizeBuilderFilenames {
-		_, err := fs.ReadFile(a.input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
+		_, err := fs.ReadFile(input, filepath.ToSlash(filepath.Join(relative, filename)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -460,9 +465,17 @@ func (a *Admission) reuseEntry(
 		selected.owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, a.entryPath(), manifest.NamedResource{}).
 			Named() {
 		record, indexed := a.qualification.loader.Index.Lookup(candidate.Named())
+		direct := record.Builder == "" && record.Authored != candidate.Named() ||
+			record.Builder != "" && record.File == record.Builder
 		if indexed && reads.Policy(candidate.Named()).Origin != manifest.SuppliedDeclaration &&
-			!selection.Root(a.qualification.loader.RootEvidence(candidate.Named(), nil, true)).InitialEntry &&
-			(record.Builder == "" && record.Authored != candidate.Named() || record.Builder != "" && record.File == record.Builder) {
+			!selection.Root(
+				selection.CaptureRoot(
+					a.qualification.loader.RootEvidence(candidate.Named(), nil),
+					a.qualification.loader.Store,
+					a.qualification.loader.Index,
+				),
+			).InitialEntry &&
+			direct {
 			return false
 		}
 	}
@@ -521,6 +534,7 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 	if q := a.qualification; q != nil && q.accepted != nil {
 		slog.Debug("discovery: entry application reused", "resource", q.accepted.Owner)
 	}
+	a.acceptProducerKeys(binding.Producer, binding.Key)
 	a.entryEvidence = binding.Entry
 	a.assessment = reads
 	a.store.Retire(reads)
@@ -687,4 +701,19 @@ func (a *Admission) captureEntrySupport(original *store.ReadSet) *store.ReadSet 
 		return nil
 	}
 	return support
+}
+
+func (a *Admission) acceptProducerKeys(producer, key manifest.NamedResource) {
+	l := a.loader
+	if q := a.qualification; q != nil {
+		l = q.loader
+	}
+	if current, known := l.Index.ProducerKeys[producer]; !known || current != key {
+		index := *l.Index
+		index.ProducerKeys = nil
+		if producer != (manifest.NamedResource{}) {
+			index.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{producer: key}
+		}
+		l.Index = &index
+	}
 }

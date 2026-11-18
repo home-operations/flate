@@ -133,7 +133,14 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 	if cached, known := c.historyProductions[id]; known {
 		return cached
 	}
-	return c.mergeHistoricalProductions(id, productions)
+	productions, changed := c.mergeHistoricalProductions(id, productions)
+	if changed {
+		if c.historyProductions == nil {
+			c.historyProductions = map[manifest.NamedResource][]manifest.Production{}
+		}
+		c.historyProductions[id] = productions
+	}
+	return productions
 }
 
 func (c *admissionClosure) bootstrapPrerequisite(
@@ -148,7 +155,7 @@ func (c *admissionClosure) bootstrapPrerequisite(
 		if object != nil {
 			owner.Identity = object.Named()
 			if owner.Identity != record.Parent {
-				owner = c.rootOwnerFacts(object)
+				owner = rootOwnerFact(object, c.rootReader())
 			}
 		}
 		return c.bootstrapInputRequired(&owner, id, &record)
@@ -291,24 +298,37 @@ func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, 
 		return false
 	}
 	record, _ := c.indexedRecord(id)
+	facts := RootEvidence{Identity: id, Record: RootRecordFrom(&record)}
 	file := record.Path
 	if file == "" {
 		delta, _, _ := c.delta(owner.Source)
-		for dependency, changed := range delta.Inputs(id) {
+		for dependency, changed := range c.comparisonInputs(delta, id) {
 			if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name ||
 				dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
 				continue
 			}
 			for _, declaration := range changed.Declarations {
-				path := owner.Input.OriginPath(filepath.Join(owner.Input.LocalPath, filepath.FromSlash(declaration)))
-				if containsPath(owner.Path, path) {
+				facts.Record.Path = owner.Input.OriginPath(
+					filepath.Join(owner.Input.LocalPath, filepath.FromSlash(declaration)),
+				)
+				facts.DeclarationSource = owner.Root
+				if c.declarationClaimed(&facts, owner) {
 					return true
 				}
 			}
 		}
 		return false
 	}
-	return containsPath(owner.Path, file) && c.declarationSource(id) == owner.Root
+	facts.DeclarationSource = c.declarationSource(id)
+	return c.declarationClaimed(&facts, owner)
+}
+
+func (c *admissionClosure) declarationClaimed(facts *RootEvidence, owner *RootCoveringOwner) bool {
+	if owner.claims != nil {
+		return rootClaimed(facts, owner, owner.claims)
+	}
+	coordinate, known := rootClaimCoordinate(facts, owner, c.context.Root)
+	return known && claimContains(c.rootOwnerClaims(owner), coordinate, facts.Identity, owner)
 }
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
@@ -366,7 +386,7 @@ func (c *admissionClosure) extendProductions(
 	for source := range c.proposal.Request.Changes.Sources() {
 		evidence := c.boundSource(source)
 		delta := evidence.Changes
-		for dependency, input := range delta.Inputs(id) {
+		for dependency, input := range c.comparisonInputs(delta, id) {
 			if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name ||
 				dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
 				continue
@@ -435,7 +455,7 @@ func (c *admissionClosure) extendProductionInput(
 func (c *admissionClosure) mergeHistoricalProductions(
 	id manifest.NamedResource,
 	productions []manifest.Production,
-) []manifest.Production {
+) ([]manifest.Production, bool) {
 	owned := slices.ContainsFunc(productions, func(p manifest.Production) bool { return c.replace[p.Owner] })
 	if owned {
 		productions = slices.DeleteFunc(
@@ -455,14 +475,7 @@ func (c *admissionClosure) mergeHistoricalProductions(
 			productions = append(productions, record.Productions...)
 		}
 	}
-	if !owned {
-		return productions
-	}
-	if c.historyProductions == nil {
-		c.historyProductions = map[manifest.NamedResource][]manifest.Production{}
-	}
-	c.historyProductions[id] = productions
-	return productions
+	return productions, owned
 }
 
 func (c *admissionClosure) declarationOwner(

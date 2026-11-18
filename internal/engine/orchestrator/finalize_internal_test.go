@@ -19,6 +19,7 @@ import (
 	controllerbase "github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/controllers/helmrelease"
 	"github.com/home-operations/flate/internal/engine/depwait"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -51,9 +52,8 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			}
 			local := &manifest.Kustomization{Name: "local", Namespace: "apps", Path: "elsewhere"}
 			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
-			for _, object := range []manifest.BaseManifest{source, child} {
-				st.AddObject(object)
-			}
+			st.AddObject(source)
+			st.AddObject(child)
 			index := indexForTest(map[manifest.NamedResource]string{child.Named(): "apps/deeper/child.yaml"})
 			entry := testutil.KustomizationID("apps", "entry")
 			for _, owner := range []*manifest.Kustomization{external, local} {
@@ -71,18 +71,34 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			st.UpdateStatus(entry, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
 			st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
 			o := &Orchestrator{store: st, index: index}
-			all := o.reportingClaims()
-			localClaims := o.reportOwnership(all)
+			index = o.reportingIndex()
+			all := index.Claims
+			localClaims := map[string][]manifest.NamedResource{}
+			for prefix, ids := range all {
+				ids = slices.DeleteFunc(slices.Clone(ids), func(id manifest.NamedResource) bool {
+					source, _, _ := index.Records[id].Declaration.SourcePath()
+					return loader.SourceView(st, source, o.repoRoot).External
+				})
+				if len(ids) != 0 {
+					localClaims[prefix] = ids
+				}
+			}
 			assert.Diff(
 				t,
 				all,
-				[]manifest.KSClaim{
-					{ID: external.Named(), Prefix: "apps/deeper/"},
-					{ID: local.Named(), Prefix: "elsewhere/"},
-				},
+				map[string][]manifest.NamedResource{"apps/deeper/": {external.Named()}, "elsewhere/": {local.Named()}},
 			)
-			assert.Diff(t, localClaims, []manifest.KSClaim{{ID: local.Named(), Prefix: "elsewhere/"}})
-			_, owned := manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
+			assert.Diff(t, localClaims, map[string][]manifest.NamedResource{"elsewhere/": {local.Named()}})
+			owned := len(
+				slices.Collect(
+					index.ClaimOwners(
+						"apps/deeper/invalid.yaml",
+						manifest.NamedResource{},
+						manifest.NamedResource{},
+						nil,
+					),
+				),
+			) != 0
 			assert.Equal(t, owned, true)
 			o.classifyCompleted()
 			info, _ := st.GetStatus(child.Named())
@@ -92,9 +108,19 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 				assert.Equal(t, st.GetObject(external.Named()) == nil, true)
 				assert.Equal(t, st.GetObject(local.Named()) == nil, true)
 				st.UpdateStatus(entry, store.StatusInfo{Status: store.StatusReady})
-				all = o.reportingClaims()
+				index = o.reportingIndex()
+				all = index.Claims
 				assert.Equal(t, len(all), 0)
-				_, owned = manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
+				owned = len(
+					slices.Collect(
+						index.ClaimOwners(
+							"apps/deeper/invalid.yaml",
+							manifest.NamedResource{},
+							manifest.NamedResource{},
+							nil,
+						),
+					),
+				) != 0
 				assert.Equal(t, owned, false)
 			}
 		})
@@ -361,7 +387,8 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 	o.controllers = controllerbase.Controllers{
 		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions, nil),
 	}
-	var previousAll, previousLocal, savedAll, savedLocal []manifest.KSClaim
+	var previousAll, savedAll map[string][]manifest.NamedResource
+	var previousLocal, savedLocal [][]manifest.NamedResource
 	for pass := range 2 {
 		if pass != 0 {
 			switch testCaseInput.name {
@@ -395,9 +422,24 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 			}
 		}
 		st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
-		all := o.reportingClaims()
-		localClaims := o.reportOwnership(all)
-		_, owned := manifest.StrictParent(all, base+"/invalid.yaml", manifest.NamedResource{}, nil)
+		current := o.reportingIndex()
+		all := current.Claims
+		localClaims := slices.Collect(
+			current.ClaimOwners(
+				base+"/invalid.yaml",
+				manifest.NamedResource{},
+				manifest.NamedResource{},
+				func(id manifest.NamedResource) bool {
+					source, _, _ := current.Records[id].Declaration.SourcePath()
+					return !loader.SourceView(st, source, root).External
+				},
+			),
+		)
+		owned := len(
+			slices.Collect(
+				current.ClaimOwners(base+"/invalid.yaml", manifest.NamedResource{}, manifest.NamedResource{}, nil),
+			),
+		) != 0
 		assert.Equal(t, owned, testCaseInput.owned[pass])
 		assert.Equal(t, len(localClaims) != 0 && testCaseInput.owned[pass], testCaseInput.orphaned[pass])
 		o.classifyCompleted()
@@ -411,6 +453,6 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 		assert.Diff(t, index.Claims, claims)
 		assert.Diff(t, index.Readers, readers)
 		previousAll, previousLocal = all, localClaims
-		savedAll, savedLocal = slices.Clone(all), slices.Clone(localClaims)
+		savedAll, savedLocal = maps.Clone(all), slices.Clone(localClaims)
 	}
 }

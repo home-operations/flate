@@ -10,10 +10,8 @@ import (
 	"iter"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync/atomic"
 
-	"github.com/home-operations/flate/internal/core/claimpath"
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/depwait"
@@ -75,6 +73,7 @@ type Loader struct {
 	entryPath             string
 	candidates            map[manifest.NamedResource]store.Child
 	builtRoots            map[manifest.NamedResource]builtRoot
+	builtBatches          map[manifest.NamedResource]*builtBatch
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
 	roots                 rootInventory
 	scopeRoots            []selection.NativeRootFacts
@@ -731,25 +730,6 @@ func (l *Loader) yieldVisitedOwners(file string, yield func(manifest.NamedResour
 		}
 	}
 
-	return true
-}
-
-func (l *Loader) yieldFileClaims(coordinate string, yield func(manifest.NamedResource) bool) bool {
-	for _, id := range l.Index.Claims[coordinate+"/"] {
-		if !yield(id) {
-			return false
-		}
-	}
-	for end, group := range claimpath.Groups(l.Index.Claims, coordinate) {
-		if end == 0 && (coordinate == ".." || strings.HasPrefix(coordinate, "../")) {
-			continue
-		}
-		for _, id := range group {
-			if !yield(id) {
-				return false
-			}
-		}
-	}
 	return true
 }
 

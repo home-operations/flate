@@ -293,9 +293,6 @@ func (l *Loader) retainUnknownOwnerReach() {
 
 func (l *Loader) retainUnknownOccurrenceReach(ownerID manifest.NamedResource, occurrence *authoredOccurrence) {
 	source, path, _ := occurrence.SourcePath()
-	if source.Kind == "" || source.Name == "" {
-		source = manifest.BootstrapSourceID
-	}
 	if manifest.HasEnvsubstReference(path) {
 		path = ""
 	}
@@ -304,9 +301,6 @@ func (l *Loader) retainUnknownOccurrenceReach(ownerID manifest.NamedResource, oc
 		owner.ContentRoots = map[manifest.NamedResource][]string{}
 		if known, ok := l.locations[ownerID]; ok {
 			ownSource, _, _ := known.SourcePath()
-			if ownSource.Kind == "" || ownSource.Name == "" {
-				ownSource = manifest.BootstrapSourceID
-			}
 			owner.ContentRoots[ownSource] = slices.Clone(known.facts.roots)
 		}
 	}

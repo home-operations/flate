@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sync/atomic"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	"github.com/go-git/go-git/v6/plumbing"
@@ -149,7 +150,7 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 	}
 	urls := d.cfg.SelfURLs
 	if len(urls) == 0 {
-		if input, ok := admitted.FS.(*gittree.FS); ok && input.Location() != nil {
+		if input, ok := inputprojection.Authored(admitted).FS.(*gittree.FS); ok && input.Location() != nil {
 			urls = input.Location().URLs
 		}
 	}
@@ -296,7 +297,9 @@ func (d *Session) entrySourceObject(
 	obj = group.object
 	independentlyAdmitted := false
 	if restricted && obj != nil {
-		independentlyAdmitted = selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted
+		independentlyAdmitted = selection.Root(
+			selection.CaptureRoot(d.loader.RootEvidence(id, nil), d.loader.Store, d.loader.Index),
+		).Admitted
 	}
 	if obj != nil &&
 		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {
@@ -573,7 +576,7 @@ func (a *Admission) resolve(
 
 	var location *gitrepo.Location
 	if candidate.pinned {
-		if input, ok := bootstrap.FS.(*gittree.FS); ok {
+		if input, ok := inputprojection.Authored(bootstrap).FS.(*gittree.FS); ok {
 			location = input.Location()
 		}
 	}

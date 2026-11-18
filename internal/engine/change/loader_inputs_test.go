@@ -467,7 +467,7 @@ spec:
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
-	assertFilterIndexForTest(t, *l.Index, snapshot)
+	assertFilterIndexForTest(t, l.Index, &snapshot)
 	assert.Equal(t, input.opens, 0)
 	fresh, freshInput, _ := newLoader()
 
@@ -476,7 +476,7 @@ spec:
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
-	assertFilterIndexForTest(t, *fresh.Index, snapshot)
+	assertFilterIndexForTest(t, fresh.Index, &snapshot)
 	assert.Equal(t, freshInput.opens, 0)
 }
 
@@ -583,7 +583,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	assert.Equal(t, input.opens, 0)
 	snapshot := snapshotIndexForFilter(l.Index)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	assertFilterIndexForTest(t, *l.Index, snapshot)
+	assertFilterIndexForTest(t, l.Index, &snapshot)
 	assert.Equal(t, input.opens, 0)
 }
 

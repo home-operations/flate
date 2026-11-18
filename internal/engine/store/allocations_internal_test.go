@@ -122,7 +122,7 @@ func testStoreRenderedParentAllocationsCase(t *testing.T, testCaseInput *string,
 	}
 	var parent manifest.NamedResource
 	var ok bool
-	allocs := testing.AllocsPerRun(10, func() { parent, ok = s.RenderedParent(id, nil) })
+	allocs := testing.AllocsPerRun(10, func() { parent, ok = s.Parent(id, nil) })
 
 	assert.FatalIf(
 		t,

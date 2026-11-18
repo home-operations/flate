@@ -116,7 +116,7 @@ func snapshotIndexForFilter(index *manifest.DiscoveryIndex) manifest.DiscoveryIn
 	return snapshot
 }
 
-func assertFilterIndexForTest(t *testing.T, got, want manifest.DiscoveryIndex) {
+func assertFilterIndexForTest(t *testing.T, got, want *manifest.DiscoveryIndex) {
 	t.Helper()
 
 	{

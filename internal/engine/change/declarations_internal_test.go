@@ -407,7 +407,7 @@ func newDeclarationInputFixture(t *testing.T, scenario string) declarationInputF
 	f := declarationInputFixture{stores: [2]*store.Store{store.New(), store.New()}}
 	inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for side, st := range f.stores {
-		input := fstest.MapFS{}
+		input := fstest.MapFS{"app/kustomization.yaml": {Data: []byte("resources: []\n")}}
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
 		f.owners[side] = &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: "./app"}
 		f.owners[side].PostBuild = &kustomizev1.PostBuild{
@@ -542,7 +542,10 @@ func testWithDeclarationsPreparedProductionCase(
 	for side, st := range stores {
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+			&store.SourceArtifact{
+				LocalPath: t.TempDir(),
+				FS:        fstest.MapFS{"app/kustomization.yaml": {Data: []byte("resources: []\n")}},
+			},
 		)
 		children[side] = &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./app"}
 		id := children[side].Named()

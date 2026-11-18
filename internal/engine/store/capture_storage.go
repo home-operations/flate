@@ -24,17 +24,12 @@ func (r *ReadSet) details(input *Input) *inputDetails {
 	return details
 }
 
-func (r *ReadSet) productionDetails(input *Input) *productionCapture {
-	if captured := input.productions.Load(); captured != nil {
+func (in *Input) productionDetails() *productionCapture {
+	if captured := in.productions.Load(); captured != nil {
 		return captured
 	}
-	if len(r.spareProductions) == 0 {
-		r.spareProductions = make([]productionCapture, max(1, allocationGrowthFactor*cap(r.spareProductions)))
-	}
-	i := len(r.spareProductions) - 1
-	captured := &r.spareProductions[i]
-	r.spareProductions = r.spareProductions[:i]
-	input.productions.Store(captured)
+	captured := &in.productionData
+	in.productions.Store(captured)
 	return captured
 }
 

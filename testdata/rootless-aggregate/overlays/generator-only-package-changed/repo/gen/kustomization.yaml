@@ -1,0 +1,3 @@
+configMapGenerator:
+  - name: generated
+    literals: [value=changed]

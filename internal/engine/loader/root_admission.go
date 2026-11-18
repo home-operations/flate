@@ -14,9 +14,19 @@ import (
 )
 
 type rootQuery struct {
-	loader   *Loader
-	objects  admissionReader
-	covering *rootOwnerInventory
+	loader  *Loader
+	objects admissionReader
+	capture rootQueryReader
+}
+
+type rootQueryReader struct {
+	admissionReader
+
+	owners []selection.RootCoveringOwner
+}
+
+func (r *rootQueryReader) RootOwners() *[]selection.RootCoveringOwner {
+	return &r.owners
 }
 
 type rootAdmission struct {
@@ -181,8 +191,10 @@ func (q *rootQuery) entryRoot(
 	view := l.physicalView()
 	evidence := view.rootFacts(id, l, nil)
 	if original != nil {
+		prepared := evidence.Scope.Prepared
 		evidence.Scope, evidence.Occurrence = original.scope, occurrenceView(original.currentOccurrence())
 		evidence.InitialScope, evidence.InitialOccurrence = original.initialScope, original.initialOccurrence
+		evidence.Scope.Prepared = prepared
 	}
 	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
 		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
@@ -203,15 +215,10 @@ func (q *rootQuery) entryRoot(
 	if !l.entryRootAvailable(id, object, objects) {
 		return selection.OccurrenceFacts{}, false
 	}
-	rootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
+	view.applicationScope(&evidence, objects)
+	q.capture.admissionReader = objects
+	evidence = selection.CaptureRoot(evidence, &q.capture, l.Index)
 	evidence.Needed = l.Options.Session.Snapshot().Reconcile(id)
-	if selection.Root(evidence).NeedsOwnerSupport {
-		var owners *rootOwnerInventory
-		if evidence.Record.Path != "" {
-			owners = q.coveringFacts()
-		}
-		captureRootOwners(&evidence, objects, l.Index, owners)
-	}
 	result := selection.Root(evidence)
 	if !result.Entry {
 		return selection.OccurrenceFacts{}, false
@@ -302,9 +309,11 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 	if coordinate == "" || l.documents.cache[file].eligible == selection.RootIndependent {
 		return
 	}
-	if len(l.Index.Claims) != 0 {
-		if !l.yieldFileClaims(coordinate, yield) {
-			return
+	for owners := range l.Index.ClaimOwners(coordinate, manifest.NamedResource{}, manifest.NamedResource{}, nil) {
+		for _, owner := range owners {
+			if !yield(owner) {
+				return
+			}
 		}
 	}
 	for reader := range l.Index.ReadersOfFile(coordinate) {
@@ -333,30 +342,14 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 	if q.objects == nil && !q.loader.frozen {
 		return q.loader.admitsDeclaration(&evidence)
 	}
-	rootSupport(&evidence, objects, q.loader.Index, &q.loader.roots.currentOnly, q.loader.SourceRoot)
+	view.applicationScope(&evidence, objects)
+	q.capture.admissionReader = objects
+	evidence = selection.CaptureRoot(evidence, &q.capture, q.loader.Index)
 	evidence.Supplied = false
-	if selection.Root(evidence).NeedsOwnerSupport {
-		var owners *rootOwnerInventory
-		if evidence.Record.Path != "" {
-			owners = q.coveringFacts()
-		}
-		captureRootOwners(&evidence, objects, q.loader.Index, owners)
-	}
 	if reads, ok := objects.(*store.ReadSet); ok {
 		evidence.Stale = !reads.Valid()
 	}
 	return q.loader.admitsDeclaration(&evidence)
-}
-
-func (q *rootQuery) coveringFacts() *rootOwnerInventory {
-	if q.covering == nil {
-		objects := q.objects
-		if objects == nil {
-			objects = q.loader.Store
-		}
-		q.covering = rootCoveringFacts(objects, q.loader.Index)
-	}
-	return q.covering
 }
 
 func (l *Loader) classifyPackages(packages []PackageEvidence) {
@@ -372,6 +365,8 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 		p := &packages[i]
 		paths[i] = p.Path
 		builder := l.documents.cache[filepath.Join(l.SourceRoot, p.Path)].file
+		eligible[i] = builder != "" &&
+			(!l.scopes.complete || l.documents.cache[builder].eligible >= selection.RootEligible)
 		for index := range p.Occurrences {
 			occurrence := &p.Occurrences[index]
 			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
@@ -381,7 +376,7 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 			runnable[i] = runnable[i] || active && (occurrence.Identity.KindInfo().Runnable || application)
 		}
 		if builder != "" {
-			eligible[i] = l.documents.cache[builder].eligible != selection.RootInactive
+			eligible[i] = eligible[i] && l.documents.cache[builder].eligible != selection.RootInactive
 		}
 	}
 	for i := range packages {
@@ -425,7 +420,7 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 			evidence.scope.PackageEligible, evidence.scope.NativePackage = eligible[i], native
 			l.roots.replace(&coordinate, &evidence)
 		}
-		p.Independent = selection.Root(selection.RootEvidence{Identity: id, Scope: scope}).Admitted
+		p.Independent = selection.Root(selection.RootEvidence{Identity: id, Scope: scope}).Independent
 	}
 }
 
@@ -477,7 +472,8 @@ func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) []string
 		}
 		location := SourceView(l.Store, source, l.SourceRoot)
 		if !location.Pinned && !location.External {
-			claims = append(claims, filepath.Join(location.Path, manifest.NormalizeClaimBase(path)))
+			input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			claims = append(claims, input.OriginPath(filepath.Join(location.Path, manifest.NormalizeClaimBase(path))))
 		}
 	}
 	return claims

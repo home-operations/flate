@@ -252,7 +252,7 @@ func (r *ReadSet) freezeEvidence() *ReadSet {
 			target.acquisition, target.acquisitionState = details.acquisition, details.acquisitionState
 		}
 		if productions := input.productions.Load(); productions != nil {
-			target := frozen.productionDetails(snapshot)
+			target := snapshot.productionDetails()
 			target.items = slices.Clone(productions.items)
 		}
 		for kind := objectFacet; kind <= reconciliationFacet; kind++ {

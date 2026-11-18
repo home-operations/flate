@@ -83,7 +83,7 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 				session, err := beginTest(t.Context(), cfg)
 				assert.NoError(t, err)
 				t.Cleanup(session.Close)
-				occurrences, err := session.partitionRootsTest(t.Context())
+				occurrences, err := session.clusterRootsTest(t.Context())
 				assert.NoError(t, err)
 				assertSourceScopeMarkers(t, occurrences, side == "left")
 				var source *manifest.GitRepository
@@ -115,7 +115,7 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 	}
 }
 
-func TestPartitionRoots_SourceScope(t *testing.T) {
+func TestClusterRoots_SourceScope(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
@@ -181,12 +181,12 @@ func TestPartitionRoots_SourceScope(t *testing.T) {
 			d.loader.SourceRoot = root
 			_, err = d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			roots, err := d.partitionRootsTest(t.Context())
+			roots, err := d.clusterRootsTest(t.Context())
 			assert.NoError(t, err)
 			assert.Equal(t, len(roots), 2)
 			assert.Equal(t, roots[0].Path, "left")
 			assert.Equal(t, roots[1].Path, "right")
-			restored, err := d.partitionRootsTest(t.Context())
+			restored, err := d.clusterRootsTest(t.Context())
 			assert.NoError(t, err)
 			assert.Equal(t, len(restored), len(roots))
 			for i, candidate := range roots {
@@ -196,13 +196,13 @@ func TestPartitionRoots_SourceScope(t *testing.T) {
 					assert.Equal(t, restored[i].Occurrences[j].Identity, occurrence.Identity)
 					assert.Equal(t, restored[i].Occurrences[j].Declaration, occurrence.Declaration)
 				}
-				assertSourceScopeMarkers(t, []entryRoot{candidate}, candidate.Path == tt.localRoot)
+				assertSourceScopeMarkers(t, []clusterRoot{candidate}, candidate.Path == tt.localRoot)
 			}
 		})
 	}
 }
 
-func assertSourceScopeMarkers(t *testing.T, roots []entryRoot, local bool) {
+func assertSourceScopeMarkers(t *testing.T, roots []clusterRoot, local bool) {
 	t.Helper()
 	leftMarker := false
 	for i := range roots {
@@ -215,7 +215,7 @@ func assertSourceScopeMarkers(t *testing.T, roots []entryRoot, local bool) {
 	assert.Equal(t, leftMarker, local)
 }
 
-func TestPartitionRoots_SourceConstruction(t *testing.T) {
+func TestClusterRoots_SourceConstruction(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	files := fstest.MapFS{
@@ -279,10 +279,10 @@ func TestPartitionRoots_SourceConstruction(t *testing.T) {
 	planner := &entryPlanner{
 		session: d, inputs: map[string]*store.SourceArtifact{root: d.cfg.Input},
 		coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]bool{},
-		roots: []entryRoot{{Path: "left", seeds: seeds}, {Path: "right", seeds: external}},
+		roots: []clusterRoot{{Path: "left", seeds: seeds}, {Path: "right", seeds: external}},
 	}
 	d.planner = planner
-	_, err = d.partitionRoots(t.Context())
+	_, err = d.clusterRoots(t.Context())
 	assert.Equal(t, errors.Is(err, errPendingSources), true)
 	assert.Equal(t, d.planner == planner, true)
 	assert.Equal(t, planner.head, 2)
@@ -290,7 +290,7 @@ func TestPartitionRoots_SourceConstruction(t *testing.T) {
 	assert.Equal(t, planner.roots[0].Occurrences[0].Declaration, seeds[0].Declaration)
 	assert.Equal(t, planner.roots[0].Occurrences[1].Declaration, seeds[1].Declaration)
 	raw := seeds[1].Identity
-	visit := partitionVisit{occurrence: &seeds[2], scope: &planner.scope}
+	visit := rootVisit{occurrence: &seeds[2], scope: &planner.scope}
 	material, err := planner.source(t.Context(), &planner.roots[0], &visit, &manifest.Reference{NamedResource: raw})
 	assert.NoError(t, err)
 	assert.Equal(t, material == nil, true)
@@ -301,7 +301,7 @@ func TestPartitionRoots_SourceConstruction(t *testing.T) {
 	assert.Equal(t, st.GetArtifact(seeds[3].Identity, store.ArtifactContent), nil)
 	assert.NoError(t, constructTestSources(t.Context(), d))
 	assert.Equal(t, st.GetArtifact(seeds[3].Identity, store.ArtifactContent) != nil, true)
-	roots, err := d.partitionRoots(t.Context())
+	roots, err := d.clusterRoots(t.Context())
 	assert.NoError(t, err)
 	assert.Equal(t, len(roots), 2)
 	for i, candidate := range roots {
@@ -315,7 +315,7 @@ func TestPartitionRoots_SourceConstruction(t *testing.T) {
 		for _, seed := range [][]selection.OccurrenceFacts{seeds, external}[i] {
 			assert.Equal(t, counts[seed.Declaration], 1)
 		}
-		assertSourceScopeMarkers(t, []entryRoot{candidate}, candidate.Path == "left")
+		assertSourceScopeMarkers(t, []clusterRoot{candidate}, candidate.Path == "left")
 	}
 	_, acquired = d.resolvedSources.snapshot()[raw]
 	assert.Equal(t, acquired, false)

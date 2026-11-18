@@ -1,0 +1,13 @@
+
+  ✗  entry  path "."  requested path "@@repo@@" (select an input path for one entry): kustomize build .: accumulating resources: accumulation err='accumulating resources from 'two': readfile two: invalid argument': recursed merging from path '@@repo@@/two': may not add resource with an already registered id: ConfigMap.v1.[noGrp]/same.[noNs]
+         duplicate resource(s) produced by multiple accumulated paths:
+         ConfigMap.v1.[noGrp]/same.[noNs]
+         - ./one
+         - ./two
+         select an individual overlay with -p
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [EmptyScan] no Flux Kustomization or HelmRelease objects found under the input path
+
+  ✗ 1 failed

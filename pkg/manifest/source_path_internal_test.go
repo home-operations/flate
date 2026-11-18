@@ -43,14 +43,14 @@ func TestSourcePath_Facts(t *testing.T) {
 		},
 		{
 			name: "empty source with path", obj: &Kustomization{Namespace: "apps", Path: "./apps/a"},
-			source: NamedResource{Namespace: "apps"}, path: "./apps/a", present: true,
+			source: BootstrapSourceID, path: "./apps/a", present: true,
 		},
 		{
 			name:   "kind without source name",
 			obj:    &Kustomization{Namespace: "apps", Path: "./apps/a", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: KindOCIRepository}},
-			source: NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "apps"}, path: "./apps/a", present: true,
+			source: BootstrapSourceID, path: "./apps/a", present: true,
 		},
-		{name: "empty declaration", obj: &Kustomization{}, present: true},
+		{name: "empty declaration", obj: &Kustomization{}, source: BootstrapSourceID, present: true},
 		{name: "helm release", obj: &HelmRelease{}},
 		{name: "helm repository", obj: &HelmRepository{}},
 		{name: "helm chart", obj: &HelmChartSource{}},
@@ -79,7 +79,7 @@ func TestSourcePath_Facts(t *testing.T) {
 			assert.Equal(t, path, tc.path)
 			assert.Equal(t, present, tc.present)
 			if ks, ok := tc.obj.(*Kustomization); ok {
-				assert.Equal(t, source, ks.SourceID())
+				assert.Equal(t, source, ks.EffectiveSourceID())
 			}
 		})
 	}

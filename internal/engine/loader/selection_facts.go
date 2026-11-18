@@ -133,14 +133,13 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 	return view
 }
 
-// RootEvidence with completeOwners false requires the caller to complete support with its preparation inventory.
+// RootEvidence MUST remain physical evidence until selection.CaptureRoot enriches it.
 func (l *Loader) RootEvidence(
 	id manifest.NamedResource,
 	reads *store.ReadSet,
-	completeOwners bool,
 ) selection.RootEvidence {
 	view := l.physicalView()
-	return view.evidence(id, reads, l, completeOwners)
+	return view.evidence(id, reads, l)
 }
 
 func physicalOccurrence(view *selection.OccurrenceFacts) authoredOccurrence {

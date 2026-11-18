@@ -34,7 +34,7 @@ func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
 		claims          []manifest.KSClaim
 	}{
 		{"discovery snapshot", "apps/old/", l.claims(root)},
-		{"late reporting", "apps/new/", Claims(st, root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))},
+		{"late reporting", "apps/new/", claimsForTest(st, root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

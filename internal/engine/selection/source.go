@@ -63,7 +63,7 @@ type census interface {
 	AdmissionCandidate(manifest.NamedResource) store.Child
 	OccurrenceRoots(manifest.NamedResource) (manifest.NamedResource, []string)
 	PreparedObject(manifest.NamedResource, *store.ReadSet) (store.Child, bool)
-	RootEvidence(manifest.NamedResource, *store.ReadSet, bool) RootEvidence
+	RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence
 	ProducerFacts(manifest.BaseManifest) ProducerFacts
 	SourceFacts(manifest.NamedResource, *store.ReadSet) SourceFacts
 }

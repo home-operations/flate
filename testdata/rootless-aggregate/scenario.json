@@ -1,0 +1,1102 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "280a4d1ef67879cf08a2a6a76c7a6eae2bdc5350",
+    "paths": [
+      "test/e2e/rootless_aggregate_test.go"
+    ],
+    "reductions": "Preserve the authored rootless aggregate assertions through the shared CLI harness. Expectations come from the handwritten test, never command output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://fixture.invalid/repo"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "namespace-dependencies-base",
+      "repository": "repo",
+      "overlay": "namespace-dependencies",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "ancestor-bootstrap-base",
+      "repository": "repo",
+      "overlay": "ancestor-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "generator-only-package-base",
+      "repository": "repo",
+      "overlay": "generator-only-package",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "ancestor-bootstrap-indexed-producer-base",
+      "repository": "repo",
+      "parents": [
+        "ancestor-bootstrap-base"
+      ],
+      "overlay": "ancestor-bootstrap-indexed-producer",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "plain-files",
+      "directory": "overlays/plain-files"
+    },
+    {
+      "name": "compatible-packages-and-plain-files",
+      "directory": "overlays/compatible-packages-and-plain-files"
+    },
+    {
+      "name": "authored-builder-authority",
+      "directory": "overlays/authored-builder-authority"
+    },
+    {
+      "name": "incompatible-packages",
+      "directory": "overlays/incompatible-packages"
+    },
+    {
+      "name": "generator-only-package",
+      "directory": "overlays/generator-only-package"
+    },
+    {
+      "name": "namespace-dependencies",
+      "directory": "overlays/namespace-dependencies"
+    },
+    {
+      "name": "namespace-dependencies-changed",
+      "directory": "overlays/namespace-dependencies-changed"
+    },
+    {
+      "name": "ancestor-bootstrap",
+      "directory": "overlays/ancestor-bootstrap"
+    },
+    {
+      "name": "ancestor-bootstrap-changed",
+      "directory": "overlays/ancestor-bootstrap-changed"
+    },
+    {
+      "name": "ancestor-blocked",
+      "directory": "overlays/ancestor-blocked"
+    },
+    {
+      "name": "generator-only-package-changed",
+      "directory": "overlays/generator-only-package-changed"
+    },
+    {
+      "name": "ancestor-bootstrap-indexed-producer",
+      "directory": "overlays/ancestor-bootstrap-indexed-producer"
+    },
+    {
+      "name": "ancestor-bootstrap-indexed-producer-changed",
+      "directory": "overlays/ancestor-bootstrap-indexed-producer-changed"
+    }
+  ],
+  "cases": [
+    {
+      "name": "plain-files",
+      "description": "plain files.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "plain-files"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/plain-files.stdout",
+              "stderr": "expect/plain-files.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "compatible-packages-and-plain-files",
+      "description": "compatible packages and plain files.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "compatible-packages-and-plain-files"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/compatible-packages-and-plain-files.stdout",
+              "stderr": "expect/compatible-packages-and-plain-files.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "authored-builder-authority",
+      "description": "authored builder authority.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "authored-builder-authority"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/authored-builder-authority.stdout",
+              "stderr": "expect/authored-builder-authority.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "incompatible-packages",
+      "description": "incompatible packages.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "incompatible-packages"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/incompatible-packages.stdout",
+              "stderr": "expect/incompatible-packages.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-only-package",
+      "description": "A generator-only package contributes its complete ConfigMap beside the plain manifest.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generator-only-package"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/generator-only-package.stdout",
+              "stderr": "expect/generator-only-package.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-dependencies",
+      "description": "Retain complete output and dependencies through one accepted entry.",
+      "setup": [
+        {
+          "commit": "namespace-dependencies-base"
+        },
+        {
+          "overlay": "namespace-dependencies-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/namespace-dependencies-build.stdout",
+              "stderr": "expect/ownership.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "workloads",
+              "--path",
+              "@@repo@@/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:namespace-dependencies-base@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/namespace-dependencies-diff.stdout",
+              "stderr": "expect/ownership.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ancestor-bootstrap",
+      "description": "Retain complete output and dependencies through one accepted entry.",
+      "setup": [
+        {
+          "commit": "ancestor-bootstrap-base"
+        },
+        {
+          "overlay": "ancestor-bootstrap-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-bootstrap-build.stdout",
+              "stderr": "expect/ownership.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:ancestor-bootstrap-base@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-bootstrap-diff.stdout",
+              "stderr": "expect/ownership.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "block",
+          "edit": {
+            "overlay": "ancestor-blocked"
+          }
+        },
+        {
+          "id": "blocked",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-blocked.stdout",
+              "stderr": "expect/ancestor-blocked.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-only-package-diff",
+      "description": "A generator literal edit appears in changed-only output for the requested aggregate.",
+      "setup": [
+        {
+          "commit": "generator-only-package-base"
+        },
+        {
+          "overlay": "generator-only-package-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:generator-only-package-base@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/generator-only-package-diff.stdout",
+              "stderr": "expect/generator-only-package-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ancestor-bootstrap-indexed-producer",
+      "description": "Keep a producer and its reader visible when the enclosing application is blocked.",
+      "setup": [
+        {
+          "commit": "ancestor-bootstrap-indexed-producer-base"
+        },
+        {
+          "overlay": "ancestor-bootstrap-indexed-producer-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-bootstrap-indexed-producer-build.stdout",
+              "stderr": "expect/ancestor-bootstrap-indexed-producer-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-bootstrap-indexed-producer-test.stdout",
+              "stderr": "expect/ownership.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/entry",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:ancestor-bootstrap-indexed-producer-base@@",
+              "-o",
+              "diff",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/ancestor-bootstrap-indexed-producer-diff.stdout",
+              "stderr": "expect/ancestor-bootstrap-indexed-producer-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/plain-files/repo/plain.yaml",
+      "cases": [
+        "plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "expect/plain-files.stdout",
+      "cases": [
+        "plain-files"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "expect/plain-files.stderr",
+      "cases": [
+        "plain-files"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "overlays/compatible-packages-and-plain-files/repo/one/kustomization.yaml",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/compatible-packages-and-plain-files/repo/one/cm.yaml",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/compatible-packages-and-plain-files/repo/two/kustomization.yaml",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/compatible-packages-and-plain-files/repo/two/cm.yaml",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/compatible-packages-and-plain-files/repo/plain.yaml",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "expect/compatible-packages-and-plain-files.stdout",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "expect/compatible-packages-and-plain-files.stderr",
+      "cases": [
+        "compatible-packages-and-plain-files"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "overlays/authored-builder-authority/repo/kustomization.yaml",
+      "cases": [
+        "authored-builder-authority"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/authored-builder-authority/repo/plain.yaml",
+      "cases": [
+        "authored-builder-authority"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/authored-builder-authority/repo/ignored/cm.yaml",
+      "cases": [
+        "authored-builder-authority"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "expect/authored-builder-authority.stdout",
+      "cases": [
+        "authored-builder-authority"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "expect/authored-builder-authority.stderr",
+      "cases": [
+        "authored-builder-authority"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "overlays/incompatible-packages/repo/one/kustomization.yaml",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/incompatible-packages/repo/one/cm.yaml",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/incompatible-packages/repo/two/kustomization.yaml",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "overlays/incompatible-packages/repo/two/cm.yaml",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Authored aggregate input retained from the regression test."
+    },
+    {
+      "path": "expect/incompatible-packages.stdout",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "expect/incompatible-packages.stderr",
+      "cases": [
+        "incompatible-packages"
+      ],
+      "purpose": "Independently authored complete expectation retained from the handwritten assertion."
+    },
+    {
+      "path": "overlays/generator-only-package/repo/gen/kustomization.yaml",
+      "cases": [
+        "generator-only-package",
+        "generator-only-package-diff"
+      ],
+      "purpose": "Independently authored generator admission input or complete output expectation."
+    },
+    {
+      "path": "overlays/generator-only-package/repo/plain.yaml",
+      "cases": [
+        "generator-only-package",
+        "generator-only-package-diff"
+      ],
+      "purpose": "Independently authored generator admission input or complete output expectation."
+    },
+    {
+      "path": "expect/generator-only-package.stdout",
+      "cases": [
+        "generator-only-package"
+      ],
+      "purpose": "Independently authored generator admission input or complete output expectation."
+    },
+    {
+      "path": "expect/generator-only-package.stderr",
+      "cases": [
+        "generator-only-package"
+      ],
+      "purpose": "Independently authored generator admission input or complete output expectation."
+    },
+    {
+      "path": "overlays/ancestor-blocked/repo/entry/apps/ks.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap/repo/entry/apps/ks.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap/repo/entry/flux-system/kustomization.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap/repo/entry/flux-system/sync.yaml",
+      "cases": [
+        "ancestor-bootstrap",
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap/repo/workloads/cm.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap/repo/workloads/kustomization.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-changed/repo/workloads/cm.yaml",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/storage/app/cm.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/storage/app/kustomization.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/storage/ks.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/storage/kustomization.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/workloads/app/cm.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/workloads/app/kustomization.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/workloads/ks.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies/repo/apps/workloads/kustomization.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "overlays/namespace-dependencies-changed/repo/apps/workloads/app/cm.yaml",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Accepted bootstrap ownership or cross-namespace dependency input."
+    },
+    {
+      "path": "expect/namespace-dependencies-build.stdout",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-build.stdout",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/namespace-dependencies-diff.stdout",
+      "cases": [
+        "namespace-dependencies"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-diff.stdout",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/ownership.stderr",
+      "cases": [
+        "namespace-dependencies",
+        "ancestor-bootstrap",
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-blocked.stdout",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-blocked.stderr",
+      "cases": [
+        "ancestor-bootstrap"
+      ],
+      "purpose": "Complete independently authored CLI expectation."
+    },
+    {
+      "path": "overlays/generator-only-package-changed/repo/gen/kustomization.yaml",
+      "cases": [
+        "generator-only-package-diff"
+      ],
+      "purpose": "Authored generator edit or independently authored complete diff expectation."
+    },
+    {
+      "path": "expect/generator-only-package-diff.stdout",
+      "cases": [
+        "generator-only-package-diff"
+      ],
+      "purpose": "Authored generator edit or independently authored complete diff expectation."
+    },
+    {
+      "path": "expect/generator-only-package-diff.stderr",
+      "cases": [
+        "generator-only-package-diff"
+      ],
+      "purpose": "Authored generator edit or independently authored complete diff expectation."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/entry/apps/ks.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Indexed sibling input or complete CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-indexed-producer-build.stdout",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Indexed sibling input or complete CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-indexed-producer-test.stdout",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Indexed sibling input or complete CLI expectation."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-indexed-producer-diff.stdout",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Indexed sibling input or complete CLI expectation."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/entry/apps/consumer.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The reader depends on the indexed producer output."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/suite/producer/ks.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "This producer has an independent application path."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/suite/producer/cm.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The producer supplies the reader value."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/consumer/cm.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The reader consumes the value through substitution."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/entry/flux-system/kustomization.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The native package applies an unrelated patch beside the bootstrap declaration."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer/repo/entry/flux-system/input.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The native patch retains its authority over this value."
+    },
+    {
+      "path": "overlays/ancestor-bootstrap-indexed-producer-changed/repo/suite/producer/cm.yaml",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The edit changes only the producer value."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-indexed-producer-build.stderr",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "The enclosing application keeps its missing input diagnostic."
+    },
+    {
+      "path": "expect/ancestor-bootstrap-indexed-producer-diff.stderr",
+      "cases": [
+        "ancestor-bootstrap-indexed-producer"
+      ],
+      "purpose": "Each diff side reports duplicate producer and unresolved input warnings."
+    }
+  ]
+}

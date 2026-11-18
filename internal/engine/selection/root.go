@@ -3,7 +3,6 @@ package selection
 import (
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -36,13 +35,19 @@ func classifyRoot(evidence *RootEvidence) RootResult {
 		return RootResult{Admitted: independent && scope.PackageRunnable, Independent: independent, PackageRoot: true}
 	}
 	if evidence.Record.Path == "" {
-		native := scope.Compact && evidence.Record.Parent.ReportHidden() &&
+		prepared := scope.Prepared && evidence.Record.Authored != (manifest.NamedResource{}) &&
+			localEntryApplication(scope)
+		native := (scope.Compact || prepared) && evidence.Record.Parent.ReportHidden() &&
 			evidence.Record.Parent == evidence.Record.BuilderOwner
-		admitted := evidence.Record.Authored == (manifest.NamedResource{}) &&
+		admitted := (evidence.Record.Authored == (manifest.NamedResource{}) || prepared) &&
 			(evidence.Record.Parent == (manifest.NamedResource{}) || native) && scope.Candidate
 		return RootResult{Admitted: admitted, Independent: admitted, Occurrence: evidence.Occurrence}
 	}
 	return classifyAuthoredRoot(evidence)
+}
+
+func localEntryApplication(scope *RootScopeFacts) bool {
+	return scope.Application && scope.LocalApplication && scope.SameEntryOrigin
 }
 
 func classifyAuthoredRoot(evidence *RootEvidence) RootResult {
@@ -95,8 +100,8 @@ func initialRootIndependent(evidence *RootEvidence, owner manifest.NamedResource
 	if !scope.EntryKustomize || scope.Bootstrap {
 		return !scope.NativeOperand
 	}
-	return scope.Application && (!scope.NativeOperand && !evidence.Identity.KindInfo().Structural ||
-		scope.LocalApplication && scope.SameEntryOrigin)
+	return localEntryApplication(scope) ||
+		scope.Application && !scope.NativeOperand && !evidence.Identity.KindInfo().Structural
 }
 
 func scopeOwner(id, authored manifest.NamedResource, scope *RootScopeFacts) manifest.NamedResource {
@@ -159,9 +164,10 @@ func rootConstruction(root *NativeRootFacts) bool {
 		return false
 	}
 	if root.Entry {
-		return !slices.ContainsFunc(root.Claims, func(claim manifest.KSClaim) bool {
-			return strings.HasPrefix(root.Path+"/", claim.Prefix)
-		})
+		for range root.Index.ClaimOwners(root.Path+"/", manifest.BootstrapSourceID, manifest.NamedResource{}, nil) {
+			return false
+		}
+		return true
 	}
 	return len(root.Owners) == 0
 }

@@ -520,7 +520,7 @@ func testRecordEmittedConcurrentSupportCaseCompletion(
 	childValues3 := scope.accepted.Children
 	for childIndex2 := range childValues3 {
 		child := childValues3[childIndex2]
-		parent, ok := scope.s.RenderedParent(child.Obj.Named(), nil)
+		parent, ok := scope.s.Parent(child.Obj.Named(), nil)
 		assert.FatalIf(
 			t,
 			!ok || parent != (*scope.q),
@@ -582,7 +582,7 @@ func testRecordEmittedConcurrentSupportReads(t *testing.T, scope *testRecordEmit
 	for childIndex3 := range childValues4 {
 		child := childValues4[childIndex3]
 		id := child.Obj.Named()
-		parent, ok := (*scope.s).RenderedParent(id, nil)
+		parent, ok := (*scope.s).Parent(id, nil)
 		assert.ErrorIf(
 			t,
 			!ok || parent != (*scope.p),

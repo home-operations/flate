@@ -25,8 +25,6 @@ func (r *ReadSet) ReleaseCapture() {
 		}
 	}
 	r.localDetails.inputPayload = inputPayload{}
-	r.localProductions = productionCapture{}
-	clear(r.spareProductions[:cap(r.spareProductions)])
 	for i := range r.spareDetails[:cap(r.spareDetails)] {
 		r.spareDetails[:cap(r.spareDetails)][i].inputPayload = inputPayload{}
 	}

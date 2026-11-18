@@ -173,11 +173,7 @@ func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
 		for _, entry := range entries {
 			paths = append(paths, entry.Path)
 		}
-		// The owner ruling restores #1379's multi-entry planning expectations.
 		want := []string{root}
-		if testCaseInput.name == "equal bytes" {
-			want = []string{filepath.Join(root, "alpha"), filepath.Join(root, "omega")}
-		}
 		assert.Diff(t, paths, want)
 	}
 	entries, err := Plan(
@@ -231,11 +227,7 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root},
 	)
 	assert.NoError(t, err)
-	// The owner ruling restores #1379's multi-entry planning expectations.
 	want := 1
-	if testCaseInput.name == "ordinary" || testCaseInput.name == "group versions" {
-		want = 2
-	}
 	assert.Equal(t, len(entries), want)
 	if want == 1 {
 		assert.Equal(t, entries[0].Path, root)
@@ -260,8 +252,7 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		for _, entry := range changed {
 			paths = append(paths, entry.Path)
 		}
-		// The owner ruling restores #1379's renamed multi-entry expectation.
-		assert.Diff(t, paths, []string{filepath.Join(root, "new-second"), filepath.Join(root, "unrelated")})
+		assert.Diff(t, paths, []string{root})
 	}
 	other := fstest.MapFS{
 		"left/kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},

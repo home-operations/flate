@@ -60,16 +60,15 @@ func (c *Catalog) CatalogObject(id manifest.NamedResource) manifest.BaseManifest
 	return c.object(id, &record, nil)
 }
 
-// RootEvidence with completeOwners false requires the caller to complete support with its preparation inventory.
+// RootEvidence MUST remain physical evidence until selection.CaptureRoot enriches it.
 func (c *Catalog) RootEvidence(
 	id manifest.NamedResource,
 	reads *store.ReadSet,
-	completeOwners bool,
 ) selection.RootEvidence {
 	if c == nil || c.index == nil {
 		return selection.RootEvidence{}
 	}
-	return c.evidence(id, reads, nil, completeOwners)
+	return c.evidence(id, reads, nil)
 }
 
 func (l *Loader) physicalView() physicalView {
@@ -154,20 +153,17 @@ func (v *physicalView) evidence(
 	id manifest.NamedResource,
 	reads *store.ReadSet,
 	live *Loader,
-	completeOwners bool,
 ) selection.RootEvidence {
 	evidence := v.rootFacts(id, live, nil)
-	var objects admissionReader
-	if reads != nil {
-		objects = reads
-	} else if live != nil && live.frozen {
-		objects = live.Store
+	var objects sourceStore = reads
+	if reads == nil {
+		objects = nil
+		if live != nil && live.frozen {
+			objects = live.Store
+		}
 	}
 	if objects != nil {
-		rootSupport(&evidence, objects, v.index, &v.roots.currentOnly, v.sourceRoot)
-		if completeOwners {
-			completeRootSupport(&evidence, objects, v.index)
-		}
+		v.applicationScope(&evidence, objects)
 	}
 	if live != nil {
 		evidence.BuiltChild, evidence.BuiltCurrent = live.PreparedObject(id, reads)
@@ -176,6 +172,21 @@ func (v *physicalView) evidence(
 		evidence.Stale = !reads.Valid()
 	}
 	return evidence
+}
+
+func (v *physicalView) applicationScope(evidence *selection.RootEvidence, objects sourceStore) {
+	if !evidence.Scope.Application {
+		return
+	}
+	location := SourceView(objects, evidence.Scope.ApplicationSource, v.sourceRoot)
+	evidence.Scope.LocalApplication = !location.Pinned && !location.External
+	input, _ := objects.GetArtifact(evidence.Scope.ApplicationSource, store.ArtifactContent).(*store.SourceArtifact)
+	evidence.Scope.Claim = ""
+	if coordinate, known := input.IndexPath(v.sourceRoot, evidence.Scope.ApplicationPath); known {
+		evidence.Scope.Claim = coordinate + "/"
+	} else {
+		evidence.Scope.LocalApplication = false
+	}
 }
 
 func (v *physicalView) rootFacts(
@@ -292,9 +303,26 @@ func (v *physicalView) rootScope(live *Loader, input *rootScopeInput) rootEviden
 	if input.records != nil {
 		evidence.scope.Records = input.records
 	}
+	v.captureApplication(live, object, &evidence, &doc)
+	return evidence
+}
+
+func (v *physicalView) captureApplication(
+	live *Loader,
+	object manifest.BaseManifest,
+	evidence *rootEvidence,
+	doc *document,
+) {
+	id, prepared := evidence.identity, evidence.scope.Prepared
 	application, valid := manifest.ApplicationFor(object)
+	if prepared {
+		if authored, located := catalogOccurrence(v.locations, id); located {
+			application.Source, application.Path, valid = authored.SourcePath()
+		}
+	}
 	if !valid {
-		return evidence
+		evidence.scope.Application = false
+		return
 	}
 	evidence.scope.Application = true
 	evidence.scope.ApplicationSource, evidence.scope.ApplicationPath = application.Source, application.Path
@@ -310,7 +338,6 @@ func (v *physicalView) rootScope(live *Loader, input *rootScopeInput) rootEviden
 		}
 	}
 	evidence.scope.LocalApplication, evidence.scope.SameEntryOrigin = retained.local, retained.sameOrigin
-	return evidence
 }
 
 func rootNamespaceEligible(id manifest.NamedResource, object manifest.BaseManifest) bool {

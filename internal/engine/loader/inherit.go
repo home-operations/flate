@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/core/claimpath"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -145,7 +144,7 @@ func (l *Loader) projectAuthored(repoRoot string, prediction map[string]nsResolu
 		}
 	}
 	allowed := &l.roots
-	allowed.retainIndependent()
+	allowed.retainMembership()
 	l.allowAuthoredObjects(authored2.records, authored2.objects, allowed, scopes)
 	l.allowAuthoredRecords(authored2.records, authored2.objects, allowed, scopes)
 	l.scopes.candidates, l.candidates = l.candidates, authored2.objects
@@ -396,15 +395,19 @@ func (l *Loader) recordNamespaces(rArg *manifest.DiscoveryRecord, forced string)
 	r := *rArg
 
 	var owners []manifest.NamedResource
-	for _, group := range claimpath.Groups(l.Index.Claims, r.File) {
-		for _, id := range group {
-			if !l.selfClaim(id, r.Authored) {
-				owners = appendUniqueProducer(owners, id)
-			}
-		}
-		if len(owners) != 0 {
+	source := manifest.BootstrapSourceID
+	for i := range r.Productions {
+		production := &r.Productions[i]
+		if production.Source != (manifest.NamedResource{}) {
+			source = production.Source
 			break
 		}
+	}
+	for group := range l.Index.ClaimOwners(r.File, source, manifest.NamedResource{}, func(id manifest.NamedResource) bool {
+		return !l.selfClaim(id, r.Authored)
+	}) {
+		owners = group
+		break
 	}
 	var namespaces inheritedNamespaces
 	namespaces.collectVisits(l, r.Path, r.Authored, owners)

@@ -23,10 +23,14 @@ type entryPrerequisites struct {
 	source   manifest.NamedResource
 }
 
+func hasEntryPrerequisites(owner *manifest.Kustomization) bool {
+	return len(owner.DependsOn) != 0 || owner.PostBuild != nil && len(owner.PostBuild.SubstituteFrom) != 0
+}
+
 func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []store.Child) bool {
 	e.source = owner.EffectiveSourceID()
 	e.reads.GetArtifact(e.source, store.ArtifactContent)
-	if len(owner.DependsOn) == 0 && (owner.PostBuild == nil || len(owner.PostBuild.SubstituteFrom) == 0) {
+	if !hasEntryPrerequisites(owner) {
 		return true
 	}
 	e.owner, e.children = owner, children

@@ -16,9 +16,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Claims builds reporting claims from caller-owned candidates, including external
-// sources and committed source coordinates. Discovery MUST use Loader.claims instead.
-func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) []manifest.KSClaim {
+// Claims captures source-qualified claim evidence without publishing declarations.
+func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) *manifest.DiscoveryIndex {
 	candidates = slices.DeleteFunc(
 		candidates,
 		func(ks *manifest.Kustomization) bool { return !s.Policy(ks.Named()).Root },
@@ -29,14 +28,24 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 	built := new(reader).buildClaims(repoRoot, candidates, func(id manifest.NamedResource) sourceScope {
 		location := SourceView(s, id, repoRoot)
 		return sourceScope{
-			root:     location.Path,
-			pinned:   location.Pinned,
-			external: location.External,
-			origin:   new(reader).localBase(location.Path, repoRoot),
+			root: location.Path, pinned: location.Pinned, external: location.External,
+			origin: new(reader).localBase(location.Path, repoRoot),
 		}
 	}, claimBuf[:0])
-	claims, _ := projectClaims(len(built), func(i int) ownerClaims { return built[i] })
-	return claims
+	index := &manifest.DiscoveryIndex{
+		Claims:     map[string][]manifest.NamedResource{},
+		Records:    map[manifest.NamedResource]manifest.DiscoveryRecord{},
+		Components: new(reader).claimComponentIndex(),
+	}
+	for i, owner := range candidates {
+		index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
+		for _, claims := range [2][]manifest.KSClaim{built[i].claims, built[i].aliases} {
+			for _, claim := range claims {
+				index.Claims[claim.Prefix] = appendUniqueProducer(index.Claims[claim.Prefix], claim.ID)
+			}
+		}
+	}
+	return index
 }
 
 func (l *Loader) claims(repoRoot string) []manifest.KSClaim {
@@ -178,7 +187,7 @@ func (r *documentReader) qualifyClaims(
 }
 
 func (r *documentReader) claimComponents(
-	ks *manifest.Kustomization,
+	object manifest.BaseManifest,
 	root, base string,
 	components map[manifest.NamedResource][]string,
 ) map[manifest.NamedResource][]string {
@@ -196,7 +205,22 @@ func (r *documentReader) claimComponents(
 		if components == nil {
 			components = map[manifest.NamedResource][]string{}
 		}
-		components[ks.Named()] = refs
+		components[object.Named()] = refs
+	}
+	return components
+}
+
+func (r *documentReader) claimComponentIndex() map[string][]string {
+	var components map[string][]string
+	for path := range r.cache {
+		body := r.cache[path].body
+		if body == nil || len(body.Components) == 0 {
+			continue
+		}
+		if components == nil {
+			components = make(map[string][]string)
+		}
+		components[path] = body.Components
 	}
 	return components
 }

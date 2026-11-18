@@ -619,18 +619,20 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	d.loader.Index.Records[dirty.Named()] = manifest.DiscoveryRecord{File: filepath.ToSlash(relative), Path: file}
 	assert.NoError(t, d.loader.Admit(t.Context(), root))
 	claims := d.pinnedWorkingTreeClaims(root, d.loader.PathObjects())
-	assert.FatalIf(t, len(claims.claims) == 0, "overlapping pinned claims are absent: %+v", d.loader.PathObjects())
+	assert.FatalIf(
+		t,
+		len(claims.index.Claims) == 0,
+		"overlapping pinned claims are absent: %+v",
+		d.loader.PathObjects(),
+	)
 	assert.Equal(
 		t,
-		slices.Contains(claims.claims, manifest.KSClaim{ID: testutil.KustomizationID("apps", "claim-0"), Prefix: ""}),
+		slices.Contains(claims.index.Claims[""], testutil.KustomizationID("apps", "claim-0")),
 		true,
 	)
 	assert.Equal(
 		t,
-		slices.Contains(
-			claims.claims,
-			manifest.KSClaim{ID: testutil.KustomizationID("apps", "claim-1"), Prefix: "nested/"},
-		),
+		slices.Contains(claims.index.Claims["nested/"], testutil.KustomizationID("apps", "claim-1")),
 		true,
 	)
 	assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), root))

@@ -5,7 +5,6 @@ import (
 	"context"
 	"iter"
 	"path/filepath"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -59,7 +58,7 @@ type staticScope interface {
 	Terminal(string) bool
 	DirectoryFile(string) string
 	Coordinate(string) string
-	Claims() []manifest.KSClaim
+	SelectionIndex() *manifest.DiscoveryIndex
 	Owner(manifest.NamedResource) (path string, indexed bool)
 	Replaced(manifest.NamedResource) bool
 	Declared(manifest.NamedResource) bool
@@ -214,11 +213,10 @@ func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, er
 		}
 		state := RootEligible
 		coordinate := scope.Coordinate(file)
-		for _, claim := range scope.Claims() {
-			owner, _ := scope.Owner(claim.ID)
-			if !strings.HasPrefix(coordinate, claim.Prefix) || owner == file {
-				continue
-			}
+		for range scope.SelectionIndex().ClaimOwners(coordinate, manifest.BootstrapSourceID, manifest.NamedResource{}, func(id manifest.NamedResource) bool {
+			owner, _ := scope.Owner(id)
+			return owner != file
+		}) {
 			state = RootInactive
 			break
 		}
@@ -231,9 +229,9 @@ func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, er
 func contributionClaims[S staticScope](scope S, i int) (bool, bool) {
 	claimed, enabled := false, false
 	dir := scope.Visit(i, 0).Dir + "/"
-	for _, claim := range scope.Claims() {
-		if strings.HasPrefix(dir, claim.Prefix) {
-			owner, _ := scope.Owner(claim.ID)
+	for owners := range scope.SelectionIndex().ClaimOwners(dir, scope.Contribution(i).Source, manifest.NamedResource{}, nil) {
+		for _, id := range owners {
+			owner, _ := scope.Owner(id)
 			claimed = true
 			enabled = enabled || owner == "" || scope.Eligibility(owner) >= RootEligible
 		}

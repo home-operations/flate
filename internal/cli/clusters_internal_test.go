@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	gitconfig "github.com/go-git/go-git/v6/config"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/cli/output"
@@ -145,11 +146,24 @@ func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.En
 func writeClusterGroupsFixture(t *testing.T, values map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
-	testutil.GitInit(t, root)
+	const selfURL = "https://fixture.invalid/cluster-groups"
+	repo := testutil.GitInit(t, root)
+	_, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{selfURL}})
+	assert.NoError(t, err)
 	for dir, value := range values {
 		testutil.WriteFile(t, root, dir+"/kustomization.yaml", "resources: [flux.yaml]\n")
-		testutil.WriteFile(t, root, dir+"/flux.yaml", testutil.KustomizationYAML("shared", "flux-system",
-			"  path: ./"+dir+"/app\n  postBuild: {substitute: {CLUSTER: "+value+"}}\n"))
+		testutil.WriteFile(
+			t,
+			root,
+			dir+"/flux.yaml",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n"+
+				"  sync: {kind: GitRepository, name: cluster, url: '"+selfURL+"', ref: 'refs/heads/main', path: './"+dir+"'}\n---\n"+
+				testutil.KustomizationYAML(
+					"shared",
+					"flux-system",
+					"  path: ./"+dir+"/app\n  postBuild: {substitute: {CLUSTER: "+value+"}}\n",
+				),
+		)
 		testutil.WriteFile(t, root, dir+"/app/kustomization.yaml", "resources: [pod.yaml]\n")
 		testutil.WriteFile(t, root, dir+"/app/pod.yaml", `apiVersion: v1
 kind: Pod

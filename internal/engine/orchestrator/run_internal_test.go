@@ -63,9 +63,11 @@ spec: {}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	idx := loader.New(store.New())
 	idx.Index.Records[id] = manifest.DiscoveryRecord{
-		Authored:    id,
-		Path:        filepath.Join(dir, "bundle.yaml"),
-		Productions: []manifest.Production{{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}},
+		Authored: id,
+		Path:     filepath.Join(dir, "bundle.yaml"),
+		Productions: []manifest.Production{
+			{Authored: id, Source: manifest.BootstrapSourceID, Path: filepath.Join(dir, "bundle.yaml")},
+		},
 	}
 	st := store.New()
 	idx.Store = st

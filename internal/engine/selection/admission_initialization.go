@@ -131,7 +131,7 @@ func (c *admissionClosure) rootMatches(root string, identities []manifest.NamedR
 	)
 	if !matches {
 		delta, _, _ := c.delta(manifest.BootstrapSourceID)
-		for id, input := range delta.Inputs(manifest.NamedResource{}) {
+		for id, input := range c.comparisonInputs(delta, manifest.NamedResource{}) {
 			if c.session.request.Matches(id) &&
 				slices.ContainsFunc(input.Declarations, func(file string) bool {
 					return containsPath(c.context.Root, filepath.Join(c.context.Root, root)) &&
@@ -307,7 +307,7 @@ func (c *admissionClosure) indexStartObjects(objects []manifest.BaseManifest) {
 		index(obj.Named())
 	}
 	delta, _, _ := c.delta(manifest.BootstrapSourceID)
-	for id := range delta.Inputs(manifest.NamedResource{}) {
+	for id := range c.comparisonInputs(delta, manifest.NamedResource{}) {
 		if c.changedInput(id, id) {
 			index(id)
 		}
@@ -649,6 +649,9 @@ func (c *admissionClosure) rescanInitialChanges(
 		identity.stableOwner, identity.stableObject = 0, nil
 	}
 	clear(c.historyProductions)
+	for _, captured := range c.capturedRoots {
+		captured.supported = false
+	}
 	//nolint:intrange // rescan MUST extend the worklist during traversal.
 	for cursor := 0; cursor < len(c.queue); cursor++ {
 		for next := c.states[c.queue[cursor]].consumer; next != 0; next = edges[next-1].next {

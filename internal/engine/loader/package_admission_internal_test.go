@@ -20,19 +20,53 @@ func TestPackages_RootAdmission(t *testing.T) {
 	source := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: oci://fixture.invalid/cluster}\n"
 	configMap := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n"
 	for _, tc := range []struct {
-		name  string
-		files map[string]string
-		want  map[string]bool
+		name     string
+		files    map[string]string
+		inactive string
+		want     map[string]bool
 	}{
 		{
 			name:  "plain runnable roots",
 			files: map[string]string{"one/source.yaml": source, "two/source.yaml": source, "data/cm.yaml": configMap},
-			want:  map[string]bool{"one": true, "two": true, "data": false},
+			want:  map[string]bool{"one": true, "two": true, "data": true},
 		},
 		{
 			name:  "native operands",
 			files: map[string]string{"one/kustomization.yaml": "resources: [../operand]\n", "operand/kustomization.yaml": "resources: [source.yaml]\n", "operand/source.yaml": source},
 			want:  map[string]bool{"one": true, "operand": false},
+		},
+		{
+			name: "shared native operand",
+			files: map[string]string{
+				"one/kustomization.yaml":    "resources: [../shared]\n",
+				"two/kustomization.yaml":    "resources: [../shared]\n",
+				"shared/kustomization.yaml": "resources: [source.yaml]\n",
+				"shared/source.yaml":        source,
+			},
+			want: map[string]bool{"one": true, "two": true, "shared": false},
+		},
+		{
+			name: "generator only",
+			files: map[string]string{
+				"gen/kustomization.yaml": "configMapGenerator: [{name: generated, literals: [value=retained]}]\n",
+			},
+			want: map[string]bool{"gen": true},
+		},
+		{
+			name: "inactive generator only",
+			files: map[string]string{
+				"gen/kustomization.yaml": "configMapGenerator: [{name: generated, literals: [value=retained]}]\n",
+			},
+			inactive: "gen/kustomization.yaml",
+			want:     map[string]bool{"gen": false},
+		},
+		{
+			name: "owned generator only",
+			files: map[string]string{
+				"one/kustomization.yaml": "resources: [../gen]\n",
+				"gen/kustomization.yaml": "configMapGenerator: [{name: generated, literals: [value=retained]}]\n",
+			},
+			want: map[string]bool{"one": true, "gen": false},
 		},
 		{
 			name: "components and generators",
@@ -90,6 +124,25 @@ func TestPackages_RootAdmission(t *testing.T) {
 			want: map[string]bool{"one": true, "two": false},
 		},
 		{
+			name: "transitive application cycle",
+			files: map[string]string{
+				"one/owner.yaml":   testutil.KustomizationYAML("one", "apps", "  path: ./two\n"),
+				"two/owner.yaml":   testutil.KustomizationYAML("two", "apps", "  path: ./three\n"),
+				"three/owner.yaml": testutil.KustomizationYAML("three", "apps", "  path: ./one\n"),
+			},
+			want: map[string]bool{"one": true, "two": false, "three": false},
+		},
+		{
+			name: "transitively owned application cycle",
+			files: map[string]string{
+				"outer/owner.yaml": testutil.KustomizationYAML("outer", "apps", "  path: ./one\n"),
+				"one/owner.yaml":   testutil.KustomizationYAML("one", "apps", "  path: ./two\n"),
+				"two/owner.yaml":   testutil.KustomizationYAML("two", "apps", "  path: ./three\n"),
+				"three/owner.yaml": testutil.KustomizationYAML("three", "apps", "  path: ./one\n"),
+			},
+			want: map[string]bool{"outer": true, "one": false, "two": false, "three": false},
+		},
+		{
 			name: "self application anchors",
 			files: map[string]string{
 				"one/owner.yaml": testutil.KustomizationYAML("same", "apps", "  path: ./one\n  sourceRef: {kind: GitRepository, name: local}\n"),
@@ -103,14 +156,18 @@ func TestPackages_RootAdmission(t *testing.T) {
 			for _, compact := range []bool{false, true} {
 				t.Run(strconv.FormatBool(compact), func(t *testing.T) {
 					t.Parallel()
-					assertPackageAdmissionForTest(t, tc.files, tc.want, compact)
+					assertPackageAdmissionForTest(
+						t,
+						packageAdmissionLoaderForTest(t, tc.files, compact, tc.inactive),
+						tc.want,
+					)
 				})
 			}
 		})
 	}
 }
 
-func assertPackageAdmissionForTest(t *testing.T, contents map[string]string, want map[string]bool, compact bool) {
+func packageAdmissionLoaderForTest(t *testing.T, contents map[string]string, compact bool, inactive string) *Loader {
 	t.Helper()
 	root := t.TempDir()
 	files := fstest.MapFS{}
@@ -124,6 +181,16 @@ func assertPackageAdmissionForTest(t *testing.T, contents map[string]string, wan
 	configureSelection(t, l, selection.Request{Changed: compact})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
+	if inactive != "" {
+		l.ensureScopes()
+		staticScope{loader: l}.SetEligibility(filepath.Join(root, inactive), selection.RootInactive)
+	}
+	return l
+}
+
+func assertPackageAdmissionForTest(t *testing.T, l *Loader, want map[string]bool) {
+	t.Helper()
+
 	for range 2 {
 		packages, err := l.Packages(t.Context())
 		assert.NoError(t, err)
@@ -144,10 +211,42 @@ func assertPackageAdmissionForTest(t *testing.T, contents map[string]string, wan
 					l.roots.occurrences[coordinate].occurrence.Declaration,
 					physicalOccurrence(occurrence).Declaration,
 				)
+				scope := &l.roots.occurrences[coordinate].scope
+				assert.Equal(t, scope.PackagePaths[scope.PackageIndex], p.Path)
 			}
 		}
 		assert.Diff(t, got, want)
 	}
+}
+
+func TestPackages_AliasApplicationOwnership(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"one/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
+			"  path: ./two\n  sourceRef: {kind: GitRepository, name: self}\n"))},
+		"two/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: apps}\n")},
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{
+		LocalPath: t.TempDir(), LocalRoot: root, InputAlias: true, FS: files,
+	})
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	packages, err := l.Packages(t.Context())
+	assert.NoError(t, err)
+	got := make(map[string]bool, len(packages))
+	for _, pkg := range packages {
+		got[pkg.Path] = pkg.Independent
+	}
+	assert.Diff(t, got, map[string]bool{"one": true, "two": false})
 }
 
 func TestPackages_UnboundSourceScope(t *testing.T) {
@@ -175,9 +274,8 @@ func TestPackages_UnboundSourceScope(t *testing.T) {
 					)
 					assertPackageAdmissionForTest(
 						t,
-						files,
+						packageAdmissionLoaderForTest(t, files, compact, ""),
 						map[string]bool{"one": true, "two": true, "target": true},
-						compact,
 					)
 				})
 			}

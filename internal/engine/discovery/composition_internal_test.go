@@ -658,7 +658,7 @@ spec:
 			rawInput := (&manifest.GitRepository{Name: "raw-input", Namespace: "ns"}).Named()
 			rawSource := (&manifest.GitRepository{Name: "raw-source", Namespace: "ns"}).Named()
 			rawProjected := (&manifest.GitRepository{Name: "raw-projected", Namespace: "ns"}).Named()
-			evidence := d.loader.RootEvidence(including, nil, true)
+			evidence := selection.CaptureRoot(d.loader.RootEvidence(including, nil), d.loader.Store, d.loader.Index)
 			assert.Equal(t, evidence.Occurrence.RequiresBuild, true)
 			assert.Equal(t, evidence.Record.Builder, "")
 			groups := map[manifest.NamedResource]*entrySourceGroup{}
@@ -681,7 +681,7 @@ spec:
 			parent := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
 			st.AddObject(parent)
 			assert.NoError(t, d.prepareProducer(t.Context(), parent, bootstrap, nil))
-			evidence = d.loader.RootEvidence(including, nil, true)
+			evidence = selection.CaptureRoot(d.loader.RootEvidence(including, nil), d.loader.Store, d.loader.Index)
 			assert.Equal(t, evidence.Record.Builder != "", true)
 			groups = map[manifest.NamedResource]*entrySourceGroup{}
 			assert.NoError(t, d.addLoadedSources(t.Context(), groups, true))

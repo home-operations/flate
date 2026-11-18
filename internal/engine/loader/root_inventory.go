@@ -16,7 +16,6 @@ type rootCoordinate struct {
 type rootInventory struct {
 	occurrences map[rootCoordinate]*rootEvidence
 	identities  map[manifest.NamedResource]*rootEvidence
-	currentOnly manifest.DiscoveryIndex
 	prepared    map[manifest.NamedResource]bool
 }
 
@@ -56,10 +55,10 @@ func (r *rootInventory) replace(coordinate *rootCoordinate, evidence *rootEviden
 	r.occurrences[*coordinate] = evidence
 }
 
-func (r *rootInventory) retainIndependent() {
+func (r *rootInventory) retainMembership() {
 	for coordinate := range r.occurrences {
 		evidence := r.occurrences[coordinate]
-		if !selection.Root(evidence.view()).Independent {
+		if !evidence.scope.PackageKnown && !selection.Root(evidence.view()).Independent {
 			delete(r.occurrences, coordinate)
 			if r.identities[coordinate.identity] == evidence {
 				delete(r.identities, coordinate.identity)

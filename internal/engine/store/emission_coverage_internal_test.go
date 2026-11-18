@@ -9,6 +9,128 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestRecordEmitted_UnqualifiedCoverage(t *testing.T) {
+	t.Parallel()
+
+	owner := &manifest.Kustomization{Name: "supplier", Namespace: "apps", Path: "supplier"}
+	source := manifest.BootstrapSourceID
+	artifact := &SourceArtifact{Key: "bootstrap", Content: "head"}
+	explicit := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "missing"}
+	for _, tc := range []struct {
+		name     string
+		owner    manifest.BaseManifest
+		admitted bool
+		source   manifest.NamedResource
+		want     sourceBinding
+	}{
+		{name: "admitted", owner: owner, admitted: true, want: sourceBinding{source: source, artifact: artifact}},
+		{name: "indexed_only", owner: owner, want: sourceBinding{source: source, artifact: artifact}},
+		{name: "missing_owner"},
+		{name: "no_source_path", owner: &manifest.ResourceSet{Name: "supplier", Namespace: "apps"}},
+		{name: "missing_artifact", owner: owner, source: explicit, want: sourceBinding{source: explicit}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			id := owner.Named()
+			if tc.owner != nil {
+				id = tc.owner.Named()
+			}
+			target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+			s.SetArtifact(source, artifact)
+			production := manifest.Production{Owner: id, Source: tc.source}
+			records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+				target: {Productions: []manifest.Production{production}},
+			}
+			if tc.admitted {
+				s.AddObject(tc.owner)
+			} else if tc.owner != nil {
+				records[id] = manifest.DiscoveryRecord{Declaration: tc.owner}
+			}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
+			got := s.coverage[id].binding(production.Source)
+			assert.Equal(t, got.source, tc.want.source)
+			assert.Equal(t, got.artifact, tc.want.artifact)
+			if tc.want.artifact == nil {
+				return
+			}
+			if !tc.admitted {
+				assert.Equal(t, s.GetDeclaration(id), nil)
+				s.AddObject(tc.owner)
+			}
+			assert.Diff(
+				t,
+				s.ReferenceFacts(target, nil, manifest.NamedResource{}).Materializers,
+				[]manifest.NamedResource{id},
+			)
+			_, _, output := s.GetEmission(id)
+			defer output.Finish()
+			output.Complete = true
+			s.RecordEmitted(id, &output, nil)
+			assert.Equal(t, len(s.Productions(target, nil)), 0)
+			assert.Equal(t, len(s.ReferenceFacts(target, nil, manifest.NamedResource{}).Materializers), 0)
+			assert.Equal(t, s.SourceAdmission(target, source), false)
+		})
+	}
+}
+
+func TestRecordEmitted_MixedSourceCoverage(t *testing.T) {
+	t.Parallel()
+
+	for _, order := range []string{"inferred_first", "explicit_first"} {
+		t.Run(order, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "supplier", Namespace: "apps", Path: "supplier"}
+			source := manifest.BootstrapSourceID
+			other := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "other",
+			}
+			raw := emissionChild("input", "seed")
+			target := raw.Obj.Named()
+			inferred := manifest.Production{Owner: owner.Named()}
+			explicit := manifest.Production{Owner: owner.Named(), Source: other}
+			productions := []manifest.Production{inferred, explicit}
+			if order == "explicit_first" {
+				slices.Reverse(productions)
+			}
+			s.AddObject(owner)
+			s.SetArtifact(source, &SourceArtifact{Key: "bootstrap", Content: "head"})
+			s.SetArtifact(other, &SourceArtifact{Key: "other", Content: "head"})
+			indexed := manifest.ReferenceData{Production: explicit, Keys: manifest.KeySet{Names: []string{"VALUE"}}}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				target: {Productions: productions, ReferenceData: []manifest.ReferenceData{indexed}},
+			}})
+			var admission ReadSet
+			admission.Init(s, manifest.NamedResource{}, nil)
+			defer admission.Close()
+			assert.Equal(t, admission.SourceAdmission(target, source), true)
+			raw.SourceSupport = source
+			admission.Admit(raw, source, manifest.NamedResource{})
+			assert.Equal(t, s.GetObject(target), raw.Obj)
+
+			_, _, output := s.GetEmission(owner.Named())
+			defer output.Finish()
+			output.Complete = true
+			s.RecordEmitted(owner.Named(), &output, nil)
+			assert.Equal(t, s.GetObject(target), nil)
+			assert.Diff(t, s.Productions(target, nil), []manifest.Production{explicit})
+			assert.Equal(t, s.SourceAdmission(target, source), false)
+			assert.Equal(t, s.SourceAdmission(target, other), true)
+			assert.Diff(
+				t,
+				s.ReferenceFacts(target, nil, manifest.NamedResource{}).ReferenceData,
+				[]manifest.ReferenceData{indexed},
+			)
+			s.SetArtifact(other, &SourceArtifact{Key: "other", Content: "changed"})
+			assert.Equal(t, len(s.ReferenceFacts(target, nil, manifest.NamedResource{}).ReferenceData), 0)
+		})
+	}
+}
+
 func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 	t.Parallel()
 

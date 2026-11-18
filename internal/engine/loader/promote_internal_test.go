@@ -602,16 +602,22 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		_, ok := l.Index.Lookup(id)
 		assert.FatalIf(t, ok || l.PromotionDocuments(id) != nil, "%s", "empty output retained raw resource evidence")
 	}
+	independent := filepath.Join(root, "entry", "independent")
+	independentOwner := testutil.KustomizationID("apps", "independent")
 	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(l, &BuiltInput{
-			Root:   filepath.Join(root, "entry", "independent"),
+			Root:   independent,
 			Source: manifest.BootstrapSourceID,
-			Owner:  testutil.KustomizationID("apps", "entry"),
+			Owner:  independentOwner,
 		}),
 		nil,
 	))
-	assert.FatalIf(t, l.documents.cache[entry].built == nil ||
-		l.documents.cache[filepath.Join(root, "entry", "independent")].built == nil, "%s", "empty builds did not retain completion evidence")
+	var reads store.ReadSet
+	reads.Init(st, manifest.NamedResource{}, nil)
+	t.Cleanup(reads.Retire)
+	_, entryBuilt := l.BuiltChildren(entry, testutil.KustomizationID("apps", "entry"), &reads)
+	_, independentBuilt := l.BuiltChildren(independent, independentOwner, &reads)
+	assert.FatalIf(t, !entryBuilt || !independentBuilt, "%s", "empty builds did not retain completion evidence")
 	for _, tc := range []struct {
 		name, ownerPath string
 		reader, scanned bool

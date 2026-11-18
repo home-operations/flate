@@ -120,7 +120,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 		needed := c.role(target).needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
-			!c.coversDeclaration(new(c.rootOwnerFacts(c.incoming(id).Obj)), target) {
+			!c.coversDeclaration(new(rootOwnerFact(c.incoming(id).Obj, c.rootReader())), target) {
 			continue
 		}
 		evidence := c.declarationEvidence(target)
@@ -257,7 +257,7 @@ func (c *admissionClosure) coveredDeclarations(
 		if !c.catalog.yieldCoveredFiles(records, root, yield) {
 			return
 		}
-		for id := range delta.Inputs(manifest.NamedResource{}) {
+		for id := range c.comparisonInputs(delta, manifest.NamedResource{}) {
 			record := records[id]
 			if record.File != "" && record.Path == "" && record.BuilderOwner == (manifest.NamedResource{}) &&
 				!yield(id, record) {

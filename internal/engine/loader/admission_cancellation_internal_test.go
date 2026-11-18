@@ -185,7 +185,7 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 				retained, want = incoming, testutil.KustomizationID("apps", "incoming")
 				assert.Equal(t, l.scopes.complete, false)
 			}
-			assert.Equal(t, l.documents.cache[root].builtInput.Support, retained)
+			assert.Equal(t, l.builtBatches[manifest.NamedResource{}].input.Support, retained)
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
 				&store.SourceArtifact{LocalPath: root, FS: input, Content: "changed"},

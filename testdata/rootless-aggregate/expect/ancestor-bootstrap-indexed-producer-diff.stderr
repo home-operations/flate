@@ -1,0 +1,9 @@
+
+  ⚠ warnings (<PERSISTENCE:4|5>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [ConflictingProducers] orig snapshot: ConfigMap flux-system/settings: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/producer
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/producer
+    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "unavailable-values" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [ConflictingProducers] current snapshot: ConfigMap flux-system/settings: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/producer
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/producer
+    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "unavailable-values" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values

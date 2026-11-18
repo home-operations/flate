@@ -1,6 +1,7 @@
 package change
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -223,7 +224,7 @@ func (d *declarationScope) validSourcePaths(_ context.Context, children *[2]stor
 		if input == nil || input.FS == nil {
 			continue
 		}
-		info, err := fs.Stat(input.FS, manifest.NormalizeClaimBase(path))
+		info, err := fs.Stat(input.FS, cmp.Or(manifest.NormalizeClaimBase(path), "."))
 		if err != nil || !info.IsDir() {
 			return false
 		}

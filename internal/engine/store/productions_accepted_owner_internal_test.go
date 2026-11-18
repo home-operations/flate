@@ -85,7 +85,7 @@ func testStoreProductionsRetainsAcceptedOwnerFrozenBorrow(t *testing.T) {
 		assert.FatalIf(t, !slices.Equal(got, want), "frozen/runtime snapshot changed: got %v, want %v", got, want)
 	}
 	assert.Diff(t, facts.Productions, want)
-	parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+	parent, ok := s.Parent(child.Obj.Named(), nil)
 	assert.FatalIf(t, !ok || parent != p, "frozen surviving parent=%v/%t, want %v/true", parent, ok, p)
 	assert.FatalIf(
 		t,
@@ -153,7 +153,7 @@ func testStoreProductionsRetainsAcceptedOwnerHiddenOwnerRootedChild(t *testing.T
 	)
 	assert.Equal(t, len(s.Productions(child.Obj.Named(), nil)), 0)
 	{
-		parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+		parent, ok := s.Parent(child.Obj.Named(), nil)
 		assert.FatalIf(t, ok || parent != (manifest.NamedResource{}), "hidden owner parent=%v/%t", parent, ok)
 	}
 }
@@ -186,7 +186,7 @@ func testStoreProductionsRetainsAcceptedOwnerCase(
 	accept(t, s, owners[(*testCaseInput)], &attempt)
 	attempt.Finish()
 	snapshot := s.Productions(child.Obj.Named(), nil)
-	parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+	parent, ok := s.Parent(child.Obj.Named(), nil)
 	wantParent := p
 	if (*testCaseInput) == 0 {
 		wantParent = q
@@ -332,7 +332,7 @@ func testStoreProductionsRetainsAcceptedOwnerCase2(
 			got,
 			func(v manifest.Production) bool { return v.Owner == p },
 		), "accepted owner lost or redundant thin evidence added: %v", got)
-	parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+	parent, ok := s.Parent(child.Obj.Named(), nil)
 	assert.FatalIf(
 		t,
 		ok == (*testCaseInput) || (!(*testCaseInput) && parent != p),
@@ -355,7 +355,7 @@ func testStoreProductionsRetainsAcceptedOwnerCase2(
 	}}
 	assert.Equal(t, len(s.Productions(child.Obj.Named(), withdrawn)), 0)
 	{
-		parent, ok := s.RenderedParent(
+		parent, ok := s.Parent(
 			child.Obj.Named(),
 			withdrawn,
 		)

@@ -54,7 +54,7 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 		assert.Equal(t, valid, true)
 		assert.Equal(t, &independent.Output[0] == &first.Output[0], false)
 	}
-	preparation.cache, preparation.complete = cache, true
+	preparation.cache, preparation.complete = cache.owner, true
 	var next Preparation
 	assert.Equal(t, preparation.Matches(cache, &RenderRequest{}), true)
 	next, preparation = preparation, Preparation{}

@@ -3,6 +3,7 @@ package selection
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/maphash"
 	"slices"
 	"testing"
@@ -36,9 +37,17 @@ func TestProject_BatchIdentities(t *testing.T) {
 			}
 			st := store.New()
 			st.AddObject(entry)
-			runs := []Snapshot{{Store: st, Complete: true, Manifests: []manifest.DocumentBatch{{
-				Parent: entry, Documents: []map[string]any{doc}, Identities: tc.identities,
-			}}}}
+			key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+			index := &manifest.DiscoveryIndex{
+				ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{entry.Named(): key},
+			}
+			runs := []Snapshot{{
+				Store: st, Index: index, Complete: true,
+				Entry: EntryIdentity{Producer: testutil.KustomizationID("apps", "stale"), Key: entry.Named()},
+				Manifests: []manifest.DocumentBatch{{
+					Parent: entry, Documents: []map[string]any{doc}, Identities: tc.identities,
+				}},
+			}}
 			before, err := json.Marshal(runs[0].Manifests)
 			assert.NoError(t, err)
 			results, errs := Project(
@@ -49,6 +58,12 @@ func TestProject_BatchIdentities(t *testing.T) {
 			assert.NoError(t, errs.Selected)
 			assert.NoError(t, errs.Remaining)
 			assert.Equal(t, len(results), 1)
+			assert.Diff(t, results[0].ProducerKeys, index.ProducerKeys)
+			assert.Diff(
+				t,
+				results[0].ProducerKeys,
+				map[manifest.NamedResource]manifest.NamedResource{entry.Named(): key},
+			)
 			assert.Equal(t, len(results[0].Manifests), 1)
 			assert.Diff(t, results[0].Manifests[0].Documents, []map[string]any{doc})
 			assert.Diff(
@@ -528,13 +543,18 @@ func TestProjectIndex_PreservesBorrowedReaders(t *testing.T) {
 		"shared.yaml":   {{Reader: kept}, {Reader: excluded}},
 		"excluded.yaml": {{Reader: excluded}},
 	}
-	index := &manifest.DiscoveryIndex{Readers: readers}
+	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
+	index := &manifest.DiscoveryIndex{
+		Readers:      readers,
+		ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{kept: key},
+	}
 	assert.Equal(t, ProjectIndex(index, nil), index)
 	decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(
 		&Admission{Needed: []manifest.NamedResource{kept}},
 		true,
 	)
 	projected := ProjectIndex(index, decision)
+	assert.Diff(t, projected.ProducerKeys, index.ProducerKeys)
 	assert.Diff(t, projected.Readers, map[string][]manifest.FileReader{"shared.yaml": {{Reader: kept}}})
 	assert.Diff(t, index.Readers, readers)
 	assert.Equal(t, len(index.Readers["shared.yaml"]), 2)
@@ -613,6 +633,51 @@ func TestSnapshot_HiddenParentPredictions(t *testing.T) {
 			assert.Equal(t, references[0].Gate, manifest.GateParents)
 			assert.Equal(t, references[0].Optional, true)
 			assert.Equal(t, st.GetDeclaration(child), nil)
+		})
+	}
+}
+
+func TestProject_ScopedEmitterOutput(t *testing.T) {
+	t.Parallel()
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("emitter selected %t", selected), func(t *testing.T) {
+			t.Parallel()
+			parent := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
+			emitter := &manifest.ResourceSet{Name: "emitter", Namespace: "apps"}
+			child := &manifest.ConfigMap{Name: "required", Namespace: "apps"}
+			st := store.New()
+			for _, object := range []manifest.BaseManifest{parent, emitter, child} {
+				st.AddObject(object)
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Named(): {Parent: emitter.Named()},
+			}}
+			admission := &Admission{Needed: []manifest.NamedResource{child.Named()}}
+			if selected {
+				admission.Selected = []manifest.NamedResource{emitter.Named()}
+			}
+			decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(admission, true)
+			document := testutil.ObjectDocument(child)
+			snapshot := Snapshot{
+				Store: st, Index: index, Decision: decision, Complete: true,
+				Emissions: []EmissionFacts{{
+					Emitter: emitter, Parent: parent,
+					Documents: []DocumentFact{{Document: document, Identity: child.Named()}},
+				}},
+			}
+			results, failures := Project([]Snapshot{snapshot}, nil, Request{Roots: []manifest.NamedResource{{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps",
+			}}})
+			assert.NoError(t, failures.Selected)
+			assert.NoError(t, failures.Remaining)
+			assert.Equal(t, len(results), 1)
+			if selected {
+				assert.Equal(t, len(results[0].Manifests), 1)
+				assert.Diff(t, results[0].Manifests[0].Documents, []map[string]any{document})
+			} else {
+				assert.Equal(t, len(results[0].Manifests), 0)
+			}
+			assert.Equal(t, decision.Reconcile(child.Named()), true)
 		})
 	}
 }

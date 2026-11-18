@@ -79,9 +79,11 @@ func assertSuppliedApplication(t *testing.T, runs []Rendered, supplied manifest.
 	t.Helper()
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "tree construction = %+v", runs)
 	o, result := runs[0].Orchestrator, runs[0].Result
-	if o.store.HasInventory(supplied) || o.store.GetArtifact(supplied, store.ArtifactContent) != nil {
-		t.Fatal("supplied applier rendered")
-	}
+	assert.FatalIf(
+		t,
+		o.store.HasInventory(supplied) || o.store.GetArtifact(supplied, store.ArtifactContent) != nil,
+		"supplied applier rendered",
+	)
 	if _, known := o.store.GetStatus(supplied); known {
 		t.Fatal("supplied applier acquired status")
 	}
@@ -90,14 +92,18 @@ func assertSuppliedApplication(t *testing.T, runs []Rendered, supplied manifest.
 		if !indexed || record.Origin != manifest.SuppliedDeclaration || record.Declaration == nil {
 			t.Fatalf("supplied application missing from discovery: indexed=%t record=%+v", indexed, record)
 		}
-		if names := configMapNames(result); len(names) != 1 || !names["literal"] || len(result.Manifests) != 1 {
-			t.Fatalf("literal entry output = %v", names)
-		}
+		names := configMapNames(result)
+		assert.FatalIf(
+			t,
+			len(names) != 1 || !names["literal"] || len(result.Manifests) != 1,
+			"literal entry output = %v",
+			names,
+		)
 		if !o.entryBinding.Producer.ReportHidden() || !o.store.HasInventory(o.entryBinding.Producer) ||
 			len(result.Manifests) == 0 {
 			t.Fatalf("literal root did not render: %+v", o.entryBinding)
 		}
-	} else if o.entryBinding.Producer != (manifest.NamedResource{}) {
+	} else if o.entryBinding.Producer == supplied || !o.entryBinding.Producer.ReportHidden() {
 		t.Fatal("noncovering evidence qualified entry")
 	}
 	projectedResults0, projectionErrors0 := Select(runs,

@@ -154,7 +154,7 @@ func (q *requiredSelection) addOtherParents(other *selectionSide, id manifest.Na
 	visited := make(map[manifest.NamedResource]bool)
 	for s.run.Store.GetObject(id) == nil && !visited[id] {
 		visited[id] = true
-		parent, ok := other.run.parentOf(id)
+		parent, ok := other.run.Store.Parent(id, other.run.Index)
 		if !ok {
 			break
 		}
@@ -171,7 +171,7 @@ func (q *requiredSelection) expandPrerequisites() {
 	for len(q.work) > 0 {
 		id := q.work[len(q.work)-1]
 		q.work = q.work[:len(q.work)-1]
-		if parent, ok := q.side.run.parentOf(id); ok {
+		if parent, ok := q.side.run.Store.Parent(id, q.side.run.Index); ok {
 			q.add(parent)
 		}
 		for dep := range q.side.run.Store.RequiredInputs(id) {
@@ -665,3 +665,26 @@ type FailuresError struct{ Message string }
 
 func (e *FailuresError) Error() string { return e.Message }
 func (*FailuresError) Unwrap() error   { return manifest.ErrFlux }
+
+func (b *batchSelection) scopeIncludes(id manifest.NamedResource) (bool, error) {
+	s := b.collection.side
+	if id.KindInfo().Runnable && s.run.Facts != nil &&
+		manifest.DiagnosticFor(b.object.Named(), b.object).Resource == (manifest.NamedResource{}) {
+		facts := s.run.Facts.RootEvidence(id, nil)
+		if !facts.Scope.NativeOperand && Root(facts).InitialIndependent {
+			return false, nil
+		}
+	}
+	if !s.run.Decision.restricted() {
+		return true, nil
+	}
+	owner, owned := s.run.Store.Parent(id, s.run.Index)
+	object := s.run.Store.GetObject(owner)
+	if !owned || owner == b.object.Named() || object == nil || object.EmissionPolicy().DocumentScope {
+		return true, nil
+	}
+	if s.run.Decision.Output(owner) {
+		return true, nil
+	}
+	return b.selectedOutput(id)
+}

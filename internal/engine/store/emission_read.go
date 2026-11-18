@@ -2,6 +2,7 @@ package store
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -127,7 +128,7 @@ func (s *Store) getEmission(
 	if c := s.coverage[id]; c != nil {
 		e.coverage = c.records
 	}
-	e.bindSource(s, obj, reads, id)
+	e.bindSource(s, obj, reads)
 	return obj, view.child.Doc, e
 }
 
@@ -262,15 +263,34 @@ func (s *Store) projectReferenceData(
 	return candidate, true
 }
 
-// RenderedParent returns the smallest eligible accepted or discovered rendered owner.
-// A nil index uses the installed discovery index.
-func (s *Store) RenderedParent(
-	id manifest.NamedResource,
-	index *manifest.DiscoveryIndex,
-) (manifest.NamedResource, bool) {
+// Parent MUST prefer indexed structure over accepted rendered relations.
+func (s *Store) Parent(id manifest.NamedResource, index *manifest.DiscoveryIndex) (manifest.NamedResource, bool) {
+	if index == nil {
+		index = s.index.Load()
+	}
+	if record, _ := index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
+		return record.Parent, true
+	}
 	result := productionResult{id: id, parentOnly: true}
 	s.visitProductions(id, index, &result)
 	return result.parent, result.parent != (manifest.NamedResource{})
+}
+
+// RenderedParents MUST exclude self relations and retain every accepted producer.
+func (s *Store) RenderedParents(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+) iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		result := productionResult{id: id, parentOnly: true, allParents: true}
+		s.visitProductions(id, index, &result)
+		slices.SortFunc(result.parents, manifest.NamedResource.Compare)
+		for _, parent := range slices.Compact(result.parents) {
+			if !yield(parent) {
+				return
+			}
+		}
+	}
 }
 
 // SourceAdmission rejects initial source support after accepted ownership retires it.
@@ -284,6 +304,8 @@ type productionResult struct {
 	source        manifest.NamedResource
 	open          bool
 	qualified     bool
+	retiredStatic bool
+	hideEvidence  bool
 	reference     *Declaration
 	data          manifest.Data
 	warnings      []manifest.Warning
@@ -295,14 +317,12 @@ type productionResult struct {
 	accepted      bool
 	owned         bool
 	parentOnly    bool
+	allParents    bool
+	parents       []manifest.NamedResource
 	reads         *ReadSet
 	captureTarget bool
 	incoming      *Child
 	watch         bool
-}
-
-func (r *productionResult) reset(evidence []manifest.Production) {
-	r.out, r.matched, r.owned, r.parent = evidence, 0, false, manifest.NamedResource{}
 }
 
 func (r *productionResult) add(p *manifest.Production) {
@@ -311,9 +331,12 @@ func (r *productionResult) add(p *manifest.Production) {
 	}
 	if r.parentOnly {
 		if p.Owner != (manifest.NamedResource{}) && p.Owner != r.id && p.Authored == (manifest.NamedResource{}) &&
-			p.Declaration == (manifest.NamedResource{}) &&
-			(r.parent == (manifest.NamedResource{}) || p.Owner.Compare(r.parent) < 0) {
-			r.parent = p.Owner
+			p.Declaration == (manifest.NamedResource{}) {
+			if r.allParents {
+				r.parents = append(r.parents, p.Owner)
+			} else if r.parent == (manifest.NamedResource{}) || p.Owner.Compare(r.parent) < 0 {
+				r.parent = p.Owner
+			}
 		}
 		return
 	}
@@ -361,7 +384,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	result.out = evidence
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	result.classifySource(new(sh.cells[id]), provisional)
+	result.classifyTarget(new(sh.cells[id]), provisional)
 	for i := range evidence {
 		if result.incoming == nil {
 			result.addVisibleProduction(s, id, &evidence[i], reads)
@@ -374,7 +397,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		result.captureReferenceLocked(sh, id)
 	}
 	if result.incoming == nil {
-		sh.addProductionMembers(id, result, reads, provisional)
+		sh.addProductionMembers(id, result, reads)
 	}
 	sh.mu.RUnlock()
 	if reads != nil {
@@ -383,13 +406,20 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	result.finishProductions()
 }
 
-func (r *productionResult) classifySource(cell *objectCell, provisional bool) {
+func (r *productionResult) classifyTarget(cell *objectCell, provisional bool) {
 	r.qualified = cell.static != nil &&
 		(cell.classified && cell.binding != nil && cell.binding.Ref.NamedResource == r.source ||
 			provisional && r.source == manifest.BootstrapSourceID)
 	if r.qualified && cell.retired {
 		r.open = false
 	}
+	if r.incoming != nil {
+		return
+	}
+	hidden := cell.hidden && cell.reference == nil
+	r.retiredStatic = hidden || cell.static != nil && cell.retired && (provisional || cell.classified)
+	// Retiring source-bound bytes MUST leave other producers' predictions eligible.
+	r.hideEvidence = hidden && (!cell.retired || !cell.classified || cell.binding == nil)
 }
 
 func sameProductionContext(
@@ -403,7 +433,7 @@ func sameProductionContext(
 		return false
 	}
 	ac, bc := coverage[a.Owner], coverage[b.Owner]
-	return ac == nil || bc == nil || ac.binding.equal(&bc.binding)
+	return ac == nil || bc == nil || ac.binding(a.Source).equal(bc.binding(b.Source))
 }
 
 //nolint:gocritic // The slices callback contract requires value parameters.
@@ -428,13 +458,6 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	s.unlockAll()
 }
 
-func (s *Store) contributionBinding(id manifest.NamedResource) sourceBinding {
-	if c := s.coverage[id]; c != nil {
-		return c.binding
-	}
-	return sourceBinding{}
-}
-
 // Bootstrap promotion alone supplies no independent authority against accepted output.
 func bootstrapSeed(productions []manifest.Production) bool {
 	if slices.ContainsFunc(productions, func(p manifest.Production) bool {
@@ -452,7 +475,7 @@ func bootstrapSeed(productions []manifest.Production) bool {
 	})
 }
 
-func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSet, id manifest.NamedResource) {
+func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSet) {
 	getArtifact := s.GetArtifact
 	if reads != nil {
 		getArtifact = reads.GetArtifact
@@ -460,18 +483,45 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.BindsSource() {
 			e.binding.source = ref.NamedResource
-			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
-				e.binding.artifact = a
-			}
 			break
 		}
 	}
-	if e.binding.source.Name == "" && s.contributionBinding(id).source == manifest.BootstrapSourceID {
-		e.binding.source = manifest.BootstrapSourceID
-		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
-			e.binding.artifact = a
-		}
+	if binding := sourcePathBinding(obj, getArtifact); binding.artifact != nil {
+		e.binding = binding
+		return
 	}
+	if e.binding.source == (manifest.NamedResource{}) {
+		e.binding.source = s.coverage[obj.Named()].unambiguousSource()
+	}
+	if e.binding.source != (manifest.NamedResource{}) {
+		e.binding = bindSourceArtifact(e.binding.source, getArtifact)
+	}
+}
+
+func bindSourceArtifact(
+	source manifest.NamedResource,
+	getArtifact func(manifest.NamedResource, ArtifactRead) Artifact,
+) sourceBinding {
+	artifact, _ := getArtifact(source, ArtifactContent).(*SourceArtifact)
+	return sourceBinding{source: source, artifact: artifact}
+}
+
+func sourcePathBinding(
+	obj manifest.BaseManifest,
+	getArtifact func(manifest.NamedResource, ArtifactRead) Artifact,
+) sourceBinding {
+	if obj == nil {
+		return sourceBinding{}
+	}
+	source, _, applies := obj.SourcePath()
+	if !applies {
+		return sourceBinding{}
+	}
+	binding := bindSourceArtifact(source, getArtifact)
+	if binding.artifact == nil {
+		return sourceBinding{}
+	}
+	return binding
 }
 
 func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.NamedResource]*contributor {
@@ -486,7 +536,7 @@ func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.N
 			independent: rawDeclarationAuthority(index, id, false),
 			classified:  rawDeclarationAuthority(index, id, true),
 		}
-		s.addDiscoveryCoverage(coverage, &record)
+		s.addDiscoveryCoverage(index, coverage, &record)
 	}
 	return coverage
 }
@@ -526,6 +576,7 @@ func (s *Store) installDiscoveryCoverageLocked(
 }
 
 func (s *Store) addDiscoveryCoverage(
+	index *manifest.DiscoveryIndex,
 	coverage map[manifest.NamedResource]*contributor,
 	record *footprint,
 ) {
@@ -539,16 +590,16 @@ func (s *Store) addDiscoveryCoverage(
 			}
 			c := coverage[p.Owner]
 			if c == nil {
-				c = &contributor{binding: sourceBinding{source: p.Source}}
+				c = &contributor{bindings: map[manifest.NamedResource]*sourceBinding{}}
 				coverage[p.Owner] = c
+			}
+			if c.binding(p.Source) == nil {
+				c.bindings[p.Source] = new(s.discoveryBinding(index, p.Owner, p.Source))
 			}
 			c.declaredOutputs = c.declaredOutputs || p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
 			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
 				c.records = append(c.records, *record)
-			}
-			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
-				c.binding.artifact = a
 			}
 		}
 	}
@@ -575,19 +626,15 @@ func (sh *shard) addProductionMembers(
 	id manifest.NamedResource,
 	result *productionResult,
 	reads *ReadSet,
-	provisional bool,
 ) {
 	cell := sh.cells[id]
 	if cell.hidden && cell.reference == nil {
-		result.reset(nil)
 		return
 	}
 	// A directly bound declaration can precede its discovery record.
-	if cell.static != nil && cell.binding != nil && cell.support == nil && len(result.out) == 0 && cell.bound() {
+	if !result.retiredStatic && cell.static != nil && cell.binding != nil && cell.support == nil &&
+		len(result.out) == 0 && cell.bound() {
 		result.add(&manifest.Production{Source: cell.binding.Ref.NamedResource})
-	}
-	if cell.static != nil && cell.retired && (provisional || cell.classified) {
-		result.reset(nil)
 	}
 	for _, m := range sh.members[id] {
 		e := m.slot.current.Load()
@@ -676,15 +723,18 @@ func (r *productionResult) addVisibleProduction(
 		if reads != nil {
 			reads.sample(id, c.slot, accepted, r.watch)
 		}
-		if r.source != (manifest.NamedResource{}) && !r.qualified && p.Source == r.source &&
-			accepted.shadows(new(c.binding)) {
+		binding := c.binding(p.Source)
+		shadowed := accepted.shadows(binding)
+		if shadowed && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
 			r.open = false
 		}
-		if c.slot.hidden.Load() || accepted.shadows(new(c.binding)) {
+		if c.slot.hidden.Load() || shadowed {
 			return
 		}
 	}
-	r.add(p)
+	if !r.hideEvidence && (!r.retiredStatic || p.Owner != (manifest.NamedResource{}) && p.Owner != id) {
+		r.add(p)
+	}
 }
 
 type incomingProductionEvidence struct {
@@ -776,12 +826,10 @@ func (s *Store) sourceQualifiedReferenceData(
 	if reads != nil {
 		getArtifact = reads.GetArtifact
 	}
-	if c := s.coverage[candidate.Production.Owner]; c != nil &&
-		c.binding.source == candidate.Production.Source &&
-		c.binding.artifact != nil {
-		artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
-		binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
-		if !c.binding.equal(&binding) {
+	p := candidate.Production
+	if frozen := s.coverage[p.Owner].binding(p.Source); frozen != nil && frozen.artifact != nil {
+		binding := bindSourceArtifact(frozen.source, getArtifact)
+		if !frozen.equal(&binding) {
 			return candidate, false
 		}
 	}

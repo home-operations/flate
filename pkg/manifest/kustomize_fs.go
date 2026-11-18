@@ -73,58 +73,40 @@ func (k *Kustomization) renderRoots(components []string, yield func(string) bool
 	}
 }
 
-// BuildKSClaims constructs longest-prefix-first claims from authored paths and
-// already-decoded components. Kustomizations without a path or source claim nothing.
+// BuildKSClaims MUST use components from the admitted source view.
 func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) []KSClaim {
 	claims := make([]KSClaim, 0, len(kss))
 	for _, ks := range kss {
 		if _, _, applies := ks.SourcePath(); !applies {
 			continue
 		}
-		id := ks.Named()
-		base := true
-		ks.renderRoots(components[id], func(root string) bool {
-			prefix := root
-			if !base {
-				var ok bool
-				prefix, ok = kustpath.Resolve("", root, kustpath.Claim)
-				if !ok {
-					return true
-				}
-			}
-			base = false
-			if prefix != "" {
-				prefix += "/"
-			}
-			claims = append(claims, KSClaim{ID: id, Prefix: prefix})
-			return true
-		})
+		claims = ks.appendClaims(claims, ks.Path, components[ks.Named()])
 	}
 	slices.SortStableFunc(claims, func(a, b KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
 	return claims
 }
 
-// StrictParent returns the deepest claimant other than self. selfPrefixes excludes
-// peers that share a claimed path, or their dependency gates would deadlock.
-// Claims must be ordered longest-prefix-first by BuildKSClaims.
-func StrictParent(
-	claims []KSClaim,
-	file string,
-	self NamedResource,
-	selfPrefixes map[string]struct{},
-) (NamedResource, bool) {
-	for _, c := range claims {
-		if c.ID == self {
-			continue
+func (k *Kustomization) appendClaims(claims []KSClaim, path string, components []string) []KSClaim {
+	declaration := *k
+	declaration.Path = path
+	base := true
+	declaration.renderRoots(components, func(root string) bool {
+		prefix := root
+		if !base {
+			var ok bool
+			prefix, ok = kustpath.Resolve("", root, kustpath.Claim)
+			if !ok {
+				return true
+			}
 		}
-		if _, peer := selfPrefixes[c.Prefix]; peer {
-			continue
+		base = false
+		if prefix != "" {
+			prefix += "/"
 		}
-		if strings.HasPrefix(file, c.Prefix) {
-			return c.ID, true
-		}
-	}
-	return NamedResource{}, false
+		claims = append(claims, KSClaim{ID: k.Named(), Prefix: prefix})
+		return true
+	})
+	return claims
 }
 
 // NormalizeClaimBase returns a repo-relative base with no trailing slash.

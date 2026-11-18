@@ -194,3 +194,26 @@ func testReadSetBoundInventoryPublicationCase(
 	assert.Equal(t, st.GetDeclaration(raw.Obj.Named()), published.Obj)
 	assert.Equal(t, st.GetObject(owner.Named()), manifest.BaseManifest(owner))
 }
+
+func TestProductions_IndependentInputCaptures(t *testing.T) {
+	t.Parallel()
+	st := New()
+	first := emissionChild("first", "one").Obj.Named()
+	second := emissionChild("second", "two").Obj.Named()
+	firstOwner, secondOwner := ownerID("first-owner"), ownerID("second-owner")
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		first:  {Productions: []manifest.Production{{Owner: firstOwner}}},
+		second: {Productions: []manifest.Production{{Owner: secondOwner}}},
+	}}
+	var reads ReadSet
+	var inputs [2]Input
+	reads.Init(st, ownerID("consumer"), inputs[:])
+	defer reads.Close()
+	capturedFirst := reads.Productions(first, index)
+	capturedSecond := reads.Productions(second, index)
+	assert.Diff(t, capturedFirst, []manifest.Production{{Owner: firstOwner}})
+	assert.Diff(t, capturedSecond, []manifest.Production{{Owner: secondOwner}})
+	assert.Diff(t, reads.Productions(first, index), capturedFirst)
+	assert.Diff(t, reads.Productions(second, index), capturedSecond)
+	assert.Equal(t, reads.Valid(), true)
+}

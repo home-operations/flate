@@ -1,0 +1,8 @@
+
+  ✓  Kustomization  flux-system/consumer
+  ✓  Kustomization  flux-system/flux-system
+  ✓  Kustomization  flux-system/producer
+  ✓  GitRepository  flux-system/cluster
+  ⊘  Kustomization  flux-system/apps  blocked by flux-system/unavailable-values (not found)
+
+  ✗ 4 passed · 1 blocked   <DUR>

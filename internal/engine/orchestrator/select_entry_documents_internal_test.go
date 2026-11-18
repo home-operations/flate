@@ -164,6 +164,7 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 	run.store.AddObject(entry)
 	run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
 	run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
+	run.index.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()}
 	docs := []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
 	}
@@ -536,7 +537,8 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 		run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
 		id := manifest.DocIdentity(doc)
 		run.index = &manifest.DiscoveryIndex{
-			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}},
+			ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()},
+			Records:      map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}},
 			Readers: map[string][]manifest.FileReader{
 				"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}},
 			},
@@ -602,6 +604,7 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 			Source:   manifest.BootstrapSourceID,
 			Path:     ".",
 		}
+		runs[i].index.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{obj.Named(): entry.Named()}
 		runs[i].store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 		if i == 0 {
 			docs := []map[string]any{

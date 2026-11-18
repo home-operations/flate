@@ -613,47 +613,31 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 	if err := o.completeDeclarations(ctx, other, changes); err != nil {
 		return err
 	}
-	if other == nil {
-		before, after := o.index, (*manifest.DiscoveryIndex)(nil)
-		inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, nil}
-		if o.cfg.ID.Side == manifest.TreeHead {
-			before, after = after, before
-			inputs[0], inputs[1] = inputs[1], inputs[0]
+	before, after := o.index, (*manifest.DiscoveryIndex)(nil)
+	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, nil}
+	if other != nil {
+		after = other.index
+		inputs[1] = other.loader.InputContent
+	}
+	if o.cfg.ID.Side == manifest.TreeHead {
+		before, after = after, before
+		inputs[0], inputs[1] = inputs[1], inputs[0]
+	}
+	for _, current := range []*Orchestrator{o, other} {
+		if current == nil {
+			continue
 		}
 		resolved, err := changes.WithReaders(
 			ctx,
 			[2]*manifest.DiscoveryIndex{before, after},
 			inputs,
-			o.cfg.work.Scope(),
+			current.cfg.work.Scope(),
 		)
 		if err != nil {
 			return err
 		}
-		o.cfg.ExternalChanges = resolved
-		return nil
+		current.cfg.ExternalChanges = resolved
 	}
-	projectedOther := projectEntryReaders(other.index, other.entryBinding.Producer, o.entryBinding.Producer)
-	projectedCurrent := projectEntryReaders(o.index, o.entryBinding.Producer, other.entryBinding.Producer)
-	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, other.loader.InputContent}
-	before, after := o.index, projectedOther
-	if o.cfg.ID.Side == manifest.TreeHead {
-		before, after = after, before
-		inputs[0], inputs[1] = inputs[1], inputs[0]
-	}
-	resolved, err := changes.WithReaders(ctx, [2]*manifest.DiscoveryIndex{before, after}, inputs, o.cfg.work.Scope())
-	if err != nil {
-		return err
-	}
-	o.cfg.ExternalChanges = resolved
-	before, after = projectedCurrent, other.index
-	if o.cfg.ID.Side == manifest.TreeHead {
-		before, after = after, before
-	}
-	resolved, err = changes.WithReaders(ctx, [2]*manifest.DiscoveryIndex{before, after}, inputs, other.cfg.work.Scope())
-	if err != nil {
-		return err
-	}
-	other.cfg.ExternalChanges = resolved
 	return nil
 }
 

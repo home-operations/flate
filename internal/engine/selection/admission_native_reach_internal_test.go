@@ -19,7 +19,7 @@ func TestAdmission_NativeConstructionReachExpires(t *testing.T) {
 		{name: "pending", root: NativeRootFacts{Path: "entry", Entry: true}, want: true},
 		{name: "built", root: NativeRootFacts{Path: "entry", Entry: true, Built: true}},
 		{name: "selected", root: NativeRootFacts{Path: "entry", Entry: true, Selected: true}},
-		{name: "claimed", root: NativeRootFacts{Path: "entry", Entry: true, Claims: []manifest.KSClaim{{Prefix: "entry/"}}}},
+		{name: "claimed", root: NativeRootFacts{Path: "entry", Entry: true, Index: &manifest.DiscoveryIndex{Claims: map[string][]manifest.NamedResource{"entry/": {{Name: "owner"}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

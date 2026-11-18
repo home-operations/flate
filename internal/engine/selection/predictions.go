@@ -25,8 +25,8 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 			if _, known := s.Store.GetStatus(id); known {
 				continue
 			}
-			evidence := s.Facts.RootEvidence(id, &reads, true)
-			parent, _ := s.parentOf(id)
+			evidence := CaptureRoot(s.Facts.RootEvidence(id, &reads), &reads, s.Index)
+			parent, _ := s.Store.Parent(id, s.Index)
 			parent = cmp.Or(parent, Root(evidence).Owner)
 			if evidence.Scope.NativeOperand {
 				parent = cmp.Or(parent, s.Entry.Producer)
@@ -39,7 +39,7 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 				// Synthetic entry parents have no emitted declaration to require.
 			case s.Store.EmissionOwner(parent) == (manifest.NamedResource{}):
 				continue
-			case s.Facts.RootEvidence(parent, &reads, true).Occurrence.Declaration.File == "":
+			case CaptureRoot(s.Facts.RootEvidence(parent, &reads), &reads, s.Index).Occurrence.Declaration.File == "":
 				continue
 			}
 			occurrence := evidence.Occurrence

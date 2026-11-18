@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"context"
+
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
@@ -35,6 +37,46 @@ func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	return ready
 }
 
+func (d *Session) preparePlannedPackages(ctx context.Context) (bool, error) {
+	registered := false
+	for _, pkg := range d.entryPackages {
+		d.retainPackage(pkg)
+		if !pkg.register {
+			continue
+		}
+		if err := d.prepareProducer(ctx, pkg.render.owner, d.cfg.Input, nil); err != nil {
+			return false, err
+		}
+		registered = true
+	}
+	return registered, nil
+}
+
+func (d *Session) retainPackage(pkg *plannedPackage) {
+	input, owner := d.cfg.Input, pkg.render.owner
+	if pkg.render.source != input || d.prepared[owner.Named()] != nil {
+		return
+	}
+	request := kustomize.RenderRequest{
+		Source: input, Spec: owner, SubPath: owner.Path,
+		ApplyIgnore:         kustomize.ApplySourceIgnore(owner, input),
+		StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds,
+	}
+	if !pkg.render.preparation.Matches(d.cfg.Trees, &request) {
+		return
+	}
+	frame := &declarationPreparation{
+		declarationRender: pkg.render,
+		complete:          true,
+		work:              d.preparationWork(owner, owner.EffectiveSourceID()).RenderWork(),
+	}
+	frame.captureSupport(d.cfg.Store, owner.EffectiveSourceID())
+	if d.prepared == nil {
+		d.prepared = map[manifest.NamedResource]*declarationPreparation{}
+	}
+	d.prepared[owner.Named()] = frame
+}
+
 func (q *entryQualification) close() {
 	q.preparation.Retire()
 	*q = entryQualification{}
@@ -67,10 +109,9 @@ func (p *declarationPreparation) retireSupport(st *store.Store) {
 }
 
 func (p *declarationPreparation) retire(st *store.Store) {
-	p.preparation = kustomize.Preparation{}
 	p.retireSupport(st)
-	p.work, p.owner, p.source, p.receipt, p.content = nil, nil, nil, nil, nil
-	p.children, p.warnings = nil, nil
+	p.declarationRender = declarationRender{}
+	p.work = nil
 	p.complete, p.registered, p.err = false, false, nil
 }
 
@@ -106,6 +147,8 @@ func (d *Session) Close() {
 		return
 	}
 	d.planner = nil
+	d.packages = nil
+	d.entryPackages = nil
 	d.entryBuilderInput = nil
 	d.entryBuilderPath = ""
 	d.entryBuilder = false

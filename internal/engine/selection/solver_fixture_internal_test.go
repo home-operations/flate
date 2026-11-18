@@ -130,7 +130,7 @@ func (f *solverFacts) CatalogObject(id manifest.NamedResource) manifest.BaseMani
 
 func (f *solverFacts) SourceExternal(manifest.NamedResource, *store.ReadSet) bool { return false }
 
-func (f *solverFacts) RootEvidence(id manifest.NamedResource, _ *store.ReadSet, _ bool) RootEvidence {
+func (f *solverFacts) RootEvidence(id manifest.NamedResource, _ *store.ReadSet) RootEvidence {
 	return f.roots[id]
 }
 

@@ -461,7 +461,7 @@ spec:
 			}), false)
 			assert.NoError(t, l.PromoteOrphans(t.Context()))
 			assert.Equal(t, st.GetObject(source) == nil, true)
-			assert.Equal(t, selection.Root(l.RootEvidence(source, nil, true)).Independent, false)
+			assert.Equal(t, selection.Root(rootEvidenceForTest(l, source, nil)).Independent, false)
 			fs := filesys.MakeFsInMemory()
 			for name, file := range files {
 				target := filepath.Join(root, name)

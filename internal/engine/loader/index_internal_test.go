@@ -144,7 +144,7 @@ func snapshotIndexForTest(index *manifest.DiscoveryIndex) manifest.DiscoveryInde
 	return snapshot
 }
 
-func assertIndexForTest(t *testing.T, got, want manifest.DiscoveryIndex) {
+func assertIndexForTest(t *testing.T, got, want *manifest.DiscoveryIndex) {
 	t.Helper()
 	{
 		diff := gocmp.Diff(want, got, gocmp.Comparer(manifest.Equal))
@@ -214,10 +214,10 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 				err := l.FinalizeIndex(t.Context(), root, true)
 				assert.NoError(t, err)
 			}
-			assertIndexForTest(t, *l.Index, snapshot)
+			assertIndexForTest(t, l.Index, &snapshot)
 			fresh := newLoader()
 			rendererFixture(t, fresh, root)
-			assertIndexForTest(t, *fresh.Index, snapshot)
+			assertIndexForTest(t, fresh.Index, &snapshot)
 		})
 	}
 }
@@ -323,13 +323,13 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 				err := l.FinalizeIndex(t.Context(), "", true)
 				assert.NoError(t, err)
 			}
-			assertIndexForTest(t, *l.Index, snapshot)
+			assertIndexForTest(t, l.Index, &snapshot)
 			fresh := newLoader()
 			{
 				err := fresh.FinalizeIndex(t.Context(), "", true)
 				assert.NoError(t, err)
 			}
-			assertIndexForTest(t, *fresh.Index, snapshot)
+			assertIndexForTest(t, fresh.Index, &snapshot)
 		})
 	}
 }

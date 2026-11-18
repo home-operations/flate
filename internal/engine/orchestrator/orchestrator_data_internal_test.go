@@ -95,7 +95,7 @@ func TestOrchestrator_ParentOfAllocations(t *testing.T) {
 	publishFixture(t, o.store, owner, []manifest.NamedResource{child})
 	var parent manifest.NamedResource
 	var ok bool
-	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.parentOf(child) })
+	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.store.Parent(child, o.index) })
 
 	assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
 }
@@ -465,7 +465,7 @@ func testOrchestratorParentOfCase(t *testing.T, testCaseInput testOrchestratorPa
 	if testCaseInput.tc.rendered {
 		publishFixture(t, o.store, (*testCaseInput.rendered), []manifest.NamedResource{(*testCaseInput.id)})
 	}
-	got, ok := o.parentOf((*testCaseInput.id))
+	got, ok := o.store.Parent((*testCaseInput.id), o.index)
 	want := (*testCaseInput.rendered)
 	if testCaseInput.tc.structural {
 		want = (*testCaseInput.structural)
@@ -493,7 +493,7 @@ func testOrchestratorParentOfMinimumAcceptedOwner(
 	for _, owner := range []manifest.NamedResource{z, a} {
 		publishFixture(t, o.store, owner, []manifest.NamedResource{(*testCaseInput)})
 	}
-	parent, ok := o.parentOf((*testCaseInput))
+	parent, ok := o.store.Parent((*testCaseInput), o.index)
 	if !ok || parent != a || o.store.EmissionOwner((*testCaseInput)) != z {
 		t.Fatalf(
 			"parent=%v/%t content owner=%v, want %v/true and %v",
@@ -506,7 +506,7 @@ func testOrchestratorParentOfMinimumAcceptedOwner(
 	}
 	assert.Diff(t, o.store.Productions((*testCaseInput), nil), []manifest.Production{{Owner: a}, {Owner: z}})
 	o.store.RecordEmitted(a, &store.Emission{Complete: true}, nil)
-	parent, ok = o.parentOf((*testCaseInput))
+	parent, ok = o.store.Parent((*testCaseInput), o.index)
 
 	assert.FatalIf(t, !ok || parent != z, "withdrawn parent=%v/%t, want %v/true", parent, ok, z)
 }
@@ -526,7 +526,7 @@ func testOrchestratorParentOfEmptyDoesNotEraseOwner(
 	o.index.Records[(*testCaseInput.id)] = manifest.DiscoveryRecord{
 		Productions: []manifest.Production{{Owner: (*testCaseInput.rendered)}, {}},
 	}
-	parent, ok := o.parentOf((*testCaseInput.id))
+	parent, ok := o.store.Parent((*testCaseInput.id), o.index)
 
 	assert.FatalIf(
 		t,
@@ -561,7 +561,7 @@ func testOrchestratorParentOfCase2(t *testing.T, testCaseInput testOrchestratorP
 	o.index.Records[(*testCaseInput.id)] = manifest.DiscoveryRecord{
 		Productions: []manifest.Production{testCaseInput.proof.production},
 	}
-	parent, ok := o.parentOf((*testCaseInput.id))
+	parent, ok := o.store.Parent((*testCaseInput.id), o.index)
 
 	assert.FatalIf(t, ok || parent != (manifest.NamedResource{}), "ineligible parent=%v/%t", parent, ok)
 

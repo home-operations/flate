@@ -106,7 +106,7 @@ func Render(
 type Preparation struct {
 	decoded        *decodedRender
 	shaping        *preparedShaping
-	cache          *TreeCache
+	cache          *sourcecache.Cache
 	spec           *manifest.Kustomization
 	source         *store.SourceArtifact
 	label, subPath string
@@ -126,7 +126,7 @@ func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
 	policy := p.binding.Policy.Strict == request.StrictSubstitutions &&
 		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
 	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
-	return p.cache == cache && owner && policy && location
+	return cache != nil && p.cache == cache.owner && owner && policy && location
 }
 
 type renderRequest struct {
@@ -198,7 +198,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	req.Work.Fingerprint(key)
 	work.Finish(nil)
 	prepared := Preparation{
-		cache: c, spec: req.Spec, label: req.Label, subPath: req.SubPath,
+		cache: c.owner, spec: req.Spec, label: req.Label, subPath: req.SubPath,
 		applyIgnore: req.ApplyIgnore,
 		lower:       lower, root: root, key: key,
 	}

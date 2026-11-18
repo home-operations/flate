@@ -4,33 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
+
+	kustypes "sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/tree"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // Entry keeps structural identity separate from the path used for admission.
 type Entry struct {
-	ID       manifest.ClusterID
-	Path     string
-	Input    *store.SourceArtifact
-	prepared *entryInputs
+	ID        manifest.ClusterID
+	Path      string
+	Input     *store.SourceArtifact
+	prepared  *entryInputs
+	aggregate bool
+	roots     []int
 }
 
 type entryInputs struct {
-	input      store.SourceArtifact
-	parsed     *loader.ParsedInputs
-	aliasViews map[string]*store.SourceArtifact
-	sources    map[manifest.NamedResource]entryResolution
+	input       store.SourceArtifact
+	parsed      *loader.ParsedInputs
+	aliasViews  map[string]*store.SourceArtifact
+	sources     map[manifest.NamedResource]entryResolution
+	projections *manifest.ProducerProjections
+	packages    []*plannedPackage
 }
 
 func (e *Entry) matches(input *store.SourceArtifact, scan string) bool {
@@ -38,9 +48,10 @@ func (e *Entry) matches(input *store.SourceArtifact, scan string) bool {
 		return false
 	}
 	prepared := e.prepared
-	return prepared.parsed.Matches(input) &&
+	authored := inputprojection.Authored(input)
+	return prepared.parsed.Matches(authored) &&
 		input.LocalPath == prepared.input.LocalPath && input.LocalRoot == prepared.input.LocalRoot &&
-		prepared.sameContent(input)
+		prepared.sameContent(authored)
 }
 
 func (p *entryInputs) sameContent(input *store.SourceArtifact) bool {
@@ -59,16 +70,22 @@ func (d *Session) Plan(ctx context.Context) ([]Entry, error) {
 	}
 	l := d.loader
 	input := d.cfg.Input
-	roots, err := d.partitionRoots(ctx)
+	roots, err := d.clusterRoots(ctx)
 	switch {
 	case errors.Is(err, errPendingSources):
 		return nil, nil
 	case err != nil:
 		return nil, err
 	}
-	entries, err := partitionEntries(roots, input, d.cfg.Path)
-	if err != nil {
-		return nil, err
+	entries := clusterEntries(roots, input, d.cfg.Path)
+	for i := range entries {
+		if entries[i].aggregate {
+			entries[i].Input, err = aggregateInput(input, d.cfg.Path, d.packages)
+			if err != nil {
+				return nil, err
+			}
+			entries[i].aggregate = entries[i].Input != input
+		}
 	}
 	if err := l.PersistInputs(ctx); err != nil {
 		return nil, err
@@ -81,7 +98,10 @@ func (d *Session) Plan(ctx context.Context) ([]Entry, error) {
 	return entries, nil
 }
 
-func (p *entryInputs) merge(root *entryRoot) {
+func (p *entryInputs) merge(root *clusterRoot) {
+	if root.packageBuild != nil {
+		p.packages = append(p.packages, root.packageBuild)
+	}
 	p.parsed = root.parsed
 	if p.aliasViews == nil {
 		p.aliasViews = maps.Clone(root.views)
@@ -98,16 +118,13 @@ func (p *entryInputs) merge(root *entryRoot) {
 	}
 }
 
-func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []entryRoot) error {
+func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []clusterRoot) error {
 	input := d.cfg.Input
-	prepared := &entryInputs{input: *input}
-	var scope *partitionScope
-	for j := range roots {
+	prepared := &entryInputs{input: *input, projections: d.cfg.Projections}
+	var scope *rootScope
+	for _, j := range entry.roots {
 		root := &roots[j]
-		if !safepath.Contains(entry.Path, filepath.Join(input.LocalPath, root.Path)) {
-			continue
-		}
-		scope = &partitionScope{occurrences: root.Occurrences, parent: scope}
+		scope = &rootScope{occurrences: root.Occurrences, parent: scope}
 		prepared.merge(root)
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(prepared.sources), manifest.NamedResource.Compare) {
@@ -164,274 +181,243 @@ func (d *Session) loadPlan(ctx context.Context) error {
 	return nil
 }
 
-func partitionEntries(roots []entryRoot, input *store.SourceArtifact, scan string) ([]Entry, error) {
-	roots = slices.Clone(roots)
-	slices.SortFunc(roots, func(a, b entryRoot) int { return strings.Compare(a.Path, b.Path) })
-	edges, anyEdge := separationEdges(roots)
-	if !anyEdge {
-		structural := manifest.ClusterID(".")
-		if len(roots) == 1 {
-			structural = manifest.ClusterID(roots[0].Path)
-			if len(roots[0].Anchors) == 1 {
-				structural = manifest.ClusterID(roots[0].Anchors[0])
-			}
+func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan string) []Entry {
+	parents := producerGroups(roots, input.LocalPath)
+	groups := map[int]struct {
+		coordinate string
+		roots      []int
+	}{}
+	anchors := map[int][]string{}
+	for i := range roots {
+		root := &roots[i]
+		if !root.bootstrap {
+			continue
 		}
-		return []Entry{{ID: structural, Path: scan, Input: input}}, nil
+		group := parents[i]
+		members, exists := groups[group]
+		coordinate := members.coordinate
+		if !exists {
+			coordinate = root.Path
+		}
+		for coordinate != "." && !safepath.Contains(filepath.FromSlash(coordinate), filepath.FromSlash(root.Path)) {
+			coordinate = path.Dir(coordinate)
+		}
+		members.coordinate = coordinate
+		groups[group] = members
+		anchors[group] = append(anchors[group], root.Anchors...)
 	}
+	for i, group := range parents {
+		if members, exists := groups[group]; exists {
+			members.roots = append(members.roots, i)
+			groups[group] = members
+		}
+	}
+	entries := make([]Entry, 0, len(groups))
+	for _, group := range slices.Sorted(maps.Keys(groups)) {
+		members := groups[group]
+		coordinate := members.coordinate
+		targets := anchors[group]
+		slices.Sort(targets)
+		targets = slices.Compact(targets)
+		if len(targets) == 1 {
+			coordinate = targets[0]
+		}
+		absolute := filepath.Join(input.LocalPath, filepath.FromSlash(coordinate))
+		if !safepath.Contains(scan, absolute) {
+			coordinate, absolute = members.coordinate, filepath.Join(
+				input.LocalPath,
+				filepath.FromSlash(members.coordinate),
+			)
+		}
+		entries = append(entries, Entry{
+			ID: manifest.ClusterID(coordinate), Path: absolute, Input: input, roots: members.roots,
+		})
+	}
+	if len(entries) == 0 {
+		coordinate, _ := filepath.Rel(input.LocalPath, scan)
+		members := make([]int, len(roots))
+		for i := range members {
+			members[i] = i
+		}
+		return []Entry{
+			{
+				ID:        manifest.ClusterID(filepath.ToSlash(coordinate)),
+				Path:      scan,
+				Input:     input,
+				aggregate: true,
+				roots:     members,
+			},
+		}
+	}
+	if len(entries) == 1 {
+		entries[0].Path = scan
+	}
+	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(string(a.ID), string(b.ID)) })
+	return slices.CompactFunc(entries, func(a, b Entry) bool { return a.ID == b.ID })
+}
 
-	groups, err := partitionGroups(roots, edges)
+func aggregateInput(
+	input *store.SourceArtifact,
+	requested string,
+	packages []loader.PackageEvidence,
+) (*store.SourceArtifact, error) {
+	relative, _ := filepath.Rel(input.LocalPath, requested)
+	authored, err := nativeEntry(input.FS, relative)
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
+	}
+	if authored {
+		return input, nil
+	}
+	resources, err := aggregateResources(input, requested, packages)
 	if err != nil {
 		return nil, err
 	}
-	var entries []Entry
-	for _, group := range groups {
-		label, targets := groupPath(roots, group), groupTargets(roots, group)
-		var native string
-		switch len(targets) {
-		case 0:
-			candidates := groupScans(roots, group, groups)
-			if len(candidates) == 0 {
-				return nil, partitionError(roots, edges, "conflicting entry coordinates")
+	if len(resources) == 0 {
+		return input, nil
+	}
+	document := kustypes.Kustomization{
+		APIVersion: kustypes.KustomizationVersion, Kind: kustypes.KustomizationKind,
+		Resources: resources,
+	}
+	data, err := yaml.Marshal(document)
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("encode entry package: %w", err), "")
+	}
+	const fileMode = 0o644
+	overlay := tree.NewBuilder(input.FS)
+	if err = overlay.AddFile(
+		filepath.ToSlash(filepath.Join(relative, manifest.KustomizeBuilderFilenames[0])),
+		data,
+		fileMode,
+	); err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("construct entry package: %w", err), "")
+	}
+	content, err := overlay.Build()
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("construct entry package: %w", err), "")
+	}
+	projected := *input
+	projected.LocalRoot = input.OriginPath(input.LocalPath)
+	projected.Content, projected.Digest, projected.ContentFingerprint = "", "", nil
+	projected.FS = &inputprojection.Overlay{Tree: content, Authored: input}
+	return &projected, nil
+}
+
+func producerGroups(roots []clusterRoot, root string) []int {
+	parents := make([]int, len(roots))
+	declarations := map[selection.OccurrenceID]int{}
+	for i := range roots {
+		parents[i] = i
+		for j := range roots[i].seeds {
+			occurrence := &roots[i].seeds[j]
+			if safepath.Contains(filepath.Join(root, roots[i].Path),
+				filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File)) {
+				declarations[occurrence.Declaration] = i
 			}
-			native = candidates[0]
-		case 1:
-			label, native = targets[0], targets[0]
-		default:
-			return nil, partitionError(roots, edges, "conflicting bootstrap targets")
-		}
-		if err := manifest.ClusterID(label).Validate(); err != nil {
-			return nil, err
-		}
-		absolute := filepath.Join(input.LocalPath, filepath.FromSlash(native))
-		if !safepath.Contains(scan, absolute) {
-			return nil, partitionError(roots, edges, "entry escapes requested scan")
-		}
-		entries = append(entries, Entry{ID: manifest.ClusterID(label), Path: absolute, Input: input})
-	}
-	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(string(a.ID), string(b.ID)) })
-	for i := 1; i < len(entries); i++ {
-		if entries[i-1].ID == entries[i].ID {
-			return nil, partitionError(roots, edges, "conflicting entry coordinates")
 		}
 	}
-	return entries, nil
+	var find func(int) int
+	find = func(i int) int {
+		if parents[i] != i {
+			parents[i] = find(parents[i])
+		}
+		return parents[i]
+	}
+	join := func(left, right int) {
+		a, b := find(left), find(right)
+		parents[max(a, b)] = min(a, b)
+	}
+	joinRootSources(roots, declarations, join)
+	joinRootOccurrences(roots, declarations, join)
+	for i := range parents {
+		parents[i] = find(i)
+	}
+	return parents
 }
 
-func groupTargets(roots []entryRoot, group []int) []string {
-	var targets []string
-	for _, i := range group {
-		for _, target := range roots[i].Anchors {
-			if !slices.Contains(targets, target) {
-				targets = append(targets, target)
-			}
-		}
-	}
-	return targets
-}
-
-func groupPath(roots []entryRoot, group []int) string {
-	label := roots[group[0]].Path
-	for _, i := range group {
-		for label != "." && !safepath.Contains(filepath.FromSlash(label), filepath.FromSlash(roots[i].Path)) {
-			label = path.Dir(label)
-		}
-	}
-	return label
-}
-
-func groupScans(roots []entryRoot, group []int, groups [][]int) []string {
-	candidates := append(slices.Clone(roots[group[0]].Scans), groupPath(roots, group))
-	for _, i := range group {
-		candidates = slices.DeleteFunc(candidates, func(candidate string) bool {
-			return !safepath.Contains(filepath.FromSlash(candidate), filepath.FromSlash(roots[i].Path))
-		})
-	}
-	for _, other := range groups {
-		if slices.Contains(other, group[0]) {
+func aggregateResources(
+	input *store.SourceArtifact,
+	requested string,
+	packages []loader.PackageEvidence,
+) ([]string, error) {
+	var resources []string
+	for i := range packages {
+		pkg := &packages[i]
+		absolute := filepath.Join(input.LocalPath, filepath.FromSlash(pkg.Path))
+		if !pkg.Independent || !safepath.Contains(requested, absolute) {
 			continue
 		}
-		for _, i := range other {
-			candidates = slices.DeleteFunc(candidates, func(candidate string) bool {
-				return safepath.Contains(filepath.FromSlash(candidate), filepath.FromSlash(roots[i].Path))
-			})
+		exists, err := nativeEntry(input.FS, pkg.Path)
+		if err != nil {
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect aggregate package: %w", err), "")
+		}
+		if exists {
+			resource, _ := filepath.Rel(requested, absolute)
+			resources = append(resources, filepath.ToSlash(resource))
+			continue
+		}
+		for j := range pkg.Occurrences {
+			occurrence := &pkg.Occurrences[j]
+			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+			if !safepath.Contains(requested, file) {
+				continue
+			}
+			resource, _ := filepath.Rel(requested, file)
+			resources = append(resources, filepath.ToSlash(resource))
 		}
 	}
-	return candidates
+	slices.Sort(resources)
+	resources = slices.Compact(resources)
+	return resources, nil
 }
 
-func separationEdges(roots []entryRoot) ([][]string, bool) {
-	type witness struct {
-		occurrence *selection.OccurrenceFacts
-		root       int
+func nativeEntry(input fs.FS, dir string) (bool, error) {
+	for _, name := range manifest.KustomizeBuilderFilenames {
+		_, err := fs.Stat(input, filepath.ToSlash(filepath.Join(dir, name)))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("inspect builder in %q: %w", dir, err)
+		}
+		return true, nil
 	}
-	edges := make([][]string, len(roots))
+	return false, nil
+}
+
+func joinRootSources(roots []clusterRoot, declarations map[selection.OccurrenceID]int, join func(int, int)) {
 	for i := range roots {
-		edges[i] = make([]string, len(roots))
+		for _, coordinate := range roots[i].sourceDeclarations {
+			owner, known := declarations[coordinate]
+			if known && roots[owner].bootstrap {
+				join(i, owner)
+			}
+		}
 	}
-	byIdentity := map[manifest.NamedResource][]witness{}
-	anyEdge := false
 	for i := range roots {
+		for _, resolution := range roots[i].sources {
+			for j := range resolution.producers {
+				producer := &resolution.producers[j]
+				if owner, known := declarations[producer.declaration]; known {
+					join(i, owner)
+				}
+			}
+		}
+	}
+}
+
+func joinRootOccurrences(roots []clusterRoot, declarations map[selection.OccurrenceID]int, join func(int, int)) {
+	for i := range roots {
+		if !roots[i].bootstrap {
+			continue
+		}
 		for j := range roots[i].Occurrences {
 			occurrence := &roots[i].Occurrences[j]
-			for _, previous := range byIdentity[occurrence.Identity] {
-				if previous.root == i || previous.occurrence.Declaration == occurrence.Declaration {
-					continue
-				}
-				left, right := fmt.Sprint(previous.occurrence.Declaration), fmt.Sprint(occurrence.Declaration)
-				left, right = min(left, right), max(left, right)
-				label := fmt.Sprintf("%s at %s and %s", occurrence.Identity, left, right)
-				if edges[previous.root][i] == "" || label < edges[previous.root][i] {
-					edges[previous.root][i], edges[i][previous.root] = label, label
-				}
-				anyEdge = true
-			}
-			byIdentity[occurrence.Identity] = append(
-				byIdentity[occurrence.Identity],
-				witness{occurrence: occurrence, root: i},
-			)
-		}
-	}
-	return edges, anyEdge
-}
-
-func partitionGroups(roots []entryRoot, edges [][]string) ([][]int, error) {
-	for i := range roots {
-		root := &roots[i]
-		for j := i + 1; j < len(roots); j++ {
-			if edges[i][j] != "" &&
-				slices.ContainsFunc(
-					root.Anchors,
-					func(target string) bool { return slices.Contains(roots[j].Anchors, target) },
-				) {
-				return nil, partitionError(roots, edges, "incompatible mandatory entry group")
+			owner, known := declarations[occurrence.Declaration]
+			if known && roots[owner].bootstrap {
+				join(i, owner)
 			}
 		}
 	}
-	components := collisionComponents(edges)
-	partitions := make([][][]int, len(components))
-	// Only one collision component can determine the required number of isolated entries.
-	strongest, width := -1, 1
-	for i, component := range components {
-		groups := partitionComponent(roots, edges, component)
-		if slices.ContainsFunc(groups, func(group []int) bool { return groupConflict(edges, group) }) {
-			return nil, partitionError(roots, edges, "ambiguous collision constraints")
-		}
-		partitions[i] = groups
-		switch {
-		case len(groups) > width:
-			strongest, width = i, len(groups)
-		case len(groups) == width:
-			strongest = -1
-		}
-	}
-	if strongest < 0 {
-		return nil, partitionError(roots, edges, "ambiguous collision constraints")
-	}
-	var groups [][]int
-	for i, partition := range partitions {
-		for _, group := range partition {
-			if i == strongest || len(groupTargets(roots, group)) != 0 {
-				groups = append(groups, group)
-			}
-		}
-	}
-	return groups, nil
-}
-
-func collisionComponents(edges [][]string) [][]int {
-	var components [][]int
-	seen := make([]bool, len(edges))
-	for i := range edges {
-		if seen[i] {
-			continue
-		}
-		component := []int{i}
-		seen[i] = true
-		for start := 0; start < len(component); start++ {
-			for j, witness := range edges[component[start]] {
-				if !seen[j] && witness != "" {
-					seen[j] = true
-					component = append(component, j)
-				}
-			}
-		}
-		components = append(components, component)
-	}
-	return components
-}
-
-func partitionComponent(roots []entryRoot, edges [][]string, component []int) [][]int {
-	assigned := make([]bool, len(roots))
-	for i := range assigned {
-		assigned[i] = true
-	}
-	for _, i := range component {
-		assigned[i] = false
-	}
-	var groups [][]int
-	for _, i := range component {
-		if assigned[i] || len(component) == 1 && len(roots[i].Anchors) == 0 {
-			continue
-		}
-		groups = append(groups, partitionGroup(roots, edges, i, assigned))
-	}
-	return groups
-}
-
-func groupConflict(edges [][]string, group []int) bool {
-	for _, a := range group {
-		for _, b := range group {
-			if edges[a][b] != "" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func partitionGroup(roots []entryRoot, edges [][]string, first int, assigned []bool) []int {
-	group := []int{first}
-	assigned[first] = true
-	for start := 0; start < len(group); start++ {
-		for j := range roots {
-			if assigned[j] || edges[group[start]][j] != "" {
-				continue
-			}
-			if !slices.ContainsFunc(edges[j], func(w string) bool { return w != "" }) {
-				continue
-			}
-			if !slices.Equal(roots[j].Anchors, roots[first].Anchors) {
-				continue
-			}
-			assigned[j] = true
-			group = append(group, j)
-		}
-	}
-	return group
-}
-
-func partitionError(roots []entryRoot, edges [][]string, reason string) error {
-	candidates := make([]string, 0, len(roots))
-	var witnesses []string
-	for i := range roots {
-		root := &roots[i]
-		candidates = append(candidates, root.Path)
-		for j := i + 1; j < len(roots); j++ {
-			if edges[i][j] != "" {
-				witnesses = append(witnesses, edges[i][j])
-			}
-		}
-	}
-	slices.Sort(candidates)
-	slices.Sort(witnesses)
-	return manifest.NewError(
-		manifest.ErrInput,
-		nil,
-		fmt.Sprintf(
-			"%s: candidates [%s]; witnesses [%s]; select an input path for one entry",
-			reason,
-			strings.Join(candidates, ", "),
-			strings.Join(slices.Compact(witnesses), "; "),
-		),
-	)
 }

@@ -2,12 +2,7 @@ package manifest
 
 import "maps"
 
-// EnsureMetadata returns doc["metadata"] as a map[string]any, lazily
-// creating one when absent (or when present as a non-map). Used by
-// writers that mutate metadata.labels / metadata.annotations; readers
-// should prefer a direct type-assert + nil-tolerant access so we
-// don't allocate when nothing will be written.
-func EnsureMetadata(doc map[string]any) map[string]any {
+func ensureMetadata(doc map[string]any) map[string]any {
 	metadata, _ := doc[metadataKey].(map[string]any)
 	if metadata == nil {
 		metadata = make(map[string]any)
@@ -16,14 +11,7 @@ func EnsureMetadata(doc map[string]any) map[string]any {
 	return metadata
 }
 
-// MergeStringMap merges in into md[key] as a map[string]any. Creates
-// the inner map when absent; existing entries with the same key are
-// overwritten. No-op when in is empty.
-//
-// Used by the ResourceSet output + Helm post-render passes to merge
-// CommonMetadata (labels / annotations) onto rendered docs without
-// touching unrelated entries.
-func MergeStringMap(md map[string]any, key string, in map[string]string) {
+func mergeStringMap(md map[string]any, key string, in map[string]string) {
 	if len(in) == 0 {
 		return
 	}

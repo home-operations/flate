@@ -108,7 +108,9 @@ func qualificationResourceSet(t *testing.T, body, value string) (*Controller, *m
 		InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
 		ResourcesTemplate: body,
 	}
-	st.AddObjects([]manifest.BaseManifest{provider, rs})
+	for _, object := range []manifest.BaseManifest{provider, rs} {
+		st.AddObject(object)
+	}
 	st.SetIncluded(rs.Named(), true, false)
 	return c, rs
 }

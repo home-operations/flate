@@ -27,7 +27,12 @@ func TestAdmission_SourceObservationKeepsPreparedComparison(t *testing.T) {
 		}
 		st.AddObject(releases[side])
 	}
-	changes, err := change.Qualify(t.Context(), change.NewSet([]string{"hr.yaml"}), stores, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		detectChanges(t, []string{"hr.yaml"}, []string{"hr.yaml"}),
+		stores,
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	changes, err = changes.WithDeclarations(t.Context(), change.DeclarationInputs{Stores: stores})
 	assert.NoError(t, err)

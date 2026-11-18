@@ -180,7 +180,13 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	l := New(st)
 	defer l.Close()
 	l.SourceRoot, l.Options.Cache = f.root, owner
-	l.Options.Changes = change.NewSet([]string{"cm-000.yaml"})
+	l.Options.Changes, err = change.Qualify(
+		t.Context(),
+		detectChanges(t, []string{"cm-000.yaml"}, []string{"cm-000.yaml"}),
+		[2]*store.Store{store.New(), store.New()},
+		manifest.WorkScope{},
+	)
+	assert.NoError(t, err)
 	configureSelection(t, l, selection.Request{Changed: true})
 	l.documents.compact = true
 	l.mountSources()

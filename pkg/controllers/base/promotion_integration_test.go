@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -98,7 +97,12 @@ spec: {url: https://example.test/excluded.git}
 	}
 	filterLoader, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: policy, Inventory: st, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
+			Index:     policy,
+			Inventory: st,
+			Root:      "",
+		},
 	)
 	admissiontest.Commit(t, filterLoader.Options.Session, nil)
 	filter := filterLoader.Options.Session

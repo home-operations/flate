@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -38,6 +39,23 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 		},
 		)
 	}
+}
+
+func detectChanges(tb testing.TB, before, after []string) *change.Set {
+	tb.Helper()
+	inputs := [2]*store.SourceArtifact{}
+	for side, paths := range [2][]string{before, after} {
+		files := fstest.MapFS{}
+		for _, file := range paths {
+			files[filepath.ToSlash(file)] = &fstest.MapFile{Data: []byte{byte(side)}}
+		}
+		inputs[side] = &store.SourceArtifact{FS: files}
+	}
+	changes, err := change.Detect(tb.Context(), inputs[0], inputs[1], change.DetectConfig{})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return changes
 }
 
 func admitForFilter(s *store.Store, root string) {
@@ -228,7 +246,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"entry/consumer.yaml"}),
+			Changes:   detectChanges(t, []string{"entry/consumer.yaml"}, []string{"entry/consumer.yaml"}),
 			Index:     l.Index,
 			Inventory: s,
 			Root:      "",
@@ -385,7 +403,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{generatorFile}),
+			Changes:   detectChanges(t, []string{generatorFile}, []string{generatorFile}),
 			Index:     idx,
 			Inventory: s,
 			Root:      "",

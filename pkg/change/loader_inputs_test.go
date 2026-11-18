@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -99,7 +98,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 				filter := admissiontest.Decision(
 					t,
 					admissiontest.Config{
-						Changes:   change.NewSet([]string{file}),
+						Changes:   detectChanges(t, []string{file}, []string{file}),
 						Index:     l.Index,
 						Inventory: s,
 						Root:      "",
@@ -120,7 +119,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 
 			assert.FatalIf(
 				t,
-				admissiontest.Decision(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
+				admissiontest.Decision(t, admissiontest.Config{Changes: detectChanges(t, []string{"inputs/unrelated"}, []string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
 					Reconcile(owner.Named()),
 				"%v",
 				"unrelated input selected owner",
@@ -180,7 +179,7 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 
 	assert.ErrorIf(
 		t,
-		!admissiontest.Decision(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
+		!admissiontest.Decision(t, admissiontest.Config{Changes: detectChanges(t, []string{"inputs/patch"}, []string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
 			Reconcile(owner.Named()),
 		"%v",
 		"changed terminal patch did not select owner",
@@ -296,7 +295,12 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 	}
 	filter := admissiontest.Decision(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: s, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{file}, []string{file}),
+			Index:     l.Index,
+			Inventory: s,
+			Root:      "",
+		},
 	)
 	assert.Equal(t, filter.Reconcile(owner.Named()), (*testCaseInput) != "pinned")
 	assert.Equal(t, filter.Reconcile(source.Named()), (*testCaseInput) != "pinned")
@@ -449,7 +453,7 @@ spec:
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"config/prod.yaml"}),
+			Changes:   detectChanges(t, []string{"config/prod.yaml"}, []string{"config/prod.yaml"}),
 			Index:     l.Index,
 			Inventory: l.Store,
 			Root:      "",
@@ -646,7 +650,11 @@ func testFinalizeIndexOwnersOfFileResourcesEscapeCase(
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"apps/base/postgres/cluster.yaml"}),
+			Changes: detectChanges(
+				t,
+				[]string{"apps/base/postgres/cluster.yaml"},
+				[]string{"apps/base/postgres/cluster.yaml"},
+			),
 			Index:     idx,
 			Inventory: s,
 			Root:      "",

@@ -255,7 +255,7 @@ func TestData_OpaqueCoverage(t *testing.T) {
 			assert.Equal(t, errors.Is(err, ErrInput), true)
 		})
 	}
-	for _, data := range []Data{NewConfigMap(NamedResource{}, nil), NewSecret(NamedResource{}, nil, nil)} {
+	for _, data := range []Data{newConfigMap(NamedResource{}, nil), newSecret(NamedResource{}, nil, nil)} {
 		assert.Equal(t, data.KeysKnown(), true)
 	}
 }

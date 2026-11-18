@@ -20,7 +20,7 @@ func TestEnsureMetadata_PreservesMap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			doc := map[string]any{"metadata": tc.metadata}
-			md := EnsureMetadata(doc)
+			md := ensureMetadata(doc)
 			md["namespace"] = "apps"
 			assert.Equal(t, doc["metadata"].(map[string]any)["namespace"], any("apps"))
 			if existing, ok := tc.metadata.(map[string]any); ok && existing != nil {
@@ -45,14 +45,14 @@ func TestMergeStringMap_PreservesEntries(t *testing.T) {
 			t.Parallel()
 			labels := map[string]any{"keep": "value", "overwrite": "old"}
 			md := map[string]any{"labels": labels, "name": "app"}
-			MergeStringMap(md, "labels", tc.in)
+			mergeStringMap(md, "labels", tc.in)
 			assert.Diff(t, labels, tc.want)
 			assert.Equal(t, md["name"], any("app"))
 		})
 	}
 	md := map[string]any{}
-	MergeStringMap(md, "labels", nil)
+	mergeStringMap(md, "labels", nil)
 	assert.Equal(t, len(md), 0)
-	MergeStringMap(md, "labels", map[string]string{"app": "demo"})
+	mergeStringMap(md, "labels", map[string]string{"app": "demo"})
 	assert.Diff(t, md["labels"], map[string]any{"app": "demo"})
 }

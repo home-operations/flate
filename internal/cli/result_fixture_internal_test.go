@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 )
 
 //nolint:gocritic // The fixture MUST match the SDK configuration value boundary.
@@ -15,9 +16,10 @@ func renderTreesForTest(
 	cfg orchestrator.Config,
 ) ([]orchestrator.Rendered, error) {
 	tb.Helper()
-	runs, err := orchestrator.RenderTrees(ctx, trees, cfg)
-	for _, run := range runs {
-		tb.Cleanup(run.Result.Close)
+	invocation, err := orchestrator.RenderTrees(ctx, trees, cfg)
+	if invocation == nil {
+		return nil, err
 	}
-	return runs, err
+	tb.Cleanup(func() { assert.NoError(tb, invocation.Close()) })
+	return invocation.Results, err
 }

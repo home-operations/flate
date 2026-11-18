@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -11,16 +10,10 @@ import (
 func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 	t.Parallel()
 
-	for _, batch := range []bool{false, true} {
-		t.Run(strconv.FormatBool(batch), func(t *testing.T) {
-			t.Parallel()
-			testRecordEmittedDirectWritesPreserveSiblingsCase(
-				t,
-				&batch,
-			)
-		},
-		)
-	}
+	t.Run("direct", func(t *testing.T) {
+		t.Parallel()
+		testRecordEmittedDirectWritesPreserveSiblingsCase(t)
+	})
 	for _, state := range []string{"member", "retired", "hidden"} {
 		t.Run("equal_static/"+state, func(t *testing.T) {
 			t.Parallel()
@@ -33,10 +26,7 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 	}
 }
 
-func testRecordEmittedDirectWritesPreserveSiblingsCase(
-	t *testing.T,
-	testCaseInput *bool,
-) {
+func testRecordEmittedDirectWritesPreserveSiblingsCase(t *testing.T) {
 	t.Helper()
 
 	s := New()
@@ -56,6 +46,7 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase(
 	accept(t, s, p, &Emission{Complete: true})
 	replacement := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace, Path: "new"}
 	sibling := emissionChild("sibling", "value")
+	s.AddObject(sibling.Obj)
 	observed := false
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == k {
@@ -68,17 +59,13 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase(
 			)
 			assert.ErrorIf(
 				t,
-				(*testCaseInput) && s.GetObject(sibling.Obj.Named()) == nil,
+				s.GetObject(sibling.Obj.Named()) == nil,
 				"%s",
-				"batch notified before its sibling was live",
+				"direct update lost its admitted sibling",
 			)
 		}
 	}, false)
-	if *testCaseInput {
-		s.AddObjects([]manifest.BaseManifest{replacement, sibling.Obj})
-	} else {
-		s.AddObject(replacement)
-	}
+	s.AddObject(replacement)
 	unsub()
 	assert.FatalIf(t, !observed, "%s", "direct update did not notify")
 	assert.FatalIf(t, s.GetObject(k) != replacement, "%s", "direct input update lost to predecessor contribution")

@@ -142,7 +142,9 @@ func TestRequire_MaterializerPurpose(t *testing.T) {
 			st := store.New()
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			owner := &manifest.ResourceSet{Name: "owner", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{consumer, owner})
+			for _, object := range []manifest.BaseManifest{consumer, owner} {
+				st.AddObject(object)
+			}
 			st.UpdateStatus(
 				owner.Named(),
 				store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing"},
@@ -291,7 +293,7 @@ func testExecutionSyntheticDependencyReasonsCase(
 	if *testCaseInput == "data" {
 		id = manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
 		assert.Diff(t, failed.Failed, []manifest.NamedResource{id})
-		assert.Equal(t, failed.Reasons[id].Message, "not found; supply it with --supply")
+		assert.Equal(t, failed.Reasons[id].Message, "not found; supply a readable document")
 		assert.Equal(t, len(failed.Reasons[id].Causes), 1)
 		reason = failed.Reasons[id].Causes[0]
 	}

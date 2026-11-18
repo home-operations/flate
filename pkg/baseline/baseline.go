@@ -78,7 +78,7 @@ func AutoResolve(ctx context.Context, cfg Config) (*Result, error) {
 			manifest.ErrInput,
 			nil,
 			fmt.Sprintf(
-				"--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout",
+				"input path %q is not inside a git working tree; provide a base input or a base revision with a git checkout",
 				path,
 			),
 		)
@@ -218,7 +218,7 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 		_ = directory.Close()
 	} else if after.ScanPath != before.ScanPath {
 		if _, err := os.Stat(after.ScanPath); err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", after.ScanPath, err), "")
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("input path %q: %w", after.ScanPath, err), "")
 		}
 	}
 	return &Result{
@@ -241,7 +241,7 @@ func (s *selection) resolve(ctx context.Context, location *gitrepo.Location, bas
 			return nil, manifest.NewError(
 				manifest.ErrInput,
 				fmt.Errorf(
-					"baseline: HEAD has no commits to merge-base from; pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>: %w",
+					"baseline: HEAD has no commits to merge-base from; provide a base revision to fetch the baseline from origin, or a base input: %w",
 					err,
 				),
 				"",
@@ -279,30 +279,34 @@ func (s *selection) resolve(ctx context.Context, location *gitrepo.Location, bas
 	if isShallow(repo) {
 		return nil, manifest.NewError(manifest.ErrInput, nil,
 			"baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); "+
-				"in actions/checkout, set 'fetch-depth: 0', or locally run 'git fetch --unshallow', "+
-				"or pass --base=<ref> / --path-orig=<dir> explicitly")
+				"fetch complete repository history, "+
+				"or provide an explicit base revision or base input")
 	}
 	return nil, manifest.NewError(manifest.ErrInput, nil,
 		"baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, "+
-			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
+			"and origin/{main,master} are absent; provide a base revision or base input")
 }
 
 func (s *selection) resolveExplicit(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
 	repo := s.repo
 	h, err := repo.ResolveRevision(plumbing.Revision(base))
 	if err == nil {
-		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
+		return &resolution{Hash: *h, Source: "explicit base revision=" + base, Repo: repo}, nil
 	}
 	remote := git.DefaultRemoteName + "/" + base
 	if h, localErr := repo.ResolveRevision(plumbing.Revision(remote)); localErr == nil {
-		return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
+		return &resolution{
+			Hash:   *h,
+			Source: "explicit base revision=" + base + " (via " + remote + ")",
+			Repo:   repo,
+		}, nil
 	}
 	url, ok := originURL(location.Config)
 	if !ok {
 		return nil, manifest.NewError(
 			manifest.ErrInput,
 			fmt.Errorf(
-				"could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w",
+				"cannot resolve base revision %q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w",
 				base,
 				base,
 				err,
@@ -318,7 +322,7 @@ func (s *selection) resolveExplicit(ctx context.Context, location *gitrepo.Locat
 		return nil, manifest.NewError(
 			manifest.ErrInput,
 			fmt.Errorf(
-				"could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w",
+				"cannot resolve base revision %q: not found locally or as origin/%s, and fetching it from origin %s failed: %w",
 				base,
 				base,
 				url,
@@ -327,7 +331,7 @@ func (s *selection) resolveExplicit(ctx context.Context, location *gitrepo.Locat
 			"",
 		)
 	}
-	r.Source = "explicit --base=" + base + " (fetched from origin)"
+	r.Source = "explicit base revision=" + base + " (fetched from origin)"
 	return r, nil
 }
 

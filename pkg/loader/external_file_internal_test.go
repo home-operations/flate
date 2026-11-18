@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -49,7 +48,7 @@ func TestFinalizeIndex_ExternalFileStructuralClosure(t *testing.T) {
 	child := testutil.KustomizationID("flux-system", "child")
 	parent := testutil.KustomizationID("flux-system", "parent")
 	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{hr}, Changed: true})
-	l.Options.Changes = change.NewSet([]string{"payload/one/hr.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"payload/one/hr.yaml"}, []string{"payload/one/hr.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "site-a"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.Admit(t.Context(), root))

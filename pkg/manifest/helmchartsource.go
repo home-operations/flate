@@ -24,10 +24,8 @@ type HelmChartSource struct {
 	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
 }
 
-// NewHelmChartSource normalizes an owned typed HelmChart declaration.
-//
-//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
-func NewHelmChartSource(cr sourcev1.HelmChart) *HelmChartSource {
+//nolint:gocritic // The value input preserves the declaration snapshot boundary.
+func newHelmChartSource(cr sourcev1.HelmChart) *HelmChartSource {
 	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
 	return &HelmChartSource{
 		Name:          cr.Name,
@@ -102,7 +100,7 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if cr.Spec.SourceRef.Name == "" {
 		return nil, inputf("HelmChart missing spec.sourceRef.name")
 	}
-	return NewHelmChartSource(cr), nil
+	return newHelmChartSource(cr), nil
 }
 
 func (h *HelmChartSource) references(yield func(Reference) bool) {

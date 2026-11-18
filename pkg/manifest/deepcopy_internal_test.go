@@ -197,7 +197,9 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 func TestWithNamespace_Copy(t *testing.T) {
 	t.Parallel()
 	ks := &Kustomization{Name: "app", Namespace: "authored"}
-	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}
+	ks.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: KindConfigMap, Name: "values"}},
+	}
 	for _, tc := range []struct{ name, namespace string }{
 		{"projected", "effective"}, {"cleared", ""},
 	} {
@@ -222,7 +224,9 @@ func TestWithNamespace_Copy(t *testing.T) {
 			assert.Diff(
 				t,
 				ks.PostBuild,
-				&kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}},
+				&kustomizev1.PostBuild{
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: KindConfigMap, Name: "values"}},
+				},
 			)
 			assert.Diff(t, projected.PostBuild, ks.PostBuild)
 		})

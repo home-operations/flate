@@ -42,7 +42,9 @@ func New(tb testing.TB, cfg Config) (*loader.Loader, *selection.Session) {
 	if !ok {
 		st = store.New()
 		if cfg.Inventory != nil {
-			st.AddObjects(cfg.Inventory.Objects())
+			for _, object := range cfg.Inventory.Objects() {
+				st.AddObject(object)
+			}
 		}
 	}
 	root := cfg.Root

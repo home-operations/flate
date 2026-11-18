@@ -15,7 +15,7 @@ func TestMergeWarnings_Presentation(t *testing.T) {
 	suppressed := []Suppression{
 		{
 			Parent: Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")},
-			Side:   SideCurrent,
+			Side:   sideCurrent,
 			Count:  2,
 			Reason: "missing source",
 		},
@@ -68,7 +68,7 @@ func TestMergeWarnings_PreservesInputsAndPayload(t *testing.T) {
 		before[i].Related = slices.Clone(backing[i].Related)
 		before[i].Detail = slices.Clone(backing[i].Detail)
 	}
-	note := Suppression{Parent: parent, Subject: captured, Side: SideOrig, Count: 2, Reason: "missing source"}
+	note := Suppression{Parent: parent, Subject: captured, Side: sideOrig, Count: 2, Reason: "missing source"}
 	notes := []Suppression{note, note, {Reason: "spare suppression slot"}}
 	beforeNotes := slices.Clone(notes)
 	disclosure := manifest.Warning{

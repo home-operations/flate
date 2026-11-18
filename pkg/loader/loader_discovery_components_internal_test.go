@@ -313,7 +313,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"},
 	}
 	ks.DependsOn = []kustomizev1.DependencyReference{{Name: "parent"}}
-	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 		{Kind: manifest.KindConfigMap, Name: "settings"},
 		{Kind: manifest.KindSecret, Name: "credentials"},
 		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},

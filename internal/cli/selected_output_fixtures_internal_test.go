@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource][]map[string]any {

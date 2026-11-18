@@ -26,7 +26,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	admissionLoader1, _ := admissiontest.New(
 		b,
 		admissiontest.Config{
-			Changes: change.NewSet([]string{"target.yaml"}),
+			Changes: detectChanges(b, []string{"target.yaml"}, []string{"target.yaml"}),
 			Index: &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
 			},
@@ -139,7 +139,9 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 		Name:      "child",
 		Namespace: "apps",
 	}
-	st.AddObjects([]manifest.BaseManifest{parent, child})
+	for _, object := range []manifest.BaseManifest{parent, child} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		child.Named(): {
 			Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}},
@@ -195,7 +197,7 @@ func testControllerCollectHRDepsOrderingFilterCase(
 		if testCaseInput.selected {
 			files = append(files, "target.yaml")
 		}
-		changes = change.NewSet(files)
+		changes = detectChanges(t, files, files)
 	}
 	hr := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},

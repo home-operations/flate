@@ -89,7 +89,12 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", InputAlias: true}
 		facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
-			source: {Source: source, Input: input, Delta: change.NewSet([]string{"input.yaml"}), Paired: true},
+			source: {
+				Source: source,
+				Input:  input,
+				Delta:  detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
+				Paired: true,
+			},
 		}}
 		c := solverClosure(t, store.New(), facts)
 		c.context.Root = "/workspace"
@@ -114,7 +119,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			change.InputChange{File: "input.yaml", Unbound: true},
 			&comparisonInput{
 				consumer: consumer, dependency: dependency, source: source,
-				input: input, paired: true, delta: change.NewSet([]string{"input.yaml"}),
+				input: input, paired: true, delta: detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
 			},
 		)
 		assert.Equal(t, changed, false)
@@ -140,7 +145,7 @@ func TestAdmission_SourceCoordinateClaims(t *testing.T) {
 			}
 			source := manifest.BootstrapSourceID
 			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
-			delta := change.NewSet([]string{tc.file})
+			delta := detectChanges(t, []string{tc.file}, []string{tc.file})
 			evidence := SourceFacts{
 				Source: source, Input: input, Delta: delta, Paired: true,
 				Files: []SourceFile{{Path: tc.file, Indexed: tc.indexed}},
@@ -215,8 +220,14 @@ func TestAdmission_SourceCoordinateClaims(t *testing.T) {
 		source := manifest.BootstrapSourceID
 		facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
 			source: {
-				Input: &store.SourceArtifact{LocalPath: "/workspace"}, Paired: true,
-				Delta: change.NewSet([]string{"input.txt"}), Files: []SourceFile{{Path: "input.txt"}},
+				Input:  &store.SourceArtifact{LocalPath: "/workspace"},
+				Paired: true,
+				Delta: detectChanges(
+					t,
+					[]string{"input.txt"},
+					[]string{"input.txt"},
+				),
+				Files: []SourceFile{{Path: "input.txt"}},
 			},
 		}}
 		c := solverClosure(t, store.New(), facts)
@@ -244,11 +255,11 @@ func TestAdmission_FileCoordinates(t *testing.T) {
 		paired, want     bool
 	}{
 		{name: "nil", file: "file"},
-		{name: "unpaired", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", file: "file", want: true},
-		{name: "paired_without_input", delta: change.NewSet([]string{"file"}), root: "/work", paired: true, file: "file", want: true},
-		{name: "normalized", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work", paired: true, file: "dir/../file", want: true},
-		{name: "origin", delta: change.NewSet([]string{"nested/file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work/nested", paired: true, file: "file", want: true},
-		{name: "failed_coordinates", delta: change.NewSet([]string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", paired: true, file: "file"},
+		{name: "unpaired", delta: detectChanges(t, []string{"file"}, []string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", file: "file", want: true},
+		{name: "paired_without_input", delta: detectChanges(t, []string{"file"}, []string{"file"}), root: "/work", paired: true, file: "file", want: true},
+		{name: "normalized", delta: detectChanges(t, []string{"file"}, []string{"file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work", paired: true, file: "dir/../file", want: true},
+		{name: "origin", delta: detectChanges(t, []string{"nested/file"}, []string{"nested/file"}), input: &store.SourceArtifact{LocalPath: "/work"}, root: "/work/nested", paired: true, file: "file", want: true},
+		{name: "failed_coordinates", delta: detectChanges(t, []string{"file"}, []string{"file"}), input: &store.SourceArtifact{LocalPath: "relative"}, root: "/work", paired: true, file: "file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

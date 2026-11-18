@@ -40,9 +40,9 @@ func testResolveSelectedEvidenceKind(t *testing.T, kind string) {
 	id := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
 	data := func(m map[string]any) manifest.Data {
 		if kind == manifest.KindSecret {
-			return manifest.NewSecret(id, nil, m)
+			return &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: nil, StringData: m}
 		}
-		return manifest.NewConfigMap(id, m)
+		return &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: m}
 	}
 	const cipher = "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]"
 	parsed, err := manifest.ParseDoc(
@@ -405,7 +405,7 @@ func (tc *selectedEvidenceCase) assertResult(t *testing.T, id manifest.NamedReso
 	if tc.effect == Failed {
 		assert.Equal(t, errors.Is(result.Err(), manifest.ErrFlux), true)
 		if !tc.present {
-			assert.Equal(t, strings.Contains(result.Err().Error(), "--supply"), true)
+			assert.Equal(t, strings.Contains(result.Err().Error(), "supply a readable document"), true)
 		}
 	} else {
 		assert.NoError(t, result.Err())
@@ -430,11 +430,15 @@ func TestResolve_PrivateEncryptedAuthority(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			data := manifest.NewSecret(
-				id,
-				nil,
-				map[string]any{"encrypted": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]", "plain": "value"},
-			)
+			data := &manifest.Secret{
+				Name:      id.Name,
+				Namespace: id.Namespace,
+				Data:      nil,
+				StringData: map[string]any{
+					"encrypted": "ENC[AES256_GCM,data:opaque,iv:x,tag:y,type:str]",
+					"plain":     "value",
+				},
+			}
 			input := store.ReferenceFacts{
 				Data:     data,
 				Original: data,
@@ -489,8 +493,8 @@ func TestResolve_CapturedFailuresAndSettlement(t *testing.T) {
 		{name: "optional terminal failure", optional: true, effect: Omitted},
 		{name: "permitted terminal failure", allowed: true, effect: Omitted},
 		{name: "ambient attempt", ambient: true, effect: Deferred},
-		{name: "readable bypass", facts: store.ReferenceFacts{Data: manifest.NewSecret(id, nil, map[string]any{"plain": "value"})}, effect: Used},
-		{name: "cycle retains failure", facts: store.ReferenceFacts{Data: manifest.NewSecret(id, nil, map[string]any{"plain": "value"})}, cycle: true, effect: Failed, captured: true},
+		{name: "readable bypass", facts: store.ReferenceFacts{Data: &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: nil, StringData: map[string]any{"plain": "value"}}}, effect: Used},
+		{name: "cycle retains failure", facts: store.ReferenceFacts{Data: &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: nil, StringData: map[string]any{"plain": "value"}}}, cycle: true, effect: Failed, captured: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -535,7 +539,7 @@ func TestResolve_CapturedFailuresAndSettlement(t *testing.T) {
 		assert.Equal(t, result.Effect(), Failed)
 		assert.Equal(t, result.MaterialError(), error(nil))
 		first, repeated, copyError := result.Err(), result.Err(), copied.Err()
-		const want = "substituteFrom Secret apps/input not found; supply it with --supply"
+		const want = "substituteFrom Secret apps/input not found; supply a readable document"
 		assert.Equal(t, first.Error(), want)
 		assert.Equal(t, repeated.Error(), want)
 		assert.Equal(t, copyError.Error(), want)
@@ -550,14 +554,10 @@ func TestResolve_UnreadableKeysUseCapturedData(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
 	data := &capturedKeyData{
-		Data: manifest.NewSecret(
-			id,
-			nil,
-			map[string]any{
-				"alpha": "ENC[AES256_GCM,data:alpha,iv:x,tag:y,type:str]",
-				"zeta":  "ENC[AES256_GCM,data:zeta,iv:x,tag:y,type:str]",
-			},
-		),
+		Data: &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: nil, StringData: map[string]any{
+			"alpha": "ENC[AES256_GCM,data:alpha,iv:x,tag:y,type:str]",
+			"zeta":  "ENC[AES256_GCM,data:zeta,iv:x,tag:y,type:str]",
+		}},
 	}
 	request := ResolveRequest{
 		Reference: manifest.Reference{NamedResource: id, Use: substitutionUse},
@@ -588,7 +588,7 @@ func (d *capturedKeyData) Value(key string) (manifest.DataValue, error) {
 func TestResolve_SuppliedMaterialAndStaticCertainty(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	data := manifest.NewConfigMap(id, map[string]any{"VALUE": "stable"})
+	data := &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "stable"}}
 	result := Resolve(
 		&ResolveRequest{
 			Reference: manifest.Reference{NamedResource: id, Use: substitutionUse},

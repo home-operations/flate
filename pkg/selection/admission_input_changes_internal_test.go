@@ -6,7 +6,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -19,7 +18,7 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			changes := change.NewSet([]string{changed})
+			changes := detectChanges(t, []string{changed}, []string{changed})
 			facts := &solverFacts{
 				store:   st,
 				changes: changes,
@@ -80,7 +79,7 @@ func TestAdmission_ContentPathsSettleBeforeReach(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			changes := change.NewSet([]string{"changed/file.yaml"})
+			changes := detectChanges(t, []string{"changed/file.yaml"}, []string{"changed/file.yaml"})
 			facts := &solverFacts{store: st, changes: changes}
 			facts.context.Root = root
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
@@ -140,7 +139,7 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 			st.AddObject(owner)
 			reader := manifest.FileReader{Reader: owner.Named(), Source: manifest.BootstrapSourceID}
 			facts := &solverFacts{
-				store: st, changes: change.NewSet([]string{tc.file}),
+				store: st, changes: detectChanges(t, []string{tc.file}, []string{tc.file}),
 				context: SourceContext{Root: root},
 				index: manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{owner.Named(): {}},

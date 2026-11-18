@@ -80,7 +80,9 @@ func testSelectionSelectorCandidatesCase(t *testing.T, testCaseInput *testSelect
 		(*testCaseInput.provider).Named(): {File: "provider.yaml", Declaration: testCaseInput.tc.declaration},
 	}}
 	st := store.New()
-	st.AddObjects(objects.Objects())
+	for _, object := range objects.Objects() {
+		st.AddObject(object)
+	}
 	facts := &solverFacts{index: *index, occurrences: map[manifest.NamedResource]OccurrenceFacts{
 		(*testCaseInput.provider).Named(): {
 			Identity:     (*testCaseInput.provider).Named(),
@@ -190,7 +192,9 @@ func TestAdmission_SelectorMembership(t *testing.T) {
 			}
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			st := store.New()
-			st.AddObjects([]manifest.BaseManifest{reader, provider, owner})
+			for _, object := range []manifest.BaseManifest{reader, provider, owner} {
+				st.AddObject(object)
+			}
 			facts := &solverFacts{
 				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					reader.Named(): {Parent: owner.Named(), Productions: []manifest.Production{{Owner: owner.Named()}}},

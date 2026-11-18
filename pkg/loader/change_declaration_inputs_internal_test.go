@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 )
@@ -27,7 +26,7 @@ func TestFilter_DeclarationInputs(t *testing.T) {
 		input: &manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace},
 		consumer: &manifest.Kustomization{
 			Name: consumer.Name, Namespace: consumer.Namespace,
-			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: input.Kind, Name: input.Name},
 			}},
 		},
@@ -35,7 +34,7 @@ func TestFilter_DeclarationInputs(t *testing.T) {
 	filter := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"patch.yaml"}),
+			changes:   detectChanges(t, []string{"patch.yaml"}, []string{"patch.yaml"}),
 			index:     index,
 			inventory: objects,
 			root:      "/repo",
@@ -87,7 +86,7 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 					selected := newAdmission(
 						t,
 						admissionConfig{
-							changes:   change.NewSet([]string{"provider.yaml"}),
+							changes:   detectChanges(t, []string{"provider.yaml"}, []string{"provider.yaml"}),
 							index:     index,
 							inventory: objects,
 						},

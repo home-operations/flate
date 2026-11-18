@@ -63,7 +63,7 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		Path:      "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"},
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
 		},
 	}
 	st.AddObject(ks)
@@ -172,7 +172,9 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 	parsed := parsed2.Object
 	assert.FatalIf(t, err != nil, "%v", err)
 	input := parsed.(*manifest.Kustomization)
-	st.AddObjects([]manifest.BaseManifest{parent, peer, input})
+	for _, object := range []manifest.BaseManifest{parent, peer, input} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(
 		&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -352,7 +354,7 @@ func testReconcileRequiredPostBuildPermissionCase(
 			Name: "flux-system",
 		},
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: (*testCaseInput.kind), Name: "missing"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: (*testCaseInput.kind), Name: "missing"}},
 		},
 	}
 	st.AddObject(ks)

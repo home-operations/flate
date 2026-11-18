@@ -34,12 +34,12 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 			err := s.Run(t.Context())
 			if requests == maxRedispatches {
 				assert.NoError(t, err)
-				assert.Equal(t, len(s.Results()), 1)
+				assert.Equal(t, len(s.results()), 1)
 			} else {
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, strings.Contains(err.Error(), id.String()), true)
 				assert.Equal(t, strings.Contains(err.Error(), "exceeded 32 redispatches"), true)
-				assert.Equal(t, len(s.Results()), 0)
+				assert.Equal(t, len(s.results()), 0)
 			}
 			assert.Equal(t, runs.Load(), int64(maxRedispatches+1))
 			assert.Equal(t, s.nodes[id].redispatches, maxRedispatches)
@@ -100,7 +100,7 @@ func TestScheduler_CallbacksOutsideMutex(t *testing.T) {
 	})
 	s.Seed([]NodeID{testutil.KustomizationID("ns", "callback")})
 	assert.NoError(t, s.Run(t.Context()))
-	assert.Equal(t, len(s.Results()), 1)
+	assert.Equal(t, len(s.results()), 1)
 	assert.Equal(t, runs.Load(), int64(2))
 }
 

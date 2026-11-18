@@ -23,7 +23,12 @@ func TestRootSupport_SuppliedDeclarationRetainsRepositoryAuthority(t *testing.T)
 	input := &store.SourceArtifact{LocalPath: t.TempDir(), Content: "initial", FS: fstest.MapFS{}}
 	st.SetArtifact(source, input)
 	st.AddDeclaration(store.Declaration{
-		Obj: manifest.NewConfigMap(id, map[string]any{"VALUE": "supplied"}), Origin: manifest.SuppliedDeclaration,
+		Obj: &manifest.ConfigMap{
+			Name:      id.Name,
+			Namespace: id.Namespace,
+			Data:      map[string]any{"VALUE": "supplied"},
+		},
+		Origin: manifest.SuppliedDeclaration,
 	})
 	record := manifest.DiscoveryRecord{
 		Path: filepath.Join(input.LocalPath, "settings.yaml"), Authored: id,

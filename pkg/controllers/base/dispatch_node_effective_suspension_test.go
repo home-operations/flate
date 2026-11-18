@@ -12,7 +12,6 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -30,7 +29,9 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 		Name:      "child",
 		Namespace: "apps",
 	}
-	st.AddObjects([]manifest.BaseManifest{parent, input})
+	for _, object := range []manifest.BaseManifest{parent, input} {
+		st.AddObject(object)
+	}
 	publish := func(obj *manifest.HelmRelease) {
 		t.Helper()
 		_, _, next := st.GetEmission(parent.Named())
@@ -99,7 +100,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				filterLoader, _ := admissiontest.New(
 					t,
 					admissiontest.Config{
-						Changes:   change.NewSet([]string{"parent.yaml"}),
+						Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 						Index:     index,
 						Inventory: s,
 						Root:      "",

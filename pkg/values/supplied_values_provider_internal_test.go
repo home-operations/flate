@@ -118,7 +118,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "absent", Optional: true},
 				{Kind: manifest.KindSecret, Name: secret.Name},
 			},

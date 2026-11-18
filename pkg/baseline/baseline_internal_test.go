@@ -43,8 +43,8 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
-	if !strings.HasPrefix(res.Source.Metadata["baseline-selection"], "explicit --base=") {
-		t.Errorf("Source = %q, want prefix 'explicit --base='", res.Source.Metadata["baseline-selection"])
+	if !strings.HasPrefix(res.Source.Metadata["baseline-selection"], "explicit base revision=") {
+		t.Errorf("Source = %q, want prefix 'explicit base revision='", res.Source.Metadata["baseline-selection"])
 	}
 	assert.Equal(t, res.Source.LocalRoot, dir)
 	assert.Equal(t, res.Source.URL, "")
@@ -393,7 +393,7 @@ func TestAutoResolve_NoGit(t *testing.T) {
 	assert.ErrorIf(
 		t,
 		!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not inside a git working tree"),
-		"error %q: should explain why and suggest --path-orig / --base",
+		"error %q: should explain why and suggest a base input or base revision",
 		err,
 	)
 	assert.Equal(t, os.Symlink(".git", filepath.Join(dir, ".git")), nil)
@@ -424,8 +424,8 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(err.Error(), "shallow"), "error %q should mention shallow", err)
 	assert.ErrorIf(
 		t,
-		!strings.Contains(err.Error(), "fetch-depth: 0"),
-		"error %q should suggest fetch-depth: 0 fix",
+		!strings.Contains(err.Error(), "fetch complete repository history"),
+		"error %q should suggest fetch complete repository history fix",
 		err,
 	)
 }
@@ -448,7 +448,7 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 		"error %q should not mention shallow on non-shallow repo",
 		err,
 	)
-	assert.ErrorIf(t, !strings.Contains(err.Error(), "--base"), "error %q should suggest --base flag", err)
+	assert.ErrorIf(t, !strings.Contains(err.Error(), "base revision"), "error %q should suggest a base revision", err)
 }
 
 // TestAutoResolve_PathOutsideRepo: --path resolves outside the .git
@@ -629,8 +629,8 @@ func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
 	assert.FatalIf(t, err == nil, "%v", "expected shallow error")
 	assert.ErrorIf(
 		t,
-		!strings.Contains(err.Error(), "fetch-depth: 0"),
-		"error %q should suggest fetch-depth: 0",
+		!strings.Contains(err.Error(), "fetch complete repository history"),
+		"error %q should suggest fetch complete repository history",
 		err,
 	)
 }

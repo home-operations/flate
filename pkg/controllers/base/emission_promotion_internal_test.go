@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -43,9 +42,11 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	c := New(s, slots)
 	parent := testutil.KustomizationID("apps", "parent")
 	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{
+	for _, object := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}, source,
-	})
+	} {
+		s.AddObject(object)
+	}
 	s.SetIncluded(source.Named(), false, false)
 	child := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
@@ -59,7 +60,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"parent.yaml"}),
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 			Index:     index,
 			Inventory: s,
 			Root:      "/repo",
@@ -127,12 +128,12 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 				st.SetWorkTree(tree.Key.Tree, tree.Scope())
 				consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
 				input := &manifest.HelmChartSource{Name: "generated", Namespace: "apps"}
-				st.AddObjects(
-					[]manifest.BaseManifest{
-						consumer,
-						input,
-					},
-				)
+				for _, object := range []manifest.BaseManifest{
+					consumer,
+					input,
+				} {
+					st.AddObject(object)
+				}
 				l, _ := admissiontest.New(
 					t,
 					admissiontest.Config{
@@ -212,7 +213,7 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Changes = change.NewSet([]string{"unrelated.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"unrelated.yaml"}, []string{"unrelated.yaml"})
 	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -254,7 +255,7 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Changes = change.NewSet(nil)
+	l.Options.Changes = detectChanges(t, nil, nil)
 	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -264,10 +265,12 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}},
 		},
 	}
-	st.AddObjects([]manifest.BaseManifest{input, consumer})
+	for _, object := range []manifest.BaseManifest{input, consumer} {
+		st.AddObject(object)
+	}
 	c := New(st, nil)
 	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 	var initial store.ReadSet
@@ -307,7 +310,7 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 	st.RecordEmitted(producer.Named(), &first, nil)
 	assert.Equal(t, st.GetObject(child.Named()), manifest.BaseManifest(child))
 	l := loader.New(st)
-	l.Options.Changes = change.NewSet(nil)
+	l.Options.Changes = detectChanges(t, nil, nil)
 	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
 	admissiontest.Commit(t, l.Options.Session, nil)
 	c := New(st, nil)
@@ -354,7 +357,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 			Name:      "changed",
 			Namespace: "apps",
 			PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "settings"},
 				},
 			},
@@ -369,7 +372,9 @@ func testKeepEmittedLatePromotionConvergesCase(
 				Name: source.Name,
 			},
 		}
-		s.AddObjects([]manifest.BaseManifest{parent, primary})
+		for _, object := range []manifest.BaseManifest{parent, primary} {
+			s.AddObject(object)
+		}
 		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			primary.Named(): {File: "changed.yaml"},
 			settings: {
@@ -379,7 +384,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 		filterLoader, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
-				Changes:   change.NewSet([]string{"changed.yaml"}),
+				Changes:   detectChanges(t, []string{"changed.yaml"}, []string{"changed.yaml"}),
 				Index:     index,
 				Inventory: s,
 				Root:      "",
@@ -501,7 +506,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"incoming.yaml"}),
+			Changes:   detectChanges(t, []string{"incoming.yaml"}, []string{"incoming.yaml"}),
 			Index:     index,
 			Inventory: s,
 			Root:      "/repo",

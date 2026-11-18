@@ -15,7 +15,8 @@ func TestEmission_RejectedRenderReplay(t *testing.T) {
 			st := New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			source := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://first.test/repo"}
-			st.AddObjects([]manifest.BaseManifest{owner, source})
+			st.AddObject(owner)
+			st.AddObject(source)
 			var reads ReadSet
 			reads.Init(st, owner.Named(), nil)
 			defer reads.Close()

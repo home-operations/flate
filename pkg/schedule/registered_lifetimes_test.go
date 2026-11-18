@@ -91,7 +91,7 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 		close(release)
 		assert.NoError(t, <-done)
 		assert.Equal(t, runs.Load(), int64(2))
-		acceptedExecution := s.Results()[consumer.Named()].Assessment.(*base.Execution)
+		acceptedExecution := s.results()[consumer.Named()].Assessment.(*base.Execution)
 		assert.Equal(t, acceptedExecution == previous, false)
 		assert.Equal(t, acceptedExecution.Valid(), true)
 	})
@@ -171,7 +171,7 @@ func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 		assert.Equal(t, status.Status, store.StatusReady)
 		assert.Equal(t, renders.Load(), int64(2))
 		assert.Equal(t, dependencies.Load(), int64(1))
-		assert.Equal(t, len(s.Results()), 3)
+		assert.Equal(t, len(s.results()), 3)
 	})
 }
 
@@ -204,7 +204,9 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 		}
 		input := &manifest.ConfigMap{Name: "input", Namespace: "ns", Data: map[string]any{"value": "old"}}
 		st, bodies := store.New(), task.NewBounded(2)
-		st.AddObjects([]manifest.BaseManifest{consumer, driver, input})
+		for _, obj := range []manifest.BaseManifest{consumer, driver, input} {
+			st.AddObject(obj)
+		}
 		controller := base.New(st, bodies)
 		controller.StartLifecycle()
 		completed, started, settled := make(chan struct{}), make(chan struct{}), make(chan struct{})

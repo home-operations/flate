@@ -7,7 +7,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -20,7 +19,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(parent)
-	changes := change.NewSet(nil)
+	changes := detectChanges(t, nil, nil)
 	session := newSolverSession(t, st, changes, Request{Roots: []manifest.NamedResource{parent.Named()}, Changed: true})
 	_, retry := publishDecision(t, session, new(Admission{
 		Needed: []manifest.NamedResource{parent.Named()}, Selected: []manifest.NamedResource{parent.Named()},

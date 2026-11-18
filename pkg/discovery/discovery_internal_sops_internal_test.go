@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -43,7 +42,7 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	st := store.New()
 	l := loader.New(st)
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"flux/consumer.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"flux/consumer.yaml"}, []string{"flux/consumer.yaml"})
 	session, err := beginTest(
 		t.Context(),
 		testConfig(t, Config{

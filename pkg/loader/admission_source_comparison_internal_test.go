@@ -200,7 +200,7 @@ func testQualifyContentFingerprintCaseCompletion(
 	if (*(*scope.testCaseInput)) == "canceled" {
 		cancel()
 	}
-	changes := change.NewSet(nil)
+	changes := detectChanges(t, nil, nil)
 	if (*(*scope.testCaseInput)) == "bootstrap" {
 		changes = nil
 	}
@@ -265,12 +265,12 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 	}
 	if (*(*scope.testCaseInput)) == "unpaired_pinned" {
 		(*scope.selected)[0].FS = nil
-		paths = []string{"../selected/apps/cm.yaml"}
+		paths = []string{"selected/apps/cm.yaml"}
 	}
 	if (*(*scope.testCaseInput)) == "unavailable" {
 		(*scope.selected)[1].FS = nil
 	}
-	supplied := change.NewSet(paths)
+	supplied := detectChanges(t, paths, paths)
 	if (*(*scope.testCaseInput)) == "missing_bootstrap" {
 		(*scope.stores)[0].SetArtifact(manifest.BootstrapSourceID, nil)
 		_, qualifyErr := change.Qualify(
@@ -293,7 +293,7 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, (*scope.err))
-	assert.Diff(t, supplied.Paths(), change.NewSet(paths).Paths())
+	assert.Diff(t, supplied.Paths(), detectChanges(t, paths, paths).Paths())
 	assert.Equal(t, sourceChanges(supplied, (*scope.source).Named()) == nil, true)
 	if (*(*scope.testCaseInput)) == "reader_reuse" {
 		for i, input := range *scope.selected {
@@ -399,7 +399,9 @@ type selectedIndexInput struct {
 
 func populateSelectedIndexes(fixture *selectedIndexInput) {
 	for i, st := range fixture.stores {
-		st.AddObjects([]manifest.BaseManifest{fixture.source, fixture.owner})
+		for _, object := range []manifest.BaseManifest{fixture.source, fixture.owner} {
+			st.AddObject(object)
+		}
 		st.SetArtifact(fixture.source.Named(), fixture.selected[i])
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: fixture.roots[i], FS: fstest.MapFS{
 			"apps/cm.yaml": {Data: []byte(fixture.roots[i])},

@@ -25,7 +25,11 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	fixture := seedKSStore(1000)
 	s, sourceFiles := fixture.store, fixture.files
 	// Small change set: 3 files spread across distinct app subpaths.
-	changeSet := change.NewSet([]string{
+	changeSet := detectChanges(b, []string{
+		"apps/app-7/ks.yaml",
+		"apps/app-42/ks.yaml",
+		"apps/app-913/ks.yaml",
+	}, []string{
 		"apps/app-7/ks.yaml",
 		"apps/app-42/ks.yaml",
 		"apps/app-913/ks.yaml",
@@ -76,7 +80,7 @@ func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
 	for id := range index.Records {
 		objects[id] = refObj(id)
 	}
-	changes := change.NewSet([]string{"input.yaml"})
+	changes := detectChanges(b, []string{"input.yaml"}, []string{"input.yaml"})
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = newAdmission(b, admissionConfig{changes: changes, index: index, inventory: objects, root: ""})
@@ -92,7 +96,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		claims := l.Claims("/repo")
+		claims := l.claims("/repo")
 		byPrefix := make(map[string][]manifest.NamedResource, len(claims))
 		for _, c := range claims {
 			byPrefix[c.Prefix] = append(byPrefix[c.Prefix], c.ID)
@@ -112,7 +116,7 @@ func BenchmarkTransitiveDeps(b *testing.B) {
 			Name:      "flux-system",
 			Namespace: "flux-system",
 		},
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 			{Kind: manifest.KindConfigMap, Name: "cluster-secrets"},
 			{Kind: manifest.KindConfigMap, Name: "common-config"},
@@ -136,7 +140,7 @@ func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
 			fixture3 := seedKSStore(unrelated + 1)
 			s, files := fixture3.store, fixture3.files
 			index := new(filterFixture{files: files, root: "/repo", objects: s}).index()
-			changes := change.NewSet([]string{"apps/app-0/ks.yaml"})
+			changes := detectChanges(b, []string{"apps/app-0/ks.yaml"}, []string{"apps/app-0/ks.yaml"})
 			parent := testutil.KustomizationID("flux-system", "app-0")
 			children := make([]store.Child, fanOut)
 			for i := range children {
@@ -346,7 +350,7 @@ func benchmarkSupplierResolve(b *testing.B, suppliers int, match bool) {
 		Namespace: "apps",
 		Path:      "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: name, Optional: true},
 			},
 		},
@@ -389,7 +393,7 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 				Namespace: "apps",
 				Path:      "apps",
 				PostBuild: &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{
+					SubstituteFrom: []kustomizev1.SubstituteReference{
 						{Kind: manifest.KindConfigMap, Name: name, Optional: true},
 					},
 				},

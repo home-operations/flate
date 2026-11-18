@@ -247,7 +247,7 @@ func (r *Result) capture(input *store.ReferenceFacts, demand Demand) error {
 	return nil
 }
 
-const producedCause = "is produced in the cluster with unknown data; supply it with --supply"
+const producedCause = "is produced in the cluster with unknown data; supply a readable document"
 
 func (r *Result) captureVariables(input *store.ReferenceFacts) error {
 	if err := r.readVariables(&input.Keys); err != nil {
@@ -270,7 +270,7 @@ func (r *Result) captureVariables(input *store.ReferenceFacts) error {
 	}
 	switch {
 	case len(r.unreadable) != 0:
-		r.cause = fmt.Sprintf("key %q is unreadable offline; supply it with --supply", r.unreadable[0])
+		r.cause = fmt.Sprintf("key %q is unreadable offline; supply a readable document", r.unreadable[0])
 	case input.Generated && !r.certain:
 		r.cause = producedCause
 	}
@@ -344,7 +344,7 @@ func (r *Result) captureKey(input *store.ReferenceFacts) error {
 	case input.Generated:
 		r.cause = producedCause
 	default:
-		r.cause = "has encrypted keys with unknown names; supply it with --supply"
+		r.cause = "has encrypted keys with unknown names; supply a readable document"
 	}
 	return nil
 }
@@ -352,7 +352,7 @@ func (r *Result) captureKey(input *store.ReferenceFacts) error {
 func (r *Result) selectValue(value *manifest.DataValue) {
 	if value.Encrypted {
 		r.unreadable = []string{r.ref.Key}
-		r.cause = fmt.Sprintf("key %q is SOPS-encrypted and unreadable; supply it with --supply", r.ref.Key)
+		r.cause = fmt.Sprintf("key %q is SOPS-encrypted and unreadable; supply a readable document", r.ref.Key)
 		return
 	}
 	r.present, r.admitted = true, true
@@ -373,7 +373,7 @@ func (r *Result) failure(absent bool) error {
 	category, cause := manifest.ErrInvalidValuesReference, r.cause
 	if absent {
 		category = manifest.ErrObjectNotFound
-		cause += "; supply it with --supply"
+		cause += "; supply a readable document"
 	}
 	return manifest.NewError(category, errors.New(cause), fmt.Sprintf("%s %s %s/%s %s",
 		r.ref.Use, r.ref.Kind, r.ref.Namespace, r.ref.Name, cause))

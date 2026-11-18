@@ -229,7 +229,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		// Fresh KS per iteration mirrors a distinct KS reconcile sharing
 		// the same substituteFrom CM.
 		postBuild := kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: "ConfigMap", Name: "cluster-settings"}},
 		}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
 		ks.PostBuild = &postBuild

@@ -3,6 +3,6 @@
          current snapshot: required by paperwork/paperwork-paperless
 
   ⚠ warnings (1)
-    [DiffSuppressed] Kustomization paperwork/paperwork-paperless: 1 object not rendered on the current side; diff suppressed (dependencies failed: Secret/paperwork/paperless: not found; supply it with --supply)
+    [DiffSuppressed] Kustomization paperwork/paperwork-paperless: 1 object not rendered on the current side; diff suppressed (dependencies failed: Secret/paperwork/paperless: not found; supply a readable document)
 
   ✗ 1 failed · 1 blocked

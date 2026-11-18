@@ -5,17 +5,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/source/cache"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -85,4 +91,120 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+type lifetimeWriter func([]byte) (int, error)
+
+func (w lifetimeWriter) Write(data []byte) (int, error) { return w(data) }
+
+func TestRunSelected_FinalConsumerLifetime(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"completed", "payload_error", "report_error", "baseline_error", "close_error"} {
+		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
+			testRunSelectedFinalConsumerLifetime(t, stage)
+		})
+	}
+}
+
+func testRunSelectedFinalConsumerLifetime(t *testing.T, stage string) {
+	t.Helper()
+	root, cacheDir := writeFixture(t), t.TempDir()
+	flags := commonFlags{path: root, cacheDir: cacheDir, concurrency: 2}
+	if stage == "baseline_error" {
+		flags.base = "absent-revision"
+	}
+	failure := errors.New("final consumer failed")
+	var data fs.FS
+	var selected *selectedInvocation
+	var diagnostics bytes.Buffer
+	reads, reports := 0, 0
+	read := func() {
+		t.Helper()
+		res, err := cache.Sweep(t.Context(), cacheDir, cache.SweepOpts{})
+		assert.FatalIf(t, err == nil && len(res.Errors) == 0, "invocation closed before final consumer")
+		if data != nil {
+			body, readErr := fs.ReadFile(data, "content")
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(body), "lazy payload")
+			reads++
+		}
+	}
+	stderr := lifetimeWriter(func(p []byte) (int, error) {
+		if selected == nil || selected.owner.Config != nil {
+			read()
+		}
+		reports++
+		if stage == "report_error" {
+			return 0, failure
+		}
+		return diagnostics.Write(p)
+	})
+	err := runSelected(t.Context(), selectedRequest{
+		flags: flags, roots: flags.roots("", runnableKinds...), stdout: stderr, stderr: stderr,
+	}, func(inv *selectedInvocation) selectedPayload {
+		selected = inv
+		if stage == "close_error" {
+			closeCache := inv.owner.Config.Cache.Close
+			release := reflect.ValueOf(inv.owner).Elem().FieldByName("releaseCache")
+			// Private ownership injection MUST stay in the test without widening the production API.
+			reflect.NewAt(release.Type(), release.Addr().UnsafePointer()).Elem().Set(reflect.ValueOf(func() error {
+				assert.Equal(t, reads >= 4 && reports > 0, true)
+				assert.NoError(t, inv.err)
+				assert.NoError(t, inv.remainder)
+				return errors.Join(closeCache(), failure)
+			}))
+		}
+		var acquireErr error
+		data, _, _, acquireErr = inv.owner.Config.Cache.Blob(t.Context(),
+			cache.BlobKey{Content: stage}, &cache.Policy{},
+			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				_, writeErr := io.WriteString(w, "lazy payload")
+				return cache.ProducerResult{}, writeErr
+			})
+		assert.NoError(t, acquireErr)
+		read()
+		return selectedPayload{
+			rosters: []output.TestReport{{Passed: 1, Matched: 1}},
+			prepare: func([]diff.Names) { read() },
+			write: func() error {
+				read()
+				if stage == "payload_error" {
+					return failure
+				}
+				return nil
+			},
+		}
+	})
+	switch stage {
+	case "completed":
+		assert.NoError(t, err)
+	case "baseline_error":
+		assert.FatalIf(t, err == nil || selected != nil, "baseline failure lost ownership: %v", err)
+	default:
+		assert.Equal(t, errors.Is(err, failure), true)
+	}
+	assert.Equal(t, reports > 0, true)
+	res, sweepErr := cache.Sweep(t.Context(), cacheDir, cache.SweepOpts{})
+	assert.NoError(t, sweepErr)
+	assert.Equal(t, len(res.Errors), 0)
+	switch stage {
+	case "baseline_error":
+		return
+	case "close_error":
+		assert.Equal(t, errors.Is(selected.err, failure), true)
+		assert.Equal(t, errors.Is(selected.remainder, failure), true)
+		assert.Equal(t, errors.Is(selected.owner.Close(), failure), true)
+		if _, reported := errors.AsType[reportedError](err); !reported {
+			assert.NoError(t, (output.Encoder{Writer: &diagnostics}).Errors(err))
+		}
+		assert.Equal(t, strings.Count(diagnostics.String(), failure.Error()), 1)
+		_, reported := errors.AsType[reportedError](err)
+		assert.Equal(t, reported, true)
+	default:
+		assert.NoError(t, selected.owner.Close())
+	}
+	assert.Equal(t, reads >= 4, true)
+	_, readErr := fs.ReadFile(data, "content")
+	assert.Equal(t, errors.Is(readErr, fs.ErrClosed), true)
 }

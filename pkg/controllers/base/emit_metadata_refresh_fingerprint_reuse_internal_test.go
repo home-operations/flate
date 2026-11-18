@@ -20,7 +20,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -121,7 +120,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			admissionLoader1, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"reader.yaml"}),
+					Changes:   detectChanges(t, []string{"reader.yaml"}, []string{"reader.yaml"}),
 					Index:     index,
 					Inventory: s,
 					Root:      "",
@@ -325,7 +324,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
 		},
 	}
 	release := &manifest.HelmRelease{
@@ -394,7 +393,12 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 	}
 	admissionLoader1, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "",
+		},
 	)
 	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
 	c.Configure(Options{Session: admissionLoader1.Options.Session, Index: index, Loader: admissionLoader1})
@@ -659,9 +663,11 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	s := store.New()
 	c := New(s, nil)
 	obj := (*testCaseInput.obj).WithNamespace("apps")
-	s.AddObjects([]manifest.BaseManifest{
+	for _, object := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: testCaseInput.parent.Name, Namespace: testCaseInput.parent.Namespace}, obj,
-	})
+	} {
+		s.AddObject(object)
+	}
 	s.UpdateStatus(
 		obj.Named(),
 		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
@@ -672,7 +678,7 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	admissionLoader2, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"parent.yaml"}),
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 			Index:     index,
 			Inventory: s,
 			Root:      "",

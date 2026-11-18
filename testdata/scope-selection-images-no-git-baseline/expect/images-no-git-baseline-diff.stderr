@@ -1,4 +1,4 @@
-flate error: --path "@@repo@@" is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout
+flate error: input path "@@repo@@" is not inside a git working tree; provide a base input or a base revision with a git checkout
 <PERSISTENCE:|
   ⚠ warnings (1)
     [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available

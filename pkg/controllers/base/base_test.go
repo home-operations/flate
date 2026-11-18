@@ -18,7 +18,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -61,7 +60,12 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	c := base.New(s, nil)
 	admissionLoader1, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "",
+		},
 	)
 	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
 	c.Configure(base.Options{Session: admissionLoader1.Options.Session, Index: index, Loader: admissionLoader1})

@@ -15,12 +15,8 @@ func testCapturePayloadAuthorityCase(t *testing.T, testCaseInput *bool,
 
 	s := New()
 	a, z := ownerID("a"), ownerID("z")
-	s.AddObjects(
-		[]manifest.BaseManifest{
-			&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
-			&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
-		},
-	)
+	s.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace})
 	child := emissionChild("input", "a")
 	declaration := emissionChild("input", "z")
 	target := child.Obj.Named()

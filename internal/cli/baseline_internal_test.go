@@ -20,9 +20,9 @@ func TestRun_BasePathDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 	}{
-		{"missing original path", "--path"},
-		{"missing selected path", "--path"},
-		{"non git", "is not inside a git working tree; pass --path-orig=<dir> or --base=<rev>"},
+		{"missing original path", "input path"},
+		{"missing selected path", "input path"},
+		{"non git", "is not inside a git working tree; provide a base input or a base revision"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeFixture(t)
@@ -55,12 +55,12 @@ func TestRun_BasePathDiagnostics(t *testing.T) {
 			assert.FatalIf(t, tc.name == "missing selected path" &&
 				!strings.Contains(
 					stderr,
-					"pass --path-orig=<dir> or --base=<rev>",
+					"provide a base input or a base revision",
 				), "missing next-step guidance: %s", stderr)
 			assert.FatalIf(
 				t,
-				tc.name == "non git" && !strings.Contains(stderr, "--path \""+root+"\""),
-				"missing flag context: %s",
+				tc.name == "non git" && !strings.Contains(stderr, "input path \""+root+"\""),
+				"missing input path context: %s",
 				stderr,
 			)
 		})

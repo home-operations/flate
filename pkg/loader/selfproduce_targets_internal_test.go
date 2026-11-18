@@ -104,7 +104,7 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 		owner.PostBuild.Substitute = map[string]string{"BUCKET": "shared"}
 	}
 	if tc.input != "" {
-		owner.PostBuild.SubstituteFrom = []manifest.SubstituteReference{{Kind: tc.input, Name: "settings"}}
+		owner.PostBuild.SubstituteFrom = []kustomizev1.SubstituteReference{{Kind: tc.input, Name: "settings"}}
 	}
 	var parent manifest.NamedResource
 	if tc.inherited {
@@ -118,9 +118,18 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 	if tc.readable {
 		id := manifest.NamedResource{Kind: tc.input, Namespace: "apps", Name: "settings"}
 		if tc.input == manifest.KindSecret {
-			st.AddObject(manifest.NewSecret(id, nil, map[string]any{"BUCKET": "shared"}))
+			st.AddObject(
+				&manifest.Secret{
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+					Data:       nil,
+					StringData: map[string]any{"BUCKET": "shared"},
+				},
+			)
 		} else {
-			st.AddObject(manifest.NewConfigMap(id, map[string]any{"BUCKET": "shared"}))
+			st.AddObject(
+				&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"BUCKET": "shared"}},
+			)
 		}
 	}
 	name := "${BUCKET}"

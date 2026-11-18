@@ -69,7 +69,7 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 	for _, before := range []bool{false, true} {
 		t.Run(strconv.FormatBool(before), func(t *testing.T) {
 			t.Parallel()
-			set := NewSet([]string{"entry/root.yaml", "leaf/kustomization.yaml"})
+			set := &Set{paths: map[string][2]filePresence{"entry/root.yaml": {}, "leaf/kustomization.yaml": {}}}
 			set.paths["leaf/kustomization.yaml"] = [2]filePresence{filePresent, fileUnknown}
 			indexes := [2]*manifest.DiscoveryIndex{index, nil}
 			if !before {
@@ -487,7 +487,7 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			assert.Equal(t, changed, !equal)
 		}
 		prepared := manifest.DeepCopyMap(docs[0].Document)
-		manifest.EnsureMetadata(prepared)["namespace"] = id.Namespace
+		prepared["metadata"].(map[string]any)["namespace"] = id.Namespace
 		side := manifest.TreeHead
 		if reverse {
 			side = manifest.TreeBase

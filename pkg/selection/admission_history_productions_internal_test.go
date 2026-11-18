@@ -7,7 +7,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -65,7 +64,7 @@ func TestAdmission_HistoryProductionRefresh(t *testing.T) {
 			},
 		},
 	)
-	changes := change.NewSet([]string{"owner.yaml"})
+	changes := detectChanges(t, []string{"owner.yaml"}, []string{"owner.yaml"})
 	facts := &solverFacts{
 		store:   st,
 		changes: changes,

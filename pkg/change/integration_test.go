@@ -6,10 +6,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -112,20 +111,24 @@ data:
   unchanged: "true"
 `)
 
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
+	invocation, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
 		{
 			ID: manifest.TreeID{
 				Cluster: ".",
 				Side:    manifest.TreeHead,
 			},
-			Path:            filepath.Join(dir, "kubernetes", "flux"),
-			RepoRoot:        dir,
-			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
+			Path:     filepath.Join(dir, "kubernetes", "flux"),
+			RepoRoot: dir,
+			ExternalChanges: detectChanges(
+				t,
+				[]string{"kubernetes/apps/media/plex/app/cm.yaml"},
+				[]string{"kubernetes/apps/media/plex/app/cm.yaml"},
+			),
 		},
 	}, orchestrator.Config{Concurrency: 2})
-	for _, run := range runs {
-		t.Cleanup(run.Result.Close)
-	}
+	assert.FatalIf(t, invocation == nil, "missing invocation: %v", err)
+	t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+	runs := invocation.Results
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
 	o := runs[0].Orchestrator

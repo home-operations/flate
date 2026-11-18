@@ -301,7 +301,9 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 				Name: source.Name,
 			},
 		}}
-		st.AddObjects([]manifest.BaseManifest{source, release})
+		for _, object := range []manifest.BaseManifest{source, release} {
+			st.AddObject(object)
+		}
 		st.SetArtifact(
 			source.Named(),
 			st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),

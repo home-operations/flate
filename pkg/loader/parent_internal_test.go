@@ -30,7 +30,7 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("apps", "owner")
-	l.Claims(root)
+	l.claims(root)
 
 	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "claims published an indexed owner")
 
@@ -42,7 +42,7 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: []\n")},
 	}})
-	l.Claims(root)
+	l.claims(root)
 
 	assert.FatalIf(t, st.GetObject(id) != owner, "%s", "claims retired an owner after reader replacement")
 
@@ -70,19 +70,19 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	{
-		claims := l.Claims(root)
+		claims := l.claims(root)
 		assert.FatalIf(t, len(claims) != 0, "unresolved source claimed bootstrap files: %v", claims)
 	}
 	st.SetArtifact(ks.SourceID(), input)
 	l.refreshSources(nil)
 	l.refreshClaims(root, l.kustomizations())
 	assert.Equal(t, reads.Load(), int64(0))
-	claims := l.Claims(root)
+	claims := l.claims(root)
 	assert.Diff(t, claims, []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
 	assert.Equal(t, reads.Load(), int64(1))
 	derived := &l.scopes.inputs[0].ownerClaims.claims[0]
 	claims[0].Prefix = "caller/"
-	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
+	assert.Diff(t, l.claims(root), []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
 	assert.Equal(t, reads.Load(), int64(1))
 
 	assert.FatalIf(
@@ -97,11 +97,11 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	earlier := *ks
 	earlier.Name = "earlier"
 	st.AddObject(&earlier)
-	claims = l.Claims(root)
+	claims = l.claims(root)
 	claims[0].Prefix = "caller/"
 	assert.Diff(
 		t,
-		l.Claims(root),
+		l.claims(root),
 		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
 	)
 
@@ -113,7 +113,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	)
 	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Claims(root)
+	l.claims(root)
 	assert.Diff(t, l.Index.Claims["apps/"], []manifest.NamedResource{earlier.Named(), ks.Named()})
 
 	assert.FatalIf(
@@ -130,7 +130,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	st.AddObject(&later)
 	assert.Diff(
 		t,
-		l.Claims(root),
+		l.claims(root),
 		[]manifest.KSClaim{
 			{ID: earlier.Named(), Prefix: "apps/"},
 			{ID: ks.Named(), Prefix: "apps/"},
@@ -150,7 +150,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	st.SetArtifact(later.SourceID(), nil)
 	assert.Diff(
 		t,
-		l.Claims(root),
+		l.claims(root),
 		[]manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}},
 	)
 	assert.Equal(t, reads.Load(), readsBefore)
@@ -293,7 +293,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		},
 	)
 
-	prefixes := loaderFixture(s, nil).Claims(repoRoot)
+	prefixes := loaderFixture(s, nil).claims(repoRoot)
 	seen := map[manifest.NamedResource]bool{}
 	for _, p := range prefixes {
 		seen[p.ID] = true
@@ -331,7 +331,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		if declared {
 			s.AddObject(&manifest.ExternalArtifact{Name: "generated", Namespace: "flux-system"})
 		}
-		for _, claim := range l.Claims(repoRoot) {
+		for _, claim := range l.claims(repoRoot) {
 			assert.ErrorIf(t, claim.ID == generated.Named(), "unavailable artifact claimed bootstrap files: %v", claim)
 		}
 		parent, found := manifest.StrictParent(Claims(s, repoRoot, []*manifest.Kustomization{&generated}),

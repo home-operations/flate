@@ -1,6 +1,8 @@
 package diff_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/diff"
@@ -10,11 +12,7 @@ import (
 // Example compares explicitly attributed documents and retains chart metadata
 // even when normalization strips the chart label from the compared manifests.
 func Example() {
-	parentID := manifest.NamedResource{
-		Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease,
-		Namespace: "media", Name: "sonarr",
-	}
-	parent := diff.Parent{NamedResource: parentID}
+	parent := &manifest.HelmRelease{Namespace: "media", Name: "sonarr"}
 	deployment := func(chartVer, image string) map[string]any {
 		return map[string]any{
 			"apiVersion": "apps/v1", "kind": "Deployment",
@@ -29,15 +27,32 @@ func Example() {
 			},
 		}
 	}
-	base := []diff.Doc{{Parent: parent, Manifest: deployment("4.0.0", "ghcr.io/home-operations/sonarr:4.0.0")}}
-	head := []diff.Doc{{Parent: parent, Manifest: deployment("4.1.0", "ghcr.io/home-operations/sonarr:4.1.0")}}
+	base := diff.Snapshot{Manifests: []manifest.DocumentBatch{{
+		Parent: parent, Documents: []map[string]any{deployment("4.0.0", "ghcr.io/home-operations/sonarr:4.0.0")},
+	}}}
+	head := diff.Snapshot{Manifests: []manifest.DocumentBatch{{
+		Parent: parent, Documents: []map[string]any{deployment("4.1.0", "ghcr.io/home-operations/sonarr:4.1.0")},
+	}}}
 
-	changes, _ := diff.Changes(
-		base, head,
-		diff.Options{StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields},
+	comparison, err := diff.Compare(
+		[]diff.Group{{Orig: base, Current: head}},
+		diff.Options{Format: diff.FormatJSON, StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields},
 	)
+	if err != nil {
+		panic(err)
+	}
+	var output bytes.Buffer
+	if err := comparison.Write(&output, nil); err != nil {
+		panic(err)
+	}
+	var report struct {
+		Changes []diff.Change `json:"changes"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		panic(err)
+	}
 	{
-		cValues := changes
+		cValues := report.Changes
 		for cIndex := range cValues {
 			c := cValues[cIndex]
 			fmt.Printf("%s %s %s/%s (chart %s -> %s)\n", c.Status, c.Kind, c.Namespace, c.Name, c.OldChart, c.NewChart)

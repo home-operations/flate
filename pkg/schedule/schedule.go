@@ -39,9 +39,7 @@ type Result struct {
 	Assessment assessment
 }
 
-// Dispatcher connects execution and publication delivery to the scheduler.
-// SDK embedders implement this seam without exposing their input representation.
-type Dispatcher interface {
+type dispatcher interface {
 	Dispatch(context.Context, NodeID, manifest.DrainLevel, Result) Result
 	// Sweep permits final classification only when the invocation's work is quiescent.
 	// A nonempty result MUST keep the structural boundary open.
@@ -76,7 +74,7 @@ type node struct {
 // Scheduler owns execution lifetime and sorted successor admission.
 type Scheduler struct {
 	tasks     taskService
-	disp      Dispatcher
+	disp      dispatcher
 	mu        sync.Mutex
 	cond      *sync.Cond
 	nodes     map[NodeID]*node
@@ -89,7 +87,7 @@ type Scheduler struct {
 }
 
 // New constructs a scheduler borrowing the invocation's bounded task service.
-func New(tasks taskService, disp Dispatcher) *Scheduler {
+func New(tasks taskService, disp dispatcher) *Scheduler {
 	s := &Scheduler{tasks: tasks, disp: disp, nodes: make(map[NodeID]*node)}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -211,7 +209,7 @@ func (s *Scheduler) invalidate(ids []NodeID) {
 }
 
 // Run drains work, delivers pending heads and settles retained unresolved assessments.
-// Dispatcher, assessment and task-service calls MUST run outside mu.
+// Dispatch, assessment and task-service calls MUST run outside mu.
 func (s *Scheduler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -274,17 +272,6 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.err = ctx.Err()
 	}
 	return s.err
-}
-
-// Results projects completed accepted assessments after Run has drained.
-func (s *Scheduler) Results() map[NodeID]Result {
-	results := make(map[NodeID]Result, len(s.nodes))
-	for id, n := range s.nodes {
-		if n.state == stateTerminal && n.assessment != nil && n.assessment.Valid() {
-			results[id] = Result{Assessment: n.assessment}
-		}
-	}
-	return results
 }
 
 func (s *Scheduler) dispatchNextLocked(ctx context.Context) {

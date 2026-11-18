@@ -26,8 +26,8 @@ func htmlDoc(t *testing.T, y string) Doc {
 
 func renderHTMLString(t *testing.T, left, right []Doc) string {
 	t.Helper()
-	out, _, err := RenderDocs(left, right, Options{Format: FormatHTML})
-	assert.FatalIf(t, err != nil, "RenderDocs(html): %v", err)
+	out, _, err := renderDocuments(left, right, new(Options{Format: FormatHTML}))
+	assert.FatalIf(t, err != nil, "renderDocuments(html): %v", err)
 	return string(out)
 }
 
@@ -46,10 +46,10 @@ func TestRenderHTML_Changed(t *testing.T) {
 		d.Manifest["data"].(map[string]any)["payload"] = "<yaml>"
 		d.Parent.Name, d.Parent.Path = "web<parent>", "apps/<path>"
 	}
-	raw, warnings, err := RenderDocs([]Doc{from}, []Doc{to}, Options{
+	raw, warnings, err := renderDocuments([]Doc{from}, []Doc{to}, new(Options{
 		Format:     FormatHTML,
-		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}},
-	})
+		Suppressed: []Suppression{{Parent: from.Parent, Side: sideCurrent, Reason: "<suppression>"}},
+	}))
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(warnings) != 0, "HTML renderer constructed presentation warnings: %+v", warnings)
 	out := string(raw)
@@ -210,7 +210,7 @@ func TestRenderHTML_PreparedSubjects(t *testing.T) {
 				cmDoc(new(removed), manifest.NamedResource{Name: "removed"}, "before", ""),
 			}
 			right := []Doc{cmDoc(new(shared), manifest.NamedResource{Name: "shared"}, "after", "")}
-			out, _, err := RenderDocs(left, right, Options{Format: FormatHTML, subjects: subjects})
+			out, _, err := renderDocuments(left, right, new(Options{Format: FormatHTML, subjects: subjects}))
 			assert.NoError(t, err)
 			for _, label := range []string{tc.shared, tc.removed} {
 				heading := `<div class="rparent">` + html.EscapeString(label) + `</div>`

@@ -11,7 +11,7 @@ import (
 func TestGetDeclaration_IndependenceLifecycle(t *testing.T) {
 	t.Parallel()
 	for _, support := range []string{"uncovered", "independent", "covered"} {
-		for _, route := range []string{"pre_index", "post_index", "document", "batch", "included", "preflight", "readset", "readmit", "anchor", "batch_anchor"} {
+		for _, route := range []string{"pre_index", "post_index", "document", "included", "preflight", "readset", "readmit", "anchor"} {
 			t.Run(support+"/"+route, func(t *testing.T) {
 				t.Parallel()
 				testGetDeclarationIndependenceLifecycleCase(
@@ -66,7 +66,7 @@ func testGetDeclarationIndependenceLifecycleCase(
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: proofs}},
 	}
-	if (*testCaseInput.route) == "anchor" || (*testCaseInput.route) == "batch_anchor" {
+	if (*testCaseInput.route) == "anchor" {
 		index.Records[ownerID("descendant")] = manifest.DiscoveryRecord{
 			Productions: []manifest.Production{{Owner: raw.Named()}},
 		}
@@ -86,8 +86,6 @@ func testGetDeclarationIndependenceLifecycleCase(
 		st.AddObject(raw)
 	case "document":
 		st.AddObject(raw, map[string]any{"apiVersion": manifest.SourceDomain + "/v1"})
-	case "batch":
-		st.AddObjects([]manifest.BaseManifest{raw})
 	case "included", "preflight":
 		if (*testCaseInput.route) == "included" {
 			st.SetIncluded(raw.Named(), false, false)
@@ -105,12 +103,8 @@ func testGetDeclarationIndependenceLifecycleCase(
 		st.AddObject(raw)
 		assert.FatalIf(t, !st.DeleteObject(raw.Named()), "%s", "fixture did not delete its first admission")
 		st.AddObject(raw)
-	case "anchor", "batch_anchor":
-		if (*testCaseInput.route) == "anchor" {
-			st.AddObject(raw)
-		} else {
-			st.AddObjects([]manifest.BaseManifest{raw})
-		}
+	case "anchor":
+		st.AddObject(raw)
 	}
 	testGetDeclarationIndependenceLifecycleCaseCompletion(
 		t,

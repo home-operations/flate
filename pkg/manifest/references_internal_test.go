@@ -53,7 +53,7 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 		{"chart", &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}, 0},
 		{"credentials", &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, 0},
 		{"provider credentials", &ResourceSetInputProvider{Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"}}, 0},
-		{"substitution", &Kustomization{PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "config"}, {Kind: KindSecret, Name: "secret", Optional: true}}}}, 2},
+		{"substitution", &Kustomization{PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: KindConfigMap, Name: "config"}, {Kind: KindSecret, Name: "secret", Optional: true}}}}, 2},
 		{"values", &HelmRelease{ValuesFrom: []ValuesReference{{Kind: KindConfigMap, Name: "values"}}}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		{Name: "relative", ReadyExpr: "true"},
 		{Name: "explicit", Namespace: "other"},
 	}
-	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{
+	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 		{
 			Kind: KindConfigMap,
 			Name: "shared",
@@ -458,7 +458,7 @@ func TestReferences_NoAllocations(t *testing.T) {
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
 	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
-	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Name: "release", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}, DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmRelease{Name: "values-only", Namespace: "apps", ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{Chart: "./charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}, &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"sources": []any{map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "input"}}, "artifacts": []any{map[string]any{"name": "bundle", "revision": "@repo"}}}}} {
+	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Name: "release", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}, DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmRelease{Name: "values-only", Namespace: "apps", ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{Chart: "./charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}, &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"sources": []any{map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "input"}}, "artifacts": []any{map[string]any{"name": "bundle", "revision": "@repo"}}}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			testReferencesNoAllocationsCase(t, obj)
 		},

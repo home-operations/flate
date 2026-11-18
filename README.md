@@ -408,11 +408,27 @@ The `pkg/manifest` package provides resource types and identities.
 This example renders the current directory as one cluster, with at most four parallel reconciles:
 
 ```go
-runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
+run, renderErr := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
     ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
     Path: ".",
 }}, orchestrator.Config{Concurrency: 4})
+if run != nil {
+    // Close must follow every result and selection consumer, including error paths.
+    renderErr = errors.Join(renderErr, run.Close())
+}
 ```
+
+Import `errors` from the standard library for this example.
+Read completed snapshots through `run.Results` before closure.
+Use `run.Select` with one owned head identity or an ordered base/head pair from the same cluster.
+Keep the run open until every selection consumer finishes.
+Keep borrowed maps, slices, documents, and manifest objects immutable until closure.
+A non-nil run requires closure even when rendering returns an error.
+`Close` releases retained resources and returns teardown errors. Repeated calls are safe.
+
+The supported SDK consists of `pkg/orchestrator` and `pkg/manifest`.
+`internal/orchestrator` owns execution and resource lifetime.
+Other `pkg/` packages remain implementation details until their separate relocation.
 
 ## License
 

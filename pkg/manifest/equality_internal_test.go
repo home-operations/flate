@@ -65,6 +65,8 @@ func TestLabelsEqual_Representations(t *testing.T) {
 	app := document(map[string]any{"app": "same"})
 	other := document(map[string]any{"app": "other"})
 	raw := &RawObject{Spec: app}
+	copied := *raw
+	copied.Spec = DeepCopyMap(raw.Spec)
 	empty := &RawObject{}
 	typed := &Kustomization{Labels: map[string]string{"app": "same"}}
 	excluded := func(key string) bool { return key == "owner" }
@@ -79,11 +81,11 @@ func TestLabelsEqual_Representations(t *testing.T) {
 		{name: "typed labels ignore exclusions", a: &Kustomization{Labels: map[string]string{"owner": "a"}}, b: &Kustomization{Labels: map[string]string{"owner": "b"}}, excluded: excluded},
 		{name: "typed nil and empty labels", a: &Kustomization{}, b: &Kustomization{Labels: map[string]string{}}, forward: true, reverse: true},
 		{name: "typed difference despite equal documents", a: typed, b: &Kustomization{}, documents: [2]map[string]any{app, app}},
-		{name: "raw inputs", a: raw, b: raw.Clone(), forward: true, reverse: true},
+		{name: "raw inputs", a: raw, b: &copied, forward: true, reverse: true},
 		{name: "raw input and document", a: raw, b: empty, documents: [2]map[string]any{nil, app}, forward: true, reverse: true},
 		{name: "raw changed input", a: raw, b: &RawObject{Spec: other}},
 		{name: "authoritative empty document", a: raw, b: empty, documents: [2]map[string]any{{}, nil}, forward: true, reverse: true},
-		{name: "empty document suppresses raw input", a: raw, b: raw.Clone(), documents: [2]map[string]any{{}, nil}},
+		{name: "empty document suppresses raw input", a: raw, b: &copied, documents: [2]map[string]any{{}, nil}},
 		{name: "document overrides raw input", a: raw, b: empty, documents: [2]map[string]any{other, other}, forward: true, reverse: true},
 		{name: "documents", a: empty, b: empty, documents: [2]map[string]any{app, app}, forward: true, reverse: true},
 		{name: "changed documents", a: empty, b: empty, documents: [2]map[string]any{app, other}},

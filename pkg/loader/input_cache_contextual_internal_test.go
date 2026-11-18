@@ -12,7 +12,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -63,7 +62,11 @@ spec: {type: Static}
 				if cached {
 					l.Options.Cache = owner
 				}
-				l.Options.Changes = change.NewSet([]string{"providers/provider.yaml"})
+				l.Options.Changes = detectChanges(
+					t,
+					[]string{"providers/provider.yaml"},
+					[]string{"providers/provider.yaml"},
+				)
 				configureSelection(t, l, selection.Request{Changed: true})
 				l.documents.compact = true
 				l.mountSources()
@@ -142,7 +145,11 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						l.SourceRoot = root
 						l.Options.Cache = inputCache
 						configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{hr}, Changed: true})
-						l.Options.Changes = change.NewSet([]string{"layer/common/child.yaml"})
+						l.Options.Changes = detectChanges(
+							t,
+							[]string{"layer/common/child.yaml"},
+							[]string{"layer/common/child.yaml"},
+						)
 						l.documents.compact = true
 						l.mountSources()
 						assert.NoError(t, l.restoreCachedInputs(t.Context()))

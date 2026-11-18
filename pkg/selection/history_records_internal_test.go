@@ -26,7 +26,9 @@ func TestRefineHistory_OrderingClosure(t *testing.T) {
 		Namespace: "apps",
 		DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
 	}
-	st.AddObjects([]manifest.BaseManifest{producer, consumer})
+	for _, object := range []manifest.BaseManifest{producer, consumer} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(
 		source,
 		&store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{"app/cm.yaml": {Data: []byte("unchanged")}}},
@@ -38,7 +40,7 @@ func TestRefineHistory_OrderingClosure(t *testing.T) {
 	f := newHistoryEvaluation(
 		t,
 		historyEvaluationConfig{
-			changes:   change.NewSet([]string{"consumer.yaml"}),
+			changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
 			index:     index,
 			inventory: st,
 			root:      "/repo",
@@ -86,7 +88,9 @@ func TestRefineHistory_OrderingReferences(t *testing.T) {
 				Namespace: "apps",
 				DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
 			}
-			st.AddObjects([]manifest.BaseManifest{target, consumer})
+			for _, object := range []manifest.BaseManifest{target, consumer} {
+				st.AddObject(object)
+			}
 			st.SetArtifact(
 				source,
 				&store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{"app/cm.yaml": {Data: []byte("unchanged")}}},
@@ -98,7 +102,7 @@ func TestRefineHistory_OrderingReferences(t *testing.T) {
 			f := newHistoryEvaluation(
 				t,
 				historyEvaluationConfig{
-					changes:   change.NewSet([]string{changed}),
+					changes:   detectChanges(t, []string{changed}, []string{changed}),
 					index:     index,
 					inventory: st,
 					root:      "/repo",
@@ -138,7 +142,9 @@ func TestRefineHistory_RestoredSourceQualification(t *testing.T) {
 	owner := testutil.KustomizationID("apps", "owner")
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	source := &manifest.GitRepository{Name: "pinned", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{source, child})
+	for _, object := range []manifest.BaseManifest{source, child} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(
 		source.Named(),
 		&store.SourceArtifact{
@@ -161,7 +167,7 @@ func TestRefineHistory_RestoredSourceQualification(t *testing.T) {
 	f := newHistoryEvaluation(
 		t,
 		historyEvaluationConfig{
-			changes:   change.NewSet([]string{"owner.yaml", "child.yaml"}),
+			changes:   detectChanges(t, []string{"owner.yaml", "child.yaml"}, []string{"owner.yaml", "child.yaml"}),
 			index:     index,
 			inventory: st,
 			root:      "/repo",

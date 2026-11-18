@@ -51,7 +51,7 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 	s := store.New()
 	c := New(s, task.NewBounded(2))
 	var calls atomic.Int64
-	child := manifest.NewConfigMap(manifest.NamedResource{Name: "auxiliary", Namespace: "apps"}, nil)
+	child := &manifest.ConfigMap{Name: "auxiliary", Namespace: "apps", Data: nil}
 	first := &configGenerator{
 		Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "first"},
 		objects:       []manifest.BaseManifest{child},
@@ -149,7 +149,7 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 			s := store.New()
 			c := New(s, task.NewBounded(2))
 			var calls atomic.Int64
-			child := manifest.NewConfigMap(manifest.NamedResource{Name: "auxiliary", Namespace: "apps"}, nil)
+			child := &manifest.ConfigMap{Name: "auxiliary", Namespace: "apps", Data: nil}
 			object := &configGenerator{
 				Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps"},
 				objects:       []manifest.BaseManifest{child},
@@ -235,7 +235,7 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 	first := &configGenerator{
 		Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "first"},
 		objects: []manifest.BaseManifest{
-			manifest.NewConfigMap(id, map[string]any{"value": "first"}),
+			&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"value": "first"}},
 		},
 		calls: &calls,
 	}
@@ -253,10 +253,11 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 			_, _, next := run.Reads.GetEmission(first.Named())
 			defer next.Finish()
 			rendered = store.Child{
-				Obj: manifest.NewConfigMap(
-					manifest.NamedResource{Name: "rendered", Namespace: "apps"},
-					map[string]any{"value": "rendered"},
-				),
+				Obj: &manifest.ConfigMap{
+					Name:      "rendered",
+					Namespace: "apps",
+					Data:      map[string]any{"value": "rendered"},
+				},
 			}
 			next.Children, next.Complete, next.Fingerprint = []store.Child{
 				rendered,
@@ -277,7 +278,9 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 	next := *first
 	next.Kustomization = first.Clone()
 	next.Path = "second"
-	next.objects = []manifest.BaseManifest{manifest.NewConfigMap(id, map[string]any{"value": "second"})}
+	next.objects = []manifest.BaseManifest{
+		&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"value": "second"}},
+	}
 	if (*testCaseInput) == "removed" {
 		next.objects = nil
 	}
@@ -375,7 +378,7 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 	s := store.New()
 	c := New(s, task.NewBounded(2))
 	var calls atomic.Int64
-	child := manifest.NewConfigMap(manifest.NamedResource{Name: "auxiliary", Namespace: "apps"}, nil)
+	child := &manifest.ConfigMap{Name: "auxiliary", Namespace: "apps", Data: nil}
 	object := &configGenerator{
 		Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps"},
 		objects:       []manifest.BaseManifest{child},
@@ -403,10 +406,11 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 			output.Children = append(
 				output.Children,
 				store.Child{
-					Obj: manifest.NewConfigMap(
-						manifest.NamedResource{Name: "rendered", Namespace: "apps"},
-						map[string]any{"VALUE": "output"},
-					),
+					Obj: &manifest.ConfigMap{
+						Name:      "rendered",
+						Namespace: "apps",
+						Data:      map[string]any{"VALUE": "output"},
+					},
 					Doc: doc,
 				},
 			)

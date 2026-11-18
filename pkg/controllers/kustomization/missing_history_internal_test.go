@@ -86,7 +86,7 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			c.StartLifecycle()
 			owner := &manifest.Kustomization{
 				Name: "apps", Namespace: "flux-system", Path: "./apps",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: input.Name, Optional: tc.optional},
 				}},
 			}
@@ -272,7 +272,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			freezeSourceForTest(t, st)
 			owner := &manifest.Kustomization{
 				Name: "apps", Namespace: "flux-system", Path: "./apps",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: tc.kind, Name: "unreadable", Optional: tc.optional},
 				}, Substitute: map[string]string{"ACTIVE": "yes"}},
 			}
@@ -396,7 +396,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 				Namespace: "flux-system",
 				Path:      "./apps",
 				PostBuild: &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 				},
 			}
 			producer := (&manifest.Kustomization{Name: "producer", Namespace: owner.Namespace}).Named()
@@ -482,13 +482,15 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 		Namespace: "flux-system",
 		Path:      "./apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}},
 		},
 	}
 	input := &manifest.ConfigMap{Name: "input", Namespace: owner.Namespace, Data: map[string]any{"VALUE": "stable"}}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: owner.Namespace}
 	source := (&manifest.GitRepository{Name: "inputs", Namespace: owner.Namespace}).Named()
-	st.AddObjects([]manifest.BaseManifest{owner, input, producer})
+	for _, object := range []manifest.BaseManifest{owner, input, producer} {
+		st.AddObject(object)
+	}
 	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
 	st.SetArtifact(source, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -41,7 +40,7 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 		t,
 		admissiontest.Config{
 			Inventory: st,
-			Changes:   change.NewSet(nil),
+			Changes:   detectChanges(t, nil, nil),
 			Index: &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					producer.Named(): {File: "candidate.yaml"},
@@ -97,7 +96,7 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 		proposal, err := filter.Prepare(
 			t.Context(),
 			selection.PrepareRequest{
-				Changes:    change.NewSet([]string{"candidate.yaml"}),
+				Changes:    detectChanges(t, []string{"candidate.yaml"}, []string{"candidate.yaml"}),
 				Generation: []store.Child{{Obj: producer}},
 			},
 		)
@@ -152,7 +151,9 @@ func TestExecution_QualificationFailurePrecedence(t *testing.T) {
 			st := store.New()
 			producer := &manifest.ResourceSet{Name: "candidate", Namespace: "apps"}
 			input := &manifest.ConfigMap{Name: "input", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{producer, input})
+			for _, object := range []manifest.BaseManifest{producer, input} {
+				st.AddObject(object)
+			}
 			st.SetIncluded(producer.Named(), true, false)
 			controller := New(st, task.NewBounded(2))
 			var run Execution

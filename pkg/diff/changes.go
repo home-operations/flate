@@ -9,20 +9,10 @@ import (
 // ChangeStatus classifies how a resource differs between two doc sets.
 type ChangeStatus string
 
-const (
-	// StatusAdded — present only on the right (New) side.
-	StatusAdded ChangeStatus = "added"
-	// StatusChanged — present on both sides with differing content.
-	StatusChanged ChangeStatus = "changed"
-	// StatusRemoved — present only on the left (Old) side.
-	StatusRemoved ChangeStatus = "removed"
-)
+// StatusRemoved identifies a resource present only in the original snapshot.
+const StatusRemoved ChangeStatus = "removed"
 
-// Change is one resource that differs between two rendered doc sets —
-// the structured form of what RenderDocs formats. SDK consumers build
-// their own output (an API payload, a web UI, an image report) from a
-// []Change instead of re-implementing the pairing + normalization that
-// RenderDocs does internally.
+// Change retains producer identity so equal resource names from different owners remain distinct.
 type Change struct {
 	// Parent is the Flux Kustomization / HelmRelease that rendered this
 	// resource — the pairing discriminator (so a Deployment from HR A is
@@ -45,21 +35,6 @@ type Change struct {
 	// no longer carry.
 	OldChart string `json:"oldChart"`
 	NewChart string `json:"newChart"`
-}
-
-// Changes normalizes left and right before pairing by canonical parent and
-// resource identity, and returns the differing resources as structured data.
-// Normalization strips opts.StripAttrs and opts.StripFields, redacts ConfigMap
-// binaryData, then applies opts.Normalize. Original chart labels are retained
-// as provenance. The result is sorted by parent then resource identity.
-// Returned manifests are independent of the input documents.
-// Warnings identify shadowed documents.
-// opts.Format is ignored.
-//
-//nolint:gocritic // The SDK takes a value snapshot of normalization options.
-func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
-	prepared := prepare(left, right, &opts)
-	return publicChanges(prepared), prepared.Warnings
 }
 
 func renderJSON(

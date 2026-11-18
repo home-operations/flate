@@ -17,7 +17,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -68,7 +67,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"producer/values.yaml"}),
+					Changes:   detectChanges(t, []string{"producer/values.yaml"}, []string{"producer/values.yaml"}),
 					Index:     res.Index,
 					Inventory: st,
 					Root:      "",
@@ -107,7 +106,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"producer/values.yaml"}),
+					Changes:   detectChanges(t, []string{"producer/values.yaml"}, []string{"producer/values.yaml"}),
 					Index:     res.Index,
 					Inventory: st,
 					Root:      "",
@@ -386,7 +385,9 @@ data: {value: fixture}
 		Name:       "owner",
 		Spec:       map[string]any{"path": "./shared"},
 	}
-	cfg.Store.AddObjects([]manifest.BaseManifest{foreignSource, foreignOwner})
+	for _, object := range []manifest.BaseManifest{foreignSource, foreignOwner} {
+		cfg.Store.AddObject(object)
+	}
 	if strings.HasPrefix((*testCaseInput), "self") {
 		cfg.SelfURLs = []string{"https://example.invalid/cluster.git"}
 	}
@@ -580,7 +581,7 @@ spec:
 			candidate, session := admissiontest.New(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"config/prod.yaml"}),
+					Changes:   detectChanges(t, []string{"config/prod.yaml"}, []string{"config/prod.yaml"}),
 					Index:     result.Index,
 					Inventory: st,
 					Root:      "",

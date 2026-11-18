@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -25,7 +24,9 @@ func TestFilter_SharedFileReaderNamespace(t *testing.T) {
 		Namespace:  "apps",
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: target.Name}},
 	}
-	st.AddObjects([]manifest.BaseManifest{owner, reader, unrelated, unknown, consumer})
+	for _, object := range []manifest.BaseManifest{owner, reader, unrelated, unknown, consumer} {
+		st.AddObject(object)
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		consumer.Named(): {File: "consumer.yaml"},
 		target: {Productions: []manifest.Production{{
@@ -35,7 +36,12 @@ func TestFilter_SharedFileReaderNamespace(t *testing.T) {
 	}, Readers: map[string][]manifest.FileReader{"common/secret.yaml": {{Reader: reader.Named(), Source: manifest.BootstrapSourceID}, {Reader: unrelated.Named(), Source: manifest.BootstrapSourceID}, {Reader: unknown.Named(), Source: manifest.BootstrapSourceID}}}}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	for _, id := range []manifest.NamedResource{consumer.Named(), target, owner.Named(), reader.Named(), unknown.Named()} {
 		assert.Equal(t, f.Reconcile(id), true)

@@ -104,7 +104,9 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 	if *testCaseInput.insertForeignFirst {
 		pair[0], pair[1] = pair[1], pair[0]
 	}
-	s.AddObjects(pair)
+	for _, object := range pair {
+		s.AddObject(object)
+	}
 	other := &manifest.Secret{Name: "s", Namespace: "ns1"}
 	s.AddObject(other)
 	for _, tt := range []struct {

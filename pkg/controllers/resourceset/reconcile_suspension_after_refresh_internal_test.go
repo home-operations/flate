@@ -103,7 +103,9 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 			if !hit {
 				rs.ResourcesTemplate = "<< invalid template"
 			}
-			s.AddObjects([]manifest.BaseManifest{rs, provider})
+			for _, object := range []manifest.BaseManifest{rs, provider} {
+				s.AddObject(object)
+			}
 			s.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if hit {
 				_, _, err := renderProviders(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {

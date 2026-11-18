@@ -27,10 +27,8 @@ type Bucket struct {
 	sourcev1.BucketSpec `json:",inline" yaml:",inline"`
 }
 
-// NewBucket normalizes an owned typed Bucket declaration.
-//
-//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
-func NewBucket(cr sourcev1.Bucket) *Bucket {
+//nolint:gocritic // The value input preserves the declaration snapshot boundary.
+func newBucket(cr sourcev1.Bucket) *Bucket {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
 	return &Bucket{
 		Name:        cr.Name,
@@ -106,7 +104,7 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 	if cr.Spec.Endpoint == "" {
 		return nil, inputf("Bucket %s/%s missing spec.endpoint", cr.Namespace, cr.Name)
 	}
-	out := NewBucket(cr)
+	out := newBucket(cr)
 	var err error
 	out.references(validateSecretReference(out.Named(), &err))
 	if err != nil {

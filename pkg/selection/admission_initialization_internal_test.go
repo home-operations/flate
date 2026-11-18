@@ -7,7 +7,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,7 +27,7 @@ func TestAdmissionStart_CancellationDuringRound(t *testing.T) {
 	st := store.New()
 	owner := testutil.KustomizationID("apps", "owner")
 	facts := &solverFacts{
-		store: st, changes: change.NewSet([]string{"owner.yaml"}),
+		store: st, changes: detectChanges(t, []string{"owner.yaml"}, []string{"owner.yaml"}),
 		index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			owner: {File: "owner.yaml"},
 		}},

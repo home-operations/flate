@@ -214,7 +214,14 @@ func TestCompleteDeclarations_PreservesInventorySnapshots(t *testing.T) {
 				},
 			}
 			inventory := declarationInventory{input: input, files: previous, paths: []string{"input.yaml"}}
-			err := reader.completeSource(t.Context(), change.NewSet([]string{"input.yaml"}),
+			changes, err := change.Qualify(
+				t.Context(),
+				detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
+				[2]*store.Store{store.New(), store.New()},
+				manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			err = reader.completeSource(t.Context(), changes,
 				manifest.TreeHead, &inventory)
 			assert.NoError(t, err)
 			assert.Equal(t, len(inventory.files), 0)

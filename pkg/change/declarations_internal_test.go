@@ -93,7 +93,7 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	}
 	changes, err := Qualify(
 		t.Context(),
-		NewSet([]string{"values.yaml"}),
+		&Set{paths: map[string][2]filePresence{"values.yaml": {}}},
 		[2]*store.Store{stores[0], stores[1]},
 		manifest.WorkScope{},
 	)
@@ -182,7 +182,12 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 		})
 		st.AddObject(child)
 	}
-	changes, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := Qualify(
+		t.Context(),
+		&Set{paths: map[string][2]filePresence{}},
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
 		t.Context(), DeclarationInputs{Stores: [2]*store.Store{
@@ -224,7 +229,12 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 	}
-	qualified, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	qualified, err := Qualify(
+		t.Context(),
+		&Set{paths: map[string][2]filePresence{}},
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	for _, other := range []*store.Store{stores[1], nil} {
 		frozen, err := qualified.WithDeclarations(
@@ -334,7 +344,7 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 			}
 			changes, err := Qualify(
 				t.Context(),
-				NewSet([]string{"parent.yaml"}),
+				&Set{paths: map[string][2]filePresence{"parent.yaml": {}}},
 				[2]*store.Store{stores[0], stores[1]},
 				manifest.WorkScope{},
 			)
@@ -476,11 +486,16 @@ func testWithDeclarationsOneSidedInputCase(t *testing.T, testCaseInput *struct {
 		}
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
 	}
-	paths := []string{}
+	paths := map[string][2]filePresence{}
 	if testCaseInput.changed {
-		paths = append(paths, "input.yaml")
+		paths["input.yaml"] = [2]filePresence{}
 	}
-	changes, err := Qualify(t.Context(), NewSet(paths), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := Qualify(
+		t.Context(),
+		&Set{paths: paths},
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
 		t.Context(), DeclarationInputs{Stores: [2]*store.Store{
@@ -551,7 +566,12 @@ func testWithDeclarationsPreparedProductionCase(
 	if testCaseInput.missing {
 		prepared[1] = nil
 	}
-	changes, err := Qualify(t.Context(), NewSet(nil), [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := Qualify(
+		t.Context(),
+		&Set{paths: map[string][2]filePresence{}},
+		[2]*store.Store{stores[0], stores[1]},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(
 		t.Context(),
@@ -587,7 +607,7 @@ func testWithDeclarationsEffectiveInputApplicabilityCase(
 	inputID := f.inputs[0].Named()
 	changes, err := Qualify(
 		t.Context(),
-		NewSet([]string{"settings.yaml"}),
+		&Set{paths: map[string][2]filePresence{"settings.yaml": {}}},
 		[2]*store.Store{f.stores[0], f.stores[1]},
 		manifest.WorkScope{},
 	)

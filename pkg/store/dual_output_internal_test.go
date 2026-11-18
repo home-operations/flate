@@ -52,7 +52,7 @@ func TestRecordEmitted_ProvenanceOnlyChange(t *testing.T) {
 	t.Parallel()
 	s := New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-	child := manifest.NewConfigMap(manifest.NamedResource{Name: "child", Namespace: "apps"}, nil)
+	child := &manifest.ConfigMap{Name: "child", Namespace: "apps"}
 	s.AddObject(owner)
 	for _, generated := range []bool{true, false, true} {
 		var previous ReadSet
@@ -86,15 +86,19 @@ func TestReadSet_CloseRetiresSourceAndInventory(t *testing.T) {
 	t.Parallel()
 	st := New()
 	owner := &manifest.GitRepository{Name: "producer", Namespace: "apps"}
-	contentInput := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "content-input", Namespace: "apps"},
-		map[string]any{"VALUE": "first"},
-	)
-	inventoryInput := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "inventory-input", Namespace: "apps"},
-		map[string]any{"VALUE": "first"},
-	)
-	st.AddObjects([]manifest.BaseManifest{owner, contentInput, inventoryInput})
+	contentInput := &manifest.ConfigMap{
+		Name:      "content-input",
+		Namespace: "apps",
+		Data:      map[string]any{"VALUE": "first"},
+	}
+	inventoryInput := &manifest.ConfigMap{
+		Name:      "inventory-input",
+		Namespace: "apps",
+		Data:      map[string]any{"VALUE": "first"},
+	}
+	st.AddObject(owner)
+	st.AddObject(contentInput)
+	st.AddObject(inventoryInput)
 	var contentReads, inventoryReads ReadSet
 	contentReads.Init(st, owner.Named(), nil)
 	inventoryReads.Init(st, owner.Named(), nil)
@@ -129,7 +133,13 @@ func TestReadSet_CloseRetiresSourceAndInventory(t *testing.T) {
 		"close left an independently retained output registered",
 	)
 	for _, input := range []*manifest.ConfigMap{contentInput, inventoryInput} {
-		st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"VALUE": "second"}))
+		st.AddObject(
+			&manifest.ConfigMap{
+				Name:      input.Named().Name,
+				Namespace: input.Named().Namespace,
+				Data:      map[string]any{"VALUE": "second"},
+			},
+		)
 	}
 	{
 		ids := slices.Collect(st.Sweep())
@@ -147,11 +157,9 @@ func testArtifactContentAndInventoryCase(t *testing.T, testCaseInput *testArtifa
 
 	s := New()
 	owner := &manifest.GitRepository{Name: "producer", Namespace: "apps"}
-	dependency := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "input", Namespace: "apps"},
-		map[string]any{"key": "one"},
-	)
-	s.AddObjects([]manifest.BaseManifest{owner, dependency})
+	dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"key": "one"}}
+	s.AddObject(owner)
+	s.AddObject(dependency)
 	var first, second ReadSet
 	first.Init(s, owner.Named(), nil)
 	second.Init(s, owner.Named(), nil)
@@ -237,7 +245,13 @@ func testArtifactContentAndInventoryCase(t *testing.T, testCaseInput *testArtifa
 		"%s",
 		"replaced output registrations or generated membership survived",
 	)
-	s.AddObject(manifest.NewConfigMap(dependency.Named(), map[string]any{"key": "two"}))
+	s.AddObject(
+		&manifest.ConfigMap{
+			Name:      dependency.Named().Name,
+			Namespace: dependency.Named().Namespace,
+			Data:      map[string]any{"key": "two"},
+		},
+	)
 	{
 		ids := slices.Collect(s.Sweep())
 		assert.FatalIf(

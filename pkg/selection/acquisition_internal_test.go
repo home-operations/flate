@@ -221,7 +221,13 @@ func TestPreparation_RootResolutionFollowsSourceGeneration(t *testing.T) {
 	demand := Demand{Source: source, Root: "app/../shared", History: true, Artifact: input, Reads: &original}
 	preparation := &Preparation{}
 	preparation.acceptAcquired([]Acquisition{{Demand: demand, Root: "shared", Available: true, Reads: &original}})
-	session.store.AddObject(manifest.NewConfigMap(sibling.Named(), map[string]any{"value": "changed"}))
+	session.store.AddObject(
+		&manifest.ConfigMap{
+			Name:      sibling.Named().Name,
+			Namespace: sibling.Named().Namespace,
+			Data:      map[string]any{"value": "changed"},
+		},
+	)
 	assert.Equal(t, original.Valid(), false)
 	current.Init(session.store, manifest.NamedResource{}, nil)
 	defer current.Retire()

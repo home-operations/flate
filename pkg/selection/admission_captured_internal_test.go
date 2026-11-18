@@ -89,7 +89,9 @@ func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
 		target.Named(): {Productions: []manifest.Production{proof}},
 	}}
 	st := store.New()
-	st.AddObjects([]manifest.BaseManifest{producer, target})
+	for _, object := range []manifest.BaseManifest{producer, target} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(index)
 	c := capturedClosure(t, st, index, emitter)
 	var reads store.ReadSet

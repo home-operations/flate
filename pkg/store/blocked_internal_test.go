@@ -100,10 +100,10 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			StatusPending, metav1.ConditionUnknown, ReasonReconciling, "retrying", false,
 		},
 		{"Ready condition", func(st *Store) {
-			st.SetCondition(id, readyCondition(StatusFailed, "", "primary"))
+			st.setCondition(id, new(readyCondition(StatusFailed, "", "primary")), 0, nil)
 		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
 		{"Healthy condition", func(st *Store) {
-			st.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
+			st.setCondition(id, new(Condition{Type: "Healthy", Status: metav1.ConditionTrue}), 0, nil)
 		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, failure.Error(), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -454,7 +454,7 @@ func testUpdateFailureTransitionsCase(t *testing.T, testCaseInput *testUpdateFai
 		},
 	}
 	if testCaseInput.tc.name == "Healthy condition" {
-		want = append(want, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
+		want = append(want, Condition{Type: "Healthy", Status: metav1.ConditionTrue})
 	}
 	assert.FatalIf(t, !slices.Equal(conds, want), "conditions = %+v, want %+v", conds, want)
 	conds[0].Message = "caller mutation"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"testing"
 	"testing/fstest"
 
@@ -43,17 +42,6 @@ func TestGetEmission_CompleteFingerprint(t *testing.T) {
 			assert.Equal(t, output.Fingerprint, want)
 			assert.Equal(t, attempt.Complete, false)
 		})
-	}
-}
-
-func TestGetEmission_AuthoritativeDocument(t *testing.T) {
-	t.Parallel()
-	for _, batch := range []bool{false, true} {
-		t.Run(strconv.FormatBool(batch), func(t *testing.T) {
-			t.Parallel()
-			testGetEmissionAuthoritativeDocumentCase(t, &batch)
-		},
-		)
 	}
 }
 
@@ -344,11 +332,8 @@ func TestRecordEmitted_AbsentArtifactPublication(t *testing.T) {
 	}
 }
 
-func testGetEmissionAuthoritativeDocumentCase(
-	t *testing.T,
-	testCaseInput *bool,
-) {
-	t.Helper()
+func TestGetEmission_AuthoritativeDocument(t *testing.T) {
+	t.Parallel()
 
 	s := New()
 	raw := &manifest.RawObject{
@@ -367,22 +352,17 @@ func testGetEmissionAuthoritativeDocumentCase(
 	}, false)()
 	s.AddObject(raw, doc)
 	assert.FatalIf(t, added != 1, "initial admission events = %d, want 1", added)
-	if *testCaseInput {
-		s.AddObjects([]manifest.BaseManifest{raw.Clone()})
-	} else {
-		s.AddObject(raw.Clone())
-	}
+	equal := *raw
+	equal.Spec = manifest.DeepCopyMap(raw.Spec)
+	s.AddObject(&equal)
 	assert.FatalIf(t, added != 1, "equal object-only admission events = %d, want 1", added)
 	_, retained, attempt := s.GetEmission(raw.Named())
 	attempt.Finish()
 	assert.FatalIf(t, !manifest.ValueEqual(retained, doc), "%s", "equal object-only admission discarded document")
-	changed := raw.Clone()
+	changed := *raw
+	changed.Spec = manifest.DeepCopyMap(raw.Spec)
 	changed.Spec["value"] = "second"
-	if *testCaseInput {
-		s.AddObjects([]manifest.BaseManifest{changed})
-	} else {
-		s.AddObject(changed)
-	}
+	s.AddObject(&changed)
 	assert.FatalIf(t, added != 2, "changed object-only admission events = %d, want 2", added)
 	_, retained, attempt = s.GetEmission(raw.Named())
 	attempt.Finish()
@@ -391,7 +371,7 @@ func testGetEmissionAuthoritativeDocumentCase(
 	var captured ReadSet
 	captured.Init(s, ownerID("document-reader"), nil)
 	captured.GetObject(raw.Named())
-	s.AddObject(changed, replacement)
+	s.AddObject(&changed, replacement)
 	assert.FatalIf(
 		t,
 		captured.Valid(),
@@ -408,7 +388,7 @@ func testGetEmissionAuthoritativeDocumentCase(
 		"%s",
 		"explicit document did not replace equal object's authority",
 	)
-	s.AddObject(changed, replacement)
+	s.AddObject(&changed, replacement)
 	assert.FatalIf(t, added != 3, "equal document admission events = %d, want 3", added)
 	_, _, completed := s.GetEmission(raw.Named())
 	defer completed.Finish()
@@ -420,7 +400,7 @@ func testGetEmissionAuthoritativeDocumentCase(
 		"%s",
 		"completed document input is unavailable",
 	)
-	s.AddObject(changed, doc)
+	s.AddObject(&changed, doc)
 	assert.FatalIf(
 		t,
 		s.GetArtifact(raw.Named(), ArtifactContent) != nil,

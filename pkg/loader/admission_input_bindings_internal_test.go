@@ -75,7 +75,7 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet([]string{"input.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -158,7 +158,7 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		Path:      "apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
 			{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 		}},
@@ -242,7 +242,7 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 			Namespace: "apps",
 			Path:      "apps",
 			PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 				},
 			},
@@ -328,7 +328,7 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
 
-	l.Options.Changes = change.NewSet([]string{"before.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"before.yaml"}, []string{"before.yaml"})
 	before := l.SourceFacts(source, nil).Delta
 	assert.Equal(t, before.Contains("before.yaml"), true)
 	_, err := prepareSelection(
@@ -338,7 +338,7 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
 	)
 	assert.NoError(t, err)
-	l.Options.Changes = change.NewSet([]string{"after.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"after.yaml"}, []string{"after.yaml"})
 	after := l.SourceFacts(source, nil).Delta
 	assert.Equal(t, after.Contains("before.yaml"), false)
 	assert.Equal(t, after.Contains("after.yaml"), true)

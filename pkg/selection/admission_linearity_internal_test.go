@@ -11,7 +11,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -40,7 +39,7 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 			facts := &solverFacts{
 				store:   st,
-				changes: change.NewSet([]string{"unrelated.yaml"}),
+				changes: detectChanges(t, []string{"unrelated.yaml"}, []string{"unrelated.yaml"}),
 				index:   manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 			}
 			facts.context.Root = root
@@ -95,7 +94,7 @@ func TestAdmission_EmittedSourceVisitsItsPath(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			session := newSolverSession(t, st, change.NewSet(nil), Request{Changed: true})
+			session := newSolverSession(t, st, detectChanges(t, nil, nil), Request{Changed: true})
 			facts := session.facts.(*solverFacts)
 			facts.context.Frozen = true
 			facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
@@ -234,7 +233,7 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Session {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	facts := &solverFacts{
 		store:       st,
-		changes:     change.NewSet(paths),
+		changes:     detectChanges(t, paths, paths),
 		index:       manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		candidates:  map[manifest.NamedResource]store.Child{},
 		occurrences: map[manifest.NamedResource]OccurrenceFacts{},

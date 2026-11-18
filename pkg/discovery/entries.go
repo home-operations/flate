@@ -428,7 +428,7 @@ func partitionError(roots []entryRoot, edges [][]string, reason string) error {
 		manifest.ErrInput,
 		nil,
 		fmt.Sprintf(
-			"%s: candidates [%s]; witnesses [%s]; select an entry with --path",
+			"%s: candidates [%s]; witnesses [%s]; select an input path for one entry",
 			reason,
 			strings.Join(candidates, ", "),
 			strings.Join(slices.Compact(witnesses), "; "),

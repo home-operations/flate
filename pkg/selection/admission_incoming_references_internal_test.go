@@ -35,7 +35,9 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 			}
 			competitor := &manifest.Kustomization{Name: "competitor", Namespace: "apps"}
 			st := store.New()
-			st.AddObjects([]manifest.BaseManifest{stale, competitor})
+			for _, object := range []manifest.BaseManifest{stale, competitor} {
+				st.AddObject(object)
+			}
 			facts := &solverFacts{
 				store: st,
 				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

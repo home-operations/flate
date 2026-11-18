@@ -38,7 +38,7 @@ func TestShape_AllDocumentFailures(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
 				Substitute:     map[string]string{"READABLE": "[", "GOOD": "substituted"},
-				SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 			}}
 			secret := &manifest.Secret{
 				Name: "input", Namespace: "apps",
@@ -130,7 +130,7 @@ func TestShape_ConsumedUnreadable(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
 				Substitute:     tc.inline,
-				SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 			}}
 			secret := &manifest.Secret{
 				Name:       "input",
@@ -199,7 +199,7 @@ func TestShape_UnknownNamesActivate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "generated"}},
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "generated"}},
 			}}
 			var inputs []values.Result
 			for ref := range manifest.References(ks, manifest.ReferenceRelations) {

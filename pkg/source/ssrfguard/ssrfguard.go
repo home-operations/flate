@@ -139,7 +139,7 @@ func (e *blockedError) Error() string {
 		return fmt.Sprintf("egress to %s blocked: %s", e.address, e.reason)
 	}
 	return fmt.Sprintf(
-		"egress to %s blocked by --restrict-egress (private/loopback/link-local/metadata address)",
+		"egress to %s blocked by egress restriction (private/loopback/link-local/metadata address)",
 		e.address,
 	)
 }

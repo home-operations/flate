@@ -107,7 +107,8 @@ func TestReferenceFacts_PendingPeerAfterEmptySupplier(t *testing.T) {
 	s := New()
 	first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
 	empty := &manifest.Kustomization{Name: "empty", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{first, empty})
+	s.AddObject(first)
+	s.AddObject(empty)
 	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		target: {Productions: []manifest.Production{{Owner: first.Named()}, {Owner: empty.Named()}}},

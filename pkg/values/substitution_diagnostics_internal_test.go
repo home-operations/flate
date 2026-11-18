@@ -20,7 +20,7 @@ func TestExpandPostBuildSubstituteReference_CapturedFailure(t *testing.T) {
 		Name:      "sync",
 	}
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
-	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 		{Kind: "Unsupported", Name: "ignored"},
 		{Kind: manifest.KindConfigMap, Name: "missing"},
 		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},

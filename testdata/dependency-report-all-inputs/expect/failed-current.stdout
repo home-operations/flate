@@ -76,7 +76,7 @@
       },
       "side": "current",
       "count": 1,
-      "reason": "dependencies failed: ConfigMap/flux-system/first-vars: not found; supply it with --supply; ConfigMap/flux-system/second-vars: not found; supply it with --supply"
+      "reason": "dependencies failed: ConfigMap/flux-system/first-vars: not found; supply a readable document; ConfigMap/flux-system/second-vars: not found; supply a readable document"
     }
   ]
 }

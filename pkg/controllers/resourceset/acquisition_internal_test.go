@@ -123,7 +123,9 @@ func testReconcileProviderAcquisitionSettlementCase(
 		InputsFrom:        []fluxopv1.InputProviderReference{{Name: pending.Name}, {Name: ready.Name}},
 		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>'}\ndata: {tag: '<< inputs.tag >>'}\n",
 	}
-	st.AddObjects([]manifest.BaseManifest{ready, pending, rs})
+	for _, object := range []manifest.BaseManifest{ready, pending, rs} {
+		st.AddObject(object)
+	}
 	before, err := json.Marshal(ready)
 	assert.NoError(t, err)
 	var publications atomic.Int32
@@ -371,7 +373,9 @@ func testReconcileProviderAcquisitionRefreshCase(
 		InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
 		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: current}\ndata: {tag: '<< inputs.tag >>', digest: '<< inputs.digest >>', color: '<< inputs.color >>'}\n",
 	}
-	st.AddObjects([]manifest.BaseManifest{provider, secret, rs})
+	for _, object := range []manifest.BaseManifest{provider, secret, rs} {
+		st.AddObject(object)
+	}
 	render := func(digest, color string) *store.Emission {
 		t.Helper()
 		var run *base.Execution

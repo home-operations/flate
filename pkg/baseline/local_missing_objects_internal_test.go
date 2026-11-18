@@ -151,7 +151,7 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 		resolvedCalls := calls.Load()
 		assert.NoError(t, err)
 		assert.Equal(t, res.BaseInput.Revision, pin.String())
-		assert.Diff(t, res.Source.Metadata, map[string]string{"baseline-selection": "explicit --base=selected"})
+		assert.Diff(t, res.Source.Metadata, map[string]string{"baseline-selection": "explicit base revision=selected"})
 		assert.Diff(t, res.Changes.Paths(), []string{"apps/file.yaml"})
 		label := filepath.Join(root, ".flate-base", pin.String())
 		assert.Equal(t, res.Source.LocalPath, root)

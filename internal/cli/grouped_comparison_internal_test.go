@@ -67,7 +67,7 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 			note := diff.Suppression{
 				Parent:  diff.Parent{NamedResource: failed},
 				Subject: subject,
-				Side:    diff.SideCurrent,
+				Side:    "current",
 				Count:   1,
 				Reason:  "secret apps/auth not found",
 			}

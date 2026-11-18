@@ -65,7 +65,12 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 		Key:      "same-family",
 	}
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}
-	data := manifest.NewSecret(secret, nil, map[string]any{"VALUE": "original"})
+	data := &manifest.Secret{
+		Name:       secret.Name,
+		Namespace:  secret.Namespace,
+		Data:       nil,
+		StringData: map[string]any{"VALUE": "original"},
+	}
 	evidence.Inputs = []EntryInput{{Resource: chart, Artifact: artifact}, {Resource: secret, Data: data}}
 	entry, err := cache.ApplicationReceipt(
 		t.Context(),
@@ -106,9 +111,12 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 					value = "changed"
 				}
 				current.AddDeclaration(store.Declaration{
-					Obj: manifest.NewSecret(secret,
-						nil,
-						map[string]any{"VALUE": value}),
+					Obj: &manifest.Secret{
+						Name:       secret.Name,
+						Namespace:  secret.Namespace,
+						Data:       nil,
+						StringData: map[string]any{"VALUE": value},
+					},
 					Origin: manifest.SuppliedDeclaration,
 				})
 			}

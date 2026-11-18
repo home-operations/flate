@@ -25,7 +25,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -440,7 +439,7 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	}
 	configureSelection(t, l, cfg.Selection)
 	if testCaseInput.changed {
-		cfg.Changes = change.NewSet([]string{"payload/input.yaml"})
+		cfg.Changes = detectChanges(t, []string{"payload/input.yaml"}, []string{"payload/input.yaml"})
 		l.Options.Changes = cfg.Changes
 	}
 	d := Session{cfg: cfg, loader: l}

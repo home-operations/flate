@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,7 +27,11 @@ func TestAdmission_EmittedNamespaceChildrenChanged(t *testing.T) {
 			stable := &manifest.Kustomization{Name: "stable", Namespace: "apps"}
 			changed := &manifest.Kustomization{Name: "changed", Namespace: "apps", Path: "changed"}
 			st.AddObject(parent)
-			changes := change.NewSet([]string{"production.yaml", "changed.yaml"})
+			changes := detectChanges(
+				t,
+				[]string{"production.yaml", "changed.yaml"},
+				[]string{"production.yaml", "changed.yaml"},
+			)
 			facts := &solverFacts{
 				store:   st,
 				changes: changes,

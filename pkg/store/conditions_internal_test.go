@@ -20,13 +20,13 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 		events = append(events, payload.(StatusInfo))
 	}, false)
 	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: string(ReasonSkipped), Message: "ok"}
-	s.SetCondition(id, cond)
+	s.setCondition(id, new(cond), 0, nil)
 	var observation Observation
 	_, observation = s.Snapshot(id, true)
 	snapshot := observation.Conditions
 	cond.Reason = "Custom"
-	s.SetCondition(id, cond)
-	s.SetCondition(id, cond)
+	s.setCondition(id, new(cond), 0, nil)
+	s.setCondition(id, new(cond), 0, nil)
 	assert.Equal(t, len(events), 2)
 	assert.Equal(t, events[0].Reason, ReasonSkipped)
 	assert.Equal(t, events[1].Reason, StatusReason("Custom"))
@@ -43,9 +43,9 @@ func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) { statusEvents++ }, false)
 
 	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: ReasonSucceeded}
-	s.SetCondition(id, cond)
-	s.SetCondition(id, cond)
-	assert.Equal(t, statusEvents, 1) // identical SetCondition is a no-op
+	s.setCondition(id, new(cond), 0, nil)
+	s.setCondition(id, new(cond), 0, nil)
+	assert.Equal(t, statusEvents, 1) // identical condition write is a no-op
 }
 
 func TestStore_FailedResources(t *testing.T) {
@@ -59,7 +59,7 @@ func TestStore_FailedResources(t *testing.T) {
 	s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "boom"})
 	assert.Equal(t, len(s.FailedResources()), 1)
 
-	// Phantom guard: a SetCondition that races after DeleteObject must
+	// Phantom guard: a condition write that races after DeleteObject must
 	// not resurrect a failure entry for an id that no longer exists.
 	s.DeleteObject(id)
 	s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "phantom"}) // simulates the race
@@ -95,12 +95,12 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 
 	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "ok"})
 	healthy := Condition{
-		Type:    ConditionHealthy,
+		Type:    "Healthy",
 		Status:  metav1.ConditionTrue,
 		Reason:  "Healthy",
 		Message: "healthy",
 	}
-	s.SetCondition(id, healthy)
+	s.setCondition(id, new(healthy), 0, nil)
 
 	var before Observation
 	_, before = s.Snapshot(id, true)

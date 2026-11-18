@@ -216,20 +216,15 @@ func testFetcherChartMediaAfterProvenanceCase(
 		Type:      sourcev1.HelmRepositoryTypeOCI,
 		Insecure:  true,
 	}
-	hc := manifest.NewHelmChartSource(
-		sourcev1.HelmChart{
-			Name:      "app",
-			Namespace: r.Namespace,
-			Spec: sourcev1.HelmChartSpec{
-				Chart:   "app",
-				Version: "1.0.0",
-				SourceRef: sourcev1.LocalHelmChartSourceReference{
-					Kind: manifest.KindHelmRepository,
-					Name: r.Name,
-				},
-			},
+	hc := &manifest.HelmChartSource{
+		Name: "app", Namespace: r.Namespace,
+		Chart:   "app",
+		Version: "1.0.0",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{
+			Kind: manifest.KindHelmRepository,
+			Name: r.Name,
 		},
-	)
+	}
 	reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}).readSet(hc)
 	charts := helmchart.New(f, helmchart.Config{Cache: cache, Network: network})
 	chart, err := fetchtest.Fetch(t.Context(), charts.Fetch, hc, reads, &sourcecache.Policy{}, nil)

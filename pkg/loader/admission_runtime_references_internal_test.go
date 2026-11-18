@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -35,7 +34,7 @@ func TestFilter_ContentDependencies(t *testing.T) {
 			f := newAdmission(
 				t,
 				admissionConfig{
-					changes: change.NewSet([]string{"changed.yaml"}),
+					changes: detectChanges(t, []string{"changed.yaml"}, []string{"changed.yaml"}),
 					index: new(filterFixture{
 						files:   map[manifest.NamedResource]string{tc.obj.Named(): "changed.yaml"},
 						objects: objects,
@@ -94,7 +93,12 @@ func TestFilter_ShouldReconcileRequiresProvenNamespace(t *testing.T) {
 	}}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"child.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"child.yaml"}, []string{"child.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	assert.Equal(t, f.Reconcile(effective), true)
 	foreign := effective
@@ -155,7 +159,7 @@ func testFilterDependsOnNotFollowedCase(t *testing.T, testCaseInput *string,
 	}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"},
+		admissionConfig{changes: detectChanges(t, changes, changes), index: index, inventory: st, root: "/repo"},
 	)
 	assert.Equal(t, f.role(a.Named()), primary)
 	want := absent
@@ -214,7 +218,11 @@ func testAddEmittedStampedHelmReleasePullsChartSourceCase(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/media/kustomization.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"apps/media/kustomization.yaml"},
+				[]string{"apps/media/kustomization.yaml"},
+			),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"},
 				objects: objects,

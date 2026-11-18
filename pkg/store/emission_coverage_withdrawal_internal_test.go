@@ -153,51 +153,45 @@ func testRecordEmittedNeverEmittedCoverageWithdrawalSimple(
 	s.RecordEmitted(p, &Emission{Complete: true}, nil)
 	(*testCaseInput.checkHidden)(t, s, k)
 	(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
-	for _, batch := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reanchor/batch=%t", batch), func(t *testing.T) {
-			t.Parallel()
+	t.Run("reanchor", func(t *testing.T) {
+		t.Parallel()
 
-			s, p, k, l := (*testCaseInput.fixture)(t, "k", "l", false)
-			s.RecordEmitted(p, &Emission{Complete: true}, nil)
-			(*testCaseInput.checkHidden)(t, s, k)
-			(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
-			s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "private"})
-			s.UpdateStatus(l.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
-			anchor := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
-			if batch {
-				s.AddObjects([]manifest.BaseManifest{anchor})
-			} else {
-				s.AddObject(anchor)
-			}
-			assert.FatalIf(
-				t,
-				s.GetObject(k) != anchor || s.GetObject(l.Obj.Named()) != l.Obj,
-				"%s",
-				"external anchor did not restore eligible frozen descendants",
-			)
-			assert.ErrorIf(
-				t,
-				s.GetArtifact(l.Obj.Named(), ArtifactContent) != nil,
-				"%s",
-				"reanchoring restored a retained artifact",
-			)
-			{
-				_, ok := s.GetStatus(l.Obj.Named())
-				assert.ErrorIf(t, ok, "%s", "reanchoring restored retained Ready")
-			}
-			sh := s.shardFor(l.Obj.Named())
-			assert.ErrorIf(
-				t,
-				sh.cells[l.Obj.Named()].retired || sh.cells[l.Obj.Named()].hidden,
-				"%s",
-				"restored frozen descendant remains retired or hidden",
-			)
-			(*testCaseInput.seedRetained)(t, s, l.Obj.Named())
-			assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
-			(*testCaseInput.checkHidden)(t, s, k)
-			(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
-		})
-	}
+		s, p, k, l := (*testCaseInput.fixture)(t, "k", "l", false)
+		s.RecordEmitted(p, &Emission{Complete: true}, nil)
+		(*testCaseInput.checkHidden)(t, s, k)
+		(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
+		s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "private"})
+		s.UpdateStatus(l.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
+		anchor := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
+		s.AddObject(anchor)
+		assert.FatalIf(
+			t,
+			s.GetObject(k) != anchor || s.GetObject(l.Obj.Named()) != l.Obj,
+			"%s",
+			"external anchor did not restore eligible frozen descendants",
+		)
+		assert.ErrorIf(
+			t,
+			s.GetArtifact(l.Obj.Named(), ArtifactContent) != nil,
+			"%s",
+			"reanchoring restored a retained artifact",
+		)
+		{
+			_, ok := s.GetStatus(l.Obj.Named())
+			assert.ErrorIf(t, ok, "%s", "reanchoring restored retained Ready")
+		}
+		sh := s.shardFor(l.Obj.Named())
+		assert.ErrorIf(
+			t,
+			sh.cells[l.Obj.Named()].retired || sh.cells[l.Obj.Named()].hidden,
+			"%s",
+			"restored frozen descendant remains retired or hidden",
+		)
+		(*testCaseInput.seedRetained)(t, s, l.Obj.Named())
+		assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
+		(*testCaseInput.checkHidden)(t, s, k)
+		(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
+	})
 }
 
 type testRecordEmittedNeverEmittedCoverageWithdrawalCaseInputs struct {

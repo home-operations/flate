@@ -78,7 +78,12 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 				}
 				changes, err := change.Qualify(
 					t.Context(),
-					change.NewSet([]string{"entry/source.yaml"}), [2]*store.Store{stores[0], stores[1]},
+					detectChanges(
+						t,
+						[]string{"entry/source.yaml"},
+						[]string{"entry/source.yaml"},
+					),
+					[2]*store.Store{stores[0], stores[1]},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)

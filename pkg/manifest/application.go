@@ -57,7 +57,7 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 			}},
 		)
 	case KindOCIRepository:
-		declaration = NewOCIRepository(
+		declaration = newOCIRepository(
 			sourcev1.OCIRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.OCIRepositorySpec{
 				URL:       sync.URL,
 				Reference: &sourcev1.OCIRepositoryRef{Tag: sync.Ref},
@@ -66,7 +66,7 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 			}},
 		)
 	case KindBucket:
-		declaration = NewBucket(sourcev1.Bucket{Name: name, Namespace: r.Namespace, Spec: sourcev1.BucketSpec{
+		declaration = newBucket(sourcev1.Bucket{Name: name, Namespace: r.Namespace, Spec: sourcev1.BucketSpec{
 			Endpoint: sync.URL, BucketName: sync.Ref, SecretRef: secret, Provider: sync.Provider,
 		}})
 	default:

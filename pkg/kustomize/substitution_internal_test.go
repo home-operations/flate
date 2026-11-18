@@ -137,7 +137,7 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	owner := testutil.KustomizationID("flux-system", "sync")
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
 	entry.PostBuild = &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
 	}
 	st := store.New()
 	st.AddObject(

@@ -72,7 +72,7 @@ func TestProducerProjections_ConcurrentContent(t *testing.T) {
 //nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestProducerProjections_DifferentContentDoesNotWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		projections := NewProducerProjections()
+		projections := new(ProducerProjections)
 		defer projections.Clear()
 		first := &ResourceSet{Name: "first", Namespace: "apps"}
 		first.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n"
@@ -118,7 +118,7 @@ func testTemplateInputsStaticReferencesCase(t *testing.T, testCaseInput *struct 
 ) {
 	t.Helper()
 
-	projection, err := NewProducerProjections().ProjectTemplate(t.Context(), []byte(testCaseInput.content), "apps")
+	projection, err := new(ProducerProjections).ProjectTemplate(t.Context(), []byte(testCaseInput.content), "apps")
 	assert.NoError(t, err)
 	refs := projection.Inputs
 	assert.Equal(t, len(refs), testCaseInput.count)
@@ -197,7 +197,7 @@ func testProducerProjectionsConcurrentContentCase(
 	t.Helper()
 	const content = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\ndata: {value: '{{ .Values.VALUE }}'}\n"
 
-	projections := NewProducerProjections()
+	projections := new(ProducerProjections)
 	defer projections.Clear()
 	project := func() (TemplateProjection, error) {
 		if (*testCaseInput) == "template" {

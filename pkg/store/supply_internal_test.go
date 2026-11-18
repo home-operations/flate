@@ -17,9 +17,9 @@ func TestDeclaration_Authority(t *testing.T) {
 			id := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
 			object := func(data map[string]any) manifest.BaseManifest {
 				if kind == manifest.KindSecret {
-					return manifest.NewSecret(id, nil, data)
+					return &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: data}
 				}
-				return manifest.NewConfigMap(id, data)
+				return &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: data}
 			}
 			s := New()
 			first := object(map[string]any{"old": "old"})

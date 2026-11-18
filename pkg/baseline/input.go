@@ -48,7 +48,7 @@ func admitLocation(
 		return nil, manifest.NewError(
 			manifest.ErrInput,
 			nil,
-			fmt.Sprintf("--path %q is outside the source root at %q", location.ScanPath, location.ContentRoot),
+			fmt.Sprintf("input path %q is outside the source root at %q", location.ScanPath, location.ContentRoot),
 		)
 	}
 	work := scope.Record(manifest.WorkAcquisition, location.ContentRoot)
@@ -59,11 +59,11 @@ func admitLocation(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", location.ScanPath, err), "")
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("input path %q: %w", location.ScanPath, err), "")
 	}
 	if _, err := os.Stat(location.ScanPath); err != nil {
 		_ = directory.Close()
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", location.ScanPath, err), "")
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("input path %q: %w", location.ScanPath, err), "")
 	}
 	return directory, nil
 }

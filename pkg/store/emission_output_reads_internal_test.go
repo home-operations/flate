@@ -168,7 +168,9 @@ func testRecordEmittedRejectedPublicationPreservesOutputWatchesCase(
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	a := &manifest.Kustomization{Name: "input-a", Namespace: "apps", Path: "old"}
 	b := &manifest.Kustomization{Name: "input-b", Namespace: "apps", Path: "old"}
-	s.AddObjects([]manifest.BaseManifest{owner, a, b})
+	s.AddObject(owner)
+	s.AddObject(a)
+	s.AddObject(b)
 	var first, second ReadSet
 	first.Init(s, owner.Named(), nil)
 	second.Init(s, owner.Named(), nil)

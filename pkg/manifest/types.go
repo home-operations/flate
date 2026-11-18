@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,11 +20,6 @@ type LocalObjectReference = meta.LocalObjectReference
 // Secret on a HelmRelease.spec.valuesFrom. Aliased to upstream meta
 // for the same reason — and to inherit GetValuesKey().
 type ValuesReference = meta.ValuesReference
-
-// SubstituteReference is a postBuild.substituteFrom entry. Aliased to
-// kustomize-controller's own type — flate's parser previously copied
-// the same three fields (Kind, Name, Optional) into a local twin.
-type SubstituteReference = kustomizev1.SubstituteReference
 
 // NamedResource uniquely identifies a Kubernetes resource by group, kind,
 // namespace and name. Empty Group means core; version is not identity.
@@ -112,7 +106,6 @@ type BaseManifest interface {
 	kind() KindInfo
 	catalog(NamedResource) BaseManifest
 	producerTargets([]NamedResource) []ProducerTarget
-	overlayPayload(map[string]any) map[string]any
 }
 
 // DependencyRef is a compact prerequisite identity and optional CEL gate.
@@ -361,13 +354,6 @@ func (r *RawObject) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (r *RawObject) ProjectionCompatible(BaseManifest) bool { return true }
-
-// Clone deep-copies the spec to preserve store and parsed-document immutability.
-func (r *RawObject) Clone() *RawObject {
-	out := *r
-	out.Spec = DeepCopyMap(r.Spec)
-	return &out
-}
 
 func parseRawObject(doc map[string]any) (*RawObject, error) {
 	apiVersion := DocAPIVersion(doc)

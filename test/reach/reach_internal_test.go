@@ -11,10 +11,10 @@ import (
 	"weak"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -33,10 +33,10 @@ func (o *reachOracle) base(t *testing.T) {
 			t.Parallel()
 			tc := &o.worlds[i].spec
 			trees := []orchestrator.Tree{reachTree(controls[tc.name].root, tc, manifest.TreeBase)}
-			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
-			for _, run := range runs {
-				t.Cleanup(run.Result.Close)
-			}
+			invocation, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			assert.FatalIf(t, invocation == nil, "missing invocation: %v", err)
+			t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+			runs := invocation.Results
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -88,10 +88,10 @@ func (o *reachOracle) head(t *testing.T) {
 			world := &worlds[i]
 			tc := &world.spec
 			trees := []orchestrator.Tree{reachTree(world.roots[1], tc, manifest.TreeHead)}
-			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
-			for _, run := range runs {
-				t.Cleanup(run.Result.Close)
-			}
+			invocation, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			assert.FatalIf(t, invocation == nil, "missing invocation: %v", err)
+			t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+			runs := invocation.Results
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -228,10 +228,10 @@ func runReachWorld(t *testing.T, world *reachWorld, cfg *orchestrator.Config) (s
 		reachTree(world.roots[0], tc, manifest.TreeBase),
 		reachTree(world.roots[1], tc, manifest.TreeHead),
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
-	for _, run := range runs {
-		t.Cleanup(run.Result.Close)
-	}
+	invocation, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+	assert.FatalIf(t, invocation == nil, "missing invocation: %v", err)
+	t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+	runs := invocation.Results
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), tc.fixture == "global")
 	joint := map[string]uint64{}
 	output := [2]map[string][]map[string]any{}

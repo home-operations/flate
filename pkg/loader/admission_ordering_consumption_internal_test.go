@@ -9,7 +9,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -24,14 +23,21 @@ func TestAddEmitted_RetainedInputsRemainUnconsumed(t *testing.T) {
 		Namespace:  "apps",
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: target.Name}},
 	}
-	st.AddObjects([]manifest.BaseManifest{producer, consumer})
+	for _, object := range []manifest.BaseManifest{producer, consumer} {
+		st.AddObject(object)
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		consumer.Named(): {File: "consumer.yaml"},
 		target.Named():   {Productions: []manifest.Production{{Owner: producer.Named()}}},
 	}}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	assert.Equal(t, f.Reconcile(producer.Named()), true)
 	var reads store.ReadSet
@@ -89,7 +95,12 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 			}
 			f := newAdmission(
 				t,
-				admissionConfig{changes: change.NewSet([]string{changed}), index: index, inventory: st, root: "/repo"},
+				admissionConfig{
+					changes:   detectChanges(t, []string{changed}, []string{changed}),
+					index:     index,
+					inventory: st,
+					root:      "/repo",
+				},
 			)
 			want := map[manifest.NamedResource]role{
 				consumer.Named(): primary,
@@ -131,7 +142,12 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 	}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"target.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"target.yaml"}, []string{"target.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), new(store.Child{Obj: consumer}), st)
 	assert.Diff(t, f.roles(), map[manifest.NamedResource]role{target.Named(): primary})

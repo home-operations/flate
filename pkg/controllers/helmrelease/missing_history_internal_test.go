@@ -272,7 +272,9 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	source := (&manifest.GitRepository{Name: "inputs", Namespace: "apps"}).Named()
-	st.AddObjects([]manifest.BaseManifest{owner, input, producer})
+	for _, object := range []manifest.BaseManifest{owner, input, producer} {
+		st.AddObject(object)
+	}
 	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
 	st.SetArtifact(source, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

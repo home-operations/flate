@@ -9,7 +9,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -280,7 +279,7 @@ func TestAdmission_ProducerFrontierSourceDerivation(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			st := store.New()
-			changes := change.NewSet(nil)
+			changes := detectChanges(t, nil, nil)
 			facts := &frontierDerivationFacts{solverFacts: &solverFacts{store: st, changes: changes}}
 			session, err := New(st, facts, Request{Changed: true})
 			assert.NoError(t, err)

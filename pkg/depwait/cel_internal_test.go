@@ -3,6 +3,7 @@ package depwait
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,9 +104,6 @@ func TestReadyExpr_DesiredSpec(t *testing.T) {
 	}
 }
 
-// TestReadyExpr_ReplaceOverridesBuiltin: in the default (replace) mode a
-// satisfied ReadyExpr makes the dep Ready even when the built-in status is
-// Failed — Classify must return schedule.Terminal (readyNow short-circuits on the CEL).
 func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
@@ -113,11 +111,14 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	s.UpdateStatus(
 		dep,
 		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "still rolling out"},
-	) // built-in says Failed
-	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
+	)
 
 	w := &Waiter{
-		Store: captureState(t, s), Missing: NewMissingPolicy(
+		Store: &conditionState{
+			stateReader: captureState(t, s),
+			id:          dep,
+			condition:   store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"},
+		}, Missing: NewMissingPolicy(
 			nil),
 	}
 	ref := manifest.DependencyRef{
@@ -133,6 +134,21 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 			got,
 		)
 	}
+}
+
+type conditionState struct {
+	stateReader
+
+	id        manifest.NamedResource
+	condition store.Condition
+}
+
+func (s *conditionState) Snapshot(id manifest.NamedResource, status bool) (manifest.BaseManifest, store.Observation) {
+	object, observation := s.stateReader.Snapshot(id, status)
+	if id == s.id && status {
+		observation.Conditions = append(slices.Clone(observation.Conditions), s.condition)
+	}
+	return object, observation
 }
 
 func TestReadyExpr_CompileError(t *testing.T) {

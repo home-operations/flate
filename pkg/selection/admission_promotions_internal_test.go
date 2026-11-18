@@ -7,7 +7,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -18,9 +17,16 @@ func TestAdmission_ChangedPromotionsInvalidatePreparation(t *testing.T) {
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "sources"}
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
-	st.AddObjects([]manifest.BaseManifest{source, parent})
+	for _, object := range []manifest.BaseManifest{source, parent} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
-	session := newSolverSession(t, st, change.NewSet([]string{"one.yaml", "two.yaml"}), Request{Changed: true})
+	session := newSolverSession(
+		t,
+		st,
+		detectChanges(t, []string{"one.yaml", "two.yaml"}, []string{"one.yaml", "two.yaml"}),
+		Request{Changed: true},
+	)
 	facts := session.facts.(*solverFacts)
 	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{
 		source.Named(): {File: "source.yaml", Inputs: []string{"kustomization.yaml"}},

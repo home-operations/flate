@@ -20,12 +20,12 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -306,7 +306,7 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(logOutput.Bytes(), &record))
 	delete(record, "time")
 	assert.Diff(t, record, map[string]any{
-		"level": "DEBUG", "msg": "cli: baseline", "source": "explicit --base=HEAD",
+		"level": "DEBUG", "msg": "cli: baseline", "source": "explicit base revision=HEAD",
 		"rev": pin.String()[:7], "path_orig": c.pathOrig,
 	})
 }

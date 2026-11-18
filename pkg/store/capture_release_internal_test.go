@@ -18,7 +18,9 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 	origin := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
 	renderInput := &manifest.ConfigMap{Name: "render", Namespace: "apps", Data: map[string]any{"value": "first"}}
 	bindingInput := &manifest.ConfigMap{Name: "binding", Namespace: "apps", Data: map[string]any{"value": "first"}}
-	st.AddObjects([]manifest.BaseManifest{origin, renderInput, bindingInput})
+	st.AddObject(origin)
+	st.AddObject(renderInput)
+	st.AddObject(bindingInput)
 	renderWarning := manifest.Warning{
 		Resource: origin.Named(),
 		Category: manifest.WarnUnresolvedSubstitution,
@@ -138,7 +140,8 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		st := New()
 		origin := &manifest.Kustomization{Name: "origin", Namespace: "apps"}
 		retained := &manifest.ConfigMap{Name: "retained", Namespace: "apps"}
-		st.AddObjects([]manifest.BaseManifest{origin, retained})
+		st.AddObject(origin)
+		st.AddObject(retained)
 		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
 		var proposal, binding, output ReadSet
 		var storage [2]Input
@@ -210,7 +213,8 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		st := New()
 		origin := &manifest.Kustomization{Name: "origin", Namespace: "apps"}
 		credential := &manifest.Secret{Name: "credential", Namespace: "apps"}
-		st.AddObjects([]manifest.BaseManifest{origin, credential})
+		st.AddObject(origin)
+		st.AddObject(credential)
 		var acquisition, binding ReadSet
 		acquisition.Init(st, manifest.BootstrapSourceID, nil)
 		t.Cleanup(acquisition.Close)

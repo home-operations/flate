@@ -32,7 +32,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	clusterAppsObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "kubernetes/apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 		}},
 	}
@@ -71,7 +71,11 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"},
+				[]string{"kubernetes/apps/communication/ntfy/app/helmrelease.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				clusterApps:   "kubernetes/flux/cluster-apps.yaml",
 				clusterVars:   "kubernetes/flux/cluster-vars.yaml",
@@ -130,7 +134,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	childObj := &manifest.Kustomization{
 		Name: "child-app", Namespace: "apps",
 		Path: "kubernetes/apps/child",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
 		}},
 	}
@@ -147,7 +151,11 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/parent/parent.yaml"},
+				[]string{"kubernetes/parent/parent.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				parent:   "kubernetes/parent/parent.yaml",
 				producer: "kubernetes/apps/settings/ks.yaml",
@@ -197,7 +205,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	childObj := &manifest.Kustomization{
 		Name: "child-app", Namespace: "apps",
 		Path: "kubernetes/apps/child",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindSecret, Name: "shared-settings", Optional: true},
 		}},
 	}
@@ -213,7 +221,11 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/parent/parent.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/parent/parent.yaml"},
+				[]string{"kubernetes/parent/parent.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				parent:   "kubernetes/parent/parent.yaml",
 				producer: "kubernetes/apps/settings/ks.yaml",
@@ -254,14 +266,14 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 	aObj := &manifest.Kustomization{
 		Name: "consumer", Namespace: "flux-system",
 		Path: "kubernetes/consumer",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cm-a", Optional: true},
 		}},
 	}
 	bObj := &manifest.Kustomization{
 		Name: "producer-b", Namespace: "flux-system",
 		Path: "kubernetes/b",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindSecret, Name: "cm-b", Optional: true},
 		}},
 	}
@@ -279,7 +291,11 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/consumer/file.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/consumer/file.yaml"},
+				[]string{"kubernetes/consumer/file.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				a:     "kubernetes/consumer/ks.yaml",
 				b:     "kubernetes/b/ks.yaml",
@@ -312,7 +328,7 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	selfObj := &manifest.Kustomization{
 		Name: "self", Namespace: "flux-system",
 		Path: "kubernetes/self",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "self-settings"},
 		}},
 	}
@@ -324,7 +340,11 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/self/changed.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/self/changed.yaml"},
+				[]string{"kubernetes/self/changed.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				self: "kubernetes/self/ks.yaml",
 				cmID: "kubernetes/self/cm.yaml",
@@ -384,7 +404,7 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"unrelated.yaml"}),
+			changes: detectChanges(t, []string{"unrelated.yaml"}, []string{"unrelated.yaml"}),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				a:       "p1/ks.yaml",
 				b:       "p2/ks.yaml",
@@ -460,7 +480,7 @@ func testFilterSubstitutionGeneratorProducersCase(
 		Namespace: "apps",
 		Path:      "app",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: testCaseInput.kind, Name: name, Optional: testCaseInput.optional},
 			},
 		},
@@ -481,7 +501,7 @@ func testFilterSubstitutionGeneratorProducersCase(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"app/cm.yaml"}),
+			changes:   detectChanges(t, []string{"app/cm.yaml"}, []string{"app/cm.yaml"}),
 			index:     index,
 			inventory: filtertest.MapLister{consumer.Named(): consumer, producer.Named(): producer},
 			root:      "",
@@ -524,14 +544,16 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "settings"},
 				{Kind: manifest.KindSecret, Name: "secret"},
 			},
 		},
 	}
 	for i, st := range stores {
-		st.AddObjects([]manifest.BaseManifest{source, producer, consumer})
+		for _, object := range []manifest.BaseManifest{source, producer, consumer} {
+			st.AddObject(object)
+		}
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: roots[i], FS: fstest.MapFS{}})
 		mounted := filepath.Join(roots[i], ".mount")
 		st.SetArtifact(
@@ -576,7 +598,7 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 	}
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet(nil),
+		detectChanges(t, nil, nil),
 		[2]*store.Store{stores[0], stores[1]},
 		manifest.WorkScope{},
 	)

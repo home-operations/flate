@@ -24,8 +24,8 @@ import (
 // whole postBuild rather than silently substituting nothing.
 var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 
-// Provider MUST preserve selected evidence and pre-supply data with each lookup.
-type Provider interface {
+// provider MUST preserve selected evidence and pre-supply data with each lookup.
+type provider interface {
 	Lookup(manifest.NamedResource) store.ReferenceFacts
 }
 

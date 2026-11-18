@@ -634,7 +634,7 @@ func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
 	runCLIResult28 := runCLI(t, "diff", "ks", "--path", path)
 	stderr, code := runCLIResult28.stderr, runCLIResult28.code
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero exit for diff without --path-orig")
-	assert.ErrorIf(t, !strings.Contains(stderr, "path-orig"), "error should mention --path-orig: %q", stderr)
+	assert.ErrorIf(t, !strings.Contains(stderr, "base input"), "error must mention a base input: %q", stderr)
 }
 
 //nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.

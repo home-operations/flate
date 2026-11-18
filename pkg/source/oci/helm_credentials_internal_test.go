@@ -85,18 +85,13 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 		Interval:  metav1.Duration{Duration: time.Hour},
 	}
-	chartInput := manifest.NewHelmChartSource(
-		sourcev1.HelmChart{
-			Name:      "app",
-			Namespace: repo.Namespace,
-			Spec: sourcev1.HelmChartSpec{
-				Chart:     "app",
-				Version:   "1.0.0",
-				Interval:  repo.Interval,
-				SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name},
-			},
-		},
-	)
+	chartInput := &manifest.HelmChartSource{
+		Name: "app", Namespace: repo.Namespace,
+		Chart:     "app",
+		Version:   "1.0.0",
+		Interval:  repo.Interval,
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name},
+	}
 	chartsInputs := testInputs{
 		secrets: ociFetcherInputs.secrets,
 		repos:   func(_, _ string) *manifest.HelmRepository { return repo },

@@ -732,7 +732,7 @@ func testDocumentReaderSourceViewsAndReuseRemoteLifetime(t *testing.T) {
 						visit,
 					)
 				}
-				assert.Equal(t, len(l.Claims(root)), 0)
+				assert.Equal(t, len(l.claims(root)), 0)
 			},
 		)
 	}

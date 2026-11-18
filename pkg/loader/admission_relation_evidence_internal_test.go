@@ -25,7 +25,9 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
 	}
 	head := store.New()
-	head.AddObjects([]manifest.BaseManifest{source, owner})
+	for _, object := range []manifest.BaseManifest{source, owner} {
+		head.AddObject(object)
+	}
 	current := &store.SourceArtifact{
 		LocalPath:  "/head",
 		LocalRoot:  "/head",
@@ -55,7 +57,9 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 	var unqualified [2][]string
 	for i, payload := range []string{"B\n", "A\n"} {
 		before := store.New()
-		before.AddObjects([]manifest.BaseManifest{source, owner})
+		for _, object := range []manifest.BaseManifest{source, owner} {
+			before.AddObject(object)
+		}
 		input := &store.SourceArtifact{
 			LocalPath: "/base",
 			LocalRoot: "/base",
@@ -111,7 +115,7 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 		Namespace: "apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "from-b", Optional: true},
 			},
 		},
@@ -119,11 +123,15 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	b := a.Clone()
 	b.Name = "b"
 	b.PostBuild = &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "from-a", Optional: true}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "from-a", Optional: true},
+		},
 	}
 	peer := a.Clone()
 	peer.Name, peer.PostBuild = "unrelated", nil
-	st.AddObjects([]manifest.BaseManifest{source, a, b, peer})
+	for _, object := range []manifest.BaseManifest{source, a, b, peer} {
+		st.AddObject(object)
+	}
 	fromA := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "from-a"}
 	fromB := fromA
 	fromB.Name = "from-b"
@@ -134,7 +142,12 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	}}
 	filter := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"a.yaml"}, []string{"a.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	filter.pending.Retire()
 	fromAObject := &manifest.ConfigMap{Name: fromA.Name, Namespace: fromA.Namespace}
@@ -171,7 +184,7 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	c := a.Clone()
 	c.Name = "c"
 	c.PostBuild = &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: fromA.Name, Optional: true},
 		},
 	}
@@ -179,11 +192,13 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	fromC.Name = "from-c"
 	b = b.Clone()
 	b.PostBuild = &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: fromC.Name, Optional: true},
 		},
 	}
-	st.AddObjects([]manifest.BaseManifest{b, c})
+	for _, object := range []manifest.BaseManifest{b, c} {
+		st.AddObject(object)
+	}
 	next := *index
 	next.Records = maps.Clone(index.Records)
 	next.Records[c.Named()] = manifest.DiscoveryRecord{File: "c.yaml"}
@@ -192,7 +207,12 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	}
 	filter = newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: &next, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"a.yaml"}, []string{"a.yaml"}),
+			index:     &next,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	filter.pending.Retire()
 	prepared = append(prepared, store.Child{

@@ -237,7 +237,9 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	st := store.New()
 	parent := &manifest.Kustomization{Name: "materializer", Namespace: "apps"}
 	raw := &manifest.HelmRepository{Name: "covered", Namespace: "apps", URL: "https://raw.example"}
-	st.AddObjects([]manifest.BaseManifest{parent, raw})
+	for _, object := range []manifest.BaseManifest{parent, raw} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})

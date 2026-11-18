@@ -13,7 +13,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -29,14 +28,14 @@ func TestAdmission_ProjectedReaderNamespace(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
 		},
 	}
 	st.AddObject(consumer)
 	owner := (&manifest.Kustomization{Name: "owner", Namespace: "apps"}).Named()
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 
 	l.Index.Records[consumer.Named()] = manifest.DiscoveryRecord{File: "consumer.yaml"}

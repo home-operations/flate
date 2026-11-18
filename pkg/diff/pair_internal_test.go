@@ -50,7 +50,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 	}
 }
 
-func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
+func TestComparison_DuplicateWarningOrder(t *testing.T) {
 	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
 	z := manifest.NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "z"}
@@ -68,16 +68,16 @@ func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
 			Detail:  []string{"side: orig", "parent: " + parent.String(), "parent path: ./apps", "apiVersion: v1"},
 		})
 	}
-	first, warnings, err := RenderDocs(left, nil, Options{Format: FormatGitHub})
+	first, warnings, err := renderDocuments(left, nil, new(Options{Format: FormatGitHub}))
 	assert.NoError(t, err)
 	assert.Diff(t, warnings, want)
-	second, warnings, err := RenderDocs(left, nil, Options{Format: FormatGitHub})
+	second, warnings, err := renderDocuments(left, nil, new(Options{Format: FormatGitHub}))
 	assert.NoError(t, err)
 	assert.Diff(t, warnings, want)
 	assert.Equal(t, string(first), string(second))
 }
 
-func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
+func TestComparison_NormalizedDuplicatesOnce(t *testing.T) {
 	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
 	left := []Doc{
@@ -95,14 +95,14 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 			var firstWarnings []manifest.Warning
 			for run := range 2 {
 				calls := make(map[string]int)
-				out, warnings, err := RenderDocs(
+				out, warnings, err := renderDocuments(
 					left,
 					right,
-					Options{Format: format, Normalize: func(m map[string]any) {
+					new(Options{Format: format, Normalize: func(m map[string]any) {
 						meta := m["metadata"].(map[string]any)
 						calls[meta["name"].(string)]++
 						meta["name"] = "normalized"
-					}},
+					}}),
 				)
 				assert.NoError(t, err)
 				assert.Diff(
@@ -164,7 +164,7 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	) != testCaseInput.pairs {
 		t.Fatalf("pairs = %+v, want %d", got, testCaseInput.pairs)
 	}
-	changes, _ := Changes(l, r, Options{})
+	changes := publicChanges(prepare(l, r, new(Options{})))
 	if len(changes) != testCaseInput.pairs {
 		t.Fatalf("changes = %+v, want %d", changes, testCaseInput.pairs)
 	}
@@ -213,7 +213,7 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	assert.ErrorIf(
 		t,
 		testCaseInput.pairs == 1 &&
-			(changes[0].Status != StatusChanged || changes[0].APIVersion != testCaseInput.apiVersion),
+			(changes[0].Status != ChangeStatus("changed") || changes[0].APIVersion != testCaseInput.apiVersion),
 		"version change must retain the current authored version: %+v",
 		changes,
 	)
@@ -239,11 +239,11 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 	}
 	right := []Doc{cmDoc(new(rightParent), manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
 	{
-		got, _ := Changes(left, right, Options{})
+		got := publicChanges(prepare(left, right, new(Options{})))
 		assert.FatalIf(t, len(got) != 0, "path-only move produced changes: %+v", got)
 	}
 	for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
-		out, _, err := RenderDocs(left, right, Options{Format: format})
+		out, _, err := renderDocuments(left, right, new(Options{Format: format}))
 		assert.FatalIf(
 			t,
 			err != nil || len(out) != 0,
@@ -254,15 +254,15 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 		)
 	}
 	right[0].Manifest["data"] = map[string]any{"k": "new"}
-	changes, _ := Changes(left, right, Options{})
+	changes := publicChanges(prepare(left, right, new(Options{})))
 	assert.FatalIf(
 		t,
-		len(changes) != 1 || changes[0].Status != StatusChanged || changes[0].Parent != rightParent,
+		len(changes) != 1 || changes[0].Status != ChangeStatus("changed") || changes[0].Parent != rightParent,
 		"content change must use current parent: %+v",
 		changes,
 	)
 	for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
-		out, _, err := RenderDocs(left, right, Options{Format: format})
+		out, _, err := renderDocuments(left, right, new(Options{Format: format}))
 		assert.NoError(t, err)
 		assert.ErrorIf(
 			t,
@@ -294,7 +294,7 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 			assert.ErrorIf(t, !strings.Contains(string(out), want), "HTML parent heading missing %q", want)
 		}
 	}
-	removed, _ := Changes(left, nil, Options{})
+	removed := publicChanges(prepare(left, nil, new(Options{})))
 	assert.ErrorIf(
 		t,
 		len(removed) != 1 || removed[0].Parent != (*testCaseInput.leftParent),

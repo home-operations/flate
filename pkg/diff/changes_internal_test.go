@@ -32,7 +32,7 @@ func jsonChanges(t *testing.T, left, right []Doc, optsValue *Options) []Change {
 	t.Helper()
 	opts := *optsValue
 	opts.Format = FormatJSON
-	out, _, err := RenderDocs(left, right, opts)
+	out, _, err := renderDocuments(left, right, new(opts))
 	assert.NoError(t, err)
 	var report struct {
 		Changes []Change `json:"changes"`
@@ -41,7 +41,7 @@ func jsonChanges(t *testing.T, left, right []Doc, optsValue *Options) []Change {
 	return report.Changes
 }
 
-func TestChanges_Classification(t *testing.T) {
+func TestPreparedChanges_Classification(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps")}
 	left := []Doc{
@@ -60,7 +60,7 @@ func TestChanges_Classification(t *testing.T) {
 		meta["name"] = meta["name"].(string) + "-normalized"
 		meta["namespace"] = "normalized-ns"
 	}}
-	changes, _ := Changes(left, right, opts)
+	changes := publicChanges(prepare(left, right, new(opts)))
 	assert.Diff(t, jsonChanges(t, left, right, new(opts)), changes)
 	got := map[string]ChangeStatus{}
 	for _, c := range changes {
@@ -72,7 +72,7 @@ func TestChanges_Classification(t *testing.T) {
 			assert.Equal(t, c.NewChart, "")
 			assert.Equal(t, c.OldChart, "gone-1")
 		}
-		if c.Status == StatusAdded {
+		if c.Status == ChangeStatus("added") {
 			assert.Equal(t, c.Old == nil, true)
 			assert.Equal(t, c.OldChart, "")
 			assert.Equal(t, c.NewChart, "fresh-2")
@@ -89,9 +89,9 @@ func TestChanges_Classification(t *testing.T) {
 		t,
 		got,
 		map[string]ChangeStatus{
-			"edit-normalized":  StatusChanged,
+			"edit-normalized":  ChangeStatus("changed"),
 			"gone-normalized":  StatusRemoved,
-			"fresh-normalized": StatusAdded,
+			"fresh-normalized": ChangeStatus("added"),
 		},
 	)
 }
@@ -114,7 +114,7 @@ func TestRenderJSON_SubjectSides(t *testing.T) {
 	}
 }
 
-func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
+func TestPreparedChanges_ReturnedManifestsIndependent(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name                    string
@@ -123,39 +123,40 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 		leftBinary, rightBinary bool
 		generated               bool
 	}{
-		{name: "changed", status: StatusChanged, opts: Options{}},
-		{name: "generated", status: StatusChanged, generated: true},
-		{name: "generated binary", status: StatusChanged, generated: true, leftBinary: true, rightBinary: true},
-		{name: "generated normalized", status: StatusChanged, generated: true, opts: Options{Normalize: func(m map[string]any) { m["data"].(map[string]any)["normalized"] = "yes" }}},
-		{name: "added", status: StatusAdded, opts: Options{}},
+		{name: "changed", status: ChangeStatus("changed"), opts: Options{}},
+		{name: "generated", status: ChangeStatus("changed"), generated: true},
+		{name: "generated binary", status: ChangeStatus("changed"), generated: true, leftBinary: true, rightBinary: true},
+		{name: "generated normalized", status: ChangeStatus("changed"), generated: true, opts: Options{Normalize: func(m map[string]any) { m["data"].(map[string]any)["normalized"] = "yes" }}},
+		{name: "added", status: ChangeStatus("added"), opts: Options{}},
 		{name: "removed", status: StatusRemoved, opts: Options{}},
-		{name: "normalized options", status: StatusChanged, opts: Options{Normalize: func(m map[string]any) {
+		{name: "normalized options", status: ChangeStatus("changed"), opts: Options{Normalize: func(m map[string]any) {
 			m["data"].(map[string]any)["normalized"] = "yes"
 		}}},
-		{name: "left binaryData", status: StatusChanged, opts: Options{}, leftBinary: true},
-		{name: "right binaryData", status: StatusChanged, opts: Options{}, rightBinary: true},
+		{name: "left binaryData", status: ChangeStatus("changed"), opts: Options{}, leftBinary: true},
+		{name: "right binaryData", status: ChangeStatus("changed"), opts: Options{}, rightBinary: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testChangesReturnedManifestsIndependentCase(t, &tt)
+			testPreparedChangesReturnedManifestsIndependentCase(t, &tt)
 		},
 		)
 	}
 }
 
-func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
+func TestPreparedChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.HelmReleaseID("ns", "app")}
 	left := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
 	right := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
 	opts := Options{StripAttrs: DefaultStripAttrs}
-	changes, warnings := Changes(left, right, opts)
+	comparison := prepare(left, right, new(opts))
+	changes, warnings := publicChanges(comparison), comparison.Warnings
 	assert.Equal(t, len(changes), 0)
 	assert.Equal(t, len(warnings), 0)
 	assert.Equal(t, len(jsonChanges(t, left, right, new(opts))), 0)
 }
 
-func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
+func TestPreparedChanges_CapturesChartBeforeStrip(t *testing.T) {
 	t.Parallel()
 	for _, replacement := range []string{"", "replacement-3"} {
 		t.Run("replacement="+replacement, func(t *testing.T) {
@@ -170,11 +171,11 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 					meta["labels"] = map[string]any{helmChartLabel: replacement}
 				}
 			}}
-			got, _ := Changes(left, right, opts)
+			got := publicChanges(prepare(left, right, new(opts)))
 			assert.FatalIf(t, len(got) != 1, "want 1 change, got %d: %+v", len(got), got)
 			assert.Diff(t, jsonChanges(t, left, right, new(opts)), got)
 			c := got[0]
-			assert.Equal(t, c.Status, StatusChanged)
+			assert.Equal(t, c.Status, ChangeStatus("changed"))
 			assert.Equal(t, c.Name, "normalized")
 			assert.Equal(t, c.OldChart, "app-1.0.0")
 			assert.Equal(t, c.NewChart, "app-2.0.0")
@@ -191,10 +192,10 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 	}
 }
 
-// TestChanges_NormalizeHookSuppressesChange is the konflate use case: a
+// TestPreparedChanges_NormalizeHookSuppressesChange is the konflate use case: a
 // render-random Secret value reads as a change by default, but a redaction
 // hook constant-izes it so it no longer does.
-func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
+func TestPreparedChanges_NormalizeHookSuppressesChange(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	secret := func(val string) Doc {
@@ -211,7 +212,7 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 	right := []Doc{secret("BBBB")}
 
 	{
-		got, _ := Changes(left, right, Options{})
+		got := publicChanges(prepare(left, right, new(Options{})))
 		assert.FatalIf(t, len(got) != 1, "without redaction the value change must show; got %d", len(got))
 	}
 	redact := func(m map[string]any) {
@@ -225,12 +226,12 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 		}
 	}
 	{
-		got, _ := Changes(left, right, Options{Normalize: redact})
+		got := publicChanges(prepare(left, right, new(Options{Normalize: redact})))
 		assert.FatalIf(t, len(got) != 0, "redaction hook should suppress the render-random change; got %+v", got)
 	}
 }
 
-func TestChanges_Sorted(t *testing.T) {
+func TestPreparedChanges_Sorted(t *testing.T) {
 	t.Parallel()
 	pa := Parent{NamedResource: testutil.KustomizationID("ns", "a")}
 	pb := Parent{NamedResource: testutil.KustomizationID("ns", "b")}
@@ -250,20 +251,20 @@ func TestChanges_Sorted(t *testing.T) {
 		meta := m["metadata"].(map[string]any)
 		meta["name"] = meta["name"].(string) + "-normalized"
 	}}
-	got, _ := Changes(left, right, opts)
-	again, _ := Changes(left, right, opts)
+	got := publicChanges(prepare(left, right, new(opts)))
+	again := publicChanges(prepare(left, right, new(opts)))
 	assert.Diff(t, again, got)
 	opts.Format = FormatJSON
-	first, _, err := RenderDocs(left, right, opts)
+	first, _, err := renderDocuments(left, right, new(opts))
 	assert.NoError(t, err)
-	second, _, err := RenderDocs(left, right, opts)
+	second, _, err := renderDocuments(left, right, new(opts))
 	assert.NoError(t, err)
 	assert.Equal(t, string(second), string(first))
 	assert.FatalIf(t, len(got) != 3 || got[0].Parent != pa || got[1].Parent != pa || got[2].Parent != pb ||
 		got[0].APIVersion != "v1" || got[1].APIVersion != "example.test/v1", "changes not sorted by canonical parent and resource identity: %+v", got)
 }
 
-func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
+func TestPreparedChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	left := []Doc{
@@ -293,7 +294,8 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 				calls[meta["name"].(string)]++
 				meta["name"] = "normalized"
 			}}
-			got, warnings := Changes(left, right, opts)
+			comparison := prepare(left, right, new(opts))
+			got, warnings := publicChanges(comparison), comparison.Warnings
 			assert.Equal(t, len(warnings), 2)
 			for _, warning := range warnings {
 				assert.Equal(t, warning.Category, manifest.WarnDuplicateDocument)
@@ -312,7 +314,7 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			assert.FatalIf(t, len(got) != tt.want, "expected %d changes, got %+v", tt.want, got)
 			if tt.want > 0 {
 				c := got[0]
-				assert.Equal(t, c.Status, StatusChanged)
+				assert.Equal(t, c.Status, ChangeStatus("changed"))
 				assert.Equal(t, c.Name, "normalized")
 				assert.Equal(t, c.Old["data"].(map[string]any)["k"].(string), "retained")
 				assert.Equal(t, c.New["data"].(map[string]any)["k"].(string), tt.last)
@@ -370,12 +372,12 @@ func testRenderJSONSubjectSidesCase(t *testing.T, testCaseInput *struct {
 	for changeIndex := range changes {
 		change := changes[changeIndex]
 		want := current
-		status := StatusChanged
+		status := ChangeStatus("changed")
 		switch change.Name {
 		case "removed":
 			want, status = original, StatusRemoved
 		case "added":
-			status = StatusAdded
+			status = ChangeStatus("added")
 		case "changed":
 		default:
 			t.Fatalf("unexpected change: %+v", change)
@@ -385,7 +387,7 @@ func testRenderJSONSubjectSidesCase(t *testing.T, testCaseInput *struct {
 	}
 }
 
-func testChangesReturnedManifestsIndependentCase(
+func testPreparedChangesReturnedManifestsIndependentCase(
 	t *testing.T,
 	testCaseInput *struct {
 		name        string
@@ -416,7 +418,7 @@ func testChangesReturnedManifestsIndependentCase(
 	inputs := func() ([]Doc, []Doc) {
 		left := []Doc{doc("keep", "same", false)}
 		right := []Doc{doc("keep", "same", false)}
-		if testCaseInput.status != StatusAdded {
+		if testCaseInput.status != ChangeStatus("added") {
 			left = append(left, doc("edit", "old", testCaseInput.leftBinary))
 		}
 		if testCaseInput.status != StatusRemoved {
@@ -439,7 +441,7 @@ func testChangesReturnedManifestsIndependentCase(
 	if testCaseInput.generated {
 		want[0].Name = manifest.DocIdentity(right[1].Manifest).Name
 	}
-	if testCaseInput.status != StatusAdded {
+	if testCaseInput.status != ChangeStatus("added") {
 		want[0].Old = doc("edit", "old", testCaseInput.leftBinary).Manifest
 	}
 	if testCaseInput.status != StatusRemoved {
@@ -449,10 +451,10 @@ func testChangesReturnedManifestsIndependentCase(
 		want[0].Old["data"].(map[string]any)["normalized"] = "yes"
 		want[0].New["data"].(map[string]any)["normalized"] = "yes"
 	}
-	got, _ := Changes(left, right, testCaseInput.opts)
+	got := publicChanges(prepare(left, right, new(testCaseInput.opts)))
 	assert.Diff(t, got, want)
 	assert.FatalIf(t, len(got) != 1, "want one change with unchanged resource omitted, got %d", len(got))
-	assert.Equal(t, got[0].Old == nil, testCaseInput.status == StatusAdded)
+	assert.Equal(t, got[0].Old == nil, testCaseInput.status == ChangeStatus("added"))
 	assert.Equal(t, got[0].New == nil, testCaseInput.status == StatusRemoved)
 	for _, body := range []map[string]any{got[0].Old, got[0].New} {
 		if body == nil {
@@ -465,6 +467,6 @@ func testChangesReturnedManifestsIndependentCase(
 	}
 	assert.Diff(t, left, wantLeft)
 	assert.Diff(t, right, wantRight)
-	again, _ := Changes(left, right, testCaseInput.opts)
+	again := publicChanges(prepare(left, right, new(testCaseInput.opts)))
 	assert.Diff(t, again, want)
 }

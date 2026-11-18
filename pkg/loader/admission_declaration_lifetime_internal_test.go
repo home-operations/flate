@@ -32,7 +32,7 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	l.SourceRoot = root
 
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	readonly := manifest.NamedResource{
@@ -119,7 +119,7 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	stores, inputs, prepared := preparedDeclarationPair(t, id, owner.Named())
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet([]string{"declaration.yaml"}), [2]*store.Store{
+		detectChanges(t, []string{"declaration.yaml"}, []string{"declaration.yaml"}), [2]*store.Store{
 			stores[0],
 			stores[1],
 		}, manifest.WorkScope{},
@@ -211,7 +211,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.rawEdit {
 		changed = "child.yaml"
 	}
-	l.Options.Changes = change.NewSet([]string{changed})
+	l.Options.Changes = detectChanges(t, []string{changed}, []string{changed})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

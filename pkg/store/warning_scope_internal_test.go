@@ -14,7 +14,8 @@ func TestWarnings_AcceptedPayloadsAndScope(t *testing.T) {
 	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
 	first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
 	second := &manifest.Kustomization{Name: "second", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{first, second})
+	s.AddObject(first)
+	s.AddObject(second)
 	var a, b, rejected ReadSet
 	a.Init(s, first.Named(), nil)
 	b.Init(s, second.Named(), nil)

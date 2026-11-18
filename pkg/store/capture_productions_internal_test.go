@@ -144,7 +144,8 @@ func testReadSetBoundInventoryPublicationCase(
 	st := New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	raw, prospective := emissionChild("input", "raw"), emissionChild("input", "prospective")
-	st.AddObjects([]manifest.BaseManifest{owner, raw.Obj})
+	st.AddObject(owner)
+	st.AddObject(raw.Obj)
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		raw.Obj.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}},
 	}})

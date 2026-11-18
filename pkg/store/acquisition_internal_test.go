@@ -40,7 +40,8 @@ func testAcquisitionAcceptedObservation(t *testing.T, tc acquisitionObservationC
 	s := New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{source, observer})
+	s.AddObject(source)
+	s.AddObject(observer)
 	if tc.initial == AcquisitionSkipped {
 		s.UpdateStatus(
 			source.Named(),
@@ -124,7 +125,8 @@ func TestAcquisition_IndependentAcceptedBorrowers(t *testing.T) {
 	s := New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{source, observer})
+	s.AddObject(source)
+	s.AddObject(observer)
 	var reconciliation, binding, reader, cleanup ReadSet
 	for _, reads := range []*ReadSet{&reconciliation, &binding} {
 		reads.Init(s, source.Named(), nil)
@@ -197,7 +199,8 @@ func TestAcquisition_SupersededAcceptance(t *testing.T) {
 				s := New()
 				source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 				observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
-				s.AddObjects([]manifest.BaseManifest{source, observer})
+				s.AddObject(source)
+				s.AddObject(observer)
 				var old, next, reader ReadSet
 				old.Init(s, source.Named(), nil)
 				old.SetAcquisition(tc.state)
@@ -229,7 +232,8 @@ func TestAcquisition_UnrelatedContent(t *testing.T) {
 	s := New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{source, observer})
+	s.AddObject(source)
+	s.AddObject(observer)
 	s.SetArtifact(source.Named(), &SourceArtifact{Content: "same", FS: fstest.MapFS{}})
 	var first, second, reader ReadSet
 	first.Init(s, source.Named(), nil)
@@ -256,7 +260,10 @@ func TestAcquisition_FrozenSettlement(t *testing.T) {
 	observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
 	first := &manifest.Secret{Name: "first", Namespace: "apps"}
 	second := &manifest.Secret{Name: "second", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{source, observer, first, second})
+	s.AddObject(source)
+	s.AddObject(observer)
+	s.AddObject(first)
+	s.AddObject(second)
 	var origin ReadSet
 	origin.Init(s, source.Named(), nil)
 	origin.GetObject(first.Named())

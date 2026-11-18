@@ -113,7 +113,9 @@ func qualificationRelease(t *testing.T, body, values string) (*Controller, *mani
 		ChartRef:   &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
 		ValuesFrom: []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
 	}).WithNamespace("apps").(*manifest.HelmRelease)
-	st.AddObjects([]manifest.BaseManifest{source, input, hr})
+	for _, object := range []manifest.BaseManifest{source, input, hr} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(source.Named(), &store.SourceArtifact{
 		Kind:     manifest.KindOCIRepository,
 		Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",

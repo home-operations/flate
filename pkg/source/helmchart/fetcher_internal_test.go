@@ -111,13 +111,11 @@ func TestFetch_TransientOCIDiagnostic(t *testing.T) {
 	s.AddObject(repo)
 	s.AddObject(hc)
 	synthetic := hc.OCIRepository(repo)
-	ordinary := manifest.NewOCIRepository(sourcev1.OCIRepository{
-		Name: synthetic.Name, Namespace: synthetic.Namespace,
-		Spec: sourcev1.OCIRepositorySpec{
-			URL: "oci://registry.example/ordinary", Suspend: true,
-			Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, Interval: &metav1.Duration{Duration: time.Minute},
-		},
-	})
+	ordinary := &manifest.OCIRepository{
+		Name: synthetic.Name, Namespace: synthetic.Namespace, Provider: sourcev1.GenericOCIProvider,
+		URL: "oci://registry.example/ordinary", Suspend: true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, Interval: &metav1.Duration{Duration: time.Minute},
+	}
 	s.AddObject(ordinary)
 	reads := new(store.ReadSet)
 	reads.Init(s, hc.Named(), nil)

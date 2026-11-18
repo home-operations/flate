@@ -6,7 +6,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -32,10 +31,17 @@ func TestAddEmitted_DoesNotReadIncomingDeclaration(t *testing.T) {
 		target.Named():   {Productions: []manifest.Production{proof}},
 	}}
 	st := store.New()
-	st.AddObjects([]manifest.BaseManifest{producer, consumer})
+	for _, object := range []manifest.BaseManifest{producer, consumer} {
+		st.AddObject(object)
+	}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	assert.Equal(t, f.role(target.Named()), kept)
 	var reads store.ReadSet

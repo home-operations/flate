@@ -11,7 +11,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -54,7 +53,7 @@ func TestFilter_ResolveDirectMatch(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/x/helmrelease.yaml"}),
+			changes: detectChanges(t, []string{"apps/x/helmrelease.yaml"}, []string{"apps/x/helmrelease.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{hr: "apps/x/helmrelease.yaml"},
 				root:    "",
@@ -88,7 +87,7 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"components/volsync/pvc.yaml"}),
+			changes: detectChanges(t, []string{"components/volsync/pvc.yaml"}, []string{"components/volsync/pvc.yaml"}),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				ksPlex:  "apps/media/plex/app/ks.yaml",
 				hrPlex:  "apps/media/plex/app/helmrelease.yaml",
@@ -129,7 +128,11 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"apps/media/plex/app/helmrelease.yaml"},
+				[]string{"apps/media/plex/app/helmrelease.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				metaID: "flux/cluster/ks.yaml",
 				plexID: "apps/media/plex/app/ks.yaml",
@@ -173,7 +176,11 @@ func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/base/self-hosted/actual/helmrelease.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"apps/base/self-hosted/actual/helmrelease.yaml"},
+				[]string{"apps/base/self-hosted/actual/helmrelease.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				parentID: "clusters/main/apps.yaml",
 				leafID:   "apps/main/self-hosted/actual.yaml",
@@ -219,7 +226,9 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	independent := &manifest.Kustomization{Name: "chart-independent", Namespace: "default", Path: "independent"}
 	hrAtuin := testutil.HelmReleaseID("default", "atuin")
 	objects := store.New()
-	objects.AddObjects([]manifest.BaseManifest{meta, plex, atuin, release, source, independent})
+	for _, object := range []manifest.BaseManifest{meta, plex, atuin, release, source, independent} {
+		objects.AddObject(object)
+	}
 	input := &store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{}}
 	objects.SetArtifact(manifest.BootstrapSourceID, input)
 	objects.SetArtifact(source.Named(), input)
@@ -277,7 +286,7 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet(changed),
+			changes: detectChanges(t, changed, changed),
 			index: new(filterFixture{
 				files:    sourceFiles,
 				root:     "",
@@ -285,7 +294,7 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 				refs:     nil,
 				excluded: nil,
 				readers:  nil,
-				changed:  change.NewSet(changed),
+				changed:  detectChanges(t, changed, changed),
 			}).index(),
 			inventory: lister,
 			root:      "",
@@ -298,7 +307,7 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 	f = newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet(changed),
+			changes: detectChanges(t, changed, changed),
 			index: new(filterFixture{
 				files:    sourceFiles,
 				root:     "",
@@ -306,7 +315,7 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 				refs:     nil,
 				excluded: map[manifest.NamedResource]struct{}{externalID: {}},
 				readers:  nil,
-				changed:  change.NewSet(changed),
+				changed:  detectChanges(t, changed, changed),
 			}).index(),
 			inventory: lister,
 			root:      "",
@@ -329,7 +338,7 @@ func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
 		Namespace: "apps",
 		Path:      "consumers",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
 		},
 	}
 	cm := &manifest.ConfigMap{Name: "settings"}
@@ -385,20 +394,25 @@ func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
 	file := "../artifact/producers/cm.yaml"
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"flux/unrelated.yaml"}), index: new(filterFixture{
-			files: map[manifest.NamedResource]string{
-				cm: file,
-			},
-			objects: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned},
-			changed: change.NewSet([]string{"flux/unrelated.yaml"}),
-			root:    t.TempDir(),
-			readers: func(path string) []manifest.FileReader {
-				if path == file {
-					return []manifest.FileReader{{Reader: pinned.Named(), Source: manifest.BootstrapSourceID}}
-				}
-				return nil
-			},
-		}).index(), inventory: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned}, root: ""},
+		admissionConfig{
+			changes: detectChanges(t, []string{"flux/unrelated.yaml"}, []string{"flux/unrelated.yaml"}),
+			index: new(filterFixture{
+				files: map[manifest.NamedResource]string{
+					cm: file,
+				},
+				objects: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned},
+				changed: detectChanges(t, []string{"flux/unrelated.yaml"}, []string{"flux/unrelated.yaml"}),
+				root:    t.TempDir(),
+				readers: func(path string) []manifest.FileReader {
+					if path == file {
+						return []manifest.FileReader{{Reader: pinned.Named(), Source: manifest.BootstrapSourceID}}
+					}
+					return nil
+				},
+			}).index(),
+			inventory: filtertest.MapLister{root.Named(): root, pinned.Named(): pinned},
+			root:      "",
+		},
 	)
 	if got := f.productionOwners(cm); !slices.Equal(got, []manifest.NamedResource{pinned.Named()}) {
 		t.Fatalf("production owners(%s) = %v, want [%s]", cm, got, pinned.Named())
@@ -421,7 +435,7 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{baseFile}),
+			changes: detectChanges(t, []string{baseFile}, []string{baseFile}),
 			index: new(filterFixture{
 				files:    map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
 				root:     "",
@@ -429,7 +443,7 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 				refs:     nil,
 				excluded: nil,
 				readers:  fileOwners,
-				changed:  change.NewSet([]string{baseFile}),
+				changed:  detectChanges(t, []string{baseFile}, []string{baseFile}),
 			}).index(),
 			inventory: filtertest.MapLister{appsID: apps},
 			root:      "",
@@ -452,7 +466,7 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 				}
 				return nil
 			}
-			changed := change.NewSet([]string{file})
+			changed := detectChanges(t, []string{file}, []string{file})
 			f := newAdmission(
 				t,
 				admissionConfig{
@@ -496,11 +510,11 @@ func TestFilter_FileOwnerMergesWithPrefixClaim(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{baseFile}),
+			changes: detectChanges(t, []string{baseFile}, []string{baseFile}),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				postgresID: "apps/base/postgres/kustomization.yaml",
 				appsID:     "apps/homelab/kustomization.yaml",
-			}, root: "", objects: filtertest.MapLister{postgresID: postgres, appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: change.NewSet([]string{baseFile})}).index(),
+			}, root: "", objects: filtertest.MapLister{postgresID: postgres, appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: detectChanges(t, []string{baseFile}, []string{baseFile})}).index(),
 			inventory: filtertest.MapLister{postgresID: postgres, appsID: apps},
 			root:      "",
 		},
@@ -524,7 +538,11 @@ func TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/base/postgres/cluster.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"apps/base/postgres/cluster.yaml"},
+				[]string{"apps/base/postgres/cluster.yaml"},
+			),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"},
 				root:    "",
@@ -548,7 +566,7 @@ func TestFilter_KeepNamespaces(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"a.yaml", "b.yaml", "c.yaml"}),
+			changes: detectChanges(t, []string{"a.yaml", "b.yaml", "c.yaml"}, []string{"a.yaml", "b.yaml", "c.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{a: "a.yaml", b: "b.yaml", c: "c.yaml"},
 				root:    "",
@@ -593,7 +611,7 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"ks.yaml"}),
+			changes: detectChanges(t, []string{"ks.yaml"}, []string{"ks.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{ksID: "ks.yaml"},
 				objects: objects,
@@ -640,7 +658,7 @@ func testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCase(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{(*testCaseInput.file)}),
+			changes:   detectChanges(t, []string{(*testCaseInput.file)}, []string{(*testCaseInput.file)}),
 			index:     index,
 			inventory: (*testCaseInput.objects),
 			root:      "",
@@ -689,20 +707,25 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{testCaseInput.tt.changed}), index: new(filterFixture{
-			files:   (*testCaseInput.files),
-			objects: (*testCaseInput.objs),
-			changed: change.NewSet([]string{testCaseInput.tt.changed}),
-			pinned:  map[manifest.NamedResource]struct{}{(*testCaseInput.producer).Named(): {}},
-			readers: func(file string) []manifest.FileReader {
-				if file == "shared/cm.yaml" || file == "../pinned/producers/cm.yaml" {
-					return []manifest.FileReader{
-						{Reader: (*testCaseInput.producer).Named(), Source: manifest.BootstrapSourceID},
+		admissionConfig{
+			changes: detectChanges(t, []string{testCaseInput.tt.changed}, []string{testCaseInput.tt.changed}),
+			index: new(filterFixture{
+				files:   (*testCaseInput.files),
+				objects: (*testCaseInput.objs),
+				changed: detectChanges(t, []string{testCaseInput.tt.changed}, []string{testCaseInput.tt.changed}),
+				pinned:  map[manifest.NamedResource]struct{}{(*testCaseInput.producer).Named(): {}},
+				readers: func(file string) []manifest.FileReader {
+					if file == "shared/cm.yaml" || file == "../pinned/producers/cm.yaml" {
+						return []manifest.FileReader{
+							{Reader: (*testCaseInput.producer).Named(), Source: manifest.BootstrapSourceID},
+						}
 					}
-				}
-				return nil
-			},
-		}).index(), inventory: (*testCaseInput.objs), root: ""},
+					return nil
+				},
+			}).index(),
+			inventory: (*testCaseInput.objs),
+			root:      "",
+		},
 	)
 	for _, id := range []manifest.NamedResource{
 		(*testCaseInput.cm).Named(), {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},

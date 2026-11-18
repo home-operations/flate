@@ -6,7 +6,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -27,7 +26,7 @@ func TestAdmission_RetiresReplacedConstructionIdentity(t *testing.T) {
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
 
-			l.Options.Changes = change.NewSet([]string{"hr.yaml"})
+			l.Options.Changes = detectChanges(t, []string{"hr.yaml"}, []string{"hr.yaml"})
 			unqualified := manifest.NamedResource{
 				Group: manifest.HelmReleaseDomain,
 				Kind:  manifest.KindHelmRelease,

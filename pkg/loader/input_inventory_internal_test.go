@@ -87,7 +87,9 @@ func TestFinalizeIndex_DirectoryReaderAuthority(t *testing.T) {
 		File: "factory.yaml", Parent: factory.Named(), Productions: []manifest.Production{{Owner: factory.Named()}},
 	}
 	st.SetDiscoveryIndex(l.Index)
-	st.AddObjects([]manifest.BaseManifest{factory, forecast})
+	for _, object := range []manifest.BaseManifest{factory, forecast} {
+		st.AddObject(object)
+	}
 	assert.Equal(t, st.GetDeclaration(owner.Named()) == owner, true)
 	assert.Equal(t, st.GetObject(forecast.Named()) == forecast, true)
 	assert.Equal(t, st.GetDeclaration(forecast.Named()) == nil, true)

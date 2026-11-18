@@ -113,7 +113,7 @@ func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario, base 
 			) == 0, "failed side looked absent: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 		for noteIndex := range groups[0].Suppressed {
 			note := groups[0].Suppressed[noteIndex]
-			assert.Equal(t, note.Side, diff.SideCurrent)
+			assert.Equal(t, note.Side, "current")
 		}
 		for _, row := range []string{
 			"  ✗  current snapshot: Kustomization  alpha: flux-system/missing  not found\n",
@@ -261,7 +261,7 @@ func runClusterGroupsDiffAbsenceAndFailureName(t *testing.T, tc *struct {
 		change := groups[i].Changes[0]
 		assert.Equal(t, change.Kind, "ConfigMap")
 		assert.Equal(t, change.Name, tc.resource)
-		assert.Equal(t, change.Status, diff.StatusChanged)
+		assert.Equal(t, change.Status, diff.ChangeStatus("changed"))
 		assert.Diff(t, change.Old["data"], map[string]any{"value": "original"})
 		assert.Diff(t, change.New["data"], map[string]any{"value": "changed"})
 	}

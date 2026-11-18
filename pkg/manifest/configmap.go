@@ -17,8 +17,7 @@ type ConfigMap struct {
 	suppliedEncrypted map[string]Data
 }
 
-// NewConfigMap constructs lookup data at the given identity without converting its payload.
-func NewConfigMap(id NamedResource, data map[string]any) *ConfigMap {
+func newConfigMap(id NamedResource, data map[string]any) *ConfigMap {
 	return &ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: data}
 }
 
@@ -130,7 +129,7 @@ func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 		return nil, inputf("%s missing %s", KindConfigMap, metadata.missing)
 	}
 	data, _ := doc[dataKey].(map[string]any)
-	out := NewConfigMap(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data)
+	out := newConfigMap(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data)
 	if opaqueField(doc[dataKey]) {
 		out.opaqueData = doc[dataKey]
 	}
@@ -148,8 +147,7 @@ type Secret struct {
 	suppliedEncrypted map[string]Data
 }
 
-// NewSecret constructs lookup data at the given identity without converting its payload.
-func NewSecret(id NamedResource, data, stringData map[string]any) *Secret {
+func newSecret(id NamedResource, data, stringData map[string]any) *Secret {
 	return &Secret{Name: id.Name, Namespace: id.Namespace, Data: data, StringData: stringData}
 }
 
@@ -299,7 +297,7 @@ func parseSecret(doc map[string]any) (*Secret, error) {
 	}
 	data, _ := doc[dataKey].(map[string]any)
 	stringData, _ := doc[stringDataKey].(map[string]any)
-	out := NewSecret(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data, stringData)
+	out := newSecret(NamedResource{Name: metadata.Name, Namespace: metadata.Namespace}, data, stringData)
 	if opaqueField(doc[dataKey]) {
 		out.opaqueData = doc[dataKey]
 	}

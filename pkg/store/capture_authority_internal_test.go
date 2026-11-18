@@ -107,7 +107,9 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	supplier := &manifest.Kustomization{Name: "supplier", Namespace: "apps"}
 	raw := &manifest.OCIRepository{Name: "covered", Namespace: "apps", URL: "oci://same.example"}
-	s.AddObjects([]manifest.BaseManifest{owner, supplier, raw})
+	s.AddObject(owner)
+	s.AddObject(supplier)
+	s.AddObject(raw)
 	s.SetDiscoveryIndex(
 		&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -209,7 +211,8 @@ func TestReadSet_RawOwnedSourceMaterializer(t *testing.T) {
 	st := New()
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	source := &manifest.HelmRepository{Name: "chart", Namespace: "apps", URL: "https://charts.example"}
-	st.AddObjects([]manifest.BaseManifest{parent, source})
+	st.AddObject(parent)
+	st.AddObject(source)
 	p := manifest.Production{
 		Owner:    parent.Named(),
 		Source:   manifest.BootstrapSourceID,
@@ -270,7 +273,8 @@ func testReadSetBoundDeclarationAuthorityCase(
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	raw := emissionChild("input", "raw")
 	prospective := emissionChild("input", "prospective")
-	st.AddObjects([]manifest.BaseManifest{owner, raw.Obj})
+	st.AddObject(owner)
+	st.AddObject(raw.Obj)
 	proofs := make([]manifest.Production, 1, 2)
 	proofs[0] = manifest.Production{Owner: owner.Named()}
 	switch *testCaseInput {
@@ -500,7 +504,8 @@ func TestRetire_AcceptedBorrowers(t *testing.T) {
 			st := New()
 			owner := &manifest.GitRepository{Name: "owner", Namespace: "apps"}
 			child := emissionChild("input", "before")
-			st.AddObjects([]manifest.BaseManifest{owner, child.Obj})
+			st.AddObject(owner)
+			st.AddObject(child.Obj)
 			var reads ReadSet
 			reads.Init(st, owner.Named(), nil)
 			t.Cleanup(reads.Close)

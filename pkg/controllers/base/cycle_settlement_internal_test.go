@@ -23,7 +23,9 @@ func TestExecution_PreflightInvalidatesSettlementRoutes(t *testing.T) {
 			st, tasks := store.New(), task.NewBounded(2)
 			own := &manifest.Kustomization{Name: "a", Namespace: "ns"}
 			peer := &manifest.Kustomization{Name: "b", Namespace: "ns"}
-			st.AddObjects([]manifest.BaseManifest{own, peer})
+			for _, object := range []manifest.BaseManifest{own, peer} {
+				st.AddObject(object)
+			}
 			st.UpdateStatus(own.Named(), store.StatusInfo{Status: store.StatusPending})
 			c := New(st, tasks)
 			e := gateExecution(c, own.Named())

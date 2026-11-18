@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -35,7 +34,12 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 	idx.Readers["config/prod.yaml"] = []manifest.FileReader{{Reader: release, Source: manifest.BootstrapSourceID}}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"config/prod.yaml"}), index: idx, inventory: objects, root: ""},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"config/prod.yaml"}, []string{"config/prod.yaml"}),
+			index:     idx,
+			inventory: objects,
+			root:      "",
+		},
 	)
 	for _, id := range []manifest.NamedResource{release, owner.Named(), parent.Named()} {
 		assert.Equal(t, f.Reconcile(id), true)
@@ -144,7 +148,9 @@ func testFilterAcceptedChildrenCase(t *testing.T, testCaseInput *string,
 	transformed := declaration.Clone()
 	transformed.Suspend = true
 	emitter := &manifest.Kustomization{Name: "emitter", Namespace: "ns"}
-	st.AddObjects([]manifest.BaseManifest{parent, emitter})
+	for _, object := range []manifest.BaseManifest{parent, emitter} {
+		st.AddObject(object)
+	}
 	st.RecordEmitted(
 		parent.Named(),
 		&store.Emission{
@@ -192,7 +198,12 @@ func testFilterAcceptedChildrenCase(t *testing.T, testCaseInput *string,
 	}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{file}), index: index, inventory: st, root: ""},
+		admissionConfig{
+			changes:   detectChanges(t, []string{file}, []string{file}),
+			index:     index,
+			inventory: st,
+			root:      "",
+		},
 	)
 	switch *testCaseInput {
 	case "runtime", "file_indexed":
@@ -239,7 +250,9 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 			}
 			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "effective"}
 			st := store.New()
-			st.AddObjects([]manifest.BaseManifest{consumer, sibling})
+			for _, object := range []manifest.BaseManifest{consumer, sibling} {
+				st.AddObject(object)
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				consumer.Named(): {File: "consumer.yaml", Declaration: consumer},
 				provider.Named(): {File: "provider.yaml", Declaration: provider},
@@ -253,7 +266,11 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 			filter := newAdmission(
 				t,
 				admissionConfig{
-					changes:   change.NewSet([]string{"credentials/secret.yaml"}),
+					changes: detectChanges(
+						t,
+						[]string{"credentials/secret.yaml"},
+						[]string{"credentials/secret.yaml"},
+					),
 					index:     index,
 					inventory: st,
 				},
@@ -309,7 +326,9 @@ func testFilterLateProducerIndexedDeclarationsCase(
 	declaration := &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}
 	child := declaration.Clone()
 	child.Suspend = testCaseInput.transformed
-	st.AddObjects([]manifest.BaseManifest{emitter, parent, declaration})
+	for _, object := range []manifest.BaseManifest{emitter, parent, declaration} {
+		st.AddObject(object)
+	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		emitter.Named(): {File: "emitter.yaml"},
 	}}
@@ -329,7 +348,11 @@ func testFilterLateProducerIndexedDeclarationsCase(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"emitter.yaml", "config.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"emitter.yaml", "config.yaml"},
+				[]string{"emitter.yaml", "config.yaml"},
+			),
 			index:     index,
 			inventory: st,
 		},

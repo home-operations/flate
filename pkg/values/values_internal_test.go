@@ -40,7 +40,7 @@ func (p *sliceProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 
 func resolveInputsForTest(
 	obj manifest.BaseManifest,
-	provider Provider,
+	provider provider,
 	permission missingPolicy,
 	scratch ...Result,
 ) []Result {
@@ -58,7 +58,7 @@ func resolveInputsForTest(
 	return results
 }
 
-func expandValuesForTest(t *testing.T, hr *manifest.HelmRelease, provider Provider, cache *Cache) {
+func expandValuesForTest(t *testing.T, hr *manifest.HelmRelease, provider provider, cache *Cache) {
 	t.Helper()
 	err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), cache)
 	assert.NoError(t, err)
@@ -559,7 +559,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: "Unsupported", Name: "vars"},
 			{Kind: "ConfigMap", Name: "vars"},
 			{Kind: "Secret", Name: "secret-vars"},
@@ -593,7 +593,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 				Namespace: "ns",
 				PostBuild: &kustomizev1.PostBuild{
 					Substitute:     map[string]string{"INLINE": "kept"},
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: kind, Name: "vars"}},
 				},
 			}
 			for _, permissions := range []testPermissions{nil, {kind}} {
@@ -613,7 +613,7 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 		Name:      "app",
 		Namespace: "ns",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}},
 		},
 	}
 	_, want := sec.Value("A")
@@ -638,7 +638,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 				}
 			} else {
 				ks.PostBuild = &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}},
 				}
 				provider.ConfigMaps = []*manifest.ConfigMap{{Name: "cm", Namespace: "ns", Data: vars}}
 			}

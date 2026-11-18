@@ -227,9 +227,7 @@ type Demand struct {
 	Occurrence OccurrenceFacts
 	Source     manifest.NamedResource
 	Root       string
-	Ordinary   bool
 	History    bool
-	Complete   bool
 	Artifact   *store.SourceArtifact
 	Reads      *store.ReadSet
 	Witness    manifest.BaseManifest

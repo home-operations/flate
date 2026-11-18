@@ -81,8 +81,7 @@ const (
 	substitutionRequired
 )
 
-// NeedsSubstitution reports expansion syntax or scalars requiring the Flux JSON conversion.
-func NeedsSubstitution(v any) bool {
+func needsSubstitution(v any) bool {
 	return classifySubstitution(v) == substitutionRequired
 }
 
@@ -162,7 +161,7 @@ func SubstitutionDocument(occurrence manifest.DocOccurrence, active bool) ([]byt
 		return nil, nil
 	}
 	doc = occurrence.SubstitutionDocument()
-	if class == substitutionInspect && !NeedsSubstitution(doc) {
+	if class == substitutionInspect && !needsSubstitution(doc) {
 		return nil, nil
 	}
 	//nolint:wrapcheck // Shaping wraps this deferred error.

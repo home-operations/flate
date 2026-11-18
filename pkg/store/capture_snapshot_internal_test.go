@@ -123,11 +123,12 @@ func TestReadSet_MatchesRawCollection(t *testing.T) {
 				Name:       "app",
 				Spec:       map[string]any{"items": []any{map[string]any{"value": "same"}}},
 			}
-			second := first.Clone()
+			second := *first
+			second.Spec = manifest.DeepCopyMap(first.Spec)
 			second.Spec["items"].([]any)[0].(map[string]any)["value"] = tc.value
 			beforeStore, currentStore := New(), New()
 			beforeStore.AddObject(first)
-			currentStore.AddObject(second)
+			currentStore.AddObject(&second)
 			var before, current ReadSet
 			before.Init(beforeStore, ownerID("reader"), nil)
 			current.Init(currentStore, ownerID("reader"), nil)
@@ -140,7 +141,7 @@ func TestReadSet_MatchesRawCollection(t *testing.T) {
 			assert.Equal(t, current.Matches(&before), tc.matches)
 			objects = current.ListObjects(id.Group, id.Kind)
 			assert.Equal(t, len(objects), 1)
-			assert.Equal(t, objects[0], manifest.BaseManifest(second))
+			assert.Equal(t, objects[0], manifest.BaseManifest(&second))
 			assert.Equal(t, objects[0] == first, false)
 			assert.Diff(t, first.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
 		})
@@ -159,7 +160,9 @@ func TestReadSet_UnsettledProducerSnapshot(t *testing.T) {
 			source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 			first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
 			second := &manifest.Kustomization{Name: "second", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{source, first, second})
+			st.AddObject(source)
+			st.AddObject(first)
+			st.AddObject(second)
 			if tc.known {
 				st.RecordEmitted(first.Named(), &Emission{Children: []Child{{Obj: source}}}, nil)
 			}
@@ -192,12 +195,8 @@ func TestCapture_SupplierQueryIsolation(t *testing.T) {
 			t.Parallel()
 			st := New()
 			sourceOwner, queryOwner := ownerID("source-owner"), ownerID("query-owner")
-			st.AddObjects(
-				[]manifest.BaseManifest{
-					&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace},
-					&manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace},
-				},
-			)
+			st.AddObject(&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace})
+			st.AddObject(&manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace})
 			source, query := emissionChild("source", "same"), emissionChild("query", "same")
 			payload := &SourceArtifact{Key: "family", Content: "generation", FS: fstest.MapFS{}}
 			st.RecordEmitted(

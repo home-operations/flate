@@ -10,11 +10,10 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -88,14 +87,14 @@ func renderTreesInputWarningOnlyCase(t *testing.T, warning *struct {
 			Path:            (*root),
 			Input:           base,
 			BaseInput:       head,
-			ExternalChanges: change.NewSet(nil),
+			ExternalChanges: detectChanges(t, nil, nil),
 		},
 		{
 			ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 			Path:            (*root),
 			Input:           head,
 			BaseInput:       base,
-			ExternalChanges: change.NewSet(nil),
+			ExternalChanges: detectChanges(t, nil, nil),
 		},
 	}, orchestrator.Config{Concurrency: 2, HeadOnly: true})
 	assert.FatalIf(t, !errors.Is(err, wantErr), "baseline discovery error lost: %v", err)

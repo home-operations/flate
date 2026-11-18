@@ -170,7 +170,7 @@ func runRegisteredFixpointFeedback(
 type registeredGraphResultState struct {
 	testCaseInput *runRegisteredDependencyGraphInputs
 	counts        *map[string]*atomic.Int64
-	s             **schedule.Scheduler
+	s             **registeredDispatcher
 	st            **store.Store
 }
 
@@ -201,7 +201,7 @@ func assertRegisteredGraphResults(t *testing.T, scope *registeredGraphResultStat
 		}
 		assert.Equal(t, (*scope.counts)[name].Load(), wantRenders)
 	}
-	assert.Equal(t, len((*scope.s).Results()), len(scope.testCaseInput.tc.graph))
+	assert.Equal(t, len((*scope.s).results()), len(scope.testCaseInput.tc.graph))
 	assert.Equal(t, t.Context().Err(), nil)
 	failures := (*scope.st).FailedResources()
 	if scope.testCaseInput.tc.want == store.StatusFailed {
@@ -226,7 +226,7 @@ type registeredFixpointResultState struct {
 	active        *atomic.Int64
 	total         *atomic.Int64
 	counts        *map[schedule.NodeID]*atomic.Int64
-	s             **schedule.Scheduler
+	s             **registeredDispatcher
 	st            **store.Store
 }
 
@@ -392,7 +392,7 @@ type registeredRecoveryResultState struct {
 	failed        *chan struct{}
 	runs          *atomic.Int64
 	st            **store.Store
-	s             **schedule.Scheduler
+	s             **registeredDispatcher
 	current       **store.Store
 }
 
@@ -411,7 +411,7 @@ func settleRegisteredRecovery(t *testing.T, scope *registeredRecoveryResultState
 	assert.Equal(t, scope.runs.Load(), int64(2))
 	assert.Equal(t, t.Context().Err(), nil)
 	assert.Equal(t, len(status.BlockedBy()), 0)
-	assert.Equal(t, len((*scope.s).Results()), 3)
+	assert.Equal(t, len((*scope.s).results()), 3)
 	failures := (*scope.st).FailedResources()
 	if *scope.testCaseInput.testCaseInput.data {
 		assert.Equal(t, len(failures), 1)

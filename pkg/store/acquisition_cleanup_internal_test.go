@@ -28,7 +28,8 @@ func testAcquisitionPostCleanupCredentialAuthority(t *testing.T, present bool) {
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	observer := &manifest.Kustomization{Name: "observer", Namespace: "apps"}
 	credential := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	s.AddObjects([]manifest.BaseManifest{source, observer})
+	s.AddObject(source)
+	s.AddObject(observer)
 	if present {
 		s.AddObject(
 			&manifest.Secret{

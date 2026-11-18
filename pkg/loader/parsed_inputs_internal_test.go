@@ -232,10 +232,19 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
-		l.Options.Changes = change.NewSet(nil)
+		changes, loadErr := change.Detect(t.Context(), input, input, change.DetectConfig{Candidates: map[string]bool{}})
+		assert.NoError(t, loadErr)
+		changes, loadErr = change.Qualify(
+			t.Context(),
+			changes,
+			[2]*store.Store{store.New(), store.New()},
+			manifest.WorkScope{},
+		)
+		assert.NoError(t, loadErr)
+		l.Options.Changes = changes
 		l.Options.ParsedInputs = inputs
-		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
-		assert.NoError(t, err)
+		_, loadErr = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+		assert.NoError(t, loadErr)
 		return l
 	}
 	planner := load(input, nil)

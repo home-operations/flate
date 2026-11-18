@@ -57,11 +57,13 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 				Name:      "consumer",
 				Namespace: "apps",
 				PostBuild: &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
 				},
 			}
 			source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{source, consumer})
+			for _, object := range []manifest.BaseManifest{source, consumer} {
+				st.AddObject(object)
+			}
 			historySourceInputResult := historySourceInput(t, mode, root)
 			art, changed, roots := historySourceInputResult.artifact, historySourceInputResult.changed, historySourceInputResult.roots
 			st.SetArtifact(source.Named(), art)
@@ -74,7 +76,7 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 					Productions: []manifest.Production{{Owner: owner}},
 				},
 			}}
-			changes := change.NewSet([]string{changed, "consumer.yaml"})
+			changes := detectChanges(t, []string{changed, "consumer.yaml"}, []string{changed, "consumer.yaml"})
 			if mode == "paired_pinned" {
 				previous := *art
 				previous.Revision = "before"
@@ -86,7 +88,7 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 				var err error
 				changes, err = change.Qualify(
 					t.Context(),
-					change.NewSet([]string{"consumer.yaml"}), [2]*store.Store{peer, st},
+					detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}), [2]*store.Store{peer, st},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
@@ -153,7 +155,12 @@ func TestRefineHistory_PeerContentSources(t *testing.T) {
 		}
 		f := newAdmission(
 			t,
-			admissionConfig{changes: change.NewSet([]string{"z/apps/red/file"}), index: nil, inventory: st, root: root},
+			admissionConfig{
+				changes:   detectChanges(t, []string{"z/apps/red/file"}, []string{"z/apps/red/file"}),
+				index:     nil,
+				inventory: st,
+				root:      root,
+			},
 		)
 		f.RefineHistory(history, map[manifest.NamedResource]bool{owners[0]: true, owners[1]: true})
 		assert.Equal(t, f.Reconcile(child), true)
@@ -179,7 +186,9 @@ func TestRefineHistory_PreservesDeclarationEvidence(t *testing.T) {
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
 			}
 			target := testutil.KustomizationID("apps", "predicted")
-			st.AddObjects([]manifest.BaseManifest{source, owner})
+			for _, object := range []manifest.BaseManifest{source, owner} {
+				st.AddObject(object)
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				source.Named(): {File: "source.yaml", Productions: []manifest.Production{{Owner: owner.Named()}}},
 				owner.Named(): {
@@ -191,7 +200,12 @@ func TestRefineHistory_PreservesDeclarationEvidence(t *testing.T) {
 			}}
 			filter := newAdmission(
 				t,
-				admissionConfig{changes: change.NewSet([]string{changed}), index: index, inventory: st, root: "/repo"},
+				admissionConfig{
+					changes:   detectChanges(t, []string{changed}, []string{changed}),
+					index:     index,
+					inventory: st,
+					root:      "/repo",
+				},
 			)
 			assert.Equal(t, filter.role(owner.Named()), primary)
 			filter.RefineHistory(
@@ -229,7 +243,12 @@ func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {
 	}}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"emitter.yaml"}, []string{"emitter.yaml"}),
+			index:     index,
+			inventory: st,
+			root:      "/repo",
+		},
 	)
 	f.RefineHistory(
 		map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{
@@ -284,7 +303,7 @@ func historySourceInput(t *testing.T, mode, root string) historyInput {
 	}
 	if mode == "pinned" || mode == "paired_pinned" {
 		art.LocalPath, art.LocalRoot, art.Key, art.Content = "/mounted/content", root, "commit", "commit"
-		changed = "../mounted/content/apps/red/config.yaml"
+		changed = "mounted/content/apps/red/config.yaml"
 	}
 	if mode == "external" {
 		art.LocalPath, art.LocalRoot = "/external", "/external"
@@ -341,7 +360,7 @@ func testContributorReplacement(t *testing.T, mode string) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
 		},
 	}
 	st.AddObject(consumer)
@@ -372,7 +391,10 @@ func testContributorReplacement(t *testing.T, mode string) {
 	if mode == "primary" {
 		changes = append(changes, "owner.yaml")
 	}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: detectChanges(t, changes, changes), index: index, inventory: st, root: "/repo"},
+	)
 	assert.Equal(t, f.Reconcile(owner), true)
 	calls := 0
 	records := func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {

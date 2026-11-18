@@ -121,15 +121,15 @@ func TestStoreProvider_BareMetadataDoesNotAdmitNamespace(t *testing.T) {
 			st := store.New()
 			bare := manifest.NamedResource{Name: "settings"}
 			data := map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"}
-			var raw manifest.BaseManifest = manifest.NewConfigMap(bare, data)
+			var raw manifest.BaseManifest = &manifest.ConfigMap{Name: bare.Name, Namespace: bare.Namespace, Data: data}
 			if kind == manifest.KindSecret {
-				raw = manifest.NewSecret(bare, nil, data)
+				raw = &manifest.Secret{Name: bare.Name, Namespace: bare.Namespace, Data: nil, StringData: data}
 			}
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				raw.Named(): {Path: "settings.yaml", Declaration: raw},
 			}})
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: bare.Name}},
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: kind, Name: bare.Name}},
 			}}
 			var reads store.ReadSet
 			reads.Init(st, consumer.Named(), nil)

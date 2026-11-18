@@ -371,7 +371,7 @@ func testReconcileUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, t
 		Name:      "parent",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}},
 		},
 	}
 	st.AddObject(parent)

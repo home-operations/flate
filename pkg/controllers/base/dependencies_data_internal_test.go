@@ -20,7 +20,7 @@ func TestAwaitData_AllDependencyFailures(t *testing.T) {
 	second := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "second-vars"}
 	absent := manifest.DiagnosticReason{
 		Subject: manifest.DiagnosticFor(first, nil),
-		Message: "not found; supply it with --supply",
+		Message: "not found; supply a readable document",
 	}
 	withProducers := absent
 	for _, name := range []string{"first", "second", "third"} {
@@ -44,7 +44,7 @@ func TestAwaitData_AllDependencyFailures(t *testing.T) {
 			name: "several and duplicate", names: []string{"second-vars", "first-vars", "second-vars"},
 			wantIDs: []manifest.NamedResource{first, second},
 			wantReasons: map[manifest.NamedResource]manifest.DiagnosticReason{
-				first: absent, second: {Subject: manifest.DiagnosticFor(second, nil), Message: "not found; supply it with --supply"},
+				first: absent, second: {Subject: manifest.DiagnosticFor(second, nil), Message: "not found; supply a readable document"},
 			},
 		},
 		{
@@ -61,7 +61,7 @@ func TestAwaitData_AllDependencyFailures(t *testing.T) {
 		ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{}}
 		hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
 		for _, name := range tc.names {
-			ks.PostBuild.SubstituteFrom = append(ks.PostBuild.SubstituteFrom, manifest.SubstituteReference{
+			ks.PostBuild.SubstituteFrom = append(ks.PostBuild.SubstituteFrom, kustomizev1.SubstituteReference{
 				Kind: manifest.KindConfigMap, Name: name,
 			})
 			hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: name})
@@ -108,7 +108,7 @@ func TestAwaitData_AllDependencyFailures(t *testing.T) {
 					assert.Equal(
 						t,
 						failed.Error(),
-						"dependencies failed: ConfigMap/apps/first-vars: not found; supply it with --supply; ConfigMap/apps/second-vars: not found; supply it with --supply",
+						"dependencies failed: ConfigMap/apps/first-vars: not found; supply a readable document; ConfigMap/apps/second-vars: not found; supply a readable document",
 					)
 				}
 			})

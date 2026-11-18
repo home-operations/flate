@@ -3,7 +3,7 @@ module github.com/home-operations/flate
 go 1.27.0
 
 require (
-	cel.dev/cel-go v0.33.3
+	cel.dev/cel-go v0.33.4
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.1.1

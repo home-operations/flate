@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "configuration"
+  ],
+  "properties": {
+    "configuration": {
+      "type": "object",
+      "required": [
+        "backupStorageLocation"
+      ],
+      "properties": {
+        "backupStorageLocation": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "bucket"
+            ],
+            "properties": {
+              "bucket": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

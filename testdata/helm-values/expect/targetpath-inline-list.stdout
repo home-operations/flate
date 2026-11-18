@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+data:
+  locations.yaml: |
+    - bucket: inline-primary
+      name: primary
+      prefix: daily
+      provider: aws
+    - bucket: archive
+      name: secondary
+      prefix: monthly
+      provider: aws
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: backup
+    helm.toolkit.fluxcd.io/namespace: apps
+  name: backup-locations
+  namespace: apps

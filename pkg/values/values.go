@@ -128,10 +128,14 @@ func ExpandValueReferences(hr *manifest.HelmRelease, inputs []Result, cache *Cac
 	if err := validateResults(hr, inputs, "valuesFrom"); err != nil {
 		return err
 	}
-	ex := valueExpansion{values: map[string]any{}, owned: true}
+	ex := valueExpansion{inline: hr.Values}
 	filter := len(inputs) != len(hr.ValuesFrom)
 	for i := range inputs {
 		filter = filter || inputs[i].effect == Omitted
+		ex.targets = ex.targets || inputs[i].effect == Used && hr.ValuesFrom[inputs[i].ref.Position].TargetPath != ""
+	}
+	if ex.targets {
+		ex.inline = manifest.DeepCopyMap(ex.inline)
 	}
 	kept := hr.ValuesFrom
 	if filter {
@@ -150,7 +154,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, inputs []Result, cache *Cac
 			kept = append(kept, ref)
 		}
 	}
-	DeepMergeInto(ex.values, hr.Values)
+	ex.values = DeepMergeInto(ex.values, ex.inline)
 	hr.Values, hr.ValuesFrom = ex.values, kept
 	return nil
 }
@@ -189,29 +193,24 @@ func validateResults(obj manifest.BaseManifest, inputs []Result, use string) err
 	return nil
 }
 
-func (c *Cache) updateHelmReleaseValues(
-	ref manifest.ValuesReference,
-	found string,
-	values map[string]any,
-) error {
+func (c *Cache) document(ref manifest.ValuesReference, found string) (map[string]any, error) {
 	parsed, ok := c.lookup(found)
 	if !ok {
 		var decoded map[string]any
 		if err := yaml.Unmarshal([]byte(found), &decoded); err != nil {
-			return manifest.NewError(
+			return nil, manifest.NewError(
 				manifest.ErrInput,
 				fmt.Errorf("expected '%s' values key %q to be valid YAML: %w", ref.Name, ref.GetValuesKey(), err),
 				"",
 			)
 		}
 		if decoded == nil {
-			return nil
+			return nil, nil
 		}
 		parsed = decoded
 		c.put(found, parsed)
 	}
-	DeepMergeInto(values, parsed)
-	return nil
+	return parsed, nil
 }
 
 // Matching quotes MUST force strings instead of Helm's ordinary type coercion.
@@ -323,23 +322,29 @@ func setValueReference(values map[string]any, ref *manifest.ValuesReference, fou
 }
 
 type valueExpansion struct {
-	values map[string]any
-	owned  bool
+	values  map[string]any
+	inline  map[string]any
+	targets bool
 }
 
 func (ex *valueExpansion) expand(ref *manifest.ValuesReference, found string, cache *Cache) error {
 	if ref.TargetPath != "" {
-		if !ex.owned {
-			// Cached nested values must be copied before strvals mutates them.
-			ex.values = manifest.DeepCopyMap(ex.values)
-			ex.owned = true
-		}
+		ex.values = DeepMergeInto(ex.values, ex.inline)
 		return setValueReference(ex.values, ref, found)
 	}
-	if err := cache.updateHelmReleaseValues(*ref, found, ex.values); err != nil {
+	parsed, err := cache.document(*ref, found)
+	if err != nil {
 		return err
 	}
-	ex.owned = false
+	if ex.targets && cache != nil {
+		// A cache miss also publishes an immutable document before target writes.
+		parsed = manifest.DeepCopyMap(parsed)
+	}
+	if ex.targets && ex.values == nil {
+		ex.values = parsed
+	} else {
+		ex.values = DeepMergeInto(ex.values, parsed)
+	}
 	return nil
 }
 

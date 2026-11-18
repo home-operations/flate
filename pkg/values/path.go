@@ -10,7 +10,7 @@ import (
 func ResolveStaticValue(
 	value string,
 	parent *manifest.Kustomization,
-	provider Provider,
+	provider provider,
 	missing missingPolicy,
 ) (string, bool) {
 	parent = new(*parent)

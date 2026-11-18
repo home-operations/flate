@@ -17,7 +17,7 @@ import (
 )
 
 // Claims builds reporting claims from caller-owned candidates, including external
-// sources and committed source coordinates. Discovery MUST use Loader.Claims instead.
+// sources and committed source coordinates. Discovery MUST use Loader.claims instead.
 func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) []manifest.KSClaim {
 	candidates = slices.DeleteFunc(
 		candidates,
@@ -39,8 +39,7 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 	return claims
 }
 
-// Claims reuses discovery's source-view documents while the Loader is mutable.
-func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
+func (l *Loader) claims(repoRoot string) []manifest.KSClaim {
 	l.refreshSources(nil)
 	l.refreshClaims(repoRoot, l.kustomizations())
 	claims, borrowed := l.claimView(repoRoot, func(input scopeInput) bool {

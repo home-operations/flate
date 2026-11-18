@@ -21,7 +21,7 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 	for _, object := range []manifest.BaseManifest{
 		&manifest.Kustomization{
 			Name: "consumer", Namespace: "apps",
-			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "input"},
 			}},
 		},
@@ -93,14 +93,16 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 	st := store.New()
 	owner := &manifest.Kustomization{
 		Name: "consumer", Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "input", Optional: true},
 		}},
 	}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	source := (&manifest.GitRepository{Name: "repo", Namespace: "apps"}).Named()
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	for _, object := range []manifest.BaseManifest{owner, producer} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(source, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		input: {Productions: []manifest.Production{{Owner: producer.Named(), Source: source}}},
@@ -157,7 +159,9 @@ func TestDataInputs_PreflightPrecedesCapture(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "input", Optional: true},
+		},
 	}}
 	st.AddObject(owner)
 	st.SetPreflight(owner.Named(), "captured admission failure")
@@ -177,7 +181,9 @@ func TestDataInputs_ProbeRequiresRawProductionMaterialization(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "input", Optional: true},
+		},
 	}}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: owner.Namespace}
 	st.AddObject(owner)
@@ -200,7 +206,9 @@ func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
 	st := store.New()
 	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	for _, object := range []manifest.BaseManifest{owner, producer} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 	secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: map[string]any{"value": "supplied"}}
 	st.AddDeclaration(store.Declaration{Obj: secret, Origin: manifest.SuppliedDeclaration})
@@ -240,7 +248,7 @@ func TestAwaitData_EncryptedSubstitutionProjection(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindSecret, Name: "input", Optional: tc.optional},
 				},
 			}}
@@ -296,7 +304,9 @@ func TestAwaitData_OrderedAssessments(t *testing.T) {
 		Namespace: "apps",
 		Data:      map[string]any{"first": "a: first", "last": "a: last"},
 	}
-	st.AddObjects([]manifest.BaseManifest{owner, data})
+	for _, object := range []manifest.BaseManifest{owner, data} {
+		st.AddObject(object)
+	}
 	var e Execution
 	e.Init(New(st, task.NewBounded(2)), owner.Named())
 	defer e.Close()
@@ -338,19 +348,21 @@ func TestAwaitData_MalformedMaterialReturnsDirectly(t *testing.T) {
 			st := store.New()
 			owner := &manifest.Kustomization{
 				Name: "consumer", Namespace: "apps",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "input"},
 				}},
 			}
 			if tc.missingFirst {
-				owner.PostBuild.SubstituteFrom = append([]manifest.SubstituteReference{{
+				owner.PostBuild.SubstituteFrom = append([]kustomizev1.SubstituteReference{{
 					Kind: manifest.KindConfigMap, Name: "absent",
 				}}, owner.PostBuild.SubstituteFrom...)
 			}
-			st.AddObjects([]manifest.BaseManifest{owner, &manifest.ConfigMap{
+			for _, object := range []manifest.BaseManifest{owner, &manifest.ConfigMap{
 				Name: "input", Namespace: "apps",
 				Data: map[string]any{"VALUE": map[string]any{"nested": "invalid"}},
-			}})
+			}} {
+				st.AddObject(object)
+			}
 			var e Execution
 			e.Init(New(st, task.NewBounded(2)), owner.Named())
 			defer e.Close()
@@ -401,7 +413,9 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
 			produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
-			st.AddObjects([]manifest.BaseManifest{owner, producer})
+			for _, object := range []manifest.BaseManifest{owner, producer} {
+				st.AddObject(object)
+			}
 			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 			resumed := false
 			assess := func() error {
@@ -435,7 +449,7 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 				assert.FatalIf(t, !ok, "expected dependency failure, got %v", err)
 				assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
 				assert.Diff(t, failed.Reasons[produced], manifest.DiagnosticReason{
-					Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply it with --supply",
+					Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply a readable document",
 					Causes: []manifest.DiagnosticReason{{
 						Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
 					}},
@@ -450,7 +464,7 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 			assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
 			for _, id := range failed.Failed {
 				assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
-					Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+					Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply a readable document",
 				})
 			}
 		})
@@ -462,7 +476,9 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 		producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
 		produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
-		st.AddObjects([]manifest.BaseManifest{owner, producer})
+		for _, object := range []manifest.BaseManifest{owner, producer} {
+			st.AddObject(object)
+		}
 		st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 		var e Execution
 		e.Init(New(st, task.NewBounded(2)), owner.Named())
@@ -496,7 +512,11 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 		failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
 		assert.FatalIf(t, !ok, "expected missing input error, got %T: %v", err, err)
 		assert.Diff(t, failed.Failed, []manifest.NamedResource{missing})
-		assert.Equal(t, err.Error(), "dependencies failed: ConfigMap/apps/missing: not found; supply it with --supply")
+		assert.Equal(
+			t,
+			err.Error(),
+			"dependencies failed: ConfigMap/apps/missing: not found; supply a readable document",
+		)
 	})
 }
 
@@ -504,9 +524,9 @@ func TestAwaitData_GateFailureWithDataInputs(t *testing.T) {
 	t.Parallel()
 	const (
 		gateMessage = "dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed"
-		firstCause  = "dependencies failed: ConfigMap/apps/first-vars: not found; supply it with --supply"
-		secondCause = "dependencies failed: ConfigMap/apps/second-vars: not found; supply it with --supply"
-		combined    = "dependencies failed: ConfigMap/apps/first-vars: not found; supply it with --supply; ConfigMap/apps/second-vars: not found; supply it with --supply; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed"
+		firstCause  = "dependencies failed: ConfigMap/apps/first-vars: not found; supply a readable document"
+		secondCause = "dependencies failed: ConfigMap/apps/second-vars: not found; supply a readable document"
+		combined    = "dependencies failed: ConfigMap/apps/first-vars: not found; supply a readable document; ConfigMap/apps/second-vars: not found; supply a readable document; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed"
 	)
 	for _, tc := range []struct {
 		name         string
@@ -522,7 +542,7 @@ func TestAwaitData_GateFailureWithDataInputs(t *testing.T) {
 		{
 			name: "one failed input", failedCount: 1,
 			message:      firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed",
-			inputMessage: "not found; supply it with --supply",
+			inputMessage: "not found; supply a readable document",
 			details: strings.Join([]string{
 				firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed",
 				"  " + firstCause + "; Kustomization.kustomize.toolkit.fluxcd.io/apps/gate: gate render failed", firstCause,
@@ -532,7 +552,7 @@ func TestAwaitData_GateFailureWithDataInputs(t *testing.T) {
 		},
 		{
 			name: "two failed inputs", failedCount: 2, message: combined,
-			inputMessage: "not found; supply it with --supply",
+			inputMessage: "not found; supply a readable document",
 			details: strings.Join([]string{
 				combined,
 				"  " + combined, firstCause, secondCause,
@@ -549,7 +569,9 @@ func TestAwaitData_GateFailureWithDataInputs(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			gate := &manifest.Kustomization{Name: "gate", Namespace: "apps"}
 			healthy := &manifest.ConfigMap{Name: "healthy", Namespace: "apps", Data: map[string]any{"VALUE": "ready"}}
-			st.AddObjects([]manifest.BaseManifest{owner, gate, healthy})
+			for _, object := range []manifest.BaseManifest{owner, gate, healthy} {
+				st.AddObject(object)
+			}
 			st.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "gate render failed"})
 			var e Execution
 			e.Init(New(st, task.NewBounded(2)), owner.Named())
@@ -621,7 +643,9 @@ func TestAwaitData_MultipleFailuresRetainSyntheticProducer(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
 	produced := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "produced"}
-	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	for _, object := range []manifest.BaseManifest{owner, producer} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending, Message: "root failure"})
 	var e Execution
 	e.Init(New(st, task.NewBounded(2)), owner.Named())
@@ -643,18 +667,18 @@ func TestAwaitData_MultipleFailuresRetainSyntheticProducer(t *testing.T) {
 	assert.Diff(t, failed.Failed, []manifest.NamedResource{missing, produced})
 	assert.Equal(t, len(failed.Reasons), 2)
 	assert.Diff(t, failed.Reasons[produced], manifest.DiagnosticReason{
-		Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply it with --supply",
+		Subject: manifest.DiagnosticFor(produced, nil), Message: "not found; supply a readable document",
 		Causes: []manifest.DiagnosticReason{{
 			Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
 		}},
 	})
 	assert.Diff(t, failed.Reasons[missing], manifest.DiagnosticReason{
-		Subject: manifest.DiagnosticFor(missing, nil), Message: "not found; supply it with --supply",
+		Subject: manifest.DiagnosticFor(missing, nil), Message: "not found; supply a readable document",
 	})
 	assert.Equal(
 		t,
 		failed.Error(),
-		"dependencies failed: ConfigMap/apps/missing: not found; supply it with --supply; ConfigMap/apps/produced: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/sync (entry path \"clusters/test\"): not ready",
+		"dependencies failed: ConfigMap/apps/missing: not found; supply a readable document; ConfigMap/apps/produced: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/sync (entry path \"clusters/test\"): not ready",
 	)
 }
 
@@ -667,7 +691,9 @@ func TestAwaitData_SharedPendingProducer(t *testing.T) {
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "first"},
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "second"},
 	}
-	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	for _, object := range []manifest.BaseManifest{owner, producer} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 	assess := func(level manifest.DrainLevel) (*Execution, error) {
 		e := new(Execution)
@@ -701,7 +727,7 @@ func TestAwaitData_SharedPendingProducer(t *testing.T) {
 	assert.Equal(t, len(failed.Reasons), len(ids))
 	for _, id := range ids {
 		assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
-			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply a readable document",
 			Causes: []manifest.DiagnosticReason{{
 				Subject: manifest.DiagnosticFor(producer.Named(), producer), Message: "not ready",
 			}},
@@ -717,7 +743,7 @@ func TestAwaitData_SharedPendingProducer(t *testing.T) {
 	assert.Diff(t, failed.Failed, ids)
 	for _, id := range ids {
 		assert.Diff(t, failed.Reasons[id], manifest.DiagnosticReason{
-			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply it with --supply",
+			Subject: manifest.DiagnosticFor(id, nil), Message: "not found; supply a readable document",
 		})
 	}
 }
@@ -728,9 +754,11 @@ func TestAwaitData_ExistingInputMissingKeyReturnsDirectly(t *testing.T) {
 	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{
 		Kind: manifest.KindSecret, Name: "input", ValuesKey: "uri",
 	}}}
-	st.AddObjects([]manifest.BaseManifest{owner, &manifest.Secret{
+	for _, object := range []manifest.BaseManifest{owner, &manifest.Secret{
 		Name: "input", Namespace: "apps", StringData: map[string]any{"other": "value"},
-	}})
+	}} {
+		st.AddObject(object)
+	}
 	var e Execution
 	e.Init(New(st, task.NewBounded(2)), owner.Named())
 	defer e.Close()

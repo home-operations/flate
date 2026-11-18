@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -52,7 +51,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				l, _ := admissiontest.New(
 					t,
 					admissiontest.Config{
-						Changes: change.NewSet([]string{"apps/red/file"}),
+						Changes: detectChanges(t, []string{"apps/red/file"}, []string{"apps/red/file"}),
 						Index: &manifest.DiscoveryIndex{
 							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{},
 						},
@@ -130,7 +129,9 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	st := store.New()
 	oldSource := &manifest.GitRepository{Name: "old", Namespace: "apps"}
 	newSource := &manifest.GitRepository{Name: "new", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{oldSource, newSource})
+	for _, object := range []manifest.BaseManifest{oldSource, newSource} {
+		st.AddObject(object)
+	}
 	for _, source := range []*manifest.GitRepository{oldSource, newSource} {
 		st.SetArtifact(
 			source.Named(),
@@ -146,7 +147,12 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	owner := testutil.KustomizationID("apps", "emitter")
 	l, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"apps/red/file"}, []string{"apps/red/file"}),
+			Index:     nil,
+			Inventory: st,
+			Root:      root,
+		},
 	)
 	filter := l.Options.Session
 	proposal, err := admissiontest.Prepare(

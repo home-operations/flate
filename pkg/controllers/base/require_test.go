@@ -114,7 +114,9 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 	obj := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"value": "old"}}
 	gate := testutil.KustomizationID("apps", "gate")
-	st.AddObjects([]manifest.BaseManifest{obj, input})
+	for _, object := range []manifest.BaseManifest{obj, input} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
 	c := base.New(st, nil)
 	first := controllertest.NewExecution(c, obj.Named())
@@ -181,7 +183,9 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 			obj := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "old"}}
 			child := &manifest.ConfigMap{Name: "output", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{obj, input})
+			for _, object := range []manifest.BaseManifest{obj, input} {
+				st.AddObject(object)
+			}
 			c := base.New(st, nil)
 			first := controllertest.NewExecution(c, obj.Named())
 			defer first.Close()
@@ -359,7 +363,9 @@ func TestExecution_ResumedPredicates(t *testing.T) {
 	st := store.New()
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	dependency := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{consumer, dependency})
+	for _, object := range []manifest.BaseManifest{consumer, dependency} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
 	defer execution.Close()
@@ -425,7 +431,9 @@ func TestDispatch_ExactMaterializers(t *testing.T) {
 			owner := &manifest.ResourceSet{Name: "a-owner", Namespace: "apps"}
 			peer := &manifest.ResourceSet{Name: "z-failed", Namespace: "apps"}
 			unrelated := &manifest.ResourceSet{Name: "unrelated", Namespace: "other"}
-			st.AddObjects([]manifest.BaseManifest{owner, peer, unrelated})
+			for _, object := range []manifest.BaseManifest{owner, peer, unrelated} {
+				st.AddObject(object)
+			}
 			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: state, Reason: "", Message: "owner state"})
 			st.UpdateStatus(
 				peer.Named(),
@@ -585,7 +593,9 @@ func testRequireMultiplePredicatesCase(t *testing.T, testCaseInput *struct {
 		Name:      "consumer",
 		Namespace: "apps",
 	}
-	st.AddObjects([]manifest.BaseManifest{obj, consumer})
+	for _, object := range []manifest.BaseManifest{obj, consumer} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: testCaseInput.status, Reason: "", Message: ""})
 	var deps []manifest.DependencyRef
 	if len(testCaseInput.expressions) > 0 {
@@ -652,7 +662,9 @@ func testExecutionSettleInvalidReadsCase(t *testing.T, testCaseInput *bool,
 	st := store.New()
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "old"}}
-	st.AddObjects([]manifest.BaseManifest{consumer, input})
+	for _, object := range []manifest.BaseManifest{consumer, input} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(
 		consumer.Named(),
 		store.StatusInfo{Status: store.StatusPending, Message: "waiting for input"},
@@ -720,7 +732,9 @@ func testRequireRetainsArtifactFactsThroughSettlementCase(
 		Namespace: "apps",
 	}
 	source := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{consumer, source})
+	for _, object := range []manifest.BaseManifest{consumer, source} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
 	st.SetArtifact(source.Named(), &store.SourceArtifact{})
 	execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())

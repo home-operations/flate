@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -20,6 +21,9 @@ import (
 )
 
 type registeredDispatcher struct {
+	*schedule.Scheduler
+
+	executions sync.Map
 	controller *base.Controller
 	reconcile  func(context.Context, *base.Execution, schedule.NodeID, manifest.DrainLevel) error
 }
@@ -95,7 +99,20 @@ func (d *registeredDispatcher) Dispatch(
 			return d.reconcile(ctx, e, obj.Named(), level)
 		},
 	)
+	d.executions.Store(id, e)
 	return schedule.Result{Assessment: e}
+}
+
+func (d *registeredDispatcher) results() map[schedule.NodeID]schedule.Result {
+	results := map[schedule.NodeID]schedule.Result{}
+	d.executions.Range(func(key, value any) bool {
+		execution := value.(*base.Execution)
+		if execution.Valid() && execution.Outcome() != schedule.Blocked {
+			results[key.(schedule.NodeID)] = schedule.Result{Assessment: execution}
+		}
+		return true
+	})
+	return results
 }
 
 func (d *registeredDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
@@ -107,13 +124,16 @@ func registeredScheduler(
 	workers int,
 	objects []manifest.BaseManifest,
 	reconcile func(context.Context, *base.Execution, schedule.NodeID, manifest.DrainLevel) error,
-) (*schedule.Scheduler, *store.Store) {
+) (*registeredDispatcher, *store.Store) {
 	t.Helper()
 	st, tasks := store.New(), task.NewBounded(workers)
-	st.AddObjects(objects)
+	for _, obj := range objects {
+		st.AddObject(obj)
+	}
 	c := base.New(st, tasks)
 	c.StartLifecycle()
-	s := schedule.New(tasks, &registeredDispatcher{controller: c, reconcile: reconcile})
+	s := &registeredDispatcher{controller: c, reconcile: reconcile}
+	s.Scheduler = schedule.New(tasks, s)
 	t.Cleanup(
 		st.AddListener(
 			store.EventObjectAdded,
@@ -212,7 +232,7 @@ func TestScheduler_RegisteredIrrelevantPublication(t *testing.T) {
 		st = current
 		assert.NoError(t, s.Run(t.Context()))
 		assert.Equal(t, renders.Load(), int64(1))
-		assert.Equal(t, len(s.Results()), 2)
+		assert.Equal(t, len(s.results()), 2)
 	})
 }
 
@@ -505,7 +525,7 @@ func runScaleDAGCompletion(t *testing.T, scope *runScaleDAGCompletionState) {
 	assert.Equal(t, t.Context().Err(), nil)
 	assert.Equal(t, active.Load(), int64(0))
 	assert.Equal(t, overBound.Load(), int64(0))
-	results := s.Results()
+	results := s.results()
 	assert.Equal(t, len(results), (*scope.producers))
 	for _, id := range *scope.ids {
 		result, ok := results[id]

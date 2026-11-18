@@ -4,8 +4,9 @@ flate renders Flux (Kustomization, HelmRelease, ResourceSet, sources) offline as
 binary: no cluster or kubectl; helm, kustomize, git and OCI are linked libraries. Only native
 Docker credential helpers and AWS credential processes may execute external programs.
 Output matches Flux bit-for-bit and is byte-identical run to run. Speed is the point:
-changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/` is a public SDK that
-konflate embeds.
+changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/orchestrator` and
+`pkg/manifest` form the supported SDK. Other `pkg/` packages remain implementation owners
+until S2 moves them. Konflate migrates with the supported boundary.
 
 ## Working here
 
@@ -58,16 +59,22 @@ konflate embeds.
 ## Layout
 
 `cmd/flate` is the entrypoint. `internal/cli` owns flags, exit codes (0 or 1), signal handling
-and `slog.SetDefault`. Everything else is `pkg/`. Dependencies flow one way and never upward;
+and `slog.SetDefault`. `internal/orchestrator` owns execution and invocation lifetime.
+`pkg/orchestrator` converts supported inputs and completed results. A non-nil SDK `Run`
+requires `Close` after every result and selection consumer, including error returns.
+The caller keeps borrowed collections and manifest data immutable until closure.
+Other implementation owners remain under `pkg/` until S2. Dependencies flow one way and never upward;
 `depguard` in `.golangci.yml` enforces this graph:
 
 ```
 manifest <- store <- {loader, values, depwait, change, source}
 manifest <- store <- change <- selection <- {loader, depwait, discovery, controllers/base, orchestrator}
-         <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- orchestrator <- internal/cli
+         <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- internal/orchestrator <- internal/cli
+                                                                               ^
+                                                                         pkg/orchestrator
 ```
 
-Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` seam, `source/{safepath,sourceignore,ssrfguard}`,
+Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its private dispatcher seam, `source/{safepath,sourceignore,ssrfguard}`,
 `internal/assert`) are the graph's bottom; `depguard` holds the exact rules.
 
 **Concern owners.** Each concern is decided in exactly one place:
@@ -83,7 +90,8 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 | Readiness                                                                                                               | `depwait`                      |
 | Scheduling                                                                                                              | `schedule`                     |
 | Root membership, requested reach, execution membership, demand, output and fatal scope                                  | `selection`                    |
-| Render lifecycle                                                                                                        | `orchestrator`                 |
+| Render lifecycle and invocation resource lifetime                                                                       | `internal/orchestrator`        |
+| Supported SDK input and result conversion                                                                               | `pkg/orchestrator`             |
 | Flags and exit codes                                                                                                    | `internal/cli`                 |
 
 **Vocabulary.**
@@ -166,9 +174,10 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
   No logger threading.
 - **Signatures.** Group larger signatures in an `Options`/`Config` struct. No functional options.
 - **Interfaces belong to the consumer.** A package declares a small unexported interface listing
-  only the methods it calls; constructors return concrete types. An exported interface exists
-  only where an SDK embedder must implement it (`schedule.Dispatcher`, `values.Provider`), and
-  the PR names that embedder.
+  only the methods it calls; constructors return concrete types. Internal cross-package
+  implementations retain the exported method names that their structural contracts require.
+  Scheduling and values interfaces remain private. New public contracts require a named SDK
+  implementer and an entry in the exported API ledger.
 - **Comments.** Add a comment only for a constraint or rationale
   (MUST, never, invariant, an upstream quirk with its issue). Banned: step narration,
   section banners, restating the name above a function, describing your own edit.

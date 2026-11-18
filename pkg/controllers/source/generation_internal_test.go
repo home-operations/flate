@@ -19,10 +19,7 @@ type sourceGenerator struct{ *manifest.GitRepository }
 
 func (g *sourceGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
 	return []manifest.BaseManifest{
-		manifest.NewConfigMap(
-			manifest.NamedResource{Name: "source-info", Namespace: g.Namespace},
-			map[string]any{"url": g.URL},
-		),
+		&manifest.ConfigMap{Name: "source-info", Namespace: g.Namespace, Data: map[string]any{"url": g.URL}},
 	}, nil
 }
 

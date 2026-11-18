@@ -127,7 +127,9 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 	t.Cleanup(tasks.BlockTillDone)
 	owner := &manifest.ResourceSet{Name: "consumer", Namespace: "apps"}
 	provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "registry"}
-	st.AddObjects([]manifest.BaseManifest{owner, provider})
+	for _, object := range []manifest.BaseManifest{owner, provider} {
+		st.AddObject(object)
+	}
 	run := gateExecution(New(st, tasks), owner.Named())
 	defer run.Close()
 	missing := &source.MissingSecretError{
@@ -219,7 +221,9 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 			t.Cleanup(tasks.BlockTillDone)
 			owner := &manifest.ResourceSet{Name: "consumer", Namespace: "apps"}
 			provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "registry"}
-			st.AddObjects([]manifest.BaseManifest{owner, provider})
+			for _, object := range []manifest.BaseManifest{owner, provider} {
+				st.AddObject(object)
+			}
 			run := gateExecution(New(st, tasks), owner.Named())
 			run.Missing = depwait.NewMissingPolicy([]string{manifest.KindSecret})
 			defer run.Close()
@@ -280,7 +284,9 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 	t.Cleanup(tasks.BlockTillDone)
 	owner := &manifest.ResourceSet{Name: "consumer", Namespace: "apps"}
 	provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "registry"}
-	st.AddObjects([]manifest.BaseManifest{owner, provider})
+	for _, object := range []manifest.BaseManifest{owner, provider} {
+		st.AddObject(object)
+	}
 	missing := &source.MissingSecretError{
 		Owner:           provider.Named(),
 		Subject:         manifest.DiagnosticFor(provider.Named(), provider),

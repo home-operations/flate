@@ -5,7 +5,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -30,7 +29,12 @@ func TestAdmission_NativeConstructionReachExpires(t *testing.T) {
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
 				id := entry.Named()
-				session := newSolverSession(t, st, change.NewSet([]string{"other/child.yaml"}), Request{Changed: true})
+				session := newSolverSession(
+					t,
+					st,
+					detectChanges(t, []string{"other/child.yaml"}, []string{"other/child.yaml"}),
+					Request{Changed: true},
+				)
 				facts := session.facts.(*solverFacts)
 				facts.context.Root, facts.context.Frozen = root, frozen
 				facts.context.Roots = []NativeRootFacts{tc.root}

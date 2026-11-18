@@ -31,9 +31,9 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		return fmt.Errorf("rel: %w", err)
 	}
 	if info, err := fs.Stat(input.FS, filepath.ToSlash(name)); err != nil {
-		return fmt.Errorf("--path %q: %w", d.cfg.Path, err)
+		return fmt.Errorf("input path %q: %w", d.cfg.Path, err)
 	} else if !info.IsDir() {
-		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
+		return fmt.Errorf("input path %q is not a directory", d.cfg.Path)
 	}
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
 	if _, err := d.loadAt(

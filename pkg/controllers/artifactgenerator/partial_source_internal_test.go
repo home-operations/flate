@@ -179,7 +179,7 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 			output:       &output,
 			st:           &st,
 			consumer:     &consumer,
-			s:            &s,
+			dispatcher:   d,
 			committed:    &committed,
 			advance:      &advance,
 			captured:     &captured,
@@ -196,7 +196,7 @@ type partialPublicationChecks struct {
 	output       **[]map[string]any
 	st           **store.Store
 	consumer     *manifest.BaseManifest
-	s            **schedule.Scheduler
+	dispatcher   *convergenceDispatcher
 	committed    *chan bool
 	advance      *chan struct{}
 	captured     *chan struct{}
@@ -276,10 +276,12 @@ func checkPartialPublication(t *testing.T, statementInput *partialPublicationChe
 	}
 	status, _ := (*statementInput.st).GetStatus((*statementInput.consumer).Named())
 	inventory, ok := (*statementInput.st).GetArtifact((*statementInput.consumer).Named(), store.ArtifactContent).(*store.Emission)
+	accepted, present := statementInput.dispatcher.executions.Load((*statementInput.consumer).Named())
 	assert.FatalIf(t, !ok || !inventory.Complete || len(inventory.Manifests) != 1 ||
 		inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" ||
 		status.Status != store.StatusReady ||
-		!(*statementInput.s).Results()[(*statementInput.consumer).Named()].Assessment.Valid(), "unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
+		!present || accepted.(schedule.Result).Assessment.Outcome() == schedule.Blocked ||
+		!accepted.(schedule.Result).Assessment.Valid(), "unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
 	assert.Equal(t, statementInput.captures.Load(), int64(1))
 	(*(*statementInput.output)) = testutil.DocumentMaps(inventory.Manifests)
 }

@@ -1,749 +1,475 @@
 package orchestrator
 
 import (
-	"encoding/json"
+	"bytes"
+	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"path/filepath"
-	"strings"
+	"slices"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
-	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/kustomization"
-	"github.com/home-operations/flate/pkg/depwait"
-	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestOrchestratorExistence_PromotionDoesNotAdmitControllerSiblings(t *testing.T) {
+func TestRun_ResultsDoNotControlOwnership(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: selected, namespace: apps}
-data: {value: selected}
-`+"---\n"+
-		`apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: raw-hr, namespace: apps}
-spec:
-  chart:
-    spec:
-      chart: charts/demo
-      sourceRef: {kind: GitRepository, name: source, namespace: apps}
-`+"---\n"+
-		testutil.KustomizationYAML(
-			"raw-ks",
-			"apps",
-			"  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n",
-		)+"---\n"+
-		`apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata: {name: raw-rs, namespace: apps}
-spec: {}
-`+"---\n"+
-		`apiVersion: seaweed.seaweedfs.com/v1
-kind: Bucket
-metadata: {name: foreign-source, namespace: apps}
-spec: {}
-`)
-	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
-	idx := loader.New(store.New())
-	idx.Index.Records[id] = manifest.DiscoveryRecord{
-		Authored:    id,
-		Path:        filepath.Join(dir, "bundle.yaml"),
-		Productions: []manifest.Production{{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}},
-	}
-	st := store.New()
-	idx.Store = st
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
-	assert.NoError(t, err)
-	st.SetArtifact(manifest.BootstrapSourceID, input)
-	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{}},
-		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
-	}}
-	t.Run("index-only", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, idx.Index.Records[id].Declaration, manifest.BaseManifest(nil))
-		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: nil}, id)
-		assert.FatalIf(t, err != nil || !promoted || st.GetObject(id) == nil, "%v", "selected data must be admitted")
-		for _, excluded := range []manifest.NamedResource{
-			testutil.HelmReleaseID("apps", "raw-hr"),
-			testutil.KustomizationID("apps", "raw-ks"),
-			{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
-			{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
-		} {
-			assert.ErrorIf(t, st.GetObject(excluded) != nil, "runtime promotion admitted %s", excluded)
-		}
-	})
-}
-
-func TestOrchestratorExistence_PromotionPreservesSelectedContent(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: selected, namespace: authored}
-data: {values.yaml: "greeting: selected"}
----
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: excluded, namespace: apps}
-data: {value: excluded}
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: chart, namespace: apps}
-spec: {url: https://example.test/chart.git}
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: excluded-source, namespace: apps}
-spec: {url: https://example.test/excluded.git}
-`)
-	st := store.New()
-	hr := &manifest.HelmRelease{
-		Name:      "consumer",
-		Namespace: "apps",
-		Chart: manifest.HelmChart{
-			Source: manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      manifest.KindGitRepository,
-				Namespace: "apps",
-				Name:      "chart",
-			},
-		},
-		HelmReleaseSpec: helmv2.HelmReleaseSpec{
-			Chart: &helmv2.HelmChartTemplate{
-				Spec: helmv2.HelmChartTemplateSpec{
-					Chart:   "chart",
-					Version: "",
-					SourceRef: &helmv2.CrossNamespaceObjectReference{
-						Kind:       manifest.KindGitRepository,
-						Name:       "chart",
-						Namespace:  "apps",
-						APIVersion: manifest.SourceDomain + "/v1",
-					},
-				},
-			},
-			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
-		},
-	}
-	st.AddObject(hr)
-	selected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
-	excluded := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "excluded"}
-	chart := manifest.NamedResource{
-		Group:     "source.toolkit.fluxcd.io",
-		Kind:      manifest.KindGitRepository,
-		Namespace: "apps",
-		Name:      "chart",
-	}
-	excludedSource := manifest.NamedResource{
-		Group:     "source.toolkit.fluxcd.io",
-		Kind:      manifest.KindGitRepository,
-		Namespace: "apps",
-		Name:      "excluded-source",
-	}
-	files := map[manifest.NamedResource]string{
-		hr.Named():     "consumer.yaml",
-		selected:       "bundle.yaml",
-		excluded:       "bundle.yaml",
-		chart:          "bundle.yaml",
-		excludedSource: "bundle.yaml",
-	}
-	idx, session := admissiontest.New(
-		t,
-		admissiontest.Config{
-			Changes:   change.NewSet([]string{"consumer.yaml"}),
-			Index:     indexForTest(files),
-			Inventory: st,
-		},
-	)
-	admissiontest.Commit(t, session, nil)
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
-	assert.NoError(t, err)
-	st.SetArtifact(manifest.BootstrapSourceID, input)
-	testutil.WriteFile(t, dir, "kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
-	idx.SourceRoot = dir
-	idx.Options.Session = session
-	_, err = idx.Load(t.Context(), dir, manifest.NamedResource{}, nil)
-	assert.NoError(t, err)
-	assert.NoError(t, idx.FinalizeIndex(t.Context(), dir, true))
-	controller := base.New(st, nil)
-	controller.Configure(base.Options{Session: session, Index: idx.Index, Loader: idx})
-	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store:     idx.Store,
-		index:     idx.Index,
-		loader:    idx,
-		cfg:       treeConfig{Config: Config{}},
-		selection: session,
-		ksc:       &kustomization.Controller{Controller: controller},
-	}}
-	size := len(selectionNamesForTest(session, st, idx.Index))
-	reads := &store.ReadSet{}
-	reads.Init(st, hr.Named(), nil)
-	defer reads.Retire()
-	reads.RequireData(chart)
-	reads.RequireData(selected)
-	{
-		promoted, err := e.Promote(
-			t.Context(),
-			selection.PrepareRequest{Reads: reads},
-			selected,
-		)
-		assert.FatalIf(t, err != nil || !promoted || st.GetObject(selected) == nil ||
-			st.GetObject(chart) == nil, "%v", "selected values and required chart source must be admitted")
-	}
-	{
-		got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]
-		assert.ErrorIf(t, got != "greeting: selected", "selected values = %v", got)
-	}
-	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
-		{
-			promoted, err := e.Promote(
-				t.Context(),
-				selection.PrepareRequest{Reads: nil},
-				id,
-			)
-			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
-				session.Snapshot().Reconcile(id), "excluded sibling %s must remain absent", id)
-		}
-	}
-	assert.ErrorIf(
-		t,
-		len(selectionNamesForTest(session, st, idx.Index)) != size,
-		"%v",
-		"ordering promotion must not expand keep",
-	)
-	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
-	{
-		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: nil}, excluded)
-		assert.ErrorIf(t, err != nil || promoted, "%v", "availability must not bypass admission")
-	}
-}
-
-func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	file := "settings.yaml"
-	testutil.WriteFile(
-		t,
-		dir,
-		file,
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n",
-	)
-	st := store.New()
-	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
-	data := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"value": "selected"}}
-	st.AddObject(source)
-	st.AddObject(data)
-	id := data.Named()
-	index := indexForTest(map[manifest.NamedResource]string{id: file})
-	record := index.Records[id]
-	record.Path = filepath.Join(dir, file)
-	record.Productions = []manifest.Production{{Authored: id, Source: source.Named(), Path: record.Path, File: file}}
-	index.Records[id] = record
-	filterLoader, session := admissiontest.New(
-		t,
-		admissiontest.Config{Changes: change.NewSet([]string{file}), Index: index, Inventory: st, Root: dir},
-	)
-	admissiontest.Commit(t, session, nil)
-	assert.FatalIf(
-		t,
-		session.Snapshot().Reconcile(id),
-		"%v",
-		"unavailable source evidence must not admit existing data",
-	)
-	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
-	assert.NoError(t, err)
-	st.SetArtifact(source.Named(), input)
-	controller := base.New(st, nil)
-	controller.Configure(base.Options{Session: session, Loader: filterLoader, Index: index})
-	e := &orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{
-		store: st, index: index, selection: session, loader: filterLoader,
-		ksc: &kustomization.Controller{Controller: controller},
-	}}
-	var reads store.ReadSet
-	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
-	defer reads.Close()
-	reads.RequireData(id)
-	{
-		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
-		assert.FatalIf(
-			t,
-			err != nil || !promoted || !session.Snapshot().Reconcile(id),
-			"%v",
-			"new source evidence must admit the existing changed data",
-		)
-	}
-	assert.Equal(t, st.GetObject(id).(*manifest.ConfigMap).Data["value"], "selected")
-}
-
-func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, recorded, requested string
-		raw, want                 bool
-	}{
-		{"exact", "apps", "apps", true, true},
-		{"inherited namespace", "", "apps", true, true},
-		{"explicit other namespace", "other", "apps", true, false},
-		{"bare query cannot match explicit", "apps", "", true, false},
-		{"generated object", "apps", "apps", false, false},
-		{"bare generated object", "", "apps", false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, mutation := range []string{"replace", "reorder", "clear", "fields"} {
+		t.Run(mutation, func(t *testing.T) {
 			t.Parallel()
-			idx := loader.New(store.New())
-			id := testutil.HelmReleaseID(tc.recorded, "target")
-			if tc.raw {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: "target.yaml"}
-			} else {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{File: "target.yaml"}
+			roots := []string{t.TempDir(), t.TempDir()}
+			trees := make([]Tree, 0, len(roots))
+			for i, root := range roots {
+				writeRunCluster(t, root, "", strconv.Itoa(i))
+				trees = append(
+					trees,
+					Tree{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeSide(i)}, RepoRoot: root},
+				)
 			}
-			e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{store: idx.Store, index: idx.Index}}
-			id.Namespace = tc.requested
-			{
-				got := e.IsFileIndexed(id)
-				assert.ErrorIf(t, got != tc.want, "IsFileIndexed(%s) = %v, want %v", id, got, tc.want)
+			run, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2, CacheDir: t.TempDir()})
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, run.Close()) })
+			ids := []manifest.TreeID{trees[0].ID, trees[1].ID}
+			switch mutation {
+			case "replace":
+				run.Results = []Rendered{{ID: manifest.TreeID{Cluster: "fake", Side: manifest.TreeHead}}}
+			case "reorder":
+				slices.Reverse(run.Results)
+			case "clear":
+				run.Results = nil
+			case "fields":
+				for i := range run.Results {
+					run.Results[i] = Rendered{}
+				}
 			}
+			selected, projection := run.Select(
+				ids,
+				[]manifest.NamedResource{testutil.KustomizationID("apps", "owner")},
+				nil,
+			)
+			assert.NoError(t, projection.Selected)
+			assert.NoError(t, projection.Remaining)
+			assert.Equal(t, len(selected), 2)
+			for i, s := range selected {
+				assert.Equal(t, runValue(t, s.Manifests), strconv.Itoa(i))
+			}
+			fake, projection := run.Select([]manifest.TreeID{{Cluster: "fake", Side: manifest.TreeHead}}, nil, nil)
+			assert.Equal(t, fake == nil, true)
+			assert.Equal(t, errors.Is(projection.Selected, manifest.ErrInput), true)
+			cacheDir := run.invocation.Config.CacheDir
+			assert.NoError(t, run.Close())
+			assert.NoError(t, run.Close())
+			result, sweepErr := sourcecache.Sweep(t.Context(), cacheDir, sourcecache.SweepOpts{})
+			assert.NoError(t, sweepErr)
+			assert.Equal(t, len(result.Errors), 0)
 		})
 	}
 }
 
-//nolint:paralleltest,tparallel // The complete fixture sets the process-wide egress policy.
-func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
-	for _, tc := range []struct {
-		name, kind                     string
-		absentDeclaration, stale, want bool
-	}{
-		{name: "oci", kind: manifest.KindOCIRepository, want: true},
-		{name: "helm", kind: manifest.KindHelmRepository},
-		{name: "bucket", kind: manifest.KindBucket, want: true},
-		{name: "external", kind: manifest.KindExternalArtifact},
-		{name: "git", kind: manifest.KindGitRepository, want: true},
-		{name: "missing requesting declaration", kind: manifest.KindGitRepository, absentDeclaration: true},
-		{name: "invalid reads", kind: manifest.KindGitRepository, stale: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestRun_LazySelectionLifetime(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"completed", "partial_failure", "discovery_failure", "canceled"} {
+		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "apps/decoy", "working tree")
-			st := store.New()
-			result, err := runDiscovery(t.Context(), discovery.Config{Path: root, Store: st})
-			assert.NoError(t, err)
-			consumer := &manifest.Kustomization{
-				Name:      "consumer",
-				Namespace: "apps",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{
-					Kind: tc.kind, Name: "missing", Namespace: "sources",
+			writeRunCluster(t, root, "", "retained")
+			switch stage {
+			case "partial_failure":
+				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [missing.yaml]\n")
+			case "discovery_failure":
+				testutil.WriteFile(t, root, "flux.yaml", "apiVersion: [\n")
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if stage == "canceled" {
+				cancel()
+			}
+			run, err := RenderTrees(
+				ctx,
+				[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+				Config{Concurrency: 2, CacheDir: t.TempDir(), RecordWork: true},
+			)
+			assert.FatalIf(t, run == nil, "lost %s invocation: %v", stage, err)
+			t.Cleanup(func() { assert.NoError(t, run.Close()) })
+			assert.Equal(t, err != nil, stage != "completed")
+			assert.Equal(t, len(run.Results), 1)
+			rendered := run.Results[0]
+			switch stage {
+			case "discovery_failure":
+				assert.Equal(t, rendered.Complete, false)
+				assert.Equal(t, rendered.Absent, false)
+				assert.Equal(t, rendered.ID, (manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}))
+				assert.FatalIf(t, rendered.Err == nil || rendered.Result == nil, "lost discovery diagnostics: %v", err)
+				assert.Equal(t, errors.Is(err, rendered.Err), true)
+				assert.Equal(t, len(rendered.Result.Work) > 0, true)
+			case "completed", "partial_failure":
+				assert.Equal(t, rendered.Complete, true)
+			case "canceled":
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+			}
+			var archive bytes.Buffer
+			testutil.WriteTar(t, &archive, map[string]string{"lazy.txt": "retained disk content"}, 0o644)
+			input, _, _, acquireErr := run.invocation.Config.Cache.Acquire(
+				t.Context(),
+				sourcecache.ArchiveKey{Content: stage},
+				&sourcecache.Policy{},
+				func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					_, writeErr := w.Write(archive.Bytes())
+					return sourcecache.ProducerResult{}, writeErr
 				},
+			)
+			assert.NoError(t, acquireErr)
+			body, readErr := fs.ReadFile(input, "lazy.txt")
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(body), "retained disk content")
+			selected, projection := run.Select(
+				[]manifest.TreeID{{Cluster: "a", Side: manifest.TreeHead}},
+				[]manifest.NamedResource{testutil.KustomizationID("apps", "owner")},
+				nil,
+			)
+			assert.Equal(t, len(selected), 1)
+			if stage == "completed" {
+				assert.NoError(t, projection.Selected)
+				assert.Equal(t, runValue(t, selected[0].Manifests), "retained")
 			}
-			if !tc.absentDeclaration {
-				st.AddObject(consumer)
-			}
-			var reads store.ReadSet
-			reads.Init(st, consumer.Named(), nil)
-			defer reads.Retire()
-			if tc.stale {
-				marker := &manifest.ConfigMap{Name: "marker", Namespace: "apps"}
-				reads.GetObject(marker.Named())
-				st.AddObject(marker)
-				assert.FatalIf(t, reads.Valid(), "%v", "fixture reads remain valid")
-			}
-			controller := base.New(st, nil)
-			controller.Configure(base.Options{})
-			o := &Orchestrator{
-				store:     st,
-				index:     result.Index,
-				admission: result.Admission,
-				ksc:       &kustomization.Controller{Controller: controller},
-			}
-			e := &orchestratorExistence{DiscoveryIndex: result.Index, o: o}
-			id := manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      tc.kind,
-				Namespace: "sources",
-				Name:      "missing",
-			}
-			promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
-			assert.NoError(t, err)
-			assert.Equal(t, promoted, tc.want)
-			if promoted {
-				assert.NoError(t, constructDiscoveredSource(t.Context(), st, result.Admission, id))
-			}
-			if !tc.want {
-				assert.FatalIf(
-					t,
-					st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil,
-					"%v",
-					"unresolved source was published",
-				)
-				{
-					status, ok := st.GetStatus(id)
-					assert.FatalIf(t, ok && status.Status == store.StatusReady, "%v", "unresolved source became ready")
-				}
-			} else {
-				assert.FatalIf(
-					t,
-					st.GetObject(id) == nil || st.GetArtifact(id, store.ArtifactContent) == nil,
-					"%v",
-					"manifest source did not publish its alias",
-				)
-			}
-		})
-	}
-	t.Run("final alias warnings", func(t *testing.T) {
-		testOrchestratorExistenceFinalAliasWarnings(t)
-	})
-}
-
-func testOrchestratorExistenceFinalAliasWarnings(t *testing.T) {
-	t.Helper()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "apps/decoy", "working tree")
-	aliases := []manifest.NamedResource{
-		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "zeta"},
-		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "alpha"},
-	}
-	run := func() *Result {
-		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
-		assert.NoError(t, err)
-		assert.NoError(t, o.bootstrap(t.Context()))
-		assert.Equal(t, o.selection != nil, true)
-		assert.Equal(t, o.selection.Snapshot().Output(manifest.NamedResource{}), true)
-		assert.Equal(t, o.preparation == nil, true)
-		o.configureControllers()
-		consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
-		o.store.AddObject(consumer)
-		existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
-		for _, id := range aliases {
-			consumer = &manifest.Kustomization{
-				Name:      "consumer",
-				Namespace: "apps",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{
-					Kind: id.Kind, Name: id.Name, Namespace: id.Namespace,
-				},
-			}
-			o.store.AddObject(consumer)
-			var reads store.ReadSet
-			reads.Init(o.store, consumer.Named(), nil)
-			promoted, promoteErr := existence.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
-			reads.Retire()
-			assert.NoError(t, promoteErr)
-			assert.Equal(t, promoted, true)
-			assert.NoError(t, constructDiscoveredSource(t.Context(), o.store, o.admission, id))
-			assert.Equal(t, o.store.GetObject(id) != nil, true)
-			assert.Equal(t, o.store.GetArtifact(id, store.ArtifactContent) != nil, true)
-			status, ok := o.store.GetStatus(id)
-			assert.Equal(t, ok, true)
-			assert.Equal(t, status.Status, store.StatusReady)
-		}
-		o.tasks.BlockTillDone()
-		result, collectErr := o.collectResult(t.Context(), nil)
-		assert.NoError(t, collectErr)
-		t.Cleanup(result.Close)
-		return result
-	}
-	first, second := run(), run()
-	assert.Diff(t, second.Warnings, first.Warnings)
-	var warnings []manifest.Warning
-	for i := range first.Warnings {
-		warning := &first.Warnings[i]
-		if warning.Category == manifest.WarnBootstrapAliases {
-			warnings = append(warnings, *warning)
-		}
-	}
-	assert.Diff(t, warnings, []manifest.Warning{
-		{
-			Category: manifest.WarnBootstrapAliases,
-			Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
-			Detail:   []string{aliases[1].String(), aliases[0].String(), root},
-			Count:    1,
-		},
-	})
-}
-
-//nolint:paralleltest // The orchestrator fixture changes the process-wide egress policy.
-func TestRender_BootstrapAliasConsumerOrder(t *testing.T) {
-	for _, tc := range []struct {
-		order string
-		valid bool
-	}{
-		{order: "chart first"},
-		{order: "manifests first"},
-		{order: "chart only"},
-		{order: "chart first", valid: true},
-		{order: "manifests first", valid: true},
-	} {
-		t.Run(fmt.Sprintf("%s/valid=%t", tc.order, tc.valid), func(t *testing.T) {
-			root := bootstrapAliasFixture(t, tc.valid)
-			first := renderBootstrapAliasOrder(t, root, tc.order, tc.valid)
-			defer first.Close()
-			second := renderBootstrapAliasOrder(t, root, tc.order, tc.valid)
-			defer second.Close()
-			firstBody, err := json.Marshal(first.Manifests)
-			assert.NoError(t, err)
-			secondBody, err := json.Marshal(second.Manifests)
-			assert.NoError(t, err)
-			assert.Equal(t, string(firstBody), string(secondBody))
-			assert.Equal(t, len(second.Failed), len(first.Failed))
-			for id, failure := range second.Failed {
-				want, exists := first.Failed[id]
-				assert.Equal(t, exists, true)
-				gotJSON, gotErr := json.Marshal(failure)
-				assert.NoError(t, gotErr)
-				wantJSON, wantErr := json.Marshal(want)
-				assert.NoError(t, wantErr)
-				assert.Equal(t, string(gotJSON), string(wantJSON))
-			}
-			assert.Diff(t, second.Blocked, first.Blocked)
-			assert.Diff(t, second.Orphans, first.Orphans)
-			assert.Diff(t, second.Warnings, first.Warnings)
+			assert.NoError(t, run.Close())
+			assert.NoError(t, run.Close())
+			_, readErr = fs.ReadFile(input, "lazy.txt")
+			assert.Equal(t, errors.Is(readErr, fs.ErrClosed), true)
 		})
 	}
 }
 
-func bootstrapAliasFixture(t *testing.T, valid bool) string {
-	t.Helper()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "flux/empty.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: entry}\n")
-	testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: [hello.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"payload/hello.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\n",
+func TestRun_StatusSnapshots(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	id := testutil.KustomizationID("apps", "owner")
+	st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+	st.UpdateStatus(id, store.ApplyingStatus(1234))
+	var replay StatusInfo
+	unsubscribe := st.AddListener(
+		store.EventStatusUpdated,
+		func(_ manifest.NamedResource, value any) { replay = statusInfo(value.(store.StatusInfo)) },
+		true,
 	)
-	if valid {
-		testutil.WriteFile(t, root, "shared/Chart.yaml", "apiVersion: v2\nname: shared\nversion: 1.0.0\n")
+	unsubscribe()
+	assert.Equal(t, replay.Message, "applying 1234 objects")
+	assert.Equal(t, replay.Outcome, OutcomePending)
+	st.UpdateFailure(
+		id,
+		&manifest.DependencyFailedError{
+			Parent: id,
+			Failed: []manifest.NamedResource{testutil.KustomizationID("apps", "dependency")},
+		},
+	)
+	info, _ := st.GetStatus(id)
+	assert.Equal(t, statusInfo(info).Outcome, OutcomeBlocked)
+	assert.Equal(t, statuses(map[manifest.NamedResource]store.StatusInfo{id: info})[id], statusInfo(info))
+	assert.Equal(t, replay.Message, "applying 1234 objects")
+	for _, reason := range []store.StatusReason{store.ReasonSkipped, store.ReasonUnchanged, store.ReasonSuspended, ""} {
+		value := store.StatusInfo{Status: store.StatusReady, Reason: reason}
+		assert.Equal(t, statusInfo(value).Outcome, Outcome(value.Outcome()))
+		assert.Equal(t, statusInfo(value).Reason, StatusReason(reason))
+	}
+	var mu sync.Mutex
+	var events []StatusInfo
+	root := t.TempDir()
+	writeRunCluster(t, root, "", "rendered")
+	run, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+		Config{Concurrency: 2, StatusListener: func(_ manifest.TreeID, _ manifest.DiagnosticIdentity, info StatusInfo) {
+			mu.Lock()
+			events = append(events, info)
+			mu.Unlock()
+		}},
+	)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, run.Close()) })
+	assert.Equal(t, len(events) > 0, true)
+	applying := slices.ContainsFunc(events, func(info StatusInfo) bool {
+		return info.Message == "applying 1 objects" && info.Outcome == OutcomePending
+	})
+	assert.Equal(t, applying, true)
+	selected, projection := run.Select(
+		[]manifest.TreeID{{Cluster: "a", Side: manifest.TreeHead}},
+		[]manifest.NamedResource{id},
+		nil,
+	)
+	assert.NoError(t, projection.Selected)
+	assert.Equal(t, selected[0].Statuses[id].Outcome, OutcomePassed)
+}
+
+func TestRun_SuppliedDocuments(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"replacement", "repository_precedence", "encrypted", "malformed", "malformed_data"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			testRunSuppliedDocuments(t, scenario)
+		})
+	}
+}
+
+func testRunSuppliedDocuments(t *testing.T, scenario string) {
+	t.Helper()
+	root := t.TempDir()
+	writeRunCluster(t, root, "settings", "${VALUE}-${OLD:-gone}")
+	doc := func(data map[string]any) map[string]any {
+		return map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
+			"data":       data,
+		}
+	}
+	first := doc(map[string]any{"VALUE": "first", "OLD": "old"})
+	last := doc(map[string]any{"VALUE": "last"})
+	if scenario == "encrypted" {
+		last = doc(map[string]any{"VALUE": "ENC[AES256_GCM,data:encrypted,iv:invalid,tag:invalid,type:str]"})
+		last["sops"] = map[string]any{"mac": "ENC[AES256_GCM,data:encrypted]"}
+	}
+	if scenario == "repository_precedence" {
 		testutil.WriteFile(
 			t,
 			root,
-			"shared/templates/result.yaml",
-			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-result, namespace: apps}\n",
+			"settings.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n",
 		)
 	}
-	return root
-}
-
-func renderBootstrapAliasOrder(t *testing.T, root, order string, valid bool) *Result {
-	t.Helper()
-	input := testDirectoryInput(t, root)
-	input.Revision = "1.0.0@sha256:" + strings.Repeat("a", 64)
-	input.Digest = "sha256:" + strings.Repeat("a", 64)
-	o, err := newTestOrchestrator(
-		t,
-		Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input},
-		Config{Concurrency: 2},
+	if scenario == "malformed_data" {
+		last = doc(map[string]any{"VALUE": map[string]any{"nested": "invalid"}})
+	}
+	if scenario == "malformed" {
+		last = map[string]any{"kind": "ConfigMap"}
+	}
+	cfg := Config{
+		Concurrency: 2,
+		Supply: []SuppliedDocument{
+			{Doc: first, InputPath: "first.yaml", Ordinal: 0},
+			{Doc: last, InputPath: "last.yaml", Ordinal: 1},
+		},
+	}
+	run, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+		cfg,
 	)
-	assert.NoError(t, err)
-	assert.NoError(t, o.bootstrap(t.Context()))
-	o.configureControllers()
-	id := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindOCIRepository,
-		Namespace: "apps",
-		Name:      "shared",
+	if scenario == "malformed" || scenario == "malformed_data" {
+		assert.Equal(t, run == nil, true)
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+		return
 	}
-	chart := &manifest.HelmRelease{
-		Name:      "chart",
-		Namespace: "apps",
-		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name},
-	}
-	ks := &manifest.Kustomization{
-		Name:      "consumer",
-		Namespace: "apps",
-		Path:      "./payload",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name},
-	}
-	o.store.AddObject(chart)
-	if order != "chart only" {
-		o.store.AddObject(ks)
-	}
-	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
-	promote := func(consumer manifest.BaseManifest) bool {
-		var reads store.ReadSet
-		reads.Init(o.store, consumer.Named(), nil)
-		defer reads.Retire()
-		promoted, promoteErr := existence.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
-		assert.NoError(t, promoteErr)
-		return promoted
-	}
-	if order != "manifests first" {
-		assert.Equal(t, promote(chart), false)
-		assert.Equal(t, o.store.GetObject(id) == nil, true)
-		assert.Equal(t, o.store.GetArtifact(id, store.ArtifactContent) == nil, true)
-		var reads store.ReadSet
-		reads.Init(o.store, chart.Named(), nil)
-		waiter := depwait.Waiter{Store: &reads, Missing: depwait.NewMissingPolicy(nil)}
-		classified := waiter.Classify(
-			t.Context(),
-			manifest.DependencyRef{NamedResource: id, ArtifactOnly: true},
-			manifest.DrainNone,
-		)
-		assert.Equal(t, classified.Kind, schedule.Blocked)
-		if order == "chart only" {
-			classified = waiter.Classify(
-				t.Context(),
-				manifest.DependencyRef{NamedResource: id, ArtifactOnly: true},
-				manifest.DrainCascade,
-			)
-			assert.Equal(t, classified.Kind, schedule.DependencyFailed)
-		}
-		reads.Retire()
-	}
-	if order != "chart only" {
-		assert.Equal(t, promote(ks), true)
-		assert.NoError(t, constructDiscoveredSource(t.Context(), o.store, o.admission, id))
-		artifact := o.store.GetArtifact(id, store.ArtifactContent)
-		input := artifact.(*store.SourceArtifact)
-		content, readErr := fs.ReadFile(input.FS, "payload/hello.yaml")
+	assert.FatalIf(t, run == nil, "lost run: %v", err)
+	t.Cleanup(func() { assert.NoError(t, run.Close()) })
+	if scenario == "encrypted" {
+		assert.NoError(t, err)
+		facts := run.invocation.Results[0].Store().
+			ReferenceFacts(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, nil, manifest.NamedResource{})
+		encrypted, readErr := facts.Data.Value("VALUE")
 		assert.NoError(t, readErr)
-		assert.Equal(t, string(content), "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\n")
-		object := o.store.GetObject(id)
-		assert.Equal(t, promote(chart), true)
-		assert.Equal(t, o.store.GetArtifact(id, store.ArtifactContent) == artifact, true)
-		assert.Equal(t, o.store.GetObject(id) == object, true)
+		assert.Equal(t, encrypted.Encrypted, true)
+		assert.Equal(t, runValue(t, run.Results[0].Result.Manifests), "-gone")
+		assert.Equal(t, len(run.Results[0].Result.Warnings), 0)
+		return
 	}
-	fetcher := &generatedOCIFetcher{err: errors.New("unexpected remote fetch")}
-	o.src.Fetchers[id.Kind] = fetcher
-	result, err := o.collectResult(t.Context(), o.run(t.Context()))
-	assert.Equal(t, err != nil, !valid)
-	assert.Equal(t, fetcher.calls.Load(), int64(0))
-	failure, failed := result.Failed[chart.Named()]
-	assert.FatalIf(t, valid && failed, "valid shared chart failed: %+v", failure)
-	assert.Equal(t, failed, !valid)
-	switch {
-	case valid:
-		assert.Equal(t, len(result.Failed), 0)
-		assert.Equal(t, len(result.Blocked), 0)
-		assert.Equal(t, configMapNames(result)["chart-result"], true)
-		assert.Equal(t, configMapNames(result)["hello"], true)
-	case order == "chart only":
-		assert.Equal(t, failure.IsDependencyFailure(), true)
-	default:
-		assert.Equal(t, failure.IsDependencyFailure(), false)
-		assert.Equal(t, strings.Contains(failure.Message, "Chart.yaml"), true)
-		status, ready := o.store.GetStatus(ks.Named())
-		assert.Equal(t, ready, true)
-		assert.Equal(t, status.Status, store.StatusReady)
+	assert.NoError(t, err)
+	last["data"].(map[string]any)["VALUE"] = "caller mutation"
+	selected, projection := run.Select(
+		[]manifest.TreeID{{Cluster: "a", Side: manifest.TreeHead}},
+		[]manifest.NamedResource{testutil.KustomizationID("apps", "owner")},
+		nil,
+	)
+	assert.NoError(t, projection.Selected)
+	want := "last-gone"
+	if scenario == "repository_precedence" {
+		want = "repository-gone"
+		assert.Equal(
+			t,
+			slices.ContainsFunc(
+				run.Results[0].Result.ClusterWarnings,
+				func(w manifest.Warning) bool { return w.Category == manifest.WarnSuppliedPrecedence },
+			),
+			true,
+		)
 	}
-	o.stop()
-	return result
+	assert.Equal(t, runValue(t, selected[0].Manifests), want)
+	assert.Equal(t, len(run.invocation.Config.Supply), 1)
+	assert.Equal(t, run.invocation.Config.Supply[0].InputPath, "last.yaml")
+	assert.Equal(t, run.invocation.Config.Supply[0].Origin, manifest.SuppliedDeclaration)
 }
 
-func TestOrchestratorExistence_BootstrapRoutes(t *testing.T) {
+func writeRunCluster(t *testing.T, root, reference, value string) {
+	t.Helper()
+	postBuild := ""
+	if reference != "" {
+		postBuild = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: " + reference + "}]}\n"
+	}
+	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./app\n"+postBuild))
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"app/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: '"+value+"'}\n",
+	)
+}
+
+func runValue(t *testing.T, batches []manifest.DocumentBatch) string {
+	t.Helper()
+	for _, batch := range batches {
+		for _, doc := range batch.Documents {
+			if data, ok := doc["data"].(map[string]any); ok {
+				if value, ok := data["value"].(string); ok {
+					return value
+				}
+			}
+		}
+	}
+	t.Fatal("missing output value")
+	return ""
+}
+
+func TestRun_LazySourceReads(t *testing.T) {
 	t.Parallel()
-	for _, route := range []string{"full", "selected", "prepared"} {
-		t.Run(route, func(t *testing.T) {
+	for _, stage := range []string{"completed", "partial_failure", "canceled"} {
+		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
-			st := store.New()
-			l := loader.New(st)
-			t.Cleanup(l.Close)
-			result, err := runDiscovery(t.Context(), discovery.Config{Path: t.TempDir(), Store: st, Loader: l})
-			assert.NoError(t, err)
-			t.Cleanup(result.Close)
-			consumer := &manifest.Kustomization{
-				Name:      "consumer",
-				Namespace: "apps",
-				Path:      "./payload",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "shared"},
+			repositoryRoot, root := t.TempDir(), t.TempDir()
+			repo := testutil.GitInit(t, repositoryRoot)
+			writeRunCluster(t, repositoryRoot, "", "remote")
+			testutil.WriteFile(t, repositoryRoot, "lazy.txt", "lazy git content")
+			if stage == "partial_failure" {
+				testutil.WriteFile(t, repositoryRoot, "app/kustomization.yaml", "resources: [absent.yaml]\n")
 			}
-			st.AddObject(consumer)
-			controller := base.New(st, nil)
-			o := &Orchestrator{
-				store:     st,
-				loader:    l,
-				index:     result.Index,
-				admission: result.Admission,
-				ksc:       &kustomization.Controller{Controller: controller},
-			}
-			options := base.Options{Loader: l, Index: result.Index}
-			if route == "selected" {
-				o.selection, err = selection.New(
-					st,
-					l,
-					selection.Request{Roots: []manifest.NamedResource{consumer.Named()}},
-				)
-				assert.NoError(t, err)
-				options.Session = o.selection
-			}
-			if route == "prepared" {
-				o.preparation = &selection.AdmissionResult{}
-			}
-			controller.Configure(options)
-			if route == "selected" {
-				accepted, acceptErr := controller.KeepEmitted(
-					t.Context(),
-					manifest.NamedResource{},
-					selection.PrepareRequest{Generation: []store.Child{{Obj: consumer}}},
-				)
-				assert.NoError(t, acceptErr)
-				assert.Equal(t, accepted, true)
-			}
-			existence := &orchestratorExistence{DiscoveryIndex: result.Index, o: o}
-			var reads store.ReadSet
-			reads.Init(st, consumer.Named(), nil)
-			defer reads.Retire()
-			promoted, err := existence.Promote(
-				t.Context(),
-				selection.PrepareRequest{Reads: &reads},
-				consumer.SourceID(),
+			testutil.GitCommitAll(
+				t,
+				repo,
+				"fixture",
+				&git.CommitOptions{
+					Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Unix(1, 0)},
+				},
 			)
-			assert.NoError(t, err)
-			assert.Equal(t, promoted, true)
-			assert.NoError(t, constructDiscoveredSource(t.Context(), st, result.Admission, consumer.SourceID()))
-			assert.Equal(t, st.GetObject(consumer.SourceID()) != nil, true)
-			assert.Equal(t, st.GetArtifact(consumer.SourceID(), store.ArtifactContent) != nil, true)
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "remote",
+			}
+			owner := testutil.KustomizationID("apps", "owner")
+			testutil.WriteFile(
+				t,
+				root,
+				"source.yaml",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: file://"+repositoryRoot+"}\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"flux.yaml",
+				testutil.KustomizationYAML(
+					"owner",
+					"apps",
+					"  path: ./app\n  sourceRef: {kind: GitRepository, name: remote}\n",
+				),
+			)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			run, err := RenderTrees(
+				ctx,
+				[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+				Config{
+					Concurrency: 2,
+					CacheDir:    t.TempDir(),
+					StatusListener: func(_ manifest.TreeID, subject manifest.DiagnosticIdentity, info StatusInfo) {
+						if stage == "canceled" && subject.ID == owner && info.Message == "applying 1 objects" {
+							cancel()
+						}
+					},
+				},
+			)
+			assert.FatalIf(t, run == nil || len(run.Results) != 1, "missing retained source run: %v", err)
+			t.Cleanup(func() { assert.NoError(t, run.Close()) })
+			if stage == "completed" {
+				assert.NoError(t, err)
+			} else {
+				assert.FatalIf(t, err == nil, "missing %s error", stage)
+			}
+			if stage == "canceled" {
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+			}
+			content := run.invocation.Results[0].Store().GetArtifact(source, store.ArtifactContent)
+			artifact, ok := content.(*store.SourceArtifact)
+			assert.FatalIf(t, !ok, "missing lazy git source: %v", err)
+			data, readErr := fs.ReadFile(artifact.FS, "lazy.txt")
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(data), "lazy git content")
+			selected, projection := run.Select(
+				[]manifest.TreeID{run.Results[0].ID},
+				[]manifest.NamedResource{owner},
+				nil,
+			)
+			assert.Equal(t, len(selected), 1)
+			if stage == "completed" {
+				assert.NoError(t, projection.Selected)
+				assert.Equal(t, runValue(t, selected[0].Manifests), "remote")
+			}
+			cacheDir := run.invocation.Config.CacheDir
+			assert.NoError(t, run.Close())
+			assert.NoError(t, run.Close())
+			result, sweepErr := sourcecache.Sweep(t.Context(), cacheDir, sourcecache.SweepOpts{})
+			assert.NoError(t, sweepErr)
+			assert.Equal(t, len(result.Errors), 0)
 		})
 	}
 }
 
-func TestOrchestratorExistence_PromotionRejectsIndexedController(t *testing.T) {
+func TestRun_StatusDependencySnapshots(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	file := "kubernetes/components/cluster-settings/cluster-settings.yaml"
-	testutil.WriteFile(t, root, file, testutil.KustomizationYAML(
-		"materializer", "apps", "  path: ./payload\n",
-	)+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\ndata: {value: retained}\n")
-	input, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
-	assert.NoError(t, err)
-	counted := &countedProducerFS{FS: input.FS}
-	input.FS = counted
-	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, input)
-	declaration := &manifest.Kustomization{Name: "materializer", Namespace: "apps", Path: "./payload"}
-	id := declaration.Named()
-	index := indexForTest(map[manifest.NamedResource]string{id: file})
-	record := index.Records[id]
-	record.Declaration, record.Authored, record.Path = declaration, id, filepath.Join(root, filepath.FromSlash(file))
-	record.Productions = []manifest.Production{{Authored: id, Path: record.Path, Source: manifest.BootstrapSourceID}}
-	index.Records[id] = record
-	existence := orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{store: st, index: index}}
-	promoted, err := existence.Promote(t.Context(), selection.PrepareRequest{}, id)
-	assert.NoError(t, err)
-	assert.Equal(t, promoted, false)
-	assert.Equal(t, counted.reads.Load(), int32(0))
-	assert.Equal(t, st.GetObject(id), manifest.BaseManifest(nil))
-	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "sibling"}
-	assert.Equal(t, st.GetObject(sibling), manifest.BaseManifest(nil))
-	data, err := fs.ReadFile(input.FS, file)
-	assert.NoError(t, err)
-	assert.Equal(t, strings.Contains(string(data), "value: retained"), true)
+	writeRunCluster(t, root, "", "unused")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [missing.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"blocked.yaml",
+		testutil.KustomizationYAML("blocked", "apps", "  path: ./app\n  dependsOn: [{name: owner}]\n"),
+	)
+	var mu sync.Mutex
+	callbacks := map[manifest.NamedResource]StatusInfo{}
+	run, err := RenderTrees(
+		t.Context(),
+		[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+		Config{
+			Concurrency: 2,
+			StatusListener: func(_ manifest.TreeID, subject manifest.DiagnosticIdentity, info StatusInfo) {
+				mu.Lock()
+				callbacks[subject.ID] = info
+				mu.Unlock()
+			},
+		},
+	)
+	assert.FatalIf(t, run == nil || err == nil, "missing failed dependency run: %v", err)
+	t.Cleanup(func() { assert.NoError(t, run.Close()) })
+	blocked := testutil.KustomizationID("apps", "blocked")
+	assert.Equal(t, callbacks[blocked].Outcome, OutcomeBlocked)
+	assert.Equal(t, run.Results[0].Result.Failed[blocked], callbacks[blocked])
+	selected, projection := run.Select(
+		[]manifest.TreeID{run.Results[0].ID},
+		[]manifest.NamedResource{testutil.KustomizationID("apps", "")},
+		nil,
+	)
+	assert.FatalIf(t, projection.Selected == nil, "selected failure lost")
+	assert.NoError(t, projection.Remaining)
+	assert.Equal(t, selected[0].Statuses[blocked].Outcome, OutcomeBlocked)
+	assert.Equal(t, selected[0].Failed[blocked].Outcome, OutcomeBlocked)
+	assert.Equal(t, selected[0].BlockedCount, 1)
 }

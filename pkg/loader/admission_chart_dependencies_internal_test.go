@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -128,7 +127,7 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{ociFile}),
+			changes: detectChanges(t, []string{ociFile}, []string{ociFile}),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				oci:             ociFile,
 				hr:              hrFile,
@@ -138,7 +137,7 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 			}, root: "", objects: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS}, refs: map[manifest.NamedResource][]manifest.NamedResource{
 				hr:      {oci},
 				sibling: {otherOCI},
-			}, excluded: nil, readers: nil, changed: change.NewSet([]string{ociFile})}).index(),
+			}, excluded: nil, readers: nil, changed: detectChanges(t, []string{ociFile}, []string{ociFile})}).index(),
 			inventory: filtertest.MapLister{reposKS.Named(): reposKS, appKS.Named(): appKS},
 			root:      "",
 		},
@@ -188,17 +187,20 @@ func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
 	app := &manifest.Kustomization{Name: "app", Namespace: "flux-system", Path: "apps/app"}
 	meta := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps"}
 	objects := filtertest.MapLister{app.Named(): app, meta.Named(): meta}
-	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{ociFile}), index: new(filterFixture{
-		files: map[manifest.NamedResource]string{
-			oci:          ociFile,
-			chart:        "apps/app/chart.yaml",
-			sibling:      "apps/app/other.yaml",
-			app.Named():  "apps/app.yaml",
-			meta.Named(): "flux-system/apps.yaml",
-		},
-		objects: objects,
-		refs:    map[manifest.NamedResource][]manifest.NamedResource{chart: {oci}},
-	}).index(), inventory: objects, root: ""})
+	f := newAdmission(
+		t,
+		admissionConfig{changes: detectChanges(t, []string{ociFile}, []string{ociFile}), index: new(filterFixture{
+			files: map[manifest.NamedResource]string{
+				oci:          ociFile,
+				chart:        "apps/app/chart.yaml",
+				sibling:      "apps/app/other.yaml",
+				app.Named():  "apps/app.yaml",
+				meta.Named(): "flux-system/apps.yaml",
+			},
+			objects: objects,
+			refs:    map[manifest.NamedResource][]manifest.NamedResource{chart: {oci}},
+		}).index(), inventory: objects, root: ""},
+	)
 
 	for _, id := range []manifest.NamedResource{oci, chart, app.Named(), meta.Named()} {
 		if !f.Reconcile(id) {
@@ -231,7 +233,7 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/a/hr.yaml"}),
+			changes: detectChanges(t, []string{"apps/a/hr.yaml"}, []string{"apps/a/hr.yaml"}),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				aID:    "apps/a/hr.yaml",
 				bID:    "apps/b/hr.yaml",
@@ -239,7 +241,7 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 			}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
 				aID: {shared},
 				bID: {shared},
-			}, excluded: nil, readers: nil, changed: change.NewSet([]string{"apps/a/hr.yaml"})}).index(),
+			}, excluded: nil, readers: nil, changed: detectChanges(t, []string{"apps/a/hr.yaml"}, []string{"apps/a/hr.yaml"})}).index(),
 			inventory: filtertest.EmptyLister(),
 			root:      "",
 		},
@@ -274,7 +276,7 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{hrFile}),
+			changes: detectChanges(t, []string{hrFile}, []string{hrFile}),
 			index: new(filterFixture{files: // only plex's file changed
 			map[manifest.NamedResource]string{
 				hr:      hrFile,
@@ -283,7 +285,7 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 			}, root: "", objects: filtertest.EmptyLister(), refs: map[manifest.NamedResource][]manifest.NamedResource{
 				hr:      {oci},
 				sibling: {oci}, // shares the same chart source
-			}, excluded: nil, readers: nil, changed: change.NewSet([]string{hrFile})}).index(),
+			}, excluded: nil, readers: nil, changed: detectChanges(t, []string{hrFile}, []string{hrFile})}).index(),
 			inventory: filtertest.EmptyLister(),
 			root:      "",
 		},
@@ -322,7 +324,7 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDInitialization(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"hr.yaml"}),
+			changes: detectChanges(t, []string{"hr.yaml"}, []string{"hr.yaml"}),
 			index: new(filterFixture{
 				files: map[manifest.NamedResource]string{(*testCaseInput.hrID): "hr.yaml"},
 				root:  "",
@@ -367,7 +369,7 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDRuntime(
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"parent.yaml"}),
+			changes: detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{parent: "parent.yaml"},
 				objects: objects,

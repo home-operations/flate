@@ -14,8 +14,7 @@ func testGetDeclarationIndependenceLifecycleCaseCompletion(
 ) {
 	t.Helper()
 	var want manifest.BaseManifest
-	if (*scope.independent) || (*(*scope.testCaseInput).route) == "anchor" ||
-		(*(*scope.testCaseInput).route) == "batch_anchor" {
+	if (*scope.independent) || (*(*scope.testCaseInput).route) == "anchor" {
 		want = (*scope.raw)
 	}
 	assert.Equal(t, (*scope.st).GetObject((*scope.raw).Named()), manifest.BaseManifest((*scope.raw)))

@@ -71,7 +71,7 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 			candidate := &manifest.Kustomization{
 				Name: "consumer", Namespace: "apps",
 				PostBuild: &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{
+					SubstituteFrom: []kustomizev1.SubstituteReference{
 						{Kind: tc.kind, Name: "settings", Optional: tc.optional},
 					},
 				},

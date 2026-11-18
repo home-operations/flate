@@ -81,7 +81,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				"Kustomization apps/affected: " + message,
 				message,
 				"configuration transformations may rewrite plugin file operands",
-				"flate build all without --base or --path-orig",
+				"render the full tree to inspect all inputs",
 			} {
 				assert.ErrorIf(
 					t,
@@ -229,7 +229,7 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 					!strings.Contains(side.block, "configuration transformations may rewrite plugin file operands") ||
 						!strings.Contains(
 							side.block,
-							"flate build all without --base or --path-orig",
+							"render the full tree to inspect all inputs",
 						),
 					"missing actionable %s warning details: %s",
 					side.name,

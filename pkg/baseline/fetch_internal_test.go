@@ -197,7 +197,7 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
 	assert.FatalIf(t, err == nil, "%v", "expected error for an unborn HEAD without --base")
-	for _, want := range []string{"no commits", "--base"} {
+	for _, want := range []string{"no commits", "base revision"} {
 		assert.ErrorIf(t, !strings.Contains(err.Error(), want), "error %q should mention %q", err, want)
 	}
 }

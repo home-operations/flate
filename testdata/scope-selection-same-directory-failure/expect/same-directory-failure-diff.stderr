@@ -5,9 +5,9 @@
 
   ⚠ warnings (<PERSISTENCE:3|4>)
 <PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
->    [PathConfig] orig snapshot: --path and --path-orig resolve to the same root; ignoring --path-orig
+>    [PathConfig] orig snapshot: current and base inputs resolve to the same root; ignoring the base input
       @@repo@@
-    [PathConfig] current snapshot: --path and --path-orig resolve to the same root; ignoring --path-orig
+    [PathConfig] current snapshot: current and base inputs resolve to the same root; ignoring the base input
       @@repo@@
     [DiffSuppressed] Kustomization flux-system/apps: 0 objects withheld; diff suppressed (failed on both sides: orig: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist; current: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist)
 

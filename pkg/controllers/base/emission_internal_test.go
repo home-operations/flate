@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -107,7 +106,9 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 			c := New(s, tasks)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "tenant"}
 			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "tenant"}
-			s.AddObjects([]manifest.BaseManifest{parent, sibling})
+			for _, object := range []manifest.BaseManifest{parent, sibling} {
+				s.AddObject(object)
+			}
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					parent.Named():  {File: "parent.yaml"},
@@ -117,7 +118,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 					Index:     index,
 					Inventory: s,
 					Root:      "",
@@ -419,7 +420,9 @@ func testEmitRuntimeProducerTargetsCase1(t *testing.T, tc *struct {
 	c := New(s, nil)
 	root := &manifest.Kustomization{Name: "p", Namespace: "apps"}
 	supporter := &manifest.Kustomization{Name: "q", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{root, supporter})
+	for _, object := range []manifest.BaseManifest{root, supporter} {
+		s.AddObject(object)
+	}
 	apiVersion := "v1"
 	if tc.group != "" {
 		apiVersion = tc.group + "/v1"
@@ -523,7 +526,9 @@ func testEmitRuntimeProducerDataPrecedenceCase1(t *testing.T, pending *string, a
 	c := New(s, nil)
 	root := &manifest.Kustomization{Name: "p", Namespace: "apps"}
 	materializer := &manifest.Kustomization{Name: "materializer", Namespace: "apps"}
-	s.AddObjects([]manifest.BaseManifest{root, materializer})
+	for _, object := range []manifest.BaseManifest{root, materializer} {
+		s.AddObject(object)
+	}
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Name: "credentials", Namespace: "apps"}
 	if (*pending) != "none" {
 		proof := manifest.Production{Source: manifest.BootstrapSourceID}

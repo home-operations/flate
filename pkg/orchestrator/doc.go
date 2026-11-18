@@ -1,26 +1,15 @@
-// Package orchestrator plans repository entries and renders isolated cluster trees.
-// RenderTrees is the SDK lifecycle boundary:
+// Package orchestrator exposes supported render inputs and completed results.
+// Together with pkg/manifest, it forms the public SDK boundary.
 //
-//	runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
-//		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
-//		Path: "/path/to/repository",
-//	}}, orchestrator.Config{Concurrency: 4})
-//	defer func() {
-//		for _, run := range runs {
-//			run.Result.Close()
-//		}
-//	}()
+// A non-nil Run requires Close, including returns with a render error. Keep the
+// run open through every result and selection consumer. The caller serializes
+// closure after those consumers and joins teardown errors with earlier errors.
+// Repeated closure is safe. Validation failures before allocation return nil.
 //
-// Call Result.Close after the final selection consumer.
-// Result.Close releases reporting references and preserves returned output.
-//
-// Results are sorted by cluster and side. Each completed tree has an independent
-// Store, controller state and result; all trees share the invocation's task budget,
-// cache, network and Helm client. Cancellation joins every launched tree before
-// releasing owned resources. Failed trees retain diagnostics and successful trees
-// retain readable stores and materialized output.
-//
-// Caller-supplied Cache, Network and HelmClient remain caller-owned. Keep the
-// supplied cache alive through any later lazy source reads, and join those reads
-// before closing it. Internally created resources close before RenderTrees returns.
+// Run.Results contains reporting snapshots. Select resolves original owned
+// identities independently of changes to that slice. Select accepts one head
+// or an ordered base/head pair from the same cluster. Complete means that a
+// selection snapshot exists, including completed renders with resource failures.
+// Keep borrowed maps, slices, documents, and manifest objects immutable until
+// closure. Other flate implementation packages are outside the supported SDK.
 package orchestrator

@@ -48,11 +48,6 @@ type producerProjectionCache struct {
 	facts sync.Map
 }
 
-// NewProducerProjections constructs a cache owned by one planning invocation.
-func NewProducerProjections() *ProducerProjections {
-	return &ProducerProjections{}
-}
-
 // Project derives source-free facts once per producer content.
 func (p *ProducerProjections) Project(ctx context.Context, object BaseManifest) (TemplateProjection, error) {
 	resourceSet, ok := object.(*ResourceSet)

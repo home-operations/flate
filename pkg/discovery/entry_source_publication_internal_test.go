@@ -496,7 +496,9 @@ func TestAdmission_Warnings(t *testing.T) {
 	url := "https://example.test/cluster"
 	first := &manifest.GitRepository{Name: "alpha", Namespace: "sources", URL: url}
 	second := &manifest.GitRepository{Name: "zeta", Namespace: "sources", URL: url}
-	st.AddObjects([]manifest.BaseManifest{first, second})
+	for _, object := range []manifest.BaseManifest{first, second} {
+		st.AddObject(object)
+	}
 	result, err := Run(t.Context(), Config{Path: root, Store: st, SelfURLs: []string{url}})
 	assert.NoError(t, err)
 	t.Cleanup(result.Close)

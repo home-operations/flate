@@ -18,7 +18,6 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -189,7 +188,7 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	s.AddObject(parent)
 	s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 	canonical := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "original"}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "original"}},
 	}}
 	s.AddObject(canonical)
 	fresh := canonical.Clone()
@@ -239,7 +238,7 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 				Name:      "child",
 				Namespace: "apps",
 				PostBuild: &kustomizev1.PostBuild{
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "stale"}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "stale"}},
 				},
 			}
 			fresh := child.Clone()
@@ -320,7 +319,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
-					Changes:   change.NewSet([]string{"parent.yaml"}),
+					Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 					Index:     index,
 					Inventory: s,
 					Root:      "",
@@ -584,7 +583,9 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 			obj := parsed.Object
 			assert.NoError(t, err)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			s.AddObjects([]manifest.BaseManifest{obj, parent, tc.dependency})
+			for _, object := range []manifest.BaseManifest{obj, parent, tc.dependency} {
+				s.AddObject(object)
+			}
 			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending})
 			s.UpdateStatus(tc.dependency.Named(), store.StatusInfo{Status: store.StatusPending})
 			c := New(s, task.NewBounded(2))

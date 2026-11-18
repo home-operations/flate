@@ -210,7 +210,8 @@ func TestRecordEmitted_DescendantRetainsBootstrapAuthority(t *testing.T) {
 	middle := &manifest.Kustomization{Name: "middle", Namespace: "apps"}
 	applier := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
 	stale := emissionChild("stale", "seed")
-	s.AddObjects([]manifest.BaseManifest{seed, stale.Obj})
+	s.AddObject(seed)
+	s.AddObject(stale.Obj)
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		seed.Named():      {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
 		stale.Obj.Named(): {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
@@ -450,10 +451,10 @@ func testRecordEmittedCoverageAndStaticBoundaryCase3(
 	child := Child{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}
 	leaf := &manifest.Kustomization{Name: l.Name, Namespace: l.Namespace}
 	tail := emissionChild("tail", "static")
-	s.AddObjects([]manifest.BaseManifest{
-		&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace},
-		&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace}, leaf, tail.Obj,
-	})
+	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
+	s.AddObject(leaf)
+	s.AddObject(tail.Obj)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
 		l:                {Productions: []manifest.Production{{Owner: k, Source: manifest.BootstrapSourceID}}},
 		tail.Obj.Named(): {Productions: []manifest.Production{{Owner: l, Source: manifest.BootstrapSourceID}}},

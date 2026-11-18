@@ -22,7 +22,9 @@ func TestExecution_PreflightDuringFailureInventory(t *testing.T) {
 	peer := &manifest.Kustomization{Name: "b", Namespace: "ns"}
 	input := &manifest.ConfigMap{Name: "input", Namespace: "ns", Data: map[string]any{"value": "before"}}
 	child := &manifest.ConfigMap{Name: "output", Namespace: "ns"}
-	st.AddObjects([]manifest.BaseManifest{own, peer, input})
+	for _, object := range []manifest.BaseManifest{own, peer, input} {
+		st.AddObject(object)
+	}
 	c := base.New(st, tasks)
 	prior := controllertest.NewExecution(c, own.Named())
 	defer prior.Close()

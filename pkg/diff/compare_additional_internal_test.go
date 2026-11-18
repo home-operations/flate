@@ -83,8 +83,8 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		)
 		statuses[changed.Name] = changed.Status
 	}
-	assert.FatalIf(t, statuses["changed"] != StatusChanged || statuses["removed"] != StatusRemoved ||
-		statuses["added"] != StatusAdded, "changes = %v", statuses)
+	assert.FatalIf(t, statuses["changed"] != ChangeStatus("changed") || statuses["removed"] != StatusRemoved ||
+		statuses["added"] != ChangeStatus("added"), "changes = %v", statuses)
 	images, notes, err := CompareImages(left, right, nil, true)
 	assert.FatalIf(t, err != nil || len(notes) != 0 ||
 		!slices.Equal(
@@ -242,9 +242,9 @@ func TestCompare_GeneratorProducerKeys(t *testing.T) {
 			}
 			assert.Equal(t, len(changes), want)
 			for _, change := range changes {
-				if change.Status != StatusChanged {
+				if change.Status != ChangeStatus("changed") {
 					assert.Equal(t, opposite, true)
-					assert.Equal(t, change.Status, StatusAdded)
+					assert.Equal(t, change.Status, ChangeStatus("added"))
 					continue
 				}
 				parent := currentParent

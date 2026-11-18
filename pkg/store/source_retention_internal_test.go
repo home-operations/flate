@@ -33,7 +33,8 @@ func testRecordEmittedSourceRetainsInvocation(t *testing.T, mode string) {
 			Kind: manifest.KindGitRepository, Name: source.Name,
 		},
 	}
-	s.AddObjects([]manifest.BaseManifest{source, owner})
+	s.AddObject(source)
+	s.AddObject(owner)
 	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "input"})
 	var supplied ReadSet
 	supplied.Init(s, manifest.BootstrapSourceID, nil)

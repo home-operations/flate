@@ -11,17 +11,17 @@ import (
 func renderDiff(t *testing.T, left, right []Doc, optsValue *Options) string {
 	t.Helper()
 	opts := *optsValue
-	out, _, err := RenderDocs(left, right, opts)
-	assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
+	out, _, err := renderDocuments(left, right, new(opts))
+	assert.FatalIf(t, err != nil, "renderDocuments: %v", err)
 	return string(out)
 }
 
-func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
+func TestComparison_NormalizeBeforePair(t *testing.T) {
 	t.Parallel()
 	for _, format := range []string{"changes", "json", "diff", "html", "github"} {
 		t.Run(format, func(t *testing.T) {
 			t.Parallel()
-			testRenderDocsNormalizeBeforePairCase(t, &format)
+			testComparisonNormalizeBeforePairCase(t, &format)
 		},
 		)
 	}
@@ -199,7 +199,7 @@ func TestNormalize_RedactsConfigMapBinaryData(t *testing.T) {
 	assert.ErrorIf(t, !strings.Contains(s, "visible"), "expected visible data change to remain; got:\n%s", s)
 }
 
-func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
+func testComparisonNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
 
@@ -217,7 +217,8 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 	}}
 	switch *testCaseInput {
 	case "changes":
-		changes, warnings := Changes([]Doc{left}, []Doc{right}, opts)
+		comparison := prepare([]Doc{left}, []Doc{right}, new(opts))
+		changes, warnings := publicChanges(comparison), comparison.Warnings
 		assert.Equal(t, len(changes), 0)
 		assert.Equal(t, len(warnings), 0)
 	case "json":
@@ -237,7 +238,7 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 	assert.Diff(t, []Doc{left, right}, before)
 }
 
-func TestRenderDocs_GeneratorNormalization(t *testing.T) {
+func TestComparison_GeneratorNormalization(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string

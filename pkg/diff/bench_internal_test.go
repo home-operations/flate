@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -8,22 +9,26 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// BenchmarkDiff_LargeTree measures RenderDocs against two 100-resource
-// doc sets where most pairs are identical and a handful differ — the
-// shape a real `flate diff` produces on a typical CI run.
 func BenchmarkDiff_LargeTree(b *testing.B) {
 	const n = 100
 	buildDiffCorpusResult1 := buildDiffCorpus(n, 5)
 	left, right := buildDiffCorpusResult1.left, buildDiffCorpusResult1.right
+	opts := Options{Format: FormatGitHub}
+	snapshots := documentSnapshots(left, right, &opts)
+	groups := []Group{{Orig: snapshots[0], Current: snapshots[1]}}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, _, err := RenderDocs(left, right, Options{Format: FormatGitHub})
-		if err != nil {
-			b.Fatalf("RenderDocs: %v", err)
+		comparison, err := Compare(groups, opts)
+		var out bytes.Buffer
+		if err == nil {
+			err = comparison.Write(&out, nil)
 		}
-		if len(out) == 0 {
+		if err != nil {
+			b.Fatalf("Compare/Write: %v", err)
+		}
+		if out.Len() == 0 {
 			b.Fatalf("expected at least one diff")
 		}
 	}
@@ -41,13 +46,19 @@ func BenchmarkDiff_PreparedSubjects(b *testing.B) {
 				{id: {ID: id, Resource: testutil.KustomizationID("apps", "original"), Path: "original/path"}},
 				{id: {ID: id, Resource: testutil.KustomizationID("apps", "current"), Path: "current/path"}},
 			}}
+			snapshots := documentSnapshots(left, right, &opts)
+			groups := []Group{{Orig: snapshots[0], Current: snapshots[1]}}
 			b.ReportAllocs()
 			for b.Loop() {
-				out, _, err := RenderDocs(left, right, opts)
-				if err != nil {
-					b.Fatalf("RenderDocs: %v", err)
+				comparison, err := Compare(groups, opts)
+				var out bytes.Buffer
+				if err == nil {
+					err = comparison.Write(&out, nil)
 				}
-				if len(out) == 0 {
+				if err != nil {
+					b.Fatalf("Compare/Write: %v", err)
+				}
+				if out.Len() == 0 {
 					b.Fatal("expected at least one diff")
 				}
 			}

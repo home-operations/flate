@@ -14,7 +14,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
@@ -422,7 +421,7 @@ func TestAdmit_AcceptedChildCiphertextSurvivesPublication(t *testing.T) {
 			l := loader.New(st)
 			defer l.Close()
 			l.SourceRoot = root
-			l.Options.Changes = change.NewSet([]string{"owner.yaml"})
+			l.Options.Changes = detectChanges(t, []string{"owner.yaml"}, []string{"owner.yaml"})
 			configureSelection(t, l, selection.Request{Changed: true})
 			d, err := beginTest(t.Context(), Config{
 				Input: input, Path: root, Store: st, Loader: l,
@@ -569,7 +568,7 @@ func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
 			st.AddObject(consumer)
 			l := loader.New(st)
 			l.SourceRoot = root
-			l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
+			l.Options.Changes = detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"})
 			configureSelection(
 				t,
 				l,

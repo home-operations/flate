@@ -433,7 +433,7 @@ func testReconcileEffectiveSubstitutionsCase(
 		PostBuild: &kustomizev1.PostBuild{
 			SubstituteStrategy: testCaseInput.strategy,
 			Substitute:         testCaseInput.inline,
-			SubstituteFrom:     []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
+			SubstituteFrom:     []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}},
 		},
 	}
 	s.AddObject(ks)
@@ -548,7 +548,7 @@ func testReconcileEffectiveSubstitutionDiagnosticsCase(
 		Namespace: "flux-system",
 		Path:      "./apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: kind, Name: "vars"}},
 		},
 	}
 	s.AddObject(ks)

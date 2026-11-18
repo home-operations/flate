@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -48,7 +47,7 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
-			l.Options.Changes = change.NewSet([]string{file})
+			l.Options.Changes = detectChanges(t, []string{file}, []string{file})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -87,18 +86,25 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 				t.Context(),
 				t,
 				l,
-				selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{{
-					Obj: manifest.NewSecret(input, nil, map[string]any{"VALUE": "current"}),
-					Productions: []manifest.Production{
-						{
-							Owner:       parent,
-							Declaration: declaration,
-							Authored:    declaration,
-							Source:      manifest.BootstrapSourceID,
-							File:        "apps/vars.yaml",
+				selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{
+					{
+						Obj: &manifest.Secret{
+							Name:       input.Name,
+							Namespace:  input.Namespace,
+							Data:       nil,
+							StringData: map[string]any{"VALUE": "current"},
+						},
+						Productions: []manifest.Production{
+							{
+								Owner:       parent,
+								Declaration: declaration,
+								Authored:    declaration,
+								Source:      manifest.BootstrapSourceID,
+								File:        "apps/vars.yaml",
+							},
 						},
 					},
-				}}},
+				}},
 			)
 			assert.NoError(t, err)
 			want := file != "apps/changed.yaml"
@@ -141,7 +147,7 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet([]string{"input.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -220,7 +226,11 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 		l.AdmitDeclarations(
 			[]store.Declaration{
 				{
-					Obj:    manifest.NewConfigMap(dependency, map[string]any{"VALUE": "supplied"}),
+					Obj: &manifest.ConfigMap{
+						Name:      dependency.Name,
+						Namespace: dependency.Namespace,
+						Data:      map[string]any{"VALUE": "supplied"},
+					},
 					Origin: manifest.SuppliedDeclaration,
 				},
 			},
@@ -232,7 +242,7 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 	if scenario != "unowned only" {
 		changed = append(changed, "consumer.yaml")
 	}
-	l.Options.Changes = change.NewSet(changed)
+	l.Options.Changes = detectChanges(t, changed, changed)
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -376,16 +386,18 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 		l.candidates = map[manifest.NamedResource]store.Child{}
 	}
 	l.candidates[provider] = providerChild
-	st.AddObjects(
-		[]manifest.BaseManifest{
-			providerChild.Obj,
-			consumerChild.Obj,
-			manifest.NewConfigMap(settings, map[string]any{"VALUE": "old"}),
-		},
-	)
+	for _, object := range []manifest.BaseManifest{
+		providerChild.Obj,
+		consumerChild.Obj,
+		&manifest.ConfigMap{Name: settings.Name, Namespace: settings.Namespace, Data: map[string]any{"VALUE": "old"}},
+	} {
+		st.AddObject(object)
+	}
 	fresh := settings
 	fresh.Name = "new-settings"
-	st.AddObject(manifest.NewConfigMap(fresh, map[string]any{"VALUE": "current"}))
+	st.AddObject(
+		&manifest.ConfigMap{Name: fresh.Name, Namespace: fresh.Namespace, Data: map[string]any{"VALUE": "current"}},
+	)
 	_, committed, err := requireSelection(
 		t,
 		l,

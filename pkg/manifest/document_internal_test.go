@@ -53,7 +53,7 @@ func TestExternalArtifact_RenderDocument(t *testing.T) {
 			delete(want, "status")
 			delete(want["metadata"].(map[string]any), "creationTimestamp")
 			want["kind"], want["apiVersion"] = KindExternalArtifact, sourceAPIVersion
-			object := NewExternalArtifact(cr)
+			object := newExternalArtifact(cr)
 			got, err := object.RenderDocument()
 			assert.NoError(t, err)
 			assert.Diff(t, got, want)

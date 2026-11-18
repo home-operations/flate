@@ -131,7 +131,7 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"removed/child.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"removed/child.yaml"}, []string{"removed/child.yaml"})
 
 	owner := testutil.HelmReleaseID("apps", "emitter")
 	var historyOwners map[manifest.NamedResource][]manifest.SourceEvidence

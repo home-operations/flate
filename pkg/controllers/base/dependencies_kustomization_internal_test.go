@@ -32,7 +32,7 @@ func BenchmarkCollectDeps(b *testing.B) {
 	admissionLoader1, _ := admissiontest.New(
 		b,
 		admissiontest.Config{
-			Changes: change.NewSet([]string{"target.yaml"}),
+			Changes: detectChanges(b, []string{"target.yaml"}, []string{"target.yaml"}),
 			Index: &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
 			},
@@ -55,19 +55,19 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for _, tc := range []struct {
 		name                    string
-		ref                     manifest.SubstituteReference
+		ref                     kustomizev1.SubstituteReference
 		producers, owners, want []manifest.NamedResource
 	}{
-		{name: "required ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
-		{name: "Owners-only ConfigMap in full mode", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, owners: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
-		{name: "optional ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
-		{name: "required Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}, producer}},
-		{name: "optional Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
-		{name: "unknown Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
-		{name: "missing ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
-		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
-		{name: "empty name", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
-		{name: "unknown kind", ref: manifest.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
+		{name: "required ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
+		{name: "Owners-only ConfigMap in full mode", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, owners: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
+		{name: "optional ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
+		{name: "required Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}, producer}},
+		{name: "optional Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
+		{name: "unknown Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
+		{name: "missing ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
+		{name: "self producer", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
+		{name: "empty name", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
+		{name: "unknown kind", ref: kustomizev1.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -82,7 +82,7 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 			ks := &manifest.Kustomization{
 				Name:      consumer.Name,
 				Namespace: consumer.Namespace,
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}},
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{tc.ref}},
 			}
 			deps := c.dependenciesForTest(ks)
 			var got []manifest.NamedResource
@@ -105,19 +105,19 @@ func TestResolve_SubstitutionProducers(t *testing.T) {
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for _, tc := range []struct {
 		name                    string
-		ref                     manifest.SubstituteReference
+		ref                     kustomizev1.SubstituteReference
 		producers, owners, want []manifest.NamedResource
 	}{
-		{name: "required ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
-		{name: "Owners-only ConfigMap in full mode", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, owners: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
-		{name: "optional ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
-		{name: "required Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}, producer}},
-		{name: "optional Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
-		{name: "unknown Secret", ref: manifest.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
-		{name: "missing ConfigMap", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
-		{name: "self producer", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
-		{name: "empty name", ref: manifest.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
-		{name: "unknown kind", ref: manifest.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
+		{name: "required ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
+		{name: "Owners-only ConfigMap in full mode", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, owners: []manifest.NamedResource{producer}, want: []manifest.NamedResource{cm, producer}},
+		{name: "optional ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
+		{name: "required Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, producers: []manifest.NamedResource{producer}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}, producer}},
+		{name: "optional Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings", Optional: true}, producers: []manifest.NamedResource{producer}},
+		{name: "unknown Secret", ref: kustomizev1.SubstituteReference{Kind: manifest.KindSecret, Name: "settings"}, want: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}}},
+		{name: "missing ConfigMap", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, want: []manifest.NamedResource{cm}},
+		{name: "self producer", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap, Name: "settings"}, producers: []manifest.NamedResource{consumer}, want: []manifest.NamedResource{cm}},
+		{name: "empty name", ref: kustomizev1.SubstituteReference{Kind: manifest.KindConfigMap}, producers: []manifest.NamedResource{producer}},
+		{name: "unknown kind", ref: kustomizev1.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -144,7 +144,7 @@ func TestCollectDeps_Allocations(t *testing.T) {
 	admissionLoader1, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes: change.NewSet([]string{"target.yaml"}),
+			Changes: detectChanges(t, []string{"target.yaml"}, []string{"target.yaml"}),
 			Index: &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}},
 			},
@@ -205,7 +205,7 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	consumerObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "kubernetes/apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "cluster-settings"},
 		}},
 	}
@@ -242,12 +242,18 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 		},
 	}
 	fixture := store.New()
-	fixture.AddObjects([]manifest.BaseManifest{consumerObj, producerObj, cmObj})
+	for _, object := range []manifest.BaseManifest{consumerObj, producerObj, cmObj} {
+		fixture.AddObject(object)
+	}
 	fixture.SetDiscoveryIndex(index)
 	fLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"kubernetes/apps/changed.yaml"}),
+			Changes: detectChanges(
+				t,
+				[]string{"kubernetes/apps/changed.yaml"},
+				[]string{"kubernetes/apps/changed.yaml"},
+			),
 			Index:     index,
 			Inventory: fixture,
 			Root:      "",
@@ -280,7 +286,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	selfObj := &manifest.Kustomization{
 		Name: "app", Namespace: "foo",
 		Path: "kubernetes/foo/app",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "settings"},
 		}},
 	}
@@ -299,12 +305,18 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 		Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}},
 	}
 	fixture := store.New()
-	fixture.AddObjects([]manifest.BaseManifest{selfObj, cmObj})
+	for _, object := range []manifest.BaseManifest{selfObj, cmObj} {
+		fixture.AddObject(object)
+	}
 	fixture.SetDiscoveryIndex(index)
 	fLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}),
+			Changes: detectChanges(
+				t,
+				[]string{"kubernetes/foo/app/changed.yaml"},
+				[]string{"kubernetes/foo/app/changed.yaml"},
+			),
 			Index:     index,
 			Inventory: fixture,
 			Root:      "",
@@ -357,7 +369,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}},
 		},
 	}
 	execution := gateExecution(c, consumer.Named())
@@ -424,7 +436,7 @@ type testResolveSubstitutionProducersCaseInputs struct {
 	tc       *struct {
 		name string
 
-		ref       manifest.SubstituteReference
+		ref       kustomizev1.SubstituteReference
 		producers []manifest.NamedResource
 		owners    []manifest.NamedResource
 
@@ -455,7 +467,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 	ks := &manifest.Kustomization{
 		Name:      testCaseInput.consumer.Name,
 		Namespace: testCaseInput.consumer.Namespace,
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{testCaseInput.tc.ref}},
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{testCaseInput.tc.ref}},
 	}
 
 	c.Reads.Init(c.Store, ks.Named(), nil)
@@ -549,7 +561,7 @@ func testSubstitutionAvailabilityObservesMaterializersCase(
 		Name:      testCaseInput.consumer.Name,
 		Namespace: testCaseInput.consumer.Namespace,
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: testCaseInput.tc.kind, Name: id.Name, Optional: testCaseInput.tc.optional},
 			},
 		},
@@ -686,7 +698,7 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 		if testCaseInput.selected {
 			files = append(files, "target.yaml")
 		}
-		changes = change.NewSet(files)
+		changes = detectChanges(t, files, files)
 	}
 	consumer := &manifest.Kustomization{
 		Name:      "consumer",
@@ -701,7 +713,7 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 			Namespace: "apps",
 		},
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 				{Kind: manifest.KindConfigMap, Name: "ignored"},
 				{Kind: "Unsupported", Name: "unsupported"},

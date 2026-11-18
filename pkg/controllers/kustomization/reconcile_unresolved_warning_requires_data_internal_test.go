@@ -28,7 +28,7 @@ func TestReconcile_UnresolvedWarningRequiresData(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system", Path: "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"},
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindSecret, Name: "missing-secret"},
 			{Kind: manifest.KindConfigMap, Name: "missing-configmap"},
 		}},

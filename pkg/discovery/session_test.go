@@ -180,7 +180,7 @@ spec: {path: ./workload}
 			var err error
 			l.Options.Changes, err = change.Qualify(
 				t.Context(),
-				change.NewSet([]string{"workload/cm.yaml"}),
+				detectChanges(t, []string{"workload/cm.yaml"}, []string{"workload/cm.yaml"}),
 				stores,
 				manifest.WorkScope{},
 			)

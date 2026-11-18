@@ -28,14 +28,14 @@ func hrDocs(n int) []Doc {
 
 func TestSuppression_String(t *testing.T) {
 	t.Parallel()
-	s := Suppression{Parent: helmReleaseParent(), Side: SideCurrent, Count: 11, Reason: "chart source\n  not ready"}
+	s := Suppression{Parent: helmReleaseParent(), Side: sideCurrent, Count: 11, Reason: "chart source\n  not ready"}
 	want := "11 objects not rendered on the current side; diff suppressed (chart source not ready)"
 	{
 		got := s.String()
 		assert.ErrorIf(t, got != want, "String() = %q, want %q", got, want)
 	}
 	{
-		got := (Suppression{Parent: kustomizationParent(), Side: SideOrig, Count: 1, Reason: "x"}).String()
+		got := (Suppression{Parent: kustomizationParent(), Side: sideOrig, Count: 1, Reason: "x"}).String()
 		assert.ErrorIf(t, !strings.Contains(
 			got,
 			"1 object not",
@@ -53,7 +53,7 @@ func TestSuppression_String(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			{
-				got := (Suppression{Parent: tc.parent, Side: SideBoth, Count: 1, Reason: "reason"}).String()
+				got := (Suppression{Parent: tc.parent, Side: sideBoth, Count: 1, Reason: "reason"}).String()
 				assert.FatalIf(t, got != tc.want, "String() = %q, want %q", got, tc.want)
 			}
 		})
@@ -69,18 +69,18 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 		{
 			Suppression{
 				Parent: helmReleaseParent(),
-				Side:   SideBoth,
+				Side:   sideBoth,
 				Count:  1,
 				Reason: "failed on both sides: orig: old;\n current: new",
 			},
 			"1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)",
 		},
 		{
-			Suppression{Parent: helmReleaseParent(), Side: SideBoth, Reason: "suspended on orig; suspended on current"},
+			Suppression{Parent: helmReleaseParent(), Side: sideBoth, Reason: "suspended on orig; suspended on current"},
 			"0 objects withheld; diff suppressed (suspended on orig; suspended on current)",
 		},
 		{
-			Suppression{Parent: helmReleaseParent(), Side: SideCurrent, Reason: "suspended on current"},
+			Suppression{Parent: helmReleaseParent(), Side: sideCurrent, Reason: "suspended on current"},
 			"0 objects not rendered on the current side; diff suppressed (suspended on current)",
 		},
 	}
@@ -92,7 +92,7 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 	}
 }
 
-func TestRenderDocs_SuppressionHeader(t *testing.T) {
+func TestComparison_SuppressionHeader(t *testing.T) {
 	t.Parallel()
 	parent := kustomizationParent()
 	parent.Path = "apps/<path>"
@@ -105,8 +105,8 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 		cmDoc(new(parent), manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", ""),
 	}
 	suppressed := []Suppression{
-		{Parent: helmReleaseParent(), Side: SideCurrent, Count: 2, Reason: "chart not ready"},
-		{Parent: kustomizationParent(), Side: SideOrig, Count: 1, Reason: "suspended on orig"},
+		{Parent: helmReleaseParent(), Side: sideCurrent, Count: 2, Reason: "chart not ready"},
+		{Parent: kustomizationParent(), Side: sideOrig, Count: 1, Reason: "suspended on orig"},
 	}
 	const humanBody = `
 data.k  (v1/ConfigMap/apps/keep)
@@ -195,17 +195,17 @@ data.k  (v1/ConfigMap/apps/other)
 	} {
 		t.Run(cmp.Or(string(tc.format), "default"), func(t *testing.T) {
 			t.Parallel()
-			out, warnings, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
+			out, warnings, err := renderDocuments(l, r, new(Options{Format: tc.format, Suppressed: suppressed}))
 			assert.FatalIf(t, err != nil, "render: %v", err)
 			assert.Equal(t, len(warnings), 0)
-			body, _, err := RenderDocs(l, r, Options{Format: tc.format})
+			body, _, err := renderDocuments(l, r, new(Options{Format: tc.format}))
 			assert.FatalIf(t, err != nil, "body: %v", err)
 			assert.ErrorIf(t, string(body) != tc.body, "body = %q, want %q", body, tc.body)
 			{
 				want := tc.body
 				assert.ErrorIf(t, string(out) != want, "output = %q, want %q", out, want)
 			}
-			out, warnings, err = RenderDocs(nil, nil, Options{Format: tc.format, Suppressed: suppressed})
+			out, warnings, err = renderDocuments(nil, nil, new(Options{Format: tc.format, Suppressed: suppressed}))
 			assert.Equal(t, len(warnings), 0)
 			assert.ErrorIf(
 				t,
@@ -214,23 +214,23 @@ data.k  (v1/ConfigMap/apps/other)
 				out,
 				err,
 			)
-			out, _, err = RenderDocs(nil, nil, Options{Format: tc.format})
+			out, _, err = renderDocuments(nil, nil, new(Options{Format: tc.format}))
 			assert.ErrorIf(t, err != nil || len(out) != 0, "empty = %q, %v; want empty bytes, nil", out, err)
 		})
 	}
 
 	t.Run("html", func(t *testing.T) {
 		t.Parallel()
-		out, _, err := RenderDocs(l, r, Options{Format: FormatHTML, Suppressed: suppressed})
+		out, _, err := renderDocuments(l, r, new(Options{Format: FormatHTML, Suppressed: suppressed}))
 		assert.FatalIf(t, err != nil, "render: %v", err)
-		body, _, bodyErr := RenderDocs(l, r, Options{Format: FormatHTML})
+		body, _, bodyErr := renderDocuments(l, r, new(Options{Format: FormatHTML}))
 		assert.NoError(t, bodyErr)
 		assert.ErrorIf(t, string(out) != string(body), "%s", "suppression changed the HTML product")
 	})
 
 	t.Run("suppression alone has no product", func(t *testing.T) {
 		t.Parallel()
-		out, _, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
+		out, _, err := renderDocuments(nil, nil, new(Options{Format: FormatHTML, Suppressed: suppressed}))
 		assert.NoError(t, err)
 		assert.ErrorIf(t, len(out) != 0, "suppression-only HTML must have no product; got %q", out)
 	})

@@ -38,7 +38,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		left, right   store.StatusInfo
 		leftN, rightN int
 		withheld      bool
-		side          Side
+		side          side
 		count         int
 		reason        string
 		keepError     bool
@@ -49,7 +49,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     3,
 			rightN:    1,
 			withheld:  true,
-			side:      SideCurrent,
+			side:      sideCurrent,
 			count:     3,
 			reason:    failedCurrent.String(),
 			keepError: true,
@@ -60,7 +60,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     1,
 			rightN:    2,
 			withheld:  true,
-			side:      SideOrig,
+			side:      sideOrig,
 			count:     2,
 			reason:    failedOrig.String(),
 			keepError: true,
@@ -70,7 +70,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			right:    failedCurrent,
 			leftN:    2,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    2,
 			reason:   failedCurrent.String(),
 		},
@@ -80,7 +80,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:    2,
 			rightN:   1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    2,
 			reason:   "missing source",
 		},
@@ -91,7 +91,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     2,
 			rightN:    1,
 			withheld:  true,
-			side:      SideBoth,
+			side:      sideBoth,
 			count:     3,
 			reason:    "failed on both sides: orig: orig build failed; current: current build failed",
 			keepError: true,
@@ -101,7 +101,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			left:      failedOrig,
 			right:     failedCurrent,
 			withheld:  true,
-			side:      SideBoth,
+			side:      sideBoth,
 			reason:    "failed on both sides: orig: orig build failed; current: current build failed",
 			keepError: true,
 		},
@@ -111,7 +111,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:    2,
 			rightN:   1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    2,
 			reason:   "suspended on current",
 		},
@@ -121,7 +121,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:    1,
 			rightN:   2,
 			withheld: true,
-			side:     SideOrig,
+			side:     sideOrig,
 			count:    2,
 			reason:   "suspended on orig",
 		},
@@ -130,7 +130,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			right:    suspended,
 			rightN:   1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			reason:   "suspended on current",
 		},
 		{
@@ -140,7 +140,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:    2,
 			rightN:   1,
 			withheld: true,
-			side:     SideBoth,
+			side:     sideBoth,
 			count:    3,
 			reason:   "suspended on orig; suspended on current",
 		},
@@ -149,7 +149,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			left:     suspended,
 			right:    suspended,
 			withheld: true,
-			side:     SideBoth,
+			side:     sideBoth,
 			reason:   "suspended on orig; suspended on current",
 		},
 		{
@@ -159,7 +159,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     2,
 			rightN:    1,
 			withheld:  true,
-			side:      SideBoth,
+			side:      sideBoth,
 			count:     3,
 			reason:    "orig: orig build failed; suspended on current",
 			keepError: true,
@@ -171,7 +171,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     1,
 			rightN:    2,
 			withheld:  true,
-			side:      SideBoth,
+			side:      sideBoth,
 			count:     3,
 			reason:    "suspended on orig; current: current build failed",
 			keepError: true,
@@ -183,7 +183,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:    1,
 			rightN:   2,
 			withheld: true,
-			side:     SideBoth,
+			side:     sideBoth,
 			count:    3,
 			reason:   "orig: missing source; suspended on current",
 		},
@@ -198,7 +198,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			leftN:     1,
 			rightN:    2,
 			withheld:  true,
-			side:      SideBoth,
+			side:      sideBoth,
 			count:     3,
 			reason:    "suspended on orig; current: " + blocked.String(),
 			keepError: true,
@@ -208,7 +208,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			right:    store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped},
 			leftN:    1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    1,
 		},
 		{
@@ -220,7 +220,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			},
 			leftN:    1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    1,
 			reason:   "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth",
 		},
@@ -233,7 +233,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			},
 			leftN:    1,
 			withheld: true,
-			side:     SideCurrent,
+			side:     sideCurrent,
 			count:    1,
 			reason:   "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth",
 		},
@@ -260,7 +260,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		},
 		)
 	}
-	for _, side := range []Side{SideOrig, SideCurrent} {
+	for _, side := range []side{sideOrig, sideCurrent} {
 		t.Run("generated "+string(side), func(t *testing.T) {
 			t.Parallel()
 			parent, sibling := helmReleaseParent(), kustomizationParent()
@@ -277,7 +277,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			)
 			left := selectedSnapshot(&parent, []Doc{old, extra}, store.StatusInfo{})
 			right := selectedSnapshot(&parent, []Doc{current}, failedCurrent)
-			if side == SideOrig {
+			if side == sideOrig {
 				left = selectedSnapshot(&parent, []Doc{old}, failedOrig)
 				right = selectedSnapshot(&parent, []Doc{current, extra}, store.StatusInfo{})
 			}
@@ -299,7 +299,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			assert.Equal(t, note.Count, 2)
 			assert.Equal(t, len(comparison.output[0].changes), 1)
 			change := comparison.output[0].changes[0]
-			assert.Equal(t, change.Status, StatusChanged)
+			assert.Equal(t, change.Status, ChangeStatus("changed"))
 			assert.Equal(t, change.Name, manifest.DocIdentity(healthyNew.Manifest).Name)
 			var first, second bytes.Buffer
 			assert.NoError(t, comparison.Write(&first, nil))
@@ -318,7 +318,7 @@ type testCompareUnavailableProducerPolicyCaseInputs struct {
 		leftN     int
 		rightN    int
 		withheld  bool
-		side      Side
+		side      side
 		count     int
 		reason    string
 		keepError bool

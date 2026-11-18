@@ -103,20 +103,20 @@ func runDiffProducerDispositionAndPathCase(t *testing.T, mode, workers *string) 
 	case "both-suspended":
 		assert.FatalIf(t, len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization ||
 			out.Changes[0].Name != "apps" ||
-			out.Changes[0].Status != diff.StatusChanged ||
+			out.Changes[0].Status != diff.ChangeStatus("changed") ||
 			len(out.Suppressed) != 1 ||
 			out.Suppressed[0].Side != "both" ||
 			out.Suppressed[0].Count != 0, "suspended workload or applied declaration disclosure: %s", stdout)
 	case "path-only":
 		assert.FatalIf(t, len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization ||
 			out.Changes[0].Name != "apps" ||
-			out.Changes[0].Status != diff.StatusChanged ||
+			out.Changes[0].Status != diff.ChangeStatus("changed") ||
 			len(
 				out.Suppressed,
 			) != 0, "path-only move changed workload output or lost its applied declaration: %s", stdout)
 	case "path-content":
 		assert.FatalIf(t, len(out.Changes) != 2 || out.Changes[0].Kind != manifest.KindKustomization ||
-			out.Changes[1].Status != diff.StatusChanged ||
+			out.Changes[1].Status != diff.ChangeStatus("changed") ||
 			out.Changes[1].Parent.Path != "moved", "content move did not pair with current path: %s", stdout)
 	}
 }

@@ -286,7 +286,13 @@ func (f *lifetimeAdmissionFacts) ResolveRoot(
 	case "acquisition error":
 		return "", false, f.resolveErr
 	case "expired authority":
-		f.store.AddObject(manifest.NewConfigMap(f.authority.Named(), map[string]any{"value": "replacement"}))
+		f.store.AddObject(
+			&manifest.ConfigMap{
+				Name:      f.authority.Named().Name,
+				Namespace: f.authority.Named().Namespace,
+				Data:      map[string]any{"value": "replacement"},
+			},
+		)
 	case "renew proof", "renew then expire authority":
 		if f.resolutions == 1 {
 			object := &manifest.ConfigMap{Name: "proof-input", Namespace: "apps"}
@@ -294,7 +300,13 @@ func (f *lifetimeAdmissionFacts) ResolveRoot(
 			reads.GetObject(object.Named())
 			f.store.AddObject(object)
 		} else if f.outcome == "renew then expire authority" {
-			f.store.AddObject(manifest.NewConfigMap(f.authority.Named(), map[string]any{"value": "replacement"}))
+			f.store.AddObject(
+				&manifest.ConfigMap{
+					Name:      f.authority.Named().Name,
+					Namespace: f.authority.Named().Namespace,
+					Data:      map[string]any{"value": "replacement"},
+				},
+			)
 		}
 	}
 	return f.solverFacts.ResolveRoot(ctx, reads, source, root)

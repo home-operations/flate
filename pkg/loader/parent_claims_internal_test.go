@@ -136,7 +136,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	s.AddObject(repo)
 	s.AddObject(external)
 	s.AddObject(local)
-	prefixes := loaderFixture(s, nil).Claims(t.TempDir())
+	prefixes := loaderFixture(s, nil).claims(t.TempDir())
 	assert.FatalIf(
 		t,
 		len(prefixes) != 1 || prefixes[0].ID != local.Named(),

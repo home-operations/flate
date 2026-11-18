@@ -166,6 +166,8 @@ linters:
           deny:
             - pkg: github.com/home-operations/flate/pkg
               desc: leaf packages import nothing from pkg/
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: leaf packages are below orchestration
         selection:
           list-mode: strict
           files: ["**/pkg/selection/**", "!$test"]
@@ -215,8 +217,10 @@ linters:
               desc: store is below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: store is below the orchestrator
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: store is below the orchestrator
         schedule:
-          # A leaf behind its Dispatcher seam: stdlib, manifest and task only.
+          # Scheduling depends only on stdlib, manifest and task.
           list-mode: strict
           files: ["**/pkg/schedule/**", "!$test"]
           allow:
@@ -248,6 +252,8 @@ linters:
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: below the orchestrator
         diff:
           files: ["**/pkg/diff/**", "!$test"]
           deny:
@@ -274,6 +280,8 @@ linters:
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: below the orchestrator
         controllers-base:
           files: ["**/pkg/controllers/base/**", "!$test"]
           deny:
@@ -289,16 +297,36 @@ linters:
               desc: base is below the kind controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: below the orchestrator
         controllers:
           files: ["**/pkg/controllers/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: controllers are below the orchestrator
+            - pkg: github.com/home-operations/flate/internal/orchestrator
+              desc: controllers are below the orchestrator
+        public-orchestrator:
+          list-mode: strict
+          files: ["**/pkg/orchestrator/**", "!$test"]
+          allow:
+            - $gostd
+            - github.com/home-operations/flate/pkg/manifest
+            - github.com/home-operations/flate/internal/orchestrator
+            - github.com/home-operations/flate/pkg/selection
+            - github.com/home-operations/flate/pkg/helm
+            - github.com/home-operations/flate/pkg/source/cache
+            - github.com/home-operations/flate/pkg/store
+        internal-orchestrator:
+          files: ["**/internal/orchestrator/**", "!$test"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: execution does not depend on the public boundary
         no-upward-to-cli:
-          files: ["**/pkg/**", "!$test"]
+          files: ["**/pkg/**", "**/internal/orchestrator/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/internal/cli
-              desc: pkg/ never imports internal/cli
+              desc: orchestration and pkg/ never import internal/cli
     embeddedstructfieldcheck:
       forbid-mutex: true
     errcheck:
@@ -435,8 +463,6 @@ linters:
         # Manifest and artifact owners return heterogeneous implementations.
         - ^github\.com/home-operations/flate/pkg/manifest\.BaseManifest$
         - ^github\.com/home-operations/flate/pkg/store\.Artifact$
-        - ^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$
-        - ^github\.com/home-operations/flate/pkg/values\.Provider$
         - ^github\.com/home-operations/flate/pkg/source/git\.Connection$
     errorlint:
       errorf: true
@@ -520,7 +546,7 @@ linters:
         path: ^(internal/kustomizeinput/input|pkg/kustomize/generate|pkg/loader/(kustomization|occurrences|paths))\.go$
         text: SA1019:.*(Bases|PatchesJson6902|PatchesStrategicMerge|ImageTags|HelmChartInflationGenerator|Vars|/api/builtins).*deprecated
       # Adapter methods must implement the paired upstream signatures.
-      - path: ^(internal/(cli|testfixture|testutil)|pkg/(baseline|helm|kustomize|orchestrator|source/(git|gittree)))/
+      - path: ^(internal/(cli|orchestrator|testfixture|testutil)|pkg/(baseline|helm|kustomize|source/(git|gittree)))/
         linters:
           - ireturn
         source: ^func \(

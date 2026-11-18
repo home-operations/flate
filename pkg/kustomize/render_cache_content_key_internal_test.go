@@ -37,7 +37,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		}},
 		{name: "substitution references", same: true, change: func(r *RenderRequest) {
 			r.Spec.PostBuild = &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "provider"}},
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "provider"}},
 			}
 		}},
 		{name: "spec", change: func(r *RenderRequest) { r.Spec.NamePrefix = "other-" }},

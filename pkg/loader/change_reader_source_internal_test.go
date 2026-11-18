@@ -217,9 +217,13 @@ func TestFilter_DeferredSourceValuesPairedSides(t *testing.T) {
 			parent := testutil.KustomizationID("flux-system", "parent")
 			release := testutil.HelmReleaseID("apps", "demo")
 			sibling := testutil.HelmReleaseID("apps", "sibling")
-			bootstrap := change.NewSet(nil)
+			bootstrap := detectChanges(t, nil, nil)
 			if state == "unchanged_collision" {
-				bootstrap = change.NewSet([]string{".selected/config/prod.yaml"})
+				bootstrap = detectChanges(
+					t,
+					[]string{".selected/config/prod.yaml"},
+					[]string{".selected/config/prod.yaml"},
+				)
 			}
 			changes, err := change.Qualify(
 				t.Context(),
@@ -253,9 +257,9 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 			t.Parallel()
 			reader := &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: ".selected"}
 			stores, indexes, roots := readSourcePair(t, mode, reader)
-			bootstrap := change.NewSet(nil)
+			bootstrap := detectChanges(t, nil, nil)
 			if mode == "read_only_collision" || mode == "structural_collision" {
-				bootstrap = change.NewSet([]string{".selected/input.yaml"})
+				bootstrap = detectChanges(t, []string{".selected/input.yaml"}, []string{".selected/input.yaml"})
 			}
 			changes, err := change.Qualify(
 				t.Context(),
@@ -611,7 +615,7 @@ func testCrossSourceOptionalInputPair(t *testing.T, mode string) {
 		Namespace: "apps",
 		Path:      "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 			},
 		},
@@ -619,7 +623,7 @@ func testCrossSourceOptionalInputPair(t *testing.T, mode string) {
 	sibling := consumer.Clone()
 	sibling.Name = "sibling"
 	sibling.PostBuild = &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
 		},
 	}

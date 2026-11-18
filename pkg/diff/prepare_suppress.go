@@ -12,7 +12,7 @@ import (
 
 type suppressionPlan struct {
 	parent        Parent
-	side          Side
+	side          side
 	count         int
 	reason        string
 	discloseEmpty bool
@@ -62,26 +62,26 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	plan := suppressionPlan{}
 	switch {
 	case lf && rf:
-		plan.side = SideBoth
+		plan.side = sideBoth
 		plan.reason = "failed on both sides: orig: " + left.String() + "; current: " + right.String()
 		plan.discloseEmpty = true
 	case ls && rs:
-		plan.side = SideBoth
+		plan.side = sideBoth
 		plan.reason = "suspended on orig; suspended on current"
 		plan.discloseEmpty = true
 	case ls && ru || rs && lu:
-		plan.side = SideBoth
-		plan.reason = unavailableReason(left, SideOrig) + "; " + unavailableReason(right, SideCurrent)
+		plan.side = sideBoth
+		plan.reason = unavailableReason(left, sideOrig) + "; " + unavailableReason(right, sideCurrent)
 		plan.discloseEmpty = true
 	case lu && !ru:
-		plan.side = SideOrig
+		plan.side = sideOrig
 		plan.reason = left.String()
 		if ls {
 			plan.reason = "suspended on orig"
 			plan.discloseEmpty = true
 		}
 	case ru && !lu:
-		plan.side = SideCurrent
+		plan.side = sideCurrent
 		plan.reason = right.String()
 		if rs {
 			plan.reason = "suspended on current"
@@ -93,7 +93,7 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	return plan, true
 }
 
-func unavailableReason(info store.StatusInfo, side Side) string {
+func unavailableReason(info store.StatusInfo, side side) string {
 	if info.Outcome() == store.OutcomeSuspended {
 		return "suspended on " + string(side)
 	}
@@ -102,7 +102,7 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 
 func suppress(orig, current Snapshot) suppressionResult {
 	plans := selectedSuppressionPlans(orig, current)
-	l, r := orig.keep(plans, SideOrig), current.keep(plans, SideCurrent)
+	l, r := orig.keep(plans, sideOrig), current.keep(plans, sideCurrent)
 	suppressed := slices.Grow([]Suppression(nil), len(plans))
 	for key := range plans {
 		plan := plans[key]
@@ -110,11 +110,11 @@ func suppress(orig, current Snapshot) suppressionResult {
 			continue
 		}
 		note := Suppression{Parent: plan.parent, Side: plan.side, Count: plan.count, Reason: plan.reason}
-		if plan.side == SideOrig {
+		if plan.side == sideOrig {
 			note.Subject = orig.subject(key)
 		} else {
 			note.Subject = current.subject(key)
-			if plan.side == SideBoth && note.Subject.ID == (manifest.NamedResource{}) {
+			if plan.side == sideBoth && note.Subject.ID == (manifest.NamedResource{}) {
 				note.Subject = orig.subject(key)
 			}
 		}
@@ -129,7 +129,7 @@ func suppress(orig, current Snapshot) suppressionResult {
 	return suppressionResult{Orig: l, Current: r, Suppressed: suppressed}
 }
 
-func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Side) []manifest.DocumentBatch {
+func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side side) []manifest.DocumentBatch {
 	out := make([]manifest.DocumentBatch, 0, len(s.Manifests))
 	for _, batch := range s.Manifests {
 		if batch.Parent == nil {
@@ -147,7 +147,7 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 			continue
 		}
 		plan.parent = objectParent(batch.Parent)
-		if plan.side == SideBoth || plan.side != side {
+		if plan.side == sideBoth || plan.side != side {
 			plan.count += len(batch.Documents)
 		}
 		plans[key] = plan
@@ -157,12 +157,12 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 
 func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppression, error) {
 	var inputErr error
-	for side, batches := range [2][]manifest.DocumentBatch{orig.Manifests, current.Manifests} {
+	for sideIndex, batches := range [2][]manifest.DocumentBatch{orig.Manifests, current.Manifests} {
 		for i, batch := range batches {
 			if _, err := batch.IdentityAccessor(); err != nil {
 				inputErr = errors.Join(
 					inputErr,
-					fmt.Errorf("%s batch %d: %w", [2]Side{SideOrig, SideCurrent}[side], i, err),
+					fmt.Errorf("%s batch %d: %w", [2]side{sideOrig, sideCurrent}[sideIndex], i, err),
 				)
 			}
 		}

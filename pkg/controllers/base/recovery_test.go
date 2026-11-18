@@ -14,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -80,7 +79,7 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 		admissionLoader1, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
-				Changes: change.NewSet([]string{"other.yaml"}),
+				Changes: detectChanges(t, []string{"other.yaml"}, []string{"other.yaml"}),
 				Index: &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
 				},

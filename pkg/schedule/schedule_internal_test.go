@@ -16,6 +16,16 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+func (s *Scheduler) results() map[NodeID]Result {
+	results := make(map[NodeID]Result, len(s.nodes))
+	for id, n := range s.nodes {
+		if n.state == stateTerminal && n.assessment != nil && n.assessment.Valid() {
+			results[id] = Result{Assessment: n.assessment}
+		}
+	}
+	return results
+}
+
 type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel, Result) Result
 
 func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel, previous Result) Result {
@@ -206,7 +216,7 @@ func TestScheduler_RunDispatchPanic(t *testing.T) {
 				s.Seed([]NodeID{testutil.KustomizationID("ns", "panic")})
 				assert.NoError(t, s.Run(t.Context()))
 				assert.Equal(t, tasks.Failures(), int64(1))
-				assert.Equal(t, len(s.Results()), 0)
+				assert.Equal(t, len(s.results()), 0)
 				assert.Equal(t, len(s.nodes), 1)
 				assert.Equal(t, s.inFlight, 0)
 				assert.Equal(t, len(s.runq), 0)
@@ -294,7 +304,7 @@ func TestScheduler_InvalidAcceptance(t *testing.T) {
 	assert.Equal(t, runs.Load(), int64(2))
 	assert.Equal(t, retired.Load(), int64(1))
 	assert.Equal(t, closed.Load(), int64(1))
-	assert.Equal(t, s.Results()[id].Assessment == fresh, true)
+	assert.Equal(t, s.results()[id].Assessment == fresh, true)
 }
 
 func TestScheduler_RetirementPrecedesStructuralBoundary(t *testing.T) {
@@ -362,7 +372,7 @@ func TestScheduler_SettleBoundedRetainedAssessment(t *testing.T) {
 		assert.Equal(t, runs.Load(), int64(3))
 		assert.Equal(t, retired.Load(), int64(0))
 		assert.Equal(t, closed.Load(), int64(3))
-		assert.Equal(t, len(s.Results()), 3)
+		assert.Equal(t, len(s.results()), 3)
 	})
 }
 
@@ -381,7 +391,7 @@ func TestScheduler_UnresolvedAfterForce(t *testing.T) {
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, strings.Contains(err.Error(), "unresolved assessment"), true)
 	assert.Diff(t, levels, []manifest.DrainLevel{manifest.DrainCascade, manifest.DrainForce})
-	assert.Equal(t, len(s.Results()), 0)
+	assert.Equal(t, len(s.results()), 0)
 }
 
 func TestScheduler_LateArrivalAfterDrain(t *testing.T) {
@@ -417,7 +427,7 @@ func TestScheduler_SettleArrivalRestartsNormalDispatch(t *testing.T) {
 	s.Seed([]NodeID{parent})
 	assert.NoError(t, s.Run(t.Context()))
 	assert.Equal(t, runs.Load(), int64(2))
-	assert.Equal(t, len(s.Results()), 2)
+	assert.Equal(t, len(s.results()), 2)
 }
 
 func TestScheduler_RunSettleCancellation(t *testing.T) {

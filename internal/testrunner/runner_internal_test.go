@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -539,14 +539,14 @@ func TestRun_BlockedByCycle(t *testing.T) {
 
 func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	t.Helper()
-	runs, err := orchestrator.RenderTrees(
+	invocation, err := orchestrator.RenderTrees(
 		t.Context(),
 		[]orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}},
 		orchestrator.Config{Concurrency: 2},
 	)
-	for _, run := range runs {
-		t.Cleanup(run.Result.Close)
-	}
+	assert.FatalIf(t, invocation == nil, "missing invocation: %v", err)
+	t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+	runs := invocation.Results
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed store")
 	o := runs[0].Orchestrator

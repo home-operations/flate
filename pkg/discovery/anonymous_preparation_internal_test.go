@@ -6,7 +6,6 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
@@ -27,7 +26,7 @@ func TestRun_AnonymousAdmissionPreparation(t *testing.T) {
 	st := store.New()
 	st.SetWorkTree(manifest.TreeID{}, work.Scope())
 	l := loader.New(st)
-	l.Options.Changes = change.NewSet([]string{"entry/release.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"entry/release.yaml"}, []string{"entry/release.yaml"})
 	request := selection.Request{Changed: true}
 	configureSelection(t, l, request)
 	session, err := beginTest(t.Context(), testConfig(t, Config{

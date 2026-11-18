@@ -175,7 +175,7 @@ func runDiffOneSidedSkipSuppressedName(t *testing.T, tc *struct {
 		assert.NoError(t, json.Unmarshal([]byte(stdout), &got))
 		assert.Equal(t, len(got.Changes), 0)
 		assert.FatalIf(t, len(got.Suppressed) != 1, "expected one suppression, got:\n%s", stdout)
-		assert.Equal(t, got.Suppressed[0].Side, diff.SideCurrent)
+		assert.Equal(t, got.Suppressed[0].Side, "current")
 		assert.Equal(t, got.Suppressed[0].Count, 2)
 		assert.Equal(
 			t,

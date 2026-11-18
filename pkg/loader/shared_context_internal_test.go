@@ -51,7 +51,7 @@ spec: {path: ./sibling, targetNamespace: sibling, components: [../shared]}
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet([]string{"selected/payload.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"selected/payload.yaml"}, []string{"selected/payload.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -122,7 +122,7 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
 
-	l.Options.Changes = change.NewSet([]string{"app/release.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"app/release.yaml"}, []string{"app/release.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -175,7 +175,9 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	}
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./owned"}
 	opaque := &manifest.HelmRelease{Name: "opaque", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{consumer, owner, opaque})
+	for _, object := range []manifest.BaseManifest{consumer, owner, opaque} {
+		st.AddObject(object)
+	}
 	if testCaseInput.complete {
 		output := &store.Emission{Complete: true}
 		if testCaseInput.generated {

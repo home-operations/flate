@@ -21,7 +21,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
@@ -90,7 +89,9 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})
-	st.AddObjects([]manifest.BaseManifest{parent, repo, secret})
+	for _, object := range []manifest.BaseManifest{parent, repo, secret} {
+		st.AddObject(object)
+	}
 	st.AddDeclaration(
 		store.Declaration{
 			Obj:       secret,
@@ -220,7 +221,9 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 			}})
-			st.AddObjects([]manifest.BaseManifest{repo, parent})
+			for _, object := range []manifest.BaseManifest{repo, parent} {
+				st.AddObject(object)
+			}
 			attempted := make(chan struct{})
 			var provisional *base.Execution
 			c.Tasks.Go(t.Context(), "provisional", func(ctx context.Context) {
@@ -442,7 +445,7 @@ func testSourceDeclarationContributorsReuseCase(
 		filterLoader, _ = admissiontest.New(
 			t,
 			admissiontest.Config{
-				Changes:   change.NewSet([]string{"chart.yaml"}),
+				Changes:   detectChanges(t, []string{"chart.yaml"}, []string{"chart.yaml"}),
 				Index:     index,
 				Inventory: store.New(),
 				Root:      "/repo",
@@ -456,7 +459,9 @@ func testSourceDeclarationContributorsReuseCase(
 		map[string]src.Fetcher{manifest.KindHelmChart: f},
 		FetchOptions{Session: filter, Loader: filterLoader},
 	)
-	st.AddObjects([]manifest.BaseManifest{first, second})
+	for _, object := range []manifest.BaseManifest{first, second} {
+		st.AddObject(object)
+	}
 	secret := &manifest.Secret{
 		Name:       "credentials",
 		Namespace:  "apps",
@@ -820,7 +825,7 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet(nil),
+			Changes:   detectChanges(t, nil, nil),
 			Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 			Inventory: st,
 			Root:      "",

@@ -260,7 +260,8 @@ func TestProducerTargets(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			{
-				before := c.raw.Clone()
+				before := *c.raw
+				before.Spec = DeepCopyMap(c.raw.Spec)
 				got := ProducerTargets(c.raw)
 				assert.ErrorIf(t, !reflect.DeepEqual(got, c.want), "targets = %#v, want %#v", got, c.want)
 				assert.Diff(t, c.raw.Spec, before.Spec)

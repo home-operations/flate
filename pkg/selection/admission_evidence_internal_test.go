@@ -26,14 +26,13 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 		Namespace: "apps",
 		Path:      "second",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
 		},
 	}
-	input := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "values", Namespace: "apps"},
-		map[string]any{"value": "before"},
-	)
-	st.AddObjects([]manifest.BaseManifest{first, second, input})
+	input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"value": "before"}}
+	for _, object := range []manifest.BaseManifest{first, second, input} {
+		st.AddObject(object)
+	}
 	content := testutil.ObjectDocument(second)
 	st.AddDeclaration(store.Declaration{Obj: second, Doc: content})
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{first.Named(), second.Named()}})
@@ -62,7 +61,13 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 	proposal.Retire()
 	for range st.Sweep() {
 	}
-	st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"value": "after"}))
+	st.AddObject(
+		&manifest.ConfigMap{
+			Name:      input.Named().Name,
+			Namespace: input.Named().Namespace,
+			Data:      map[string]any{"value": "after"},
+		},
+	)
 	proposal, err = session.prepareTest(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
 	assert.NoError(t, err)
 	defer proposal.Retire()
@@ -84,7 +89,7 @@ func TestAdmission_UnknownDeclarationSkipsPreparedEvidence(t *testing.T) {
 		states: map[manifest.NamedResource]admissionState{
 			object.Named(): {productionsKnown: true},
 		},
-		proposal: &Admission{Request: PrepareRequest{Changes: change.NewSet(nil)}},
+		proposal: &Admission{Request: PrepareRequest{Changes: detectChanges(t, nil, nil)}},
 		declarationContents: func(map[string]any) store.DeclarationContent {
 			calls++
 			return store.DeclarationContent{Exact: "prepared"}
@@ -121,7 +126,12 @@ func TestAdmission_AuthoredDeclarationChangeOverridesOutput(t *testing.T) {
 			},
 		}
 	}
-	changes, err := change.Qualify(t.Context(), change.NewSet([]string{"input.yaml"}), stores, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
+		stores,
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	changes, err = changes.WithDeclarations(t.Context(), change.DeclarationInputs{Stores: stores})
 	assert.NoError(t, err)

@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -74,7 +73,7 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{"release.yaml"}),
+			Changes:   detectChanges(t, []string{"release.yaml"}, []string{"release.yaml"}),
 			Index:     index,
 			Inventory: filtertest.MapLister{},
 		},
@@ -263,13 +262,12 @@ func checkGeneratedSourceReplacement(
 	if (*tailCaseInput.testCaseInput).replacement == "chartRef" {
 		(*tailCaseInput.st).
 			AddObject(
-				manifest.NewOCIRepository(
-					sourcev1.OCIRepository{
-						Name:      replacement.Name,
-						Namespace: replacement.Namespace,
-						Spec:      sourcev1.OCIRepositorySpec{URL: "oci://registry.example/charts/replacement"},
-					},
-				),
+				&manifest.OCIRepository{
+					Name:      replacement.Name,
+					Namespace: replacement.Namespace,
+					Provider:  sourcev1.GenericOCIProvider,
+					URL:       "oci://registry.example/charts/replacement",
+				},
 			)
 		(*tailCaseInput.st).
 			UpdateStatus(replacement, store.StatusInfo{Status: store.StatusPending})

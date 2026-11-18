@@ -99,7 +99,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 // TestDiscovery_PromoteMaterializesFromIndex covers the
 // lazy-promotion contract: when depwait hits a missing dep that the
 // Existence index knows about, Promote re-parses the file and
-// AddObjects it into the Store so the wait can clear.
+// The producer must publish the dependency before the wait can clear.
 func TestDiscovery_PromoteMaterializesFromIndex(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -49,7 +49,9 @@ func BenchmarkAddRendered(b *testing.B) {
 					s.AddObject(obj)
 					twin := obj
 					if distinct {
-						twin = obj.Clone()
+						clone := *obj
+						clone.Spec = manifest.DeepCopyMap(obj.Spec)
+						twin = &clone
 					}
 					b.ReportAllocs()
 					for b.Loop() {

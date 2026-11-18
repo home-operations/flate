@@ -198,7 +198,9 @@ func testGetDeclarationCoveredAuthorityCase(t *testing.T, testCaseInput *string,
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	peer := &manifest.Kustomization{Name: "peer", Namespace: "apps"}
 	raw := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: "oci://raw.example"}
-	st.AddObjects([]manifest.BaseManifest{parent, peer, raw})
+	st.AddObject(parent)
+	st.AddObject(peer)
+	st.AddObject(raw)
 	proofs := []manifest.Production{
 		{
 			Owner:    parent.Named(),
@@ -291,7 +293,9 @@ func testRecordEmittedReplacedInputRejectedCase(
 		Namespace: "apps",
 	}
 	input := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "A"}
-	st.AddObjects([]manifest.BaseManifest{owner, peer, input})
+	st.AddObject(owner)
+	st.AddObject(peer)
+	st.AddObject(input)
 	st.SetDiscoveryIndex(
 		&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

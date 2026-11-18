@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -21,7 +20,7 @@ func TestFilter_SharedInputRelationLookupBounded(t *testing.T) {
 	st := store.New()
 	facts := &solverFacts{
 		store:   st,
-		changes: change.NewSet([]string{"apps/app-7/ks.yaml"}),
+		changes: detectChanges(t, []string{"apps/app-7/ks.yaml"}, []string{"apps/app-7/ks.yaml"}),
 		index:   manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 	}
 	facts.context.Root = "/repo"
@@ -63,7 +62,7 @@ func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
 			st := &countedProductions{Store: store.New(), id: child.Named()}
 			facts := &solverFacts{
 				store:   st.Store,
-				changes: change.NewSet([]string{"parent.yaml"}),
+				changes: detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 				index: manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 				},
@@ -110,7 +109,7 @@ func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
 		Name:      "primary",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "settings"},
 				{Kind: manifest.KindConfigMap, Name: target.Name},
 			},
@@ -122,7 +121,7 @@ func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
 		Name:      "late",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}},
 		},
 	}
 	st.AddObject(primary)
@@ -130,7 +129,11 @@ func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		primary.Named(): {File: "primary.yaml"}, settings: {Productions: []manifest.Production{{Owner: dependency}}},
 	}}
-	facts := &solverFacts{store: st, changes: change.NewSet([]string{"primary.yaml"}), index: *index}
+	facts := &solverFacts{
+		store:   st,
+		changes: detectChanges(t, []string{"primary.yaml"}, []string{"primary.yaml"}),
+		index:   *index,
+	}
 	facts.context.Root = "/repo"
 	c := solverClosure(t, st, facts)
 	session := c.session

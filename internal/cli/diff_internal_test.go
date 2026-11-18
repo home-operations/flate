@@ -345,7 +345,7 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 			stdout, stderr, code := runCLIResult4.stdout, runCLIResult4.stderr, runCLIResult4.code
 			assert.Equal(t, code, 0)
 			assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
-			assert.Equal(t, strings.Count(stderr, "--path and --path-orig resolve to the same root"), 2)
+			assert.Equal(t, strings.Count(stderr, "current and base inputs resolve to the same root"), 2)
 			assert.Equal(t, strings.Count(stderr, "snapshot:"), 2)
 			var compact bytes.Buffer
 			assert.NoError(t, json.Compact(&compact, []byte(stdout)))

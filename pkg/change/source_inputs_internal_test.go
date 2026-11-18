@@ -20,8 +20,8 @@ func TestSet_SourceInputsIgnoreUnqualifiedCollision(t *testing.T) {
 	changes := &Set{
 		inputs: map[manifest.NamedResource]InputChange{input: {File: "inputs/optional.yaml", Unbound: true}},
 		sources: map[manifest.NamedResource]sourceDelta{
-			manifest.BootstrapSourceID: {changes: NewSet(nil)},
-			supplier:                   {changes: NewSet(nil)},
+			manifest.BootstrapSourceID: {changes: &Set{paths: map[string][2]filePresence{}}},
+			supplier:                   {changes: &Set{paths: map[string][2]filePresence{}}},
 		},
 	}
 	changes.groupSources()

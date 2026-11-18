@@ -17,7 +17,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -431,7 +430,7 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 		admissionLoader1, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
-				Changes: change.NewSet([]string{"other.yaml"}),
+				Changes: detectChanges(t, []string{"other.yaml"}, []string{"other.yaml"}),
 				Index: &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
 				},
@@ -575,7 +574,9 @@ func testExecutionDispatchCase3(t *testing.T, testCaseInput *bool,
 	predicted.Chart.Name = "predicted"
 	accepted := predicted.Clone()
 	accepted.Chart.Name = "accepted"
-	st.AddObjects([]manifest.BaseManifest{parent, predicted})
+	for _, object := range []manifest.BaseManifest{parent, predicted} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		predicted.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})

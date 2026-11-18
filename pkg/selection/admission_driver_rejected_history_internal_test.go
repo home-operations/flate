@@ -50,7 +50,9 @@ func TestAdmit_PublicationRetryDiscardsRejectedOwnerHistory(t *testing.T) {
 				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name}},
 			}
 			rejectedInput := &manifest.ConfigMap{Name: "rejected-input", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{owner, root, rejectedInput})
+			for _, object := range []manifest.BaseManifest{owner, root, rejectedInput} {
+				st.AddObject(object)
+			}
 			session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{root.Named()}})
 			borrowedOwner := tc.owner
 			borrowed := map[manifest.NamedResource]struct {

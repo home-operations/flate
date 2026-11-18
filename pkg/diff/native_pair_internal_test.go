@@ -14,7 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
+func TestComparison_ParentQualifiedMatching(t *testing.T) {
 	t.Parallel()
 	left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")
 	left.Parent = Parent{NamedResource: testutil.HelmReleaseID("apps", "a")}
@@ -22,9 +22,9 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 	for _, format := range []Format{FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea, FormatDiff, FormatHTML, FormatJSON, ""} {
 		t.Run(cmp.Or(string(format), "default"), func(t *testing.T) {
 			t.Parallel()
-			testRenderDocsParentQualifiedMatchingCase(
+			testComparisonParentQualifiedMatchingCase(
 				t,
-				&testRenderDocsParentQualifiedMatchingCaseInputs{left: &left, right: &right, format: &format},
+				&testComparisonParentQualifiedMatchingCaseInputs{left: &left, right: &right, format: &format},
 			)
 		},
 		)
@@ -32,15 +32,15 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 
 	t.Run("shared native label", func(t *testing.T) {
 		t.Parallel()
-		testRenderDocsParentQualifiedMatchingSharedNativeLabel(
+		testComparisonParentQualifiedMatchingSharedNativeLabel(
 			t,
-			&testRenderDocsParentQualifiedMatchingSharedNativeLabelInputs{left: &left, right: &right},
+			&testComparisonParentQualifiedMatchingSharedNativeLabelInputs{left: &left, right: &right},
 		)
 	},
 	)
 }
 
-func TestRenderDocs_NativePresentation(t *testing.T) {
+func TestComparison_NativePresentation(t *testing.T) {
 	t.Parallel()
 	left := []Doc{
 		ncm("b-removed", "greeting", "gone"),
@@ -92,7 +92,7 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 `
 	note := Suppression{
 		Parent: Parent{NamedResource: testutil.HelmReleaseID("apps", "owner")},
-		Side:   SideCurrent,
+		Side:   sideCurrent,
 		Count:  1,
 		Reason: "not ready",
 	}
@@ -113,28 +113,28 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 	}
 }
 
-func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
+func TestComparison_NativeCanonicalEdges(t *testing.T) {
 	t.Parallel()
 	t.Run(
 		"namespace presence",
-		func(t *testing.T) { t.Parallel(); testRenderDocsNativeCanonicalEdgesNamespacePresence(t) },
+		func(t *testing.T) { t.Parallel(); testComparisonNativeCanonicalEdgesNamespacePresence(t) },
 	)
 	t.Run(
 		"same group version",
-		func(t *testing.T) { t.Parallel(); testRenderDocsNativeCanonicalEdgesSameGroupVersion(t) },
+		func(t *testing.T) { t.Parallel(); testComparisonNativeCanonicalEdgesSameGroupVersion(t) },
 	)
 	t.Run(
 		"incomplete normalized identity",
-		func(t *testing.T) { t.Parallel(); testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t) },
+		func(t *testing.T) { t.Parallel(); testComparisonNativeCanonicalEdgesIncompleteNormalizedIdentity(t) },
 	)
 	t.Run(
 		"validation before equality",
-		func(t *testing.T) { t.Parallel(); testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t) },
+		func(t *testing.T) { t.Parallel(); testComparisonNativeCanonicalEdgesValidationBeforeEquality(t) },
 	)
-	t.Run("empty documents", func(t *testing.T) { t.Parallel(); testRenderDocsNativeCanonicalEdgesEmptyDocuments(t) })
+	t.Run("empty documents", func(t *testing.T) { t.Parallel(); testComparisonNativeCanonicalEdgesEmptyDocuments(t) })
 }
 
-func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
+func TestComparison_NativeDuplicateEdges(t *testing.T) {
 	t.Parallel()
 	for _, side := range []string{"left", "right"} {
 		for _, collision := range []bool{false, true} {
@@ -144,9 +144,9 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				testRenderDocsNativeDuplicateEdgesCase(
+				testComparisonNativeDuplicateEdgesCase(
 					t,
-					&testRenderDocsNativeDuplicateEdgesCaseInputs{side: &side, collision: &collision},
+					&testComparisonNativeDuplicateEdgesCaseInputs{side: &side, collision: &collision},
 				)
 			},
 			)
@@ -154,15 +154,15 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 	}
 }
 
-type testRenderDocsParentQualifiedMatchingCaseInputs struct {
+type testComparisonParentQualifiedMatchingCaseInputs struct {
 	left   *Doc
 	right  *Doc
 	format *Format
 }
 
-func testRenderDocsParentQualifiedMatchingCase(
+func testComparisonParentQualifiedMatchingCase(
 	t *testing.T,
-	testCaseInput *testRenderDocsParentQualifiedMatchingCaseInputs,
+	testCaseInput *testComparisonParentQualifiedMatchingCaseInputs,
 ) {
 	t.Helper()
 
@@ -179,7 +179,7 @@ func testRenderDocsParentQualifiedMatchingCase(
 		assert.Equal(t, changes[0].Status, StatusRemoved)
 		assert.Diff(t, changes[0].Old, testCaseInput.left.Manifest)
 		assert.Equal(t, changes[1].Parent, testCaseInput.right.Parent)
-		assert.Equal(t, changes[1].Status, StatusAdded)
+		assert.Equal(t, changes[1].Status, ChangeStatus("added"))
 		assert.Diff(t, changes[1].New, testCaseInput.right.Manifest)
 	case FormatBrief:
 		assert.FatalIf(t, !strings.Contains(out, "two changes detected"), "want two changes, got %q", out)
@@ -225,14 +225,14 @@ func testRenderDocsParentQualifiedMatchingCase(
 	}
 }
 
-type testRenderDocsParentQualifiedMatchingSharedNativeLabelInputs struct {
+type testComparisonParentQualifiedMatchingSharedNativeLabelInputs struct {
 	left  *Doc
 	right *Doc
 }
 
-func testRenderDocsParentQualifiedMatchingSharedNativeLabel(
+func testComparisonParentQualifiedMatchingSharedNativeLabel(
 	t *testing.T,
-	testCaseInput *testRenderDocsParentQualifiedMatchingSharedNativeLabelInputs,
+	testCaseInput *testComparisonParentQualifiedMatchingSharedNativeLabelInputs,
 ) {
 	t.Helper()
 
@@ -247,7 +247,7 @@ func testRenderDocsParentQualifiedMatchingSharedNativeLabel(
 		!strings.Contains(out, "+ new"), "want only a's change, got:\n%s", out)
 }
 
-func testRenderDocsNativeCanonicalEdgesNamespacePresence(t *testing.T) {
+func testComparisonNativeCanonicalEdgesNamespacePresence(t *testing.T) {
 	t.Helper()
 
 	for _, tc := range []struct {
@@ -278,7 +278,7 @@ func testRenderDocsNativeCanonicalEdgesNamespacePresence(t *testing.T) {
 	}
 }
 
-func testRenderDocsNativeCanonicalEdgesSameGroupVersion(t *testing.T) {
+func testComparisonNativeCanonicalEdgesSameGroupVersion(t *testing.T) {
 	t.Helper()
 
 	left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")
@@ -287,10 +287,10 @@ func testRenderDocsNativeCanonicalEdgesSameGroupVersion(t *testing.T) {
 	const want = "\n@@ apiVersion @@\n! ± value change\n- example.test/v1\n+ example.test/v2\n\n"
 	assert.Equal(t, out, want)
 	changes := jsonChanges(t, []Doc{left}, []Doc{right}, new(Options{}))
-	assert.FatalIf(t, len(changes) != 1 || changes[0].Status != StatusChanged, "version change: %+v", changes)
+	assert.FatalIf(t, len(changes) != 1 || changes[0].Status != ChangeStatus("changed"), "version change: %+v", changes)
 }
 
-func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T) {
+func testComparisonNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T) {
 	t.Helper()
 
 	for _, tc := range []struct {
@@ -330,7 +330,7 @@ func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T
 	}
 }
 
-func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
+func testComparisonNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 	t.Helper()
 
 	value := make(chan int)
@@ -346,18 +346,14 @@ func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, _, err := RenderDocs(
-				tc.left,
-				tc.right,
-				Options{
-					Format:     FormatGitHub,
-					Suppressed: []Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Reason: "not ready"}},
-				},
-			)
+			out, _, err := renderDocuments(tc.left, tc.right, new(Options{
+				Format:     FormatGitHub,
+				Suppressed: []Suppression{{Parent: helmReleaseParent(), Side: sideCurrent, Reason: "not ready"}},
+			}))
 			assert.FatalIf(
 				t,
 				out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
-				"RenderDocs = %q, %v; want nil and %s",
+				"renderDocuments = %q, %v; want nil and %s",
 				out,
 				err,
 				tc.prefix,
@@ -366,18 +362,18 @@ func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 	}
 }
 
-func testRenderDocsNativeCanonicalEdgesEmptyDocuments(t *testing.T) {
+func testComparisonNativeCanonicalEdgesEmptyDocuments(t *testing.T) {
 	t.Helper()
 
 	assert.Equal(t, renderDiff(t, []Doc{{}}, []Doc{{}}, new(Options{Format: FormatGitHub})), "")
 }
 
-type testRenderDocsNativeDuplicateEdgesCaseInputs struct {
+type testComparisonNativeDuplicateEdgesCaseInputs struct {
 	side      *string
 	collision *bool
 }
 
-func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRenderDocsNativeDuplicateEdgesCaseInputs) {
+func testComparisonNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testComparisonNativeDuplicateEdgesCaseInputs) {
 	t.Helper()
 
 	shadow, old, current := ncm(
@@ -411,12 +407,12 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 		"wrong winning content:\n%s",
 		out,
 	)
-	_, warnings, err := RenderDocs(left, right, opts)
+	_, warnings, err := renderDocuments(left, right, new(opts))
 	assert.NoError(t, err)
 	assert.Equal(t, len(warnings), 2)
-	warningSide := SideOrig
+	warningSide := sideOrig
 	if (*testCaseInput.side) == "right" {
-		warningSide = SideCurrent
+		warningSide = sideCurrent
 	}
 	{
 		warningValues := warnings
@@ -428,7 +424,7 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 }
 
 //nolint:paralleltest // Native diff writers change process-global color settings.
-func TestRenderDocs_GeneratorFormats(t *testing.T) {
+func TestComparison_GeneratorFormats(t *testing.T) {
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
 			old, current := ncm("values", "k", "before"), ncm("values", "k", "after")
@@ -437,14 +433,14 @@ func TestRenderDocs_GeneratorFormats(t *testing.T) {
 			left, right := []Doc{old, ncm("unchanged", "k", "same")}, []Doc{current, ncm("unchanged", "k", "same")}
 			for _, format := range Formats() {
 				t.Run(string(format), func(t *testing.T) {
-					testRenderDocsGeneratorFormat(t, left, right, format)
+					testComparisonGeneratorFormat(t, left, right, format)
 				})
 			}
 		})
 	}
 }
 
-func testRenderDocsGeneratorFormat(t *testing.T, left, right []Doc, format Format) {
+func testComparisonGeneratorFormat(t *testing.T, left, right []Doc, format Format) {
 	t.Helper()
 	p := prepare(left, right, &Options{})
 	count := 0
@@ -454,10 +450,10 @@ func testRenderDocsGeneratorFormat(t *testing.T, left, right []Doc, format Forma
 		assert.Equal(t, pair.Resource, manifest.DocIdentity(right[0].Manifest))
 	}
 	assert.Equal(t, count, 1)
-	first, warnings, err := RenderDocs(left, right, Options{Format: format})
+	first, warnings, err := renderDocuments(left, right, new(Options{Format: format}))
 	assert.NoError(t, err)
 	assert.Equal(t, len(warnings), 0)
-	second, _, err := RenderDocs(left, right, Options{Format: format})
+	second, _, err := renderDocuments(left, right, new(Options{Format: format}))
 	assert.NoError(t, err)
 	assert.Diff(t, second, first)
 	if format == FormatBrief {
@@ -482,6 +478,6 @@ func testRenderDocsGeneratorFormat(t *testing.T, left, right []Doc, format Forma
 	if format == FormatJSON {
 		changes := jsonChanges(t, left, right, &Options{})
 		assert.Equal(t, len(changes), 1)
-		assert.Equal(t, changes[0].Status, StatusChanged)
+		assert.Equal(t, changes[0].Status, ChangeStatus("changed"))
 	}
 }

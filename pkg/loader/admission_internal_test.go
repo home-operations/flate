@@ -119,7 +119,7 @@ func TestAdmission_EmptyDelta(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet(nil)
+	l.Options.Changes = detectChanges(t, nil, nil)
 
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -216,7 +216,7 @@ func TestAdmission_AncestorRetainsSupportRole(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet([]string{"apps/child/cm.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"apps/child/cm.yaml"}, []string{"apps/child/cm.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -278,7 +278,7 @@ func TestAdmission_MultipleReferences(t *testing.T) {
 				}
 				changes, err := change.Qualify(
 					t.Context(),
-					change.NewSet(paths), [2]*store.Store{stores[0], stores[1]},
+					detectChanges(t, paths, paths), [2]*store.Store{stores[0], stores[1]},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
@@ -428,100 +428,107 @@ func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
 	for _, scope := range []string{"namespace", "named", "all"} {
 		t.Run(scope, func(t *testing.T) {
 			t.Parallel()
-			st := store.New()
-			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
-			selected.SourceRef.Kind = manifest.KindOCIRepository
-			selected.SourceRef.Name, selected.SourceRef.Namespace = "required", "monitoring"
-			excluded := &manifest.Kustomization{Name: "excluded", Namespace: "monitoring"}
-			excluded.Path, excluded.TargetNamespace = "excluded", "monitoring"
-			required := &manifest.OCIRepository{Name: "required", Namespace: "monitoring"}
-			st.AddObjects([]manifest.BaseManifest{parent, selected})
-			l := New(st)
-
-			switch scope {
-			case "namespace":
-				root := parent.Named()
-				root.Name = ""
-				configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{root}})
-			case "named":
-				configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{parent.Named()}})
-			}
-			allChildren := scope != "namespace"
-			if l.Options.Session != nil {
-				initial, err := prepareSelection(
-					t.Context(),
-					t,
-					l,
-					selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
-				)
-				assert.NoError(t, err)
-				_, committed, err := l.commitSelection(t.Context(), t, initial, selection.Execution)
-				assert.NoError(t, err)
-				assert.Equal(t, committed, true)
-			}
-			children := make([]store.Child, 0, 3)
-			for _, obj := range []manifest.BaseManifest{selected, excluded, required} {
-				incoming := store.Child{Obj: obj, Productions: []manifest.Production{{Owner: parent.Named()}}}
-				decision := l.Options.Session.Snapshot()
-				output, needed := decision.Output(obj.Named()), decision.Reconcile(obj.Named())
-				if l.Options.Session != nil {
-					proposal, prepareErr := prepareSelection(
-						t.Context(),
-						t,
-						l,
-						selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{incoming}},
-					)
-					assert.NoError(t, prepareErr)
-					output, needed = slices.Contains(
-						proposal.Selected,
-						obj.Named(),
-					), slices.Contains(
-						proposal.Needed,
-						obj.Named(),
-					)
-				}
-				assert.Equal(t, output, obj == selected || allChildren)
-				assert.Equal(t, needed, obj != excluded || allChildren)
-				children = append(children, incoming)
-			}
-			st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Complete: true}, nil)
-
-			decision := l.Options.Session.Snapshot()
-			outputExcluded, neededExcluded := decision.Output(excluded.Named()), decision.Reconcile(excluded.Named())
-			outputRequired, neededRequired := decision.Output(required.Named()), decision.Reconcile(required.Named())
-			if l.Options.Session != nil {
-				proposal, err := prepareSelection(
-					t.Context(),
-					t,
-					l,
-					selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
-				)
-				assert.NoError(t, err)
-				outputExcluded, neededExcluded = slices.Contains(
-					proposal.Selected,
-					excluded.Named(),
-				), slices.Contains(
-					proposal.Needed,
-					excluded.Named(),
-				)
-				outputRequired, neededRequired = slices.Contains(
-					proposal.Selected,
-					required.Named(),
-				), slices.Contains(
-					proposal.Needed,
-					required.Named(),
-				)
-			}
-			assert.Equal(t, outputExcluded, allChildren)
-			assert.Equal(t, neededExcluded, allChildren)
-			assert.Equal(t, outputRequired, allChildren)
-			assert.Equal(t, neededRequired, true)
-			_, _, batch := st.GetEmission(parent.Named())
-			defer batch.Finish()
-			assert.Equal(t, len(batch.Children), 3)
+			testAdmissionEmittedNamespaceChildren(t, scope)
 		})
 	}
+}
+
+func testAdmissionEmittedNamespaceChildren(t *testing.T, scope string) {
+	t.Helper()
+	st := store.New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
+	selected.SourceRef.Kind = manifest.KindOCIRepository
+	selected.SourceRef.Name, selected.SourceRef.Namespace = "required", "monitoring"
+	excluded := &manifest.Kustomization{Name: "excluded", Namespace: "monitoring"}
+	excluded.Path, excluded.TargetNamespace = "excluded", "monitoring"
+	required := &manifest.OCIRepository{Name: "required", Namespace: "monitoring"}
+	for _, object := range []manifest.BaseManifest{parent, selected} {
+		st.AddObject(object)
+	}
+	l := New(st)
+
+	switch scope {
+	case "namespace":
+		root := parent.Named()
+		root.Name = ""
+		configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{root}})
+	case "named":
+		configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{parent.Named()}})
+	}
+	allChildren := scope != "namespace"
+	if l.Options.Session != nil {
+		initial, err := prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+		)
+		assert.NoError(t, err)
+		_, committed, err := l.commitSelection(t.Context(), t, initial, selection.Execution)
+		assert.NoError(t, err)
+		assert.Equal(t, committed, true)
+	}
+	children := make([]store.Child, 0, 3)
+	for _, obj := range []manifest.BaseManifest{selected, excluded, required} {
+		incoming := store.Child{Obj: obj, Productions: []manifest.Production{{Owner: parent.Named()}}}
+		decision := l.Options.Session.Snapshot()
+		output, needed := decision.Output(obj.Named()), decision.Reconcile(obj.Named())
+		if l.Options.Session != nil {
+			proposal, prepareErr := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{incoming}},
+			)
+			assert.NoError(t, prepareErr)
+			output, needed = slices.Contains(
+				proposal.Selected,
+				obj.Named(),
+			), slices.Contains(
+				proposal.Needed,
+				obj.Named(),
+			)
+		}
+		assert.Equal(t, output, obj == selected || allChildren)
+		assert.Equal(t, needed, obj != excluded || allChildren)
+		children = append(children, incoming)
+	}
+	st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Complete: true}, nil)
+
+	decision := l.Options.Session.Snapshot()
+	outputExcluded, neededExcluded := decision.Output(excluded.Named()), decision.Reconcile(excluded.Named())
+	outputRequired, neededRequired := decision.Output(required.Named()), decision.Reconcile(required.Named())
+	if l.Options.Session != nil {
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+		)
+		assert.NoError(t, err)
+		outputExcluded, neededExcluded = slices.Contains(
+			proposal.Selected,
+			excluded.Named(),
+		), slices.Contains(
+			proposal.Needed,
+			excluded.Named(),
+		)
+		outputRequired, neededRequired = slices.Contains(
+			proposal.Selected,
+			required.Named(),
+		), slices.Contains(
+			proposal.Needed,
+			required.Named(),
+		)
+	}
+	assert.Equal(t, outputExcluded, allChildren)
+	assert.Equal(t, neededExcluded, allChildren)
+	assert.Equal(t, outputRequired, allChildren)
+	assert.Equal(t, neededRequired, true)
+	_, _, batch := st.GetEmission(parent.Named())
+	defer batch.Finish()
+	assert.Equal(t, len(batch.Children), 3)
 }
 
 func admissionReferencePair(t *testing.T, keys []string) ([2]*store.Store, [2]*Loader) {

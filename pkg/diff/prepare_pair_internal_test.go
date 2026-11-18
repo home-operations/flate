@@ -113,9 +113,9 @@ func pairDuplicateDocumentsWarnAndLastWinsSide(t *testing.T, parent *Parent, sid
 	assert.Equal(t, pairs[0].Resource.Name, "normalized")
 	assert.Equal(t, chartLabel(retained), "")
 	assert.Equal(t, chartLabel(counterpart), "")
-	warningSide := SideOrig
+	warningSide := sideOrig
 	if (*side) == "right" {
-		warningSide = SideCurrent
+		warningSide = sideCurrent
 	}
 	assert.Diff(t, warnings, []manifest.Warning{
 		{
@@ -385,7 +385,7 @@ func TestPair_GeneratorAmbiguityAndExactPrecedence(t *testing.T) {
 			assert.Diff(t, second.Warnings, first.Warnings)
 			var output []byte
 			for run := range 2 {
-				got, warnings, err := RenderDocs(tc.old, tc.current, Options{Format: FormatDiff})
+				got, warnings, err := renderDocuments(tc.old, tc.current, new(Options{Format: FormatDiff}))
 				assert.NoError(t, err)
 				assert.Diff(t, warnings, first.Warnings)
 				if run == 0 {

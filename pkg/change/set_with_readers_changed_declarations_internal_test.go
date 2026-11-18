@@ -166,7 +166,7 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	oldReader := testutil.KustomizationID("apps", "old")
 	newReader := testutil.KustomizationID("apps", "new")
-	set := NewSet([]string{"removed.yaml"})
+	set := &Set{paths: map[string][2]filePresence{"removed.yaml": {}}}
 
 	visible := manifest.InputVisibility{
 		Source:   manifest.BootstrapSourceID,

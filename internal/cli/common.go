@@ -14,18 +14,17 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
-	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -344,6 +343,7 @@ type selectedRequest struct {
 }
 
 type selectedInvocation struct {
+	owner          *orchestrator.Invocation
 	groups         []selectedGroup
 	err, remainder error
 	elapsed        time.Duration
@@ -381,26 +381,20 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		return early(err)
 	}
 
-	ssrfguard.Restrict(c.restrictEgress)
-	owner, err := sourcecache.New(ctx, c.cacheDir)
-	if err != nil {
-		return early(err)
-	}
-	c.owner = owner
 	cfg := buildOrchCfg(c)
-	cfg.HelmClient, cfg.Network = helm.NewClient(owner), new(source.Network)
-	defer cfg.Network.Close()
-	c.network = cfg.Network
-	inv := selectedInvocation{}
+	owner, err := orchestrator.NewInvocation(ctx, cfg)
+	if err != nil {
+		return early(errors.Join(err, owner.Close()))
+	}
+	c.owner, c.network, c.gitTransports = owner.Config.Cache, owner.Config.Network, owner.Config.GitTransports
+	inv := selectedInvocation{owner: owner}
 	if err := resolveBaseline(ctx, c, req.pair); err != nil {
 		inv.failBaseline(c, req.pair, err)
 	} else {
-		inv.renderTrees(ctx, &req, &cfg)
+		inv.renderTrees(ctx, &req)
 	}
 	inv.elapsed = time.Since(start)
 	result := inv.preparePayload(&req, payload)
-	closeErr := owner.Close()
-	inv.err, inv.remainder = errors.Join(inv.err, closeErr), errors.Join(inv.remainder, closeErr)
 	return finishSelected(&req, &inv, &result)
 }
 
@@ -436,13 +430,17 @@ func finishSelected(req *selectedRequest, inv *selectedInvocation, payload *sele
 	out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
 	report.Error = diagnostic
 	writeErr := encoder.Report(&report, out)
-	final = errors.Join(final, writeErr)
-	if err := encoder.Errors(writeErr); err != nil {
+	closeErr := inv.owner.Close()
+	if closeErr != nil {
+		inv.err, inv.remainder = errors.Join(inv.err, closeErr), errors.Join(inv.remainder, closeErr)
+	}
+	final = errors.Join(final, writeErr, closeErr)
+	if err := encoder.Errors(errors.Join(writeErr, closeErr)); err != nil {
 		return errors.Join(final, err)
 	}
 	if final != nil {
-		presented := diagnostic != nil || writeErr != nil ||
-			report.Test && testReportsFailed(payload.rosters)
+		testFailureReported := report.Test && testReportsFailed(payload.rosters)
+		presented := diagnostic != nil || writeErr != nil || closeErr != nil || testFailureReported
 		presented = presented || reportHasFailures(&report)
 		if presented {
 			return reportedError{final}
@@ -749,7 +747,8 @@ const (
 	pathKey              = "path"
 )
 
-func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedRequest, cfg *orchestrator.Config) {
+func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedRequest) {
+	cfg := i.owner.Config
 	cfg.HeadOnly = !req.pair && req.flags.baseInput != nil
 	cfg.Selection.Roots = slices.Clone(req.roots)
 	if req.roots[0].Namespace == "" && cfg.Selection.Matches(manifest.NamedResource{}) {
@@ -760,12 +759,8 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 		session := barSink.progress(ctx)
 		cfg.StatusListener, stop = session.observe, session.stop
 	}
-	runs, runErr := orchestrator.RenderTrees(ctx, inputTrees(&req.flags), *cfg)
-	defer func() {
-		for _, run := range runs {
-			run.Result.Close()
-		}
-	}()
+	runErr := i.owner.Render(ctx, inputTrees(&req.flags))
+	runs := i.owner.Results
 	if stop != nil {
 		stop()
 	}

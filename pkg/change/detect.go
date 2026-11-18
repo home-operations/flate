@@ -60,15 +60,6 @@ type sourceGroup struct {
 	refs    []manifest.NamedResource
 }
 
-// NewSet supplies requested paths without admitted presence authority.
-func NewSet(paths []string) *Set {
-	out := &Set{paths: make(map[string][2]filePresence, len(paths))}
-	for _, p := range paths {
-		out.paths[filepath.ToSlash(p)] = [2]filePresence{}
-	}
-	return out
-}
-
 func (s *Set) recordPresence(scanned *scannedInputs) {
 	for side, scan := range [2]fileScan{scanned.before, scanned.after} {
 		for file, presence := range s.paths {
@@ -97,10 +88,11 @@ func Qualify(ctx context.Context, changes *Set, stores [2]*store.Store, work man
 	compared := map[readerPair]*Set{}
 	for _, id := range slices.SortedFunc(maps.Keys(ids), manifest.NamedResource.Compare) {
 		evidence := sourceEvidence(stores, id)
-		if !evidence.readable() {
-			if id == manifest.BootstrapSourceID && changes == nil {
-				return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
-			}
+		switch {
+		case evidence.readable():
+		case id == manifest.BootstrapSourceID && changes == nil:
+			return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
+		default:
 			continue
 		}
 		delta, err := changes.qualifySource(ctx, &evidence, id, work)
@@ -122,7 +114,10 @@ func Qualify(ctx context.Context, changes *Set, stores [2]*store.Store, work man
 		}
 	}
 	if out.paths == nil && changes != nil {
-		out.paths = NewSet(changes.Paths()).paths
+		out.paths = make(map[string][2]filePresence, len(changes.paths))
+		for file := range changes.paths {
+			out.paths[file] = [2]filePresence{}
+		}
 	}
 	out.groupSources()
 	return out, nil

@@ -24,12 +24,12 @@ func prepare(left, right []Doc, opts *Options) prepared {
 	idx := make(map[pairKey]int, len(left)+len(right))
 	entries := make([]pair, 0, len(left)+len(right))
 	var warnings []manifest.Warning
-	add := func(side Side, d, original Doc, pos int) {
+	add := func(side side, d, original Doc, pos int) {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		resource := manifest.DocIdentity(d.Manifest)
 		parent := d.Parent.NamedResource
 		sideIndex := 0
-		if side == SideCurrent {
+		if side == sideCurrent {
 			sideIndex = 1
 		}
 		keys := opts.producerKeys[sideIndex]
@@ -47,7 +47,7 @@ func prepare(left, right []Doc, opts *Options) prepared {
 		p.Parent = d.Parent
 		p.APIVersion = apiVersion
 		dst, dstChart, dstPos := &p.Old, &p.OldChart, &p.OldPos
-		if side == SideCurrent {
+		if side == sideCurrent {
 			dst, dstChart, dstPos = &p.New, &p.NewChart, &p.NewPos
 		}
 		if *dst != nil {
@@ -69,11 +69,11 @@ func prepare(left, right []Doc, opts *Options) prepared {
 	}
 	normalizedLeft, leftCopied := normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedLeft {
-		add(SideOrig, d, left[i], i)
+		add(sideOrig, d, left[i], i)
 	}
 	normalizedRight, rightCopied := normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedRight {
-		add(SideCurrent, d, right[i], i)
+		add(sideCurrent, d, right[i], i)
 	}
 	refineGenerated(idx, entries, [2][]Doc{left, right})
 	out := make([]pair, 0, len(idx))

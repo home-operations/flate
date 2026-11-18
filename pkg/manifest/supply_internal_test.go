@@ -109,11 +109,11 @@ func TestData_WithSuppliedEncryptedMembership(t *testing.T) {
 	const repositoryCipher = "ENC[AES256_GCM,data:repository,iv:x,tag:y,type:str]"
 	encoded := base64.StdEncoding.EncodeToString([]byte(cipher))
 	for _, supplied := range []Data{
-		NewConfigMap(NamedResource{}, map[string]any{"KEY": cipher}),
-		NewSecret(NamedResource{}, map[string]any{"KEY": encoded}, nil),
-		NewSecret(NamedResource{}, map[string]any{"KEY": base64.StdEncoding.EncodeToString([]byte("[sops]"))}, nil),
+		newConfigMap(NamedResource{}, map[string]any{"KEY": cipher}),
+		newSecret(NamedResource{}, map[string]any{"KEY": encoded}, nil),
+		newSecret(NamedResource{}, map[string]any{"KEY": base64.StdEncoding.EncodeToString([]byte("[sops]"))}, nil),
 	} {
-		for _, repository := range []Data{NewConfigMap(NamedResource{}, nil), NewSecret(NamedResource{}, nil, nil)} {
+		for _, repository := range []Data{newConfigMap(NamedResource{}, nil), newSecret(NamedResource{}, nil, nil)} {
 			before := repository.Snapshot()
 			input := supplied.Snapshot()
 			result := repository.WithSupplied(supplied)
@@ -126,7 +126,7 @@ func TestData_WithSuppliedEncryptedMembership(t *testing.T) {
 			assert.Diff(t, supplied.Snapshot(), input)
 			repeated := result.Data.WithSupplied(supplied)
 			assert.Equal(t, repeated.Data == result.Data, true)
-			replacement := result.Data.WithSupplied(NewConfigMap(NamedResource{}, map[string]any{"KEY": "readable"}))
+			replacement := result.Data.WithSupplied(newConfigMap(NamedResource{}, map[string]any{"KEY": "readable"}))
 			value, err = replacement.Data.Value("KEY")
 			assert.NoError(t, err)
 			assert.Equal(t, value, DataValue{Value: "readable", Found: true})
@@ -136,9 +136,9 @@ func TestData_WithSuppliedEncryptedMembership(t *testing.T) {
 			assert.Diff(t, collision.Overridden, []string{"KEY"})
 		}
 	}
-	repository := NewSecret(NamedResource{}, map[string]any{"KEY": repositoryCipher}, nil)
+	repository := newSecret(NamedResource{}, map[string]any{"KEY": repositoryCipher}, nil)
 	before := repository.Snapshot()
-	result := repository.WithSupplied(NewConfigMap(NamedResource{}, map[string]any{"KEY": cipher}))
+	result := repository.WithSupplied(newConfigMap(NamedResource{}, map[string]any{"KEY": cipher}))
 	assert.Equal(t, result.Data == repository, true)
 	assert.Diff(t, result.Data.Snapshot(), before)
 }

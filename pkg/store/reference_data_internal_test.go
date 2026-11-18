@@ -19,7 +19,7 @@ func TestReferenceFacts_ProjectsQualifiedNamespaceData(t *testing.T) {
 		Path:     "input.yaml",
 		File:     "input.yaml",
 	}
-	data := manifest.NewSecret(bare, nil, map[string]any{"VALUE": "offline"})
+	data := &manifest.Secret{Name: bare.Name, Namespace: bare.Namespace, StringData: map[string]any{"VALUE": "offline"}}
 	unrelated := proof
 	unrelated.Source.Name = "other"
 	candidate := manifest.ReferenceData{Production: proof, OfflineData: data}
@@ -136,7 +136,11 @@ func testReferenceFactsSourceContextWithdrawalCase(
 	artifact := &SourceArtifact{Content: "old"}
 	st.SetArtifact(source, artifact)
 	proof := manifest.Production{Owner: owner.Named(), Source: source, File: "generator.yaml"}
-	data := manifest.NewSecret(target, nil, map[string]any{"VALUE": "offline"})
+	data := &manifest.Secret{
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+		StringData: map[string]any{"VALUE": "offline"},
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		target: {
 			Productions: []manifest.Production{proof},
@@ -145,7 +149,11 @@ func testReferenceFactsSourceContextWithdrawalCase(
 			},
 		},
 	}})
-	supplied := manifest.NewSecret(target, nil, map[string]any{"VALUE": "supplied"})
+	supplied := &manifest.Secret{
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+		StringData: map[string]any{"VALUE": "supplied"},
+	}
 	st.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
 	var captured ReadSet
 	captured.Init(st, ownerID("consumer"), nil)
@@ -222,7 +230,7 @@ func TestReferenceFacts_DeclarationAndCompleteEmptyKeys(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			st := New()
-			data := manifest.NewConfigMap(manifest.NamedResource{Name: "empty", Namespace: "apps"}, nil)
+			data := &manifest.ConfigMap{Name: "empty", Namespace: "apps"}
 			if indexed {
 				st.SetDiscoveryIndex(
 					&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -291,7 +299,11 @@ func TestReferenceFacts_ProducedSupplyKeepsUnknownCoverage(t *testing.T) {
 	}})
 	st.AddDeclaration(
 		Declaration{
-			Obj:    manifest.NewSecret(target, nil, map[string]any{"FIRST": "supplied"}),
+			Obj: &manifest.Secret{
+				Name:       target.Name,
+				Namespace:  target.Namespace,
+				StringData: map[string]any{"FIRST": "supplied"},
+			},
 			Origin: manifest.SuppliedDeclaration,
 		},
 	)
@@ -304,7 +316,11 @@ func TestReferenceFacts_ProducedSupplyKeepsUnknownCoverage(t *testing.T) {
 	assert.Diff(t, facts.Keys, manifest.KeySet{Names: []string{"FIRST"}})
 	st.AddDeclaration(
 		Declaration{
-			Obj:    manifest.NewSecret(target, nil, map[string]any{"SECOND": "replacement"}),
+			Obj: &manifest.Secret{
+				Name:       target.Name,
+				Namespace:  target.Namespace,
+				StringData: map[string]any{"SECOND": "replacement"},
+			},
 			Origin: manifest.SuppliedDeclaration,
 		},
 	)
@@ -317,12 +333,8 @@ func TestReferenceFacts_SelectsOneProducerKeySet(t *testing.T) {
 	t.Parallel()
 	st := New()
 	first, second := ownerID("a"), ownerID("b")
-	st.AddObjects(
-		[]manifest.BaseManifest{
-			&manifest.Kustomization{Name: first.Name, Namespace: first.Namespace},
-			&manifest.Kustomization{Name: second.Name, Namespace: second.Namespace},
-		},
-	)
+	st.AddObject(&manifest.Kustomization{Name: first.Name, Namespace: first.Namespace})
+	st.AddObject(&manifest.Kustomization{Name: second.Name, Namespace: second.Namespace})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
 	a := manifest.Production{
 		Owner: first,

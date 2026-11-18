@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -33,12 +32,12 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 	l.SourceRoot = root
 
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"first.yaml", "second.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"first.yaml", "second.yaml"}, []string{"first.yaml", "second.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	incoming := store.Child{Obj: &manifest.Kustomization{
 		Name: "entry", Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "first"},
 			{Kind: manifest.KindConfigMap, Name: "second"},
 		}},
@@ -124,7 +123,7 @@ func TestCommit_RetiredSourceSupport(t *testing.T) {
 	l.SourceRoot = root
 
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"input.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
@@ -132,7 +131,7 @@ func TestCommit_RetiredSourceSupport(t *testing.T) {
 		Invocation: true,
 		Generation: []store.Child{{Obj: &manifest.Kustomization{
 			Name: "entry", Namespace: "apps",
-			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "input"},
 			}},
 		}, Entry: &manifest.EntryApplication{}}},
@@ -170,7 +169,7 @@ func TestCommit_RequiredClosureRetries(t *testing.T) {
 	parent := &manifest.Kustomization{
 		Name:      "entry",
 		Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "first"},
 			{Kind: manifest.KindConfigMap, Name: "second"},
 		}},
@@ -306,7 +305,7 @@ func testCommitOrdinaryNativeRoots(t *testing.T, implicit bool) {
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
 
-	l.Options.Changes = change.NewSet([]string{"shared/cm.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"shared/cm.yaml"}, []string{"shared/cm.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

@@ -283,7 +283,9 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
 	}
 	owner := &manifest.Kustomization{Name: "producer", Namespace: repo.Namespace}
-	s.AddObjects([]manifest.BaseManifest{repo, owner})
+	for _, object := range []manifest.BaseManifest{repo, owner} {
+		s.AddObject(object)
+	}
 	reconcile := func() *base.Execution {
 		var run *base.Execution
 		tasks.Go(
@@ -360,7 +362,7 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 		t.Fatalf("rerun did not wait on the captured producer: blocked=%v calls=%d", next.Blocked, f.calls)
 	}
 	assert.FatalIf(t, f.missing.Owner != missing.Owner || f.missing.Secret != missing.Secret ||
-		f.missing.Detail != "is produced in the cluster with unknown data; supply it with --supply", "%s", "rerun did not retain identities with the current unavailable cause")
+		f.missing.Detail != "is produced in the cluster with unknown data; supply a readable document", "%s", "rerun did not retain identities with the current unavailable cause")
 
 	before := authenticated.Load()
 	tasks.Go(

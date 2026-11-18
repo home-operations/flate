@@ -13,7 +13,6 @@ import (
 	internalkustomize "github.com/home-operations/flate/internal/kustomize"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -49,7 +48,7 @@ spec: {interval: 1h}
 			l.SourceRoot = root
 
 			configureSelection(t, l, selection.Request{Changed: true})
-			l.Options.Changes = change.NewSet([]string{file})
+			l.Options.Changes = detectChanges(t, []string{file}, []string{file})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -75,7 +74,9 @@ spec: {interval: 1h}
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"}
 			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./workload"}
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", owner.Named())
-			st.AddObjects([]manifest.BaseManifest{owner, child, entry})
+			for _, object := range []manifest.BaseManifest{owner, child, entry} {
+				st.AddObject(object)
+			}
 			if tc.failed {
 				st.UpdateStatus(
 					entry.Named(),
@@ -85,7 +86,7 @@ spec: {interval: 1h}
 			l := New(st)
 			l.SourceRoot = root
 
-			l.Options.Changes = change.NewSet([]string{tc.file})
+			l.Options.Changes = detectChanges(t, []string{tc.file}, []string{tc.file})
 			configureSelection(t, l, selection.Request{Changed: true})
 			l.Index = &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -135,7 +136,11 @@ spec: {path: ./workload}
 			l.SourceRoot = root
 
 			configureSelection(t, l, selection.Request{Changed: true})
-			l.Options.Changes = change.NewSet([]string{"entry/unreferenced.yaml"})
+			l.Options.Changes = detectChanges(
+				t,
+				[]string{"entry/unreferenced.yaml"},
+				[]string{"entry/unreferenced.yaml"},
+			)
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

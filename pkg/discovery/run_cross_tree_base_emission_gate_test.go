@@ -686,7 +686,9 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	if *testCaseInput.reverse {
 		slices.Reverse(objects)
 	}
-	st.AddObjects(objects)
+	for _, object := range objects {
+		st.AddObject(object)
+	}
 	{
 		_, err := discovery.Run(
 			t.Context(),

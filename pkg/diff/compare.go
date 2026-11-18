@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -182,31 +181,6 @@ func (c *Comparison) names() []Names {
 		}
 	}
 	return PrepareNames(clusters, inventory, subjects).Groups
-}
-
-func renderPrepared(p prepared, opts *Options) ([]byte, error) {
-	format := cmp.Or(opts.Format, FormatHuman)
-	out, inventory, err := prepareOutput(p, format)
-	if err != nil {
-		return nil, err
-	}
-	c := &Comparison{
-		format: format,
-		output: []preparedGroup{out},
-		Groups: []GroupResult{
-			{
-				Warnings:   p.Warnings,
-				Suppressed: slices.Clone(opts.Suppressed),
-				Subjects:   inventory.Subjects,
-			},
-		},
-	}
-	c.nativeInventory()
-	var buf bytes.Buffer
-	if err := c.Write(&buf, nil); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // MergeWarnings preserves duplicate disclosures and never mutates caller-owned slices.

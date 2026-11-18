@@ -182,7 +182,7 @@ const (
 )
 
 func stampDocument(p *EmissionPolicy, doc map[string]any) {
-	md := EnsureMetadata(doc)
+	md := ensureMetadata(doc)
 	hook := func() bool {
 		if p.HookAnnotation == "" {
 			return false
@@ -209,8 +209,8 @@ func stampDocument(p *EmissionPolicy, doc map[string]any) {
 		owner()
 	}
 	if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
-		MergeStringMap(md, "labels", p.Labels)
-		MergeStringMap(md, annotationsKey, p.Annotations)
+		mergeStringMap(md, "labels", p.Labels)
+		mergeStringMap(md, annotationsKey, p.Annotations)
 	}
 	if p.CommonFirst {
 		owner()

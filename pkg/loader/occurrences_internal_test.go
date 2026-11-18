@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -285,7 +284,7 @@ func TestEntryFailure_ChangedUnownedResource(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
-			l.Options.Changes = change.NewSet([]string{file})
+			l.Options.Changes = detectChanges(t, []string{file}, []string{file})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			err = l.EntryFailure(t.Context(), root)

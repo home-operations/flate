@@ -61,7 +61,7 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 
 func TestPlan_SharedProducerProjection(t *testing.T) {
 	t.Parallel()
-	projections := manifest.NewProducerProjections()
+	projections := new(manifest.ProducerProjections)
 	const document = `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: set, namespace: apps}

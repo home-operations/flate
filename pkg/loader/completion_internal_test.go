@@ -520,7 +520,7 @@ func TestCompleteDeclarations_UnknownAndAbsent(t *testing.T) {
 	peer.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet([]string{"input.yaml"}),
+		detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
 		[2]*store.Store{peer, l.Store},
 		manifest.WorkScope{},
 	)
@@ -530,7 +530,7 @@ func TestCompleteDeclarations_UnknownAndAbsent(t *testing.T) {
 		changes *change.Set
 		known   bool
 	}{
-		{name: "requested", changes: change.NewSet([]string{"input.yaml"})},
+		{name: "requested", changes: detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"})},
 		{name: "admitted", changes: changes, known: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

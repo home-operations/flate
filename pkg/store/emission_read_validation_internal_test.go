@@ -191,7 +191,9 @@ func testRecordEmittedRejectedSuccessorRetainsOutputReadsCase(
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	a := &manifest.ConfigMap{Name: "a", Namespace: "apps", Data: map[string]any{"value": "A"}}
 	b := &manifest.ConfigMap{Name: "b", Namespace: "apps", Data: map[string]any{"value": "B"}}
-	st.AddObjects([]manifest.BaseManifest{owner, a, b})
+	st.AddObject(owner)
+	st.AddObject(a)
+	st.AddObject(b)
 	var first, successor ReadSet
 	first.Init(st, owner.Named(), nil)
 	successor.Init(st, owner.Named(), nil)

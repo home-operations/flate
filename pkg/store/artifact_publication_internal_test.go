@@ -32,7 +32,8 @@ func TestStore_SetArtifact(t *testing.T) {
 		st := New()
 		source := &manifest.GitRepository{Name: "source"}
 		credential := &manifest.ConfigMap{Name: "credential"}
-		st.AddObjects([]manifest.BaseManifest{source, credential})
+		st.AddObject(source)
+		st.AddObject(credential)
 		var stale, valid, pending ReadSet
 		stale.Init(st, source.Named(), nil)
 		stale.GetObject(credential.Named())

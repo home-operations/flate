@@ -125,7 +125,7 @@ func testReconcileOptionalMaterializerAbsenceCase(
 		Namespace: producer.Namespace,
 		Path:      "./apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: optional.Kind, Name: optional.Name, Optional: true},
 			},
 		},
@@ -133,7 +133,7 @@ func testReconcileOptionalMaterializerAbsenceCase(
 	if testCaseInput.required {
 		ks.PostBuild.SubstituteFrom = append(
 			ks.PostBuild.SubstituteFrom,
-			manifest.SubstituteReference{Kind: required.Kind, Name: required.Name},
+			kustomizev1.SubstituteReference{Kind: required.Kind, Name: required.Name},
 		)
 	}
 	s.AddObject(ks)

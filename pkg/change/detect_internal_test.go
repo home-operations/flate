@@ -792,7 +792,7 @@ func completeTestInventory(t *testing.T, changes *Set, input *store.SourceArtifa
 
 func TestSet_Present(t *testing.T) {
 	t.Parallel()
-	requested := NewSet([]string{"same.yaml", "absent.yaml"})
+	requested := &Set{paths: map[string][2]filePresence{"same.yaml": {}, "absent.yaml": {}}}
 	for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
 		present, known := requested.Present(side, "same.yaml")
 		assert.Equal(t, present || known, false)
@@ -821,5 +821,31 @@ func TestSet_Present(t *testing.T) {
 	}
 	for _, input := range inputs {
 		assert.Equal(t, input.opens.Load()+input.lists.Load()+input.stats.Load(), int64(0))
+	}
+	for _, tc := range []struct {
+		name string
+		set  *Set
+	}{
+		{name: "requested", set: requested},
+		{name: "admitted", set: qualified},
+		{name: "empty", set: &Set{paths: map[string][2]filePresence{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			original := maps.Clone(tc.set.paths)
+			withoutSource, err := Qualify(
+				t.Context(), tc.set, [2]*store.Store{store.New(), store.New()}, manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, withoutSource.Paths(), tc.set.Paths())
+			assert.Equal(t, withoutSource.paths != nil, true)
+			for file := range original {
+				for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+					present, known := withoutSource.Present(side, file)
+					assert.Equal(t, present || known, false)
+				}
+			}
+			assert.Diff(t, tc.set.paths, original)
+		})
 	}
 }

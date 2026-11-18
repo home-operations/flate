@@ -82,7 +82,6 @@ func TestShape_BinarySubstitutionFraming(t *testing.T) {
 			assert.FatalIf(t, len(docs) != 1, "decoded %d documents", len(docs))
 			assert.NoError(t, docs[0].Err)
 			assert.Diff(t, docs[0].Document, tc.decoded)
-			assert.Equal(t, values.NeedsSubstitution(docs[0].Document), false)
 			data, err := values.SubstitutionDocument(docs[0], true)
 			assert.NoError(t, err)
 			assert.Equal(t, data != nil, tc.prepared)

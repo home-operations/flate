@@ -94,7 +94,7 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet([]string{"parent.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"})
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -146,7 +146,7 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 
-	l.Options.Changes = change.NewSet(nil)
+	l.Options.Changes = detectChanges(t, nil, nil)
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -268,7 +268,7 @@ func selectorAdmissionPair(t *testing.T, selectedSide manifest.TreeSide) (
 
 		t.Context(),
 
-		change.NewSet([]string{"chosen.yaml"}), [2]*store.Store{stores[0], stores[1]},
+		detectChanges(t, []string{"chosen.yaml"}, []string{"chosen.yaml"}), [2]*store.Store{stores[0], stores[1]},
 
 		manifest.WorkScope{},
 	)
@@ -566,7 +566,7 @@ func testSelectorVisibilityCase(t *testing.T, incoming bool, visibleSide manifes
 	provider := controls[0]
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet([]string{".krmignore"}), [2]*store.Store{stores[0], stores[1]},
+		detectChanges(t, []string{".krmignore"}, []string{".krmignore"}), [2]*store.Store{stores[0], stores[1]},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

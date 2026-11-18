@@ -17,14 +17,14 @@ func TestStore_ApplyingStatus(t *testing.T) {
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		events = append(events, payload.(StatusInfo))
 	}, false)
-	s.SetCondition(obj.Named(), readyCondition(StatusPending, "", "applying 0 objects"))
+	s.setCondition(obj.Named(), new(readyCondition(StatusPending, "", "applying 0 objects")), 0, nil)
 	s.UpdateStatus(obj.Named(), ApplyingStatus(0))
 	first, _ := s.GetStatus(obj.Named())
 	assert.Equal(t, first, ApplyingStatus(0))
 	assert.Equal(t, len(events), 1)
 	_, conditions := s.Snapshot(obj.Named(), true)
 	assert.Equal(t, conditions.Conditions[0].Message, "applying 0 objects")
-	s.SetCondition(obj.Named(), conditions.Conditions[0])
+	s.setCondition(obj.Named(), new(conditions.Conditions[0]), 0, nil)
 	assert.Equal(t, len(events), 1)
 	s.UpdateStatus(obj.Named(), ApplyingStatus(1234))
 	current, _ := s.GetStatus(obj.Named())
@@ -43,8 +43,8 @@ func TestStore_ApplyingStatus(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(encoded, &decoded))
 	assert.Equal(t, decoded.Message, "applying 1234 objects")
 	healthy := readyCondition(StatusReady, "", "healthy")
-	healthy.Type = ConditionHealthy
-	s.SetCondition(obj.Named(), healthy)
+	healthy.Type = "Healthy"
+	s.setCondition(obj.Named(), new(healthy), 0, nil)
 	afterHealthy, _ := s.GetStatus(obj.Named())
 	assert.Equal(t, afterHealthy, current)
 	var replay StatusInfo

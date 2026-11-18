@@ -14,7 +14,6 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -87,7 +86,9 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 	build := func() *loader.Loader {
 		t.Helper()
 		st := store.New()
-		st.AddObjects([]manifest.BaseManifest{source, chart, first, second})
+		for _, object := range []manifest.BaseManifest{source, chart, first, second} {
+			st.AddObject(object)
+		}
 		st.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
@@ -241,7 +242,9 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 	second := release.Clone()
 	second.Name = "second"
 	sibling := &manifest.ConfigMap{Name: "independent", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{release, second, sibling})
+	for _, object := range []manifest.BaseManifest{release, second, sibling} {
+		st.AddObject(object)
+	}
 	l := readerLoaderForFilter(
 		st,
 		map[manifest.NamedResource]string{
@@ -284,7 +287,7 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 		filter := admissiontest.Decision(
 			t,
 			admissiontest.Config{
-				Changes:   change.NewSet([]string{file}),
+				Changes:   detectChanges(t, []string{file}, []string{file}),
 				Index:     l.Index,
 				Inventory: st,
 				Root:      "",
@@ -297,7 +300,11 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
-			Changes:   change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}),
+			Changes: detectChanges(
+				t,
+				[]string{path.Join(location, "excluded/invalid.yaml")},
+				[]string{path.Join(location, "excluded/invalid.yaml")},
+			),
 			Index:     l.Index,
 			Inventory: st,
 			Root:      "",

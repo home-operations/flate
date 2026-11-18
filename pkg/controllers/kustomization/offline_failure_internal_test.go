@@ -27,7 +27,7 @@ metadata: {name: '${TOKEN}'}
 `)
 	owner := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system", Path: "./apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindSecret, Name: "input"},
 		}},
 	}
@@ -112,7 +112,7 @@ data: {number: '${READABLE}'}
 		Name: "apps", Namespace: "flux-system", Path: "./apps",
 		PostBuild: &kustomizev1.PostBuild{
 			Substitute:     map[string]string{"READABLE": "["},
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 		},
 	}
 	st.AddObject(owner)
@@ -157,7 +157,7 @@ data: {number: '${READABLE}'}
 				Name: "apps", Namespace: "flux-system", Path: "./apps",
 				PostBuild: &kustomizev1.PostBuild{
 					Substitute:     map[string]string{"READABLE": "["},
-					SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+					SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 				},
 			}
 			st.AddObject(owner)

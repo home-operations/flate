@@ -8,12 +8,11 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/orchestrator"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -120,7 +119,7 @@ func keepSetFixture(tb testing.TB, count, sides int) []orchestrator.Rendered {
 		}
 		id := manifest.TreeID{Cluster: ".", Side: side}
 		rendered, err := renderTreesForTest(tb.Context(), tb, []orchestrator.Tree{{
-			ID: id, RepoRoot: root, Path: root, ExternalChanges: change.NewSet(paths),
+			ID: id, RepoRoot: root, Path: root, ExternalChanges: detectChanges(tb, paths, paths),
 		}}, orchestrator.Config{Concurrency: 2})
 		assert.NoError(tb, err)
 		if len(rendered) != 1 || rendered[0].Absent || rendered[0].Orchestrator == nil || rendered[0].Result == nil {

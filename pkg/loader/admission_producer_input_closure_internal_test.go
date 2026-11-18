@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -41,7 +40,7 @@ func TestFilter_ReverseContentInputs(t *testing.T) {
 			f := newAdmission(
 				t,
 				admissionConfig{
-					changes:   change.NewSet([]string{"input.yaml"}),
+					changes:   detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
 					index:     index,
 					inventory: objects,
 					root:      "",
@@ -59,7 +58,7 @@ func TestFilter_ReferenceSnapshotUnchanged(t *testing.T) {
 		Name:      "app",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 			},
 		},
@@ -81,7 +80,12 @@ func TestFilter_ReferenceSnapshotUnchanged(t *testing.T) {
 	}).index()
 	newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"source.yaml"}), index: index, inventory: objects, root: ""},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"source.yaml"}, []string{"source.yaml"}),
+			index:     index,
+			inventory: objects,
+			root:      "",
+		},
 	)
 	assert.Diff(t, backing, want)
 }
@@ -156,7 +160,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 			f := newAdmission(
 				t,
 				admissionConfig{
-					changes:   change.NewSet([]string{"consumer.yaml"}),
+					changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
 					index:     idx,
 					inventory: objects,
 					root:      "",
@@ -243,7 +247,7 @@ func TestFilter_DeclarationSourceChange(t *testing.T) {
 			filter := newAdmission(
 				t,
 				admissionConfig{
-					changes:   change.NewSet([]string{"generator.yaml"}),
+					changes:   detectChanges(t, []string{"generator.yaml"}, []string{"generator.yaml"}),
 					index:     index,
 					inventory: objects,
 					root:      "",
@@ -422,7 +426,7 @@ func testFilterProducerInputClosureCase(t *testing.T, testCaseInput *struct {
 	filter := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"input.yaml"}),
+			changes:   detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
 			index:     index,
 			inventory: objects,
 			root:      "",

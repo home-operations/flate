@@ -744,7 +744,9 @@ func testControllerPrepareRequiresDeclarationCase(
 			},
 		},
 	}
-	st.AddObjects([]manifest.BaseManifest{parent, input})
+	for _, object := range []manifest.BaseManifest{parent, input} {
+		st.AddObject(object)
+	}
 	st.SetDiscoveryIndex(
 		&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

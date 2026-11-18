@@ -197,13 +197,8 @@ func (f *dependencyFailure) same(o *dependencyFailure) bool {
 // can interoperate with the rest of the K8s ecosystem.
 type Condition = metav1.Condition
 
-// Condition type identifiers used by flate. These mirror Flux's
-// conventions so a future watch-mode could publish to a real cluster
-// without translating.
-const (
-	ConditionReady   = "Ready"
-	ConditionHealthy = "Healthy"
-)
+// ConditionReady remains independent of auxiliary health conditions.
+const ConditionReady = "Ready"
 
 // Condition reasons attached to the Ready condition.
 const (
@@ -299,26 +294,6 @@ func FailureStatus(err error) StatusInfo {
 		info.failure = newDependencyFailure(dep)
 	}
 	return info
-}
-
-// SetCondition upserts cond into the resource's condition list keyed
-// by cond.Type. Dispatches a StatusUpdated event with the StatusInfo
-// rollup (derived from Ready) on every observable condition change,
-// not just Ready transitions. Listeners that only care about Ready
-// can filter on the StatusInfo payload; CEL-based ReadyExpr watchers
-// need the broader notification so a Healthy condition flip (for
-// example) wakes them.
-//
-// An identical re-write of the same condition is a no-op (no event).
-//
-// SetCondition does NOT require the object to be in the store —
-// callers may legitimately establish initial state before AddObject
-// lands (e.g. tests). The FailedResources rollup filters phantoms
-// by intersecting against the object map at read time.
-//
-//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
-func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
-	s.setCondition(id, new(cond), 0, nil)
 }
 
 func (s *Store) setCondition(
@@ -442,7 +417,7 @@ func conditionEqual(a, b Condition) bool {
 // FailedResources returns every (id, info) currently in Failed state
 // for an object that is also present in the store. The "also present"
 // gate filters phantom entries: DeleteObject wipes the conditions
-// map, but a SetCondition that lands AFTER the delete (e.g. a slow
+// map, but a condition write that lands AFTER the delete (e.g. a slow
 // reconcile goroutine writing back its terminal status) would
 // otherwise resurrect a failure entry for an id that no longer exists.
 // Conditioning on s.objects ensures FailedResources never reports a

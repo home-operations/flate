@@ -85,7 +85,7 @@ func TestPartitionEntries_Constraints(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, strings.Contains(err.Error(), tc.failure), true)
-				assert.Equal(t, strings.Contains(err.Error(), "--path"), true)
+				assert.Equal(t, strings.Contains(err.Error(), "input path"), true)
 				return
 			}
 			assert.NoError(t, err)

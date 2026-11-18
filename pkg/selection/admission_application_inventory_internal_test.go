@@ -78,7 +78,9 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 	st.SetArtifact(source.Named(), input)
 	producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}
 	other := &manifest.HelmRelease{Name: "other", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{producer, other})
+	for _, object := range []manifest.BaseManifest{producer, other} {
+		st.AddObject(object)
+	}
 	application := &manifest.RawObject{
 		APIVersion: "fluxcd.controlplane.io/v1",
 		Kind:       "FluxInstance",
@@ -130,12 +132,12 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 			Identity: application.Named(),
 			Scope:    RootScopeFacts{NamespaceEligible: true, Candidate: true},
 		}
-		current := application.Clone()
+		current := *application
+		current.Spec = manifest.DeepCopyMap(application.Spec)
 		if tc.name == "retired_static" {
-			current.Spec = manifest.DeepCopyMap(application.Spec)
 			current.Spec["sync"].(map[string]any)["path"] = "./elsewhere"
 		}
-		st.AddObject(current)
+		st.AddObject(&current)
 	}
 	if tc.fixture == "known_owner" {
 		entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).

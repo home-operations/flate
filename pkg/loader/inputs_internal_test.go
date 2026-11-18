@@ -703,7 +703,7 @@ func testFinalizeIndexConfigurationCoverageCase(
 			first[0].Count != 1 ||
 			!strings.Contains(
 				first[0].Message,
-				"flate build all without --base or --path-orig",
+				"render the full tree to inspect all inputs",
 			), "incomplete warning = %+v", first)
 	} else {
 		assert.FatalIf(t, len(first) != 0, "safe namespace wrapper warned: %+v", first)

@@ -11,7 +11,7 @@ import (
 
 func TestReadRegistration_AbsentAdmission(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"batch", "emission", "hidden-producer"} {
+	for _, mode := range []string{"direct", "emission", "hidden-producer"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testReadRegistrationAbsentAdmissionCase(t, &mode)
@@ -70,8 +70,8 @@ func testReadRegistrationAbsentAdmissionCase(
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if (*testCaseInput) == "batch" {
-			s.AddObjects([]manifest.BaseManifest{child.Obj})
+		if (*testCaseInput) == "direct" {
+			s.AddObject(child.Obj)
 		} else {
 			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
 		}

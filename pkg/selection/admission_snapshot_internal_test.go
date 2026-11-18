@@ -12,7 +12,6 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -469,7 +468,7 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 	})
 	proposal, err := session.refreshHistoryTest(
 		t.Context(), previous, PrepareRequest{
-			Invocation: true, Changes: change.NewSet(nil),
+			Invocation: true, Changes: detectChanges(t, nil, nil),
 			HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{
 				producer.Named(): {{Source: input.HistoryIdentity(manifest.BootstrapSourceID)}},
 			},
@@ -493,7 +492,9 @@ func TestAdmission_EntrySourceRefreshPrecedesMaterialization(t *testing.T) {
 			source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
 			producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}
 			credentials := &manifest.Secret{Name: "credentials", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{source, producer, credentials})
+			for _, object := range []manifest.BaseManifest{source, producer, credentials} {
+				st.AddObject(object)
+			}
 			var fetchReads store.ReadSet
 			fetchReads.Init(st, source.Named(), nil)
 			fetchReads.GetObject(credentials.Named())

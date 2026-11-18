@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -90,7 +89,7 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 		owner := &manifest.Kustomization{Name: color, Namespace: "apps"}
 		input := &manifest.ConfigMap{Name: "vars-" + color, Namespace: "apps", Data: map[string]any{"VALUE": color}}
 		owner.PostBuild = &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
 		}
 		l.Store.AddObject(owner)
 		l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
@@ -171,7 +170,7 @@ func TestFinalizeIndex_ContextualEligibility(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			owner.PostBuild = &kustomizev1.PostBuild{
 				Substitute: map[string]string{"VALUE": "known", "KEY": "role", "OP": "NotIn"},
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "unread", Optional: true},
 				},
 			}
@@ -276,7 +275,7 @@ spec:
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"work/cm.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"work/cm.yaml"}, []string{"work/cm.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.Admit(t.Context(), root))
@@ -380,7 +379,7 @@ spec: {path: ./work}
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"work/cm.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"work/cm.yaml"}, []string{"work/cm.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -424,7 +423,7 @@ func TestFinalizeIndex_MetadataKeepsScopes(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"providers/provider.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"providers/provider.yaml"}, []string{"providers/provider.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.prepareIndexScopes(t.Context(), root, false))
@@ -497,10 +496,10 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 	for _, tc := range []struct {
 		name, disabled string
 		known          bool
-		from           []manifest.SubstituteReference
+		from           []kustomizev1.SubstituteReference
 	}{
 		{name: "known", known: true},
-		{name: "unread input with defaults", from: []manifest.SubstituteReference{
+		{name: "unread input with defaults", from: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "unread"},
 		}},
 		{name: "disabled annotation", disabled: "annotations"},

@@ -13,7 +13,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -25,14 +24,14 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 	for _, tc := range []struct {
 		name, expression, value, childName string
 		published, uncertain               bool
-		from                               []manifest.SubstituteReference
+		from                               []kustomizev1.SubstituteReference
 		visits, publications               int
 	}{
 		{name: "changed", expression: "${VALUE}", value: "work", childName: "child", published: true, visits: 4, publications: 5},
 		{name: "unchanged", expression: "${VALUE}", value: "${VALUE}", childName: "child", visits: 1},
 		{
 			name: "uncertain", expression: "${UNKNOWN}", value: "work", childName: "${UNKNOWN}", published: true,
-			uncertain: true, visits: 4, publications: 5, from: []manifest.SubstituteReference{
+			uncertain: true, visits: 4, publications: 5, from: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "unread", Optional: true},
 			},
 		},
@@ -108,7 +107,7 @@ func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
 			t.Parallel()
 			l := New(store.New())
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindSecret, Name: "vars"},
 			}}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
@@ -117,11 +116,12 @@ func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
 			}
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "vars"}
 			if tc.encrypted {
-				data := manifest.NewSecret(
-					id,
-					nil,
-					map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
-				)
+				data := &manifest.Secret{
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+					Data:       nil,
+					StringData: map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
+				}
 				reader.inputs[id] = store.ReferenceFacts{Data: data, Original: data, Declared: true}
 			}
 			resolution := substitutionResolution{loader: l, provider: values.NewStoreProvider(reader)}
@@ -218,7 +218,7 @@ func TestSubstitutionResolution_InheritedBindings(t *testing.T) {
 	ancestor := &manifest.Kustomization{Name: "ancestor", Namespace: "apps"}
 	ancestor.PostBuild = &kustomizev1.PostBuild{
 		Substitute: map[string]string{"FIRST_VALUE": "one", "SECOND_VALUE": "two"},
-		SubstituteFrom: []manifest.SubstituteReference{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "unread", Optional: true},
 		},
 	}
@@ -335,7 +335,7 @@ spec:
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
-	l.Options.Changes = change.NewSet([]string{"work/cm.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"work/cm.yaml"}, []string{"work/cm.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -412,7 +412,7 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
-			l.Options.Changes = change.NewSet([]string{"apps/red/cm.yaml"})
+			l.Options.Changes = detectChanges(t, []string{"apps/red/cm.yaml"}, []string{"apps/red/cm.yaml"})
 
 			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -473,7 +473,7 @@ func TestSubstitutionResolution_UnavailableProjectionInputs(t *testing.T) {
 	l.SourceRoot = root
 	owner := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
 	owner.Path = "./work"
-	owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+	owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 		{Kind: manifest.KindConfigMap, Name: "missing"},
 	}}
 	record := manifest.DiscoveryRecord{ContentRoots: map[manifest.NamedResource][]string{
@@ -499,7 +499,7 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 				l := New(st)
 				l.SourceRoot = root
 				configureSelection(t, l, selection.Request{Changed: true})
-				l.Options.Changes = change.NewSet([]string{"flux/settings.yaml"})
+				l.Options.Changes = detectChanges(t, []string{"flux/settings.yaml"}, []string{"flux/settings.yaml"})
 
 				_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)

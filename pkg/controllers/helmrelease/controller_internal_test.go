@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	sourcecontroller "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -165,7 +164,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 				filterLoader, _ = admissiontest.New(
 					t,
 					admissiontest.Config{
-						Changes: change.NewSet(nil),
+						Changes: detectChanges(t, nil, nil),
 						Index: &manifest.DiscoveryIndex{
 							Records: map[manifest.NamedResource]manifest.DiscoveryRecord{},
 						},

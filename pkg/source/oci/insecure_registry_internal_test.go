@@ -325,21 +325,16 @@ func testFetcherInsecureRegistryFetch(
 			Duration: time.Hour,
 		},
 	}
-	hc := manifest.NewHelmChartSource(
-		sourcev1.HelmChart{
-			Name:      "app",
-			Namespace: "ns",
-			Spec: sourcev1.HelmChartSpec{
-				Chart:    "app",
-				Version:  "1.x",
-				Interval: repo.Interval,
-				SourceRef: sourcev1.LocalHelmChartSourceReference{
-					Kind: manifest.KindHelmRepository,
-					Name: repo.Name,
-				},
-			},
+	hc := &manifest.HelmChartSource{
+		Name: "app", Namespace: "ns",
+		Chart:    "app",
+		Version:  "1.x",
+		Interval: repo.Interval,
+		SourceRef: sourcev1.LocalHelmChartSourceReference{
+			Kind: manifest.KindHelmRepository,
+			Name: repo.Name,
 		},
-	)
+	}
 	reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return repo }}).readSet(
 		hc,
 	)

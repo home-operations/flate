@@ -22,7 +22,7 @@ type Doc struct {
 	Parent   Parent
 }
 
-// Options tunes Compare and RenderDocs behavior.
+// Options normalize copied documents without mutating either input snapshot.
 type Options struct {
 	subjects     [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
 	producerKeys [2]map[manifest.NamedResource]manifest.NamedResource
@@ -58,17 +58,4 @@ type Options struct {
 	// selected suppressions without modifying this slice and returns them as data.
 	// JSON also includes them in its suppressed array.
 	Suppressed []Suppression
-}
-
-// RenderDocs compares normalized documents by canonical parent and resource identity
-// and returns the formatted diff for opts.Format. Parent.Path is display metadata.
-// Native formats use dyff for content comparison and Kubernetes resource labels;
-// unified, HTML and JSON formats present the same canonical pairs.
-// Discovered warnings are returned even when formatting fails.
-//
-//nolint:gocritic // The SDK takes a value snapshot of rendering options.
-func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
-	result := prepare(left, right, &opts)
-	out, err := renderPrepared(result, &opts)
-	return out, result.Warnings, err
 }

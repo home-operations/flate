@@ -102,7 +102,7 @@ func init() {
 		)
 	}
 	kindTable[kindOCIRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
-		return NewOCIRepository(
+		return newOCIRepository(
 			sourcev1.OCIRepository{
 				Name:      id.Name,
 				Namespace: id.Namespace,
@@ -111,7 +111,7 @@ func init() {
 		)
 	}
 	kindTable[kindBucket].bindLocal = func(id NamedResource, root string) BaseManifest {
-		return NewBucket(
+		return newBucket(
 			sourcev1.Bucket{
 				Name:      id.Name,
 				Namespace: id.Namespace,

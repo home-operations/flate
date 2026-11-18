@@ -43,14 +43,14 @@ func TestCompare_OptionalBatchIdentities(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config"}
 	left := []Doc{cmDoc(&Parent{}, id, "old", "")}
 	right := []Doc{cmDoc(&Parent{}, id, "new", "")}
-	want, _, err := RenderDocs(left, right, Options{Format: FormatJSON})
+	want, _, err := renderDocuments(left, right, new(Options{Format: FormatJSON}))
 	assert.NoError(t, err)
 	expected, err := json.MarshalIndent(struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
 	}{[]Change{{
 		APIVersion: "v1", Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config",
-		Status: StatusChanged, Old: left[0].Manifest, New: right[0].Manifest,
+		Status: ChangeStatus("changed"), Old: left[0].Manifest, New: right[0].Manifest,
 	}}, []Suppression{}}, "", "  ")
 	assert.NoError(t, err)
 	assert.Diff(t, string(want), string(expected)+"\n")
@@ -119,7 +119,7 @@ func TestCompare_OptionalBatchIdentities(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(comparison.output[0].changes), 1)
 			assert.Equal(t, comparison.output[0].changes[0].Name, manifest.DocIdentity(right.Manifest).Name)
-			assert.Equal(t, comparison.output[0].changes[0].Status, StatusChanged)
+			assert.Equal(t, comparison.output[0].changes[0].Status, ChangeStatus("changed"))
 			var first, second bytes.Buffer
 			assert.NoError(t, comparison.Write(&first, nil))
 			assert.NoError(t, comparison.Write(&second, nil))
@@ -148,7 +148,7 @@ func TestCompare_InvalidBatchIdentities(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "config"}
 	doc := cmDoc(&Parent{}, id, "value", "").Manifest
-	for _, side := range []Side{SideOrig, SideCurrent} {
+	for _, side := range []side{sideOrig, sideCurrent} {
 		for _, tc := range []struct {
 			name       string
 			documents  []map[string]any
@@ -194,7 +194,7 @@ func TestCompare_InvalidBatchIdentities(t *testing.T) {
 						{Parent: objectParent(parent), Subject: subject, Side: side, Count: 1, Reason: "failed"},
 					}
 				}
-				if side == SideCurrent {
+				if side == sideCurrent {
 					group.Orig, group.Current = group.Current, group.Orig
 				}
 				before, err := json.Marshal([2][]manifest.DocumentBatch{group.Orig.Manifests, group.Current.Manifests})
@@ -279,14 +279,14 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 	assert.ErrorIf(t, len(warnings) != 0 ||
 		!slices.Equal(
 			suppressed,
-			[]Suppression{{Parent: helmReleaseParent(), Side: SideCurrent, Count: 1, Reason: "failed"}},
+			[]Suppression{{Parent: helmReleaseParent(), Side: sideCurrent, Count: 1, Reason: "failed"}},
 		), "format error lost structured suppression: %+v; warnings: %+v", suppressed, warnings)
 }
 
 func TestCompare_SuppressionSubject(t *testing.T) {
 	t.Parallel()
 	for _, applier := range []manifest.NamedResource{{}, {Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "flux-system", Name: "cluster"}} {
-		for _, side := range []Side{SideOrig, SideCurrent, SideBoth} {
+		for _, side := range []side{sideOrig, sideCurrent, sideBoth} {
 			t.Run(string(side)+"/"+applier.Name, func(t *testing.T) {
 				t.Parallel()
 				testCompareSuppressionSubjectCase(
@@ -301,7 +301,7 @@ func TestCompare_SuppressionSubject(t *testing.T) {
 
 func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	t.Parallel()
-	for _, side := range []Side{SideOrig, SideCurrent} {
+	for _, side := range []side{sideOrig, sideCurrent} {
 		t.Run(string(side), func(t *testing.T) {
 			t.Parallel()
 			left := selectedSnapshot(
@@ -326,13 +326,13 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 			unavailable := map[manifest.NamedResource]store.StatusInfo{
 				kustomizationParent().NamedResource: {Status: store.StatusFailed, Message: "failed"},
 			}
-			if side == SideOrig {
+			if side == sideOrig {
 				left.Unavailable = unavailable
 			} else {
 				right.Unavailable = unavailable
 			}
 			backing := []Suppression{
-				{Parent: helmReleaseParent(), Side: SideOrig, Count: 1, Reason: "supplied"},
+				{Parent: helmReleaseParent(), Side: sideOrig, Count: 1, Reason: "supplied"},
 				{Reason: "untouched"},
 			}
 			before := slices.Clone(backing)
@@ -386,7 +386,8 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 				notes,
 				err,
 			)
-			_, directWarnings := Changes(nil, nil, Options{Suppressed: backing[:1]})
+			comparison := prepare(nil, nil, new(Options{Suppressed: backing[:1]}))
+			directWarnings := comparison.Warnings
 			assert.ErrorIf(
 				t,
 				len(directWarnings) != 0,
@@ -460,9 +461,9 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			orig, current, side := left, right, SideCurrent
+			orig, current, reportSide := left, right, sideCurrent
 			if tc.reverse {
-				orig, current, side = right, left, SideOrig
+				orig, current, reportSide = right, left, sideOrig
 			}
 			images, notes, err := CompareImages(orig, current, selectedErr, tc.includeRemoved)
 			assert.ErrorIf(
@@ -473,7 +474,7 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 				err,
 				tc.want,
 			)
-			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: side, Count: 2, Reason: "failed"}
+			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: reportSide, Count: 2, Reason: "failed"}
 			assert.ErrorIf(
 				t,
 				!slices.Equal(notes, []Suppression{wantSuppression}),
@@ -595,7 +596,7 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 		Format: FormatJSON, StripAttrs: DefaultStripAttrs, StripFields: DefaultStripFields,
 		Normalize: func(doc map[string]any) { doc["metadata"].(map[string]any)["namespace"] = "normalized" },
 	}
-	want, _, err := RenderDocs(left, right, opts)
+	want, _, err := renderDocuments(left, right, new(opts))
 	assert.NoError(t, err)
 	comparison5, preparationErr5 := Compare([]Group{{Orig: selected[0], Current: selected[1], SelectedErr: nil}}, opts)
 	var comparisonOutput5 bytes.Buffer
@@ -622,7 +623,7 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 
 type testCompareSuppressionSubjectCaseInputs struct {
 	applier *manifest.NamedResource
-	side    *Side
+	side    *side
 }
 
 func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareSuppressionSubjectCaseInputs) {
@@ -642,10 +643,10 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 	healthy.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{helmReleaseParent().NamedResource: key}
 	orig, current := healthy, failed
 	switch *testCaseInput.side {
-	case SideOrig:
+	case sideOrig:
 		orig, current = failed, healthy
-	case SideCurrent:
-	case SideBoth:
+	case sideCurrent:
+	case sideBoth:
 		orig = failed
 	}
 	comparison6, preparationErr6 := Compare(
@@ -666,7 +667,7 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		err,
 	)
 	wantParent, wantCount := helmReleaseParent(), 1
-	if (*testCaseInput.side) == SideBoth {
+	if (*testCaseInput.side) == sideBoth {
 		wantParent, wantCount = Parent{NamedResource: key}, 0
 	}
 	if notes[0].Parent != wantParent || notes[0].Count != wantCount ||
@@ -731,7 +732,7 @@ func testCompareMixedBatchIdentities(t *testing.T, omitted int, reverse bool) {
 		expected = append(expected, Change{
 			Parent: Parent{NamedResource: parent.Named()}, APIVersion: "v1",
 			Kind: manifest.KindConfigMap, Name: ids[producer].Name,
-			Status: StatusChanged, Old: docs[0], New: docs[1],
+			Status: ChangeStatus("changed"), Old: docs[0], New: docs[1],
 		})
 	}
 	if reverse {

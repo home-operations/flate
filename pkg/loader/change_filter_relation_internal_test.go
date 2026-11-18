@@ -80,7 +80,11 @@ func TestAddEmitted_IncomingEvidence(t *testing.T) {
 			f := newAdmission(
 				t,
 				admissionConfig{
-					changes:   change.NewSet([]string{"source.yaml", "incoming.yaml"}),
+					changes: detectChanges(
+						t,
+						[]string{"source.yaml", "incoming.yaml"},
+						[]string{"source.yaml", "incoming.yaml"},
+					),
 					index:     index,
 					inventory: st,
 					root:      "/repo",
@@ -139,7 +143,11 @@ func TestIntegration_ResourceEscapeSelection(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"apps/base/postgres/cluster.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"apps/base/postgres/cluster.yaml"},
+				[]string{"apps/base/postgres/cluster.yaml"},
+			),
 			index:     l.Index,
 			inventory: st,
 			root:      root,
@@ -199,7 +207,7 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 	}
 	_, err := change.Qualify(
 		t.Context(),
-		change.NewSet(nil),
+		detectChanges(t, nil, nil),
 		[2]*store.Store{stores[0], stores[1]},
 		manifest.WorkScope{},
 	)
@@ -214,7 +222,7 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 	}
 	changes, err := change.Qualify(
 		t.Context(),
-		change.NewSet(nil),
+		detectChanges(t, nil, nil),
 		[2]*store.Store{stores[0], stores[1]},
 		manifest.WorkScope{},
 	)
@@ -241,7 +249,7 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 			Namespace: "apps",
 			Path:      "apps",
 			PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
 				},
 			},
@@ -316,7 +324,7 @@ func testFilterProducedTargetsWithoutObjectsCase(
 
 	producer := testutil.KustomizationID("apps", "producer")
 	target := manifest.NamedResource{Kind: testCaseInput.kind, Namespace: "apps", Name: "target"}
-	var obj manifest.BaseManifest = &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}}}}
+	var obj manifest.BaseManifest = &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}}}}
 	if testCaseInput.kind == manifest.KindOCIRepository {
 		target.Group = manifest.SourceDomain
 		obj = &manifest.HelmRelease{
@@ -367,7 +375,7 @@ func testFilterProducedTargetsWithoutObjectsCase(
 	}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet(changes), index: index, inventory: inventory, root: "/repo"},
+		admissionConfig{changes: detectChanges(t, changes, changes), index: index, inventory: inventory, root: "/repo"},
 	)
 	if testCaseInput.edge == "file_index_only" {
 		f.pending.Retire()
@@ -457,7 +465,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		testutil.WriteFile(t, root, "components/common/kustomization.yaml", "kind: Component\n")
 		st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 	}
-	changes := change.NewSet([]string{changed})
+	changes := detectChanges(t, []string{changed}, []string{changed})
 	if (*testCaseInput) == "paired_pinned" || (*testCaseInput) == "paired_alias" {
 		current := *st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 		before := current
@@ -469,7 +477,12 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		peer.AddObject(st.GetObject(source))
 		peer.SetArtifact(source, &before)
 		var err error
-		changes, err = change.Qualify(t.Context(), change.NewSet(nil), [2]*store.Store{peer, st}, manifest.WorkScope{})
+		changes, err = change.Qualify(
+			t.Context(),
+			detectChanges(t, nil, nil),
+			[2]*store.Store{peer, st},
+			manifest.WorkScope{},
+		)
 		assert.NoError(t, err)
 	}
 	f := newAdmission(t, admissionConfig{changes: changes, index: nil, inventory: st, root: root})
@@ -519,7 +532,7 @@ func testFilterProductionReadersSourceCoordinatesCase(
 		Name:      "consumer",
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: target.Kind, Name: target.Name}},
 		},
 	}
 	st.AddObject(consumer)
@@ -575,7 +588,7 @@ func testFilterProductionReadersSourceCoordinatesCase(
 	filter := newAdmission(
 		t,
 		admissionConfig{
-			changes:   change.NewSet([]string{"consumer.yaml"}),
+			changes:   detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}),
 			index:     index,
 			inventory: st,
 			root:      root,

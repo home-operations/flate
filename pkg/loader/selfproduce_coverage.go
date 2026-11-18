@@ -52,7 +52,7 @@ func (l *Loader) warnIncompleteProductions(incomplete map[manifest.NamedResource
 				manifest.Warning{
 					Resource: owner,
 					Category: manifest.WarnIncompleteInputCoverage,
-					Message:  "changed-only input coverage is incomplete; run flate build all without --base or --path-orig to validate the full tree",
+					Message:  "changed-only input coverage is incomplete; render the full tree to inspect all inputs",
 					Detail:   details,
 				},
 			)

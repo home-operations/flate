@@ -91,7 +91,7 @@ func TestResolveStaticValue_Activation(t *testing.T) {
 		{name: "Always empty", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, want: "./apps/red", known: true},
 		{
 			name: "unknown inputs",
-			postBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			postBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "missing"},
 			}},
 			want: "./apps/red",

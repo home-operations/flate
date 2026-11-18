@@ -25,7 +25,9 @@ func TestExecution_ProbeProviderLifetime(t *testing.T) {
 		input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{
 			"first": "a: first", "last": "a: last",
 		}}
-		st.AddObjects([]manifest.BaseManifest{owner, input})
+		for _, object := range []manifest.BaseManifest{owner, input} {
+			st.AddObject(object)
+		}
 		var previous, next Execution
 		assert.Equal(t, previous.data == nil, true)
 		first, _, err := previous.Probe(t.Context(), controller, owner, schedule.Result{})

@@ -8,7 +8,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -46,7 +45,7 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 			f := newAdmission(
 				t,
 				admissionConfig{
-					changes: change.NewSet([]string{"parent.yaml"}),
+					changes: detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 					index: new(filterFixture{
 						files:   map[manifest.NamedResource]string{parent: "parent.yaml", sibling: "sibling.yaml"},
 						objects: objects,
@@ -135,7 +134,11 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"},
+				[]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				leafKS:      "kubernetes/apps/kube-system/reloader/app/ks.yaml",
 				clusterApps: "kubernetes/flux/cluster-apps.yaml",
@@ -241,7 +244,11 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"},
+				[]string{"kubernetes/apps/kube-system/reloader/app/ocirepository.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				clusterApps:     "kubernetes/flux/cluster-apps.yaml",
 				kubeSystem:      "kubernetes/flux/kube-system.yaml",
@@ -310,7 +317,7 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"apps/database/parent.yaml"}),
+			changes: detectChanges(t, []string{"apps/database/parent.yaml"}, []string{"apps/database/parent.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
 				root:    "",

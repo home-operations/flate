@@ -7,7 +7,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -17,7 +16,7 @@ func TestAdmission_EmittedChildKeepsUnrelatedInventoryClosed(t *testing.T) {
 	st := store.New()
 	facts := &solverFacts{
 		store:   st,
-		changes: change.NewSet([]string{"apps/app-0/ks.yaml"}),
+		changes: detectChanges(t, []string{"apps/app-0/ks.yaml"}, []string{"apps/app-0/ks.yaml"}),
 		index:   manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 	}
 	facts.context.Root = "/repo"
@@ -71,7 +70,9 @@ func TestAdmission_ReferenceForecastNeedsDeclaration(t *testing.T) {
 		},
 	}}
 	st.SetDiscoveryIndex(&facts.index)
-	st.AddObjects([]manifest.BaseManifest{owner, child})
+	for _, object := range []manifest.BaseManifest{owner, child} {
+		st.AddObject(object)
+	}
 	assert.Equal(t, st.GetObject(child.Named()) == child, true)
 	assert.Equal(t, st.GetDeclaration(child.Named()) == nil, true)
 	session, err := New(st, facts, Request{Roots: []manifest.NamedResource{child.Named()}})

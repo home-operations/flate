@@ -16,11 +16,23 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
 	first := &manifest.Kustomization{Name: "z-first", Namespace: "apps"}
 	second := &manifest.Kustomization{Name: "a-second", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{first, second})
+	for _, object := range []manifest.BaseManifest{first, second} {
+		st.AddObject(object)
+	}
 	p := manifest.Production{Owner: first.Named(), Source: manifest.BootstrapSourceID, File: "first.yaml"}
 	q := manifest.Production{Owner: second.Named(), Source: manifest.BootstrapSourceID, File: "second.yaml"}
-	one := manifest.NewSecret(target, nil, map[string]any{"FIRST": "first"})
-	two := manifest.NewSecret(target, nil, map[string]any{"SECOND": "second"})
+	one := &manifest.Secret{
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+		Data:       nil,
+		StringData: map[string]any{"FIRST": "first"},
+	}
+	two := &manifest.Secret{
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+		Data:       nil,
+		StringData: map[string]any{"SECOND": "second"},
+	}
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		target: {
 			Productions: []manifest.Production{p, q},
@@ -30,7 +42,12 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 			},
 		},
 	}})
-	supplied := manifest.NewSecret(target, nil, map[string]any{"FIRST": "supplied", "EXTRA": "extra"})
+	supplied := &manifest.Secret{
+		Name:       target.Name,
+		Namespace:  target.Namespace,
+		Data:       nil,
+		StringData: map[string]any{"FIRST": "supplied", "EXTRA": "extra"},
+	}
 	st.AddDeclaration(
 		store.Declaration{
 			Obj:       supplied,
@@ -136,7 +153,7 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	next := NewStoreProvider(&fresh)
 	assert.FatalIf(t, next.Lookup(target).Data != offline, "%s", "fresh lookup lost candidate")
 
-	actual := manifest.NewConfigMap(target, map[string]any{"VALUE": "real"})
+	actual := &manifest.ConfigMap{Name: target.Name, Namespace: target.Namespace, Data: map[string]any{"VALUE": "real"}}
 	st.AddObject(actual)
 	assert.FatalIf(t, fresh.Valid(), "%s", "real data arrival did not invalidate offline capture")
 	assert.FatalIf(

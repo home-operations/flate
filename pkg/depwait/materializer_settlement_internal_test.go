@@ -103,7 +103,7 @@ func TestAvailable_CapturedProducerCauses(t *testing.T) {
 	assert.Equal(t, retained, false)
 	assert.Diff(t, got.Failed, []manifest.NamedResource{target})
 	assert.Diff(t, got.Reason, manifest.DiagnosticReason{
-		Subject: manifest.DiagnosticFor(target, nil), Message: "not found; supply it with --supply",
+		Subject: manifest.DiagnosticFor(target, nil), Message: "not found; supply a readable document",
 		Causes: []manifest.DiagnosticReason{{
 			Subject: manifest.DiagnosticFor(producer, nil),
 			Causes: []manifest.DiagnosticReason{{

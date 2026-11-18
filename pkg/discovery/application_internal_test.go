@@ -82,7 +82,12 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 		q.refresh = append(q.refresh, id)
 	}
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "settings"}
-	data := manifest.NewSecret(secret, nil, map[string]any{"VALUE": "original"})
+	data := &manifest.Secret{
+		Name:       secret.Name,
+		Namespace:  secret.Namespace,
+		Data:       nil,
+		StringData: map[string]any{"VALUE": "original"},
+	}
 	switch *testCaseInput {
 	case "supplied unchanged", "supplied changed", "supplied removed", "repository precedence":
 		evidence.Inputs = append(evidence.Inputs,
@@ -96,9 +101,12 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 				value = "changed"
 			}
 			st.AddDeclaration(store.Declaration{
-				Obj: manifest.NewSecret(secret,
-					nil,
-					map[string]any{"VALUE": value}),
+				Obj: &manifest.Secret{
+					Name:       secret.Name,
+					Namespace:  secret.Namespace,
+					Data:       nil,
+					StringData: map[string]any{"VALUE": value},
+				},
 				Origin: manifest.SuppliedDeclaration,
 			})
 		}

@@ -53,7 +53,9 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 	if !ok {
 		st = store.New()
 		if inventory != nil {
-			st.AddObjects(inventory.Objects())
+			for _, object := range inventory.Objects() {
+				st.AddObject(object)
+			}
 		}
 	}
 	if root == "" {

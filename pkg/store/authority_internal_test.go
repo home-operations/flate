@@ -30,20 +30,6 @@ func headsForTest(s *Store, id manifest.NamedResource) authorityHeads {
 	return h
 }
 
-func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
-	t.Parallel()
-	for _, batch := range []bool{false, true} {
-		t.Run(map[bool]string{false: "single", true: "batch"}[batch], func(t *testing.T) {
-			t.Parallel()
-			testReadRegistrationSameByteAuthorityTransitionsCase(
-				t,
-				&batch,
-			)
-		},
-		)
-	}
-}
-
 func TestStore_CollectionAuthority(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []bool{false, true} {
@@ -89,7 +75,7 @@ func TestStore_CollectionAuthority(t *testing.T) {
 			assert.Equal(t, s.GetObject(id), versions[1])
 			input, _, _ := s.GetEmission(id)
 			assert.Equal(t, input, versions[1])
-			s.AddObjects([]manifest.BaseManifest{versions[2]})
+			s.AddObject(versions[2])
 			assert.FatalIf(t, head() <= first, "%s", "label transition did not advance collection authority")
 			objects := s.ListObjects(id.Group, id.Kind)
 			assert.Equal(t, len(objects), 1)
@@ -200,12 +186,14 @@ func TestFamilyAuthority_CrossFamilyWithdrawalCut(t *testing.T) {
 		"%s",
 		"fixture requires different producer shards",
 	)
-	s.AddObjects([]manifest.BaseManifest{p, q})
+	s.AddObject(p)
+	s.AddObject(q)
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		p.Named(): {Productions: []manifest.Production{{Owner: q.Named(), Source: manifest.BootstrapSourceID}}},
 		q.Named(): {Productions: []manifest.Production{{Owner: p.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
-	s.AddObjects([]manifest.BaseManifest{p, q})
+	s.AddObject(p)
+	s.AddObject(q)
 	fromP, fromQ := emissionChild("from-p", "p"), emissionChild("from-q", "q")
 	emittedP := *p
 	emittedP.Path = "emitted"
@@ -245,7 +233,8 @@ func TestOfflockModel_ActivationAfterValidation(t *testing.T) {
 	s := New()
 	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	seed := &manifest.ConfigMap{Name: "leaf"}
-	s.AddObjects([]manifest.BaseManifest{p, seed})
+	s.AddObject(p)
+	s.AddObject(seed)
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		seed.Named(): {
 			Productions: []manifest.Production{
@@ -318,14 +307,16 @@ func TestFeasibility_RevisionBeforeSeparateInstall(t *testing.T) {
 	assert.Equal(t, s.GetObject(b.Obj.Named()), b.Obj)
 }
 
-func TestStore_AddObjects_LastWrite(t *testing.T) {
+func TestStore_AddObject_LastWrite(t *testing.T) {
 	t.Parallel()
 	s := New()
 	a, b := emissionChild("duplicate", "a"), emissionChild("duplicate", "b")
 	s.AddObject(a.Obj)
-	s.AddObjects([]manifest.BaseManifest{b.Obj, a.Obj})
+	s.AddObject(b.Obj)
+	s.AddObject(a.Obj)
 	assert.Equal(t, s.GetObject(a.Obj.Named()), a.Obj)
-	s.AddObjects([]manifest.BaseManifest{a.Obj, b.Obj})
+	s.AddObject(a.Obj)
+	s.AddObject(b.Obj)
 	assert.Equal(t, s.GetObject(a.Obj.Named()), b.Obj)
 }
 
@@ -334,7 +325,8 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	s := New()
 	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	seed, emitted := emissionChild("anchor", "static"), emissionChild("anchor", "emitted")
-	s.AddObjects([]manifest.BaseManifest{p, seed.Obj})
+	s.AddObject(p)
+	s.AddObject(seed.Obj)
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{emitted}, Complete: true}, nil)
 	sh := s.shardFor(seed.Obj.Named())
 	sh.mu.RLock()
@@ -500,20 +492,13 @@ func TestStore_ReadmissionExhaustionIsAtomic(t *testing.T) {
 	assert.Equal(t, info.Outcome(), OutcomeUnchanged)
 }
 
-func testReadRegistrationSameByteAuthorityTransitionsCase(
-	t *testing.T,
-	testCaseInput *bool,
-) {
-	t.Helper()
+func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
+	t.Parallel()
 
 	s := New()
 	p, q := ownerID("a"), ownerID("z")
-	s.AddObjects(
-		[]manifest.BaseManifest{
-			&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace},
-			&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace},
-		},
-	)
+	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
 	child := emissionChild("shared", "equal")
 	s.AddDeclaration(Declaration{Obj: child.Obj, Doc: child.Doc, Origin: manifest.SuppliedDeclaration})
 	s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
@@ -546,11 +531,7 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 	)
 	assert.Equal(t, second.Valid(), false)
 	third := captureReads()
-	if *testCaseInput {
-		s.AddObjects([]manifest.BaseManifest{child.Obj})
-	} else {
-		s.AddObject(child.Obj)
-	}
+	s.AddObject(child.Obj)
 	h4 := headsForTest(s, child.Obj.Named())
 	assert.FatalIf(
 		t,
@@ -560,11 +541,7 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 	)
 	assert.Equal(t, third.Valid(), false)
 	fourth := captureReads()
-	if *testCaseInput {
-		s.AddObjects([]manifest.BaseManifest{child.Obj})
-	} else {
-		s.AddObject(child.Obj)
-	}
+	s.AddObject(child.Obj)
 	assert.Equal(t, headsForTest(s, child.Obj.Named()), h4)
 	assert.Equal(t, fourth.Valid(), true)
 	s.UpdateStatus(child.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})

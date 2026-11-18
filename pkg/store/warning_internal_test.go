@@ -527,7 +527,8 @@ func TestWarnings_RetiredAuthorityFacets(t *testing.T) {
 				Namespace: "apps",
 				Labels:    map[string]string{"selected": "before"},
 			}
-			s.AddObjects([]manifest.BaseManifest{owner, input})
+			s.AddObject(owner)
+			s.AddObject(input)
 			var reads ReadSet
 			reads.Init(s, owner.Named(), nil)
 			var mutate func()

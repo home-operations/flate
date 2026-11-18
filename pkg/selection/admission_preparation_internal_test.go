@@ -10,7 +10,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -46,7 +45,7 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 		Namespace: consumer.Namespace,
 		Path:      "app",
 		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
+			SubstituteFrom: []kustomizev1.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "absent", Optional: true},
 			},
 		},
@@ -203,7 +202,9 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 	root := t.TempDir()
 	source := &manifest.GitRepository{Name: "source", Namespace: "sources"}
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
-	st.AddObjects([]manifest.BaseManifest{source, parent})
+	for _, object := range []manifest.BaseManifest{source, parent} {
+		st.AddObject(object)
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{parent.Named()}})
@@ -274,10 +275,12 @@ func TestAdmission_NewGenerationUsesCurrentProducer(t *testing.T) {
 				"metadata": map[string]any{"name": child.Name, "namespace": child.Namespace},
 				"spec":     map[string]any{"path": child.Path},
 			}
-			st.AddObjects([]manifest.BaseManifest{previous, selected})
+			for _, object := range []manifest.BaseManifest{previous, selected} {
+				st.AddObject(object)
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 
-			changes := change.NewSet(nil)
+			changes := detectChanges(t, nil, nil)
 			session := newSolverSession(t, st, changes, Request{Changed: true})
 			_, retry := publishDecision(t, session, new(Admission{
 				Needed:   []manifest.NamedResource{selected.Named()},
@@ -342,7 +345,7 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 			Namespace: consumer.Namespace,
 			Path:      "app",
 			PostBuild: &kustomizev1.PostBuild{
-				SubstituteFrom: []manifest.SubstituteReference{
+				SubstituteFrom: []kustomizev1.SubstituteReference{
 					{Kind: manifest.KindConfigMap, Name: "absent", Optional: true},
 				},
 			},
@@ -393,10 +396,7 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 		t.Fatal("an unrelated source publication invalidated the consumer's materializer proof")
 	}
 	st.UpdateStatus(requester, store.StatusInfo{Status: store.StatusReady})
-	unrelated := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "unrelated", Namespace: "apps"},
-		map[string]any{"value": "runtime"},
-	)
+	unrelated := &manifest.ConfigMap{Name: "unrelated", Namespace: "apps", Data: map[string]any{"value": "runtime"}}
 	st.AddObject(unrelated)
 	var fresh store.ReadSet
 	fresh.Init(st, requester, nil)

@@ -290,7 +290,7 @@ func testCompareInvalidOutputGroup(
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 		!errors.Is(err, selectedErr), "classified or selected error lost: %v", err)
 	assert.Equal(t, len(partial.Groups), 4)
-	note := Suppression{Parent: objectParent(producer), Subject: subject, Side: SideOrig, Count: 1, Reason: "failed"}
+	note := Suppression{Parent: objectParent(producer), Subject: subject, Side: sideOrig, Count: 1, Reason: "failed"}
 	assert.Diff(t, partial.Groups[1].Suppressed, []Suppression{note})
 	for i := range groups {
 		group := &groups[i]
@@ -333,15 +333,15 @@ func expectedPartialGroupJSON(t *testing.T, old, current []Doc, note *Suppressio
 		old    map[string]any
 		new    map[string]any
 	}{
-		{group: 0, status: StatusAdded, new: current[2].Manifest},
-		{group: 0, status: StatusChanged, old: old[1].Manifest, new: current[1].Manifest},
+		{group: 0, status: ChangeStatus("added"), new: current[2].Manifest},
+		{group: 0, status: ChangeStatus("changed"), old: old[1].Manifest, new: current[1].Manifest},
 		{group: 0, status: StatusRemoved, old: old[0].Manifest},
 		{group: 2, status: StatusRemoved, old: current[2].Manifest},
 		{group: 2, status: StatusRemoved, old: current[1].Manifest},
 		{group: 2, status: StatusRemoved, old: current[0].Manifest},
-		{group: 3, status: StatusAdded, new: old[1].Manifest},
-		{group: 3, status: StatusAdded, new: old[0].Manifest},
-		{group: 3, status: StatusAdded, new: old[2].Manifest},
+		{group: 3, status: ChangeStatus("added"), new: old[1].Manifest},
+		{group: 3, status: ChangeStatus("added"), new: old[0].Manifest},
+		{group: 3, status: ChangeStatus("added"), new: old[2].Manifest},
 	} {
 		doc := change.new
 		if doc == nil {

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -185,14 +186,15 @@ func (a *convergenceAssessment) Settle(ctx context.Context, level manifest.Drain
 }
 
 type convergenceDispatcher struct {
-	generator *Controller
-	id        manifest.NamedResource
-	consumer  *kustomization.Controller
-	source    *sourcecontroller.Controller
-	driver    manifest.NamedResource
-	drive     func(context.Context)
-	work      *generatorWork
-	sweeps    atomic.Int64
+	executions sync.Map
+	generator  *Controller
+	id         manifest.NamedResource
+	consumer   *kustomization.Controller
+	source     *sourcecontroller.Controller
+	driver     manifest.NamedResource
+	drive      func(context.Context)
+	work       *generatorWork
+	sweeps     atomic.Int64
 }
 
 func (d *convergenceDispatcher) Dispatch(
@@ -201,6 +203,7 @@ func (d *convergenceDispatcher) Dispatch(
 	level manifest.DrainLevel,
 	previous schedule.Result,
 ) schedule.Result {
+	var result schedule.Result
 	switch id {
 	case d.id:
 		d.work.dispatched.Add(1)
@@ -210,7 +213,7 @@ func (d *convergenceDispatcher) Dispatch(
 			level,
 			previous,
 		)
-		return schedule.Result{Assessment: &convergenceAssessment{Execution: assessment, work: d.work}}
+		result = schedule.Result{Assessment: &convergenceAssessment{Execution: assessment, work: d.work}}
 	case d.driver:
 		e := controllertest.NewExecution(d.generator.Controller, id)
 		e.Dispatch[*manifest.Kustomization](
@@ -222,13 +225,16 @@ func (d *convergenceDispatcher) Dispatch(
 				return ctx.Err()
 			},
 		)
-		return schedule.Result{Assessment: e}
+		result = schedule.Result{Assessment: e}
 	default:
 		if d.source.Owns(id) {
-			return schedule.Result{Assessment: d.source.ReconcileNode(ctx, id, level, previous)}
+			result = schedule.Result{Assessment: d.source.ReconcileNode(ctx, id, level, previous)}
+		} else {
+			result = schedule.Result{Assessment: d.consumer.ReconcileNode(ctx, id, level, previous)}
 		}
-		return schedule.Result{Assessment: d.consumer.ReconcileNode(ctx, id, level, previous)}
 	}
+	d.executions.Store(id, result)
+	return result
 }
 
 func (d *convergenceDispatcher) Sweep(context.Context, bool) []schedule.NodeID {

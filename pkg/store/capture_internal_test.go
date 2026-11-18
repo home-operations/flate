@@ -140,12 +140,8 @@ func TestDerivedCapture_UnselectedContributorStableCommit(t *testing.T) {
 	t.Parallel()
 	s := New()
 	a, z := ownerID("a"), ownerID("z")
-	s.AddObjects(
-		[]manifest.BaseManifest{
-			&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
-			&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
-		},
-	)
+	s.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace})
 	child := emissionChild("shared", "first")
 	s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, nil)
 	s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
@@ -174,13 +170,9 @@ func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 				s := New()
 				a, z := ownerID("a"), ownerID("z")
 				input := emissionChild("input", "old")
-				s.AddObjects(
-					[]manifest.BaseManifest{
-						&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace},
-						&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace},
-						input.Obj,
-					},
-				)
+				s.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
+				s.AddObject(&manifest.Kustomization{Name: z.Name, Namespace: z.Namespace})
+				s.AddObject(input.Obj)
 				var previous, content, contributors ReadSet
 				previous.Init(s, a, nil)
 				previous.GetObject(input.Obj.Named())

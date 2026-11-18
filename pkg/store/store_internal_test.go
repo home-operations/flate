@@ -47,19 +47,7 @@ func TestStore_Snapshot(t *testing.T) {
 func TestStore_AddObject_ContentDedup(t *testing.T) {
 	t.Parallel()
 	t.Run("document metadata", func(t *testing.T) { t.Parallel(); testStoreAddObjectContentDedupDocumentMetadata(t) })
-	for _, insert := range []struct {
-		name string
-		add  func(*Store, manifest.BaseManifest)
-	}{
-		{"single", func(s *Store, obj manifest.BaseManifest) { s.AddObject(obj) }},
-		{"batch", func(s *Store, obj manifest.BaseManifest) { s.AddObjects([]manifest.BaseManifest{obj}) }},
-	} {
-		t.Run(insert.name, func(t *testing.T) {
-			t.Parallel()
-			testStoreAddObjectContentDedupCase(t, &insert)
-		},
-		)
-	}
+	testStoreAddObjectContentDedupCase(t)
 }
 
 func TestStore_AddObject_ConcurrentDedup(t *testing.T) {
@@ -318,13 +306,14 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			candidate := base.Clone()
-			assert.Equal(t, candidate == base, false)
+			candidate := *base
+			candidate.Spec = manifest.DeepCopyMap(base.Spec)
+			assert.Equal(t, &candidate == base, false)
 			if tc.change != nil {
-				tc.change(candidate)
+				tc.change(&candidate)
 			}
-			assert.Equal(t, manifest.Equal(base, candidate), tc.equal)
-			assert.Equal(t, manifest.Equal(candidate, base), tc.equal)
+			assert.Equal(t, manifest.Equal(base, &candidate), tc.equal)
+			assert.Equal(t, manifest.Equal(&candidate, base), tc.equal)
 		})
 	}
 	assert.Diff(t, base.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
@@ -384,9 +373,11 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 	}
 }
 
-func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
+func TestRecordEmitted_DispatchesAfterAllWrites(t *testing.T) {
 	t.Parallel()
 	s := New()
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "ns"}
+	s.AddObject(producer)
 	a := newCM("a", "ns")
 	b := &manifest.RawObject{Kind: manifest.KindConfigMap, APIVersion: "example.test/v1", Name: "a", Namespace: "ns"}
 	c := &manifest.RawObject{
@@ -405,18 +396,27 @@ func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
 		assert.Equal(t, s.GetObject(idC), manifest.BaseManifest(c))
 		{
 			got := s.GetObject(idB)
-			assert.ErrorIf(t, got == nil || got.Named() != idB, "batch listener cannot see foreign sibling: %v", got)
+			assert.ErrorIf(t, got == nil || got.Named() != idB, "emission listener cannot see foreign sibling: %v", got)
 		}
 	}, false)
 
-	s.AddObjects([]manifest.BaseManifest{a, b, c})
-	s.AddObjects([]manifest.BaseManifest{newCM("a", "ns"), b.Clone(), c.Clone()})
+	s.RecordEmitted(producer.Named(), &Emission{
+		Children: []Child{{Obj: a}, {Obj: b}, {Obj: c}}, Complete: true,
+	}, nil)
+	equalB, equalC := *b, *c
+	equalB.Spec, equalC.Spec = manifest.DeepCopyMap(b.Spec), manifest.DeepCopyMap(c.Spec)
+	s.RecordEmitted(producer.Named(), &Emission{
+		Children: []Child{{Obj: newCM("a", "ns")}, {Obj: &equalB}, {Obj: &equalC}}, Complete: true,
+	}, nil)
 	assert.Diff(t, seen, map[manifest.NamedResource]int{idA: 1, idB: 1, idC: 1})
-	newVersion := b.Clone()
+	newVersion := *b
+	newVersion.Spec = manifest.DeepCopyMap(b.Spec)
 	newVersion.APIVersion = "example.test/v2"
 	assert.Equal(t, newVersion.Named(), idB)
-	s.AddObjects([]manifest.BaseManifest{newVersion})
-	assert.Equal(t, s.GetObject(idB), manifest.BaseManifest(newVersion))
+	s.RecordEmitted(producer.Named(), &Emission{
+		Children: []Child{{Obj: a}, {Obj: &newVersion}, {Obj: c}}, Complete: true,
+	}, nil)
+	assert.Equal(t, s.GetObject(idB), manifest.BaseManifest(&newVersion))
 	assert.Equal(t, len(s.ListObjects("example.test", manifest.KindConfigMap)), 1)
 	assert.Diff(t, seen, map[manifest.NamedResource]int{idA: 1, idB: 2, idC: 1})
 }
@@ -586,7 +586,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
 		statusEvents++
 	}, false)
-	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
+	s.setCondition(id, new(Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "Healthy"}), 0, nil)
 	assert.Equal(t, statusEvents, 1)
 	var observation Observation
 	_, observation = s.Snapshot(id, true)
@@ -672,11 +672,7 @@ func testStoreAddObjectContentDedupDocumentMetadata(t *testing.T) {
 	)
 }
 
-func testStoreAddObjectContentDedupCase(t *testing.T, testCaseInput *struct {
-	name string
-	add  func(*Store, manifest.BaseManifest)
-},
-) {
+func testStoreAddObjectContentDedupCase(t *testing.T) {
 	t.Helper()
 
 	for _, tc := range []struct {
@@ -700,15 +696,15 @@ func testStoreAddObjectContentDedupCase(t *testing.T, testCaseInput *struct {
 					seen++
 					assert.ErrorIf(t, s.GetObject(id) == nil, "%s", "listener cannot see rendered object")
 				}, false)
-				testCaseInput.add(s, obj)
+				s.AddObject(obj)
 				equal := obj
 				if distinct {
 					equal = tc.newObject("1")
 				}
-				testCaseInput.add(s, equal)
+				s.AddObject(equal)
 				assert.Equal(t, seen, 1)
 				changed := tc.newObject("2")
-				testCaseInput.add(s, changed)
+				s.AddObject(changed)
 				assert.Equal(t, seen, 2)
 				assert.Equal(t, s.GetObject(obj.Named()), changed)
 			})

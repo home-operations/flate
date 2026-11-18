@@ -178,10 +178,8 @@ type RegistryAccess struct {
 	Timeout        time.Duration
 }
 
-// NewOCIRepository normalizes an owned typed OCIRepository declaration.
-//
-//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
-func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
+//nolint:gocritic // The value input preserves the declaration snapshot boundary.
+func newOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
 	if cr.Spec.Verify != nil && cr.Spec.Verify.Provider == "" {
 		verify := *cr.Spec.Verify
@@ -310,7 +308,7 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
-	out := NewOCIRepository(cr)
+	out := newOCIRepository(cr)
 	var err error
 	out.references(validateSecretReference(out.Named(), &err))
 	if err != nil {
@@ -331,10 +329,8 @@ type ExternalArtifact struct {
 	sourcev1.ExternalArtifactSpec `json:",inline" yaml:",inline"`
 }
 
-// NewExternalArtifact constructs an owned typed ExternalArtifact declaration.
-//
-//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
-func NewExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
+//nolint:gocritic // The value input preserves the declaration snapshot boundary.
+func newExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
 	return &ExternalArtifact{
 		Name:                 cr.Name,
 		Namespace:            cr.Namespace,
@@ -384,7 +380,7 @@ func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	if err := decodeCR(doc, &cr, "ExternalArtifact", SourceDomain); err != nil {
 		return nil, err
 	}
-	return NewExternalArtifact(cr), nil
+	return newExternalArtifact(cr), nil
 }
 
 func (g *GitRepository) references(yield func(Reference) bool) {

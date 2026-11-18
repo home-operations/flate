@@ -498,7 +498,7 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository, admitted bool) (*ur
 				manifest.ErrInput,
 				nil,
 				fmt.Sprintf(
-					"url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
+					"url %q uses a scheme not allowed under egress restriction (only https:// and ssh:// remotes are permitted)",
 					repo.URL,
 				),
 			)

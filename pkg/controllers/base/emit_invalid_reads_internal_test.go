@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -28,7 +27,12 @@ func TestEmit_InvalidReads(t *testing.T) {
 	}
 	filterLoader, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "",
+		},
 	)
 	admissiontest.Commit(t, filterLoader.Options.Session, nil)
 	filter := filterLoader.Options.Session
@@ -70,7 +74,12 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	}
 	filterLoader, _ := admissiontest.New(
 		t,
-		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
+		admissiontest.Config{
+			Changes:   detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "",
+		},
 	)
 	admissiontest.Commit(t, filterLoader.Options.Session, nil)
 	filter := filterLoader.Options.Session
@@ -137,7 +146,9 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			st := store.New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "first"}}
-			st.AddObjects([]manifest.BaseManifest{owner, dependency})
+			for _, object := range []manifest.BaseManifest{owner, dependency} {
+				st.AddObject(object)
+			}
 			controller := New(st, nil)
 			run := newExecution(controller, owner.Named())
 			defer run.Retire()
@@ -263,7 +274,9 @@ func testFingerprintDedupAcceptedReceiptCase(
 		Namespace: "apps",
 		Data:      map[string]any{"value": "first"},
 	}
-	st.AddObjects([]manifest.BaseManifest{owner, dependency})
+	for _, object := range []manifest.BaseManifest{owner, dependency} {
+		st.AddObject(object)
+	}
 	controller := New(st, nil)
 	first := newExecution(controller, owner.Named())
 	defer first.Retire()

@@ -14,7 +14,8 @@ func TestReadSet_QualificationSettlementDemand(t *testing.T) {
 	st := New()
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	input := &manifest.ConfigMap{Name: "content", Namespace: "apps", Data: map[string]any{"value": "same"}}
-	st.AddObjects([]manifest.BaseManifest{producer, input})
+	st.AddObject(producer)
+	st.AddObject(input)
 	st.SetIncluded(producer.Named(), true, false)
 	var settled ReadSet
 	settled.Init(st, producer.Named(), nil)
@@ -89,7 +90,8 @@ func TestReadSet_QualificationRejectsStaleCapture(t *testing.T) {
 	st := New()
 	producer := &manifest.ResourceSet{Name: "producer", Namespace: "apps"}
 	input := &manifest.ConfigMap{Name: "content", Namespace: "apps", Data: map[string]any{"value": "same"}}
-	st.AddObjects([]manifest.BaseManifest{producer, input})
+	st.AddObject(producer)
+	st.AddObject(input)
 	st.SetIncluded(producer.Named(), true, false)
 	var settled ReadSet
 	settled.Init(st, producer.Named(), nil)

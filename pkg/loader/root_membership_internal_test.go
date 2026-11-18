@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -211,7 +210,7 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 func TestRootQuery_ReusesOwnership(t *testing.T) {
 	t.Parallel()
 	l, _, factory, owner, child := admissionMembershipFixture(t)
-	l.Options.Changes = change.NewSet([]string{"declarations/child.yaml"})
+	l.Options.Changes = detectChanges(t, []string{"declarations/child.yaml"}, []string{"declarations/child.yaml"})
 	record := l.Index.Records[child]
 	object := l.CatalogObject(child)
 	normal := rootQuery{loader: l}

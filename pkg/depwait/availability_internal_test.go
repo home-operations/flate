@@ -407,7 +407,8 @@ func TestAvailable_OriginalDataDoesNotCaptureProducerReadiness(t *testing.T) {
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			data := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "readable"}}
 			parent := testutil.HelmReleaseID("apps", "consumer")
-			st.AddObjects([]manifest.BaseManifest{producer, data})
+			st.AddObject(producer)
+			st.AddObject(data)
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				data.Named(): {Productions: []manifest.Production{
 					{Owner: producer.Named(), Authored: data.Named(), Path: "input.yaml"},

@@ -24,8 +24,8 @@ func cm(name, ns, key, value string) Doc {
 
 func unified(t *testing.T, left, right []Doc) string {
 	t.Helper()
-	out, _, err := RenderDocs(left, right, Options{Format: FormatDiff})
-	assert.FatalIf(t, err != nil, "RenderDocs(diff): %v", err)
+	out, _, err := renderDocuments(left, right, new(Options{Format: FormatDiff}))
+	assert.FatalIf(t, err != nil, "renderDocuments(diff): %v", err)
 	return string(out)
 }
 

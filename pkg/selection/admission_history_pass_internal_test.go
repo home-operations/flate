@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -79,7 +78,7 @@ func TestAdmission_HistoryProductionPass(t *testing.T) {
 	st := store.New()
 	facts := &solverFacts{
 		store:   st,
-		changes: change.NewSet([]string{"owner.yaml"}),
+		changes: detectChanges(t, []string{"owner.yaml"}, []string{"owner.yaml"}),
 		index:   manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 	}
 	owner := testutil.KustomizationID("apps", "owner")

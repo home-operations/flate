@@ -186,7 +186,7 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 				Operation: sourcev1.OCILayerCopy,
 			}
 		}
-		generated := NewOCIRepository(sourcev1.OCIRepository{ObjectMeta: metadata, Spec: spec})
+		generated := newOCIRepository(sourcev1.OCIRepository{ObjectMeta: metadata, Spec: spec})
 		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
 		object = generated
 	} else {
@@ -208,7 +208,7 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 				SecretRef: verify.SecretRef,
 			}
 		}
-		generated := NewHelmChartSource(sourcev1.HelmChart{ObjectMeta: metadata, Spec: spec})
+		generated := newHelmChartSource(sourcev1.HelmChart{ObjectMeta: metadata, Spec: spec})
 		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
 		object = generated
 	}
@@ -252,7 +252,7 @@ func (h *HelmChartSource) OCIRepository(repository *HelmRepository) *OCIReposito
 			ref.Tag = h.Version
 		}
 	}
-	repo := NewOCIRepository(sourcev1.OCIRepository{
+	repo := newOCIRepository(sourcev1.OCIRepository{
 		Name: h.Name, Namespace: h.Namespace,
 		Spec: sourcev1.OCIRepositorySpec{
 			URL:       strings.TrimSuffix(repository.URL, "/") + "/" + h.Chart,

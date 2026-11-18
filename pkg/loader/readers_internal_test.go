@@ -283,10 +283,10 @@ func TestFilter_UnavailableArtifactSource(t *testing.T) {
 			})
 			l.SourceRoot = root
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-			assert.Equal(t, len(l.Claims(root)), 0)
+			assert.Equal(t, len(l.claims(root)), 0)
 			assert.Equal(t, len(l.Index.Claims), 0)
 			assert.Equal(t, len(slices.Collect(l.Index.ReadersOfFile("renamed-artifact/cm.yaml"))), 0)
-			changes := change.NewSet([]string{"renamed-artifact/cm.yaml"})
+			changes := detectChanges(t, []string{"renamed-artifact/cm.yaml"}, []string{"renamed-artifact/cm.yaml"})
 			l.Options.Changes = changes
 			facts := l.SourceFacts(source.Named(), nil)
 			assert.Equal(t, facts.External, true)

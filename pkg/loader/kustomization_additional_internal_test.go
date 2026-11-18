@@ -27,13 +27,13 @@ func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Path: "./apps"}
 	st.AddObject(ks)
 	l := New(st)
-	l.Claims(root)
+	l.claims(root)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "components: [new]\n")
 	for _, tc := range []struct {
 		name, component string
 		claims          []manifest.KSClaim
 	}{
-		{"discovery snapshot", "apps/old/", l.Claims(root)},
+		{"discovery snapshot", "apps/old/", l.claims(root)},
 		{"late reporting", "apps/new/", Claims(st, root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

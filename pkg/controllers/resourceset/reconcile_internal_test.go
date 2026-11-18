@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -229,7 +228,9 @@ func testReconcileProviderInventorySettlementCase(
 	rs := selectorFixture("reader", "blue")
 	rs.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: '<< inputs.value >>'}"
 	owner := &manifest.Kustomization{Name: "providers", Namespace: "ns"}
-	st.AddObjects([]manifest.BaseManifest{rs, owner})
+	for _, object := range []manifest.BaseManifest{rs, owner} {
+		st.AddObject(object)
+	}
 	st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	a := staticRSIP("a", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "first"})
 	b := staticRSIP("b", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "second"})
@@ -249,7 +250,7 @@ func testReconcileProviderInventorySettlementCase(
 		filterLoader, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
-				Changes:   change.NewSet([]string{"reader.yaml"}),
+				Changes:   detectChanges(t, []string{"reader.yaml"}, []string{"reader.yaml"}),
 				Index:     index,
 				Inventory: st,
 				Root:      "",

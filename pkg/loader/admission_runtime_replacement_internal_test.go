@@ -43,7 +43,11 @@ func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"parent.yaml", "old-chart.yaml"}),
+			changes: detectChanges(
+				t,
+				[]string{"parent.yaml", "old-chart.yaml"},
+				[]string{"parent.yaml", "old-chart.yaml"},
+			),
 			index: new(filterFixture{files: map[manifest.NamedResource]string{
 				parent: "parent.yaml", oldSource: "old-chart.yaml",
 			}, objects: objects}).index(),
@@ -95,7 +99,7 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 	f := newAdmission(
 		t,
 		admissionConfig{
-			changes: change.NewSet([]string{"parent.yaml"}),
+			changes: detectChanges(t, []string{"parent.yaml"}, []string{"parent.yaml"}),
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{parent: "parent.yaml"},
 				objects: objects,

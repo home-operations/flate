@@ -14,22 +14,24 @@ func TestExpandPostBuildSubstituteReference_UnreadablePrecedence(t *testing.T) {
 	t.Parallel()
 	const cipher = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
 			{Kind: manifest.KindConfigMap, Name: "first"},
 			{Kind: manifest.KindSecret, Name: "later"},
 			{Kind: manifest.KindSecret, Name: "generated"},
 		},
 		Substitute: map[string]string{"INLINE": "fixed"},
 	}}
-	first := manifest.NewConfigMap(
-		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "first"},
-		map[string]any{"VALUE": "earlier", "INLINE": "earlier"},
-	)
-	later := manifest.NewSecret(
-		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "later"},
-		nil,
-		map[string]any{"VALUE": cipher, "INLINE": cipher, "READABLE": "retained"},
-	)
+	first := &manifest.ConfigMap{
+		Name:      "first",
+		Namespace: "apps",
+		Data:      map[string]any{"VALUE": "earlier", "INLINE": "earlier"},
+	}
+	later := &manifest.Secret{
+		Name:       "later",
+		Namespace:  "apps",
+		Data:       nil,
+		StringData: map[string]any{"VALUE": cipher, "INLINE": cipher, "READABLE": "retained"},
+	}
 	canonical := later.Snapshot()
 	var inputs []Result
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
@@ -76,16 +78,26 @@ func TestExpandValueReferences_OrderedUnreadableOmissions(t *testing.T) {
 		facts := store.ReferenceFacts{Generated: true}
 		switch ref.Name {
 		case "first":
-			facts.Data = manifest.NewConfigMap(
-				ref.NamedResource,
-				map[string]any{"values.yaml": "image:\n  tag: first\n"},
-			)
+			facts.Data = &manifest.ConfigMap{
+				Name:      ref.NamedResource.Name,
+				Namespace: ref.NamedResource.Namespace,
+				Data:      map[string]any{"values.yaml": "image:\n  tag: first\n"},
+			}
 			facts.Original = facts.Data
 		case "encrypted":
-			facts.Data = manifest.NewSecret(ref.NamedResource, nil, map[string]any{"values.yaml": cipher})
+			facts.Data = &manifest.Secret{
+				Name:       ref.NamedResource.Name,
+				Namespace:  ref.NamedResource.Namespace,
+				Data:       nil,
+				StringData: map[string]any{"values.yaml": cipher},
+			}
 			facts.Original = facts.Data
 		case "later":
-			facts.Data = manifest.NewConfigMap(ref.NamedResource, map[string]any{"value": "later"})
+			facts.Data = &manifest.ConfigMap{
+				Name:      ref.NamedResource.Name,
+				Namespace: ref.NamedResource.Namespace,
+				Data:      map[string]any{"value": "later"},
+			}
 			facts.Original = facts.Data
 		}
 		inputs = append(inputs, Resolve(&ResolveRequest{Reference: ref, Facts: facts}))
@@ -148,7 +160,7 @@ func TestExpansion_ReturnsCapturedFailure(t *testing.T) {
 	t.Parallel()
 	failure := manifest.NewError(manifest.ErrInvalidValuesReference, nil, "captured material failure")
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
-		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}},
 		Substitute:     map[string]string{"INLINE": "unchanged"},
 	}}
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{

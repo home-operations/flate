@@ -9,7 +9,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -91,7 +90,11 @@ func testFilterInlineOCICredentialChangeSelectsReleaseCase(
 	index := &manifest.DiscoveryIndex{Records: records}
 	f := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"credentials.yaml"}), index: index, inventory: st},
+		admissionConfig{
+			changes:   detectChanges(t, []string{"credentials.yaml"}, []string{"credentials.yaml"}),
+			index:     index,
+			inventory: st,
+		},
 	)
 	if (*testCaseInput.form) == "emitted" {
 		f.AddEmitted(parent, new(store.Child{Obj: release}), st)

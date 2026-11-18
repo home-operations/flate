@@ -31,7 +31,10 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 			t.Parallel()
 			st := store.New()
 			l := New(st)
-			l.Options.Changes = change.NewSet(nil)
+			changes, err := change.Qualify(t.Context(), detectChanges(t, nil, nil),
+				[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{})
+			assert.NoError(t, err)
+			l.Options.Changes = changes
 			l.SourceRoot = (*testCaseInput)
 			var previous fs.FS
 			var replacement *store.SourceArtifact

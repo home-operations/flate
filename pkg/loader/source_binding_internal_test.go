@@ -47,7 +47,7 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			}
 			l.Options.Changes, err = change.Qualify(
 				t.Context(),
-				change.NewSet([]string{"changed.yaml"}),
+				detectChanges(t, []string{"changed.yaml"}, []string{"changed.yaml"}),
 				stores,
 				manifest.WorkScope{},
 			)
@@ -105,7 +105,7 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			}
 			changes, err := change.Qualify(
 				t.Context(),
-				change.NewSet([]string{"apps/b/cm.yaml"}),
+				detectChanges(t, []string{"apps/b/cm.yaml"}, []string{"apps/b/cm.yaml"}),
 				stores,
 				manifest.WorkScope{},
 			)
@@ -221,7 +221,7 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 			l.Store.AddObject(declaration)
 			l.Store.SetArtifact(source, input)
 			l.Index.CompleteSources = map[manifest.NamedResource]bool{source: true}
-			l.Options.Changes = change.NewSet([]string{"before.yaml"})
+			l.Options.Changes = detectChanges(t, []string{"before.yaml"}, []string{"before.yaml"})
 			observed := l.SourceFacts(source, nil)
 			assert.Equal(t, observed.Input, input)
 			assert.Equal(t, observed.InitialKnown, false)
@@ -234,7 +234,7 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 			assert.Equal(t, previous.initial, input)
 			switch changed {
 			case "comparison":
-				l.Options.Changes = change.NewSet([]string{"after.yaml"})
+				l.Options.Changes = detectChanges(t, []string{"after.yaml"}, []string{"after.yaml"})
 			case "declaration":
 				replacement := *declaration
 				replacement.URL = "https://fixture.invalid/replacement"
@@ -341,7 +341,7 @@ func TestSourceFacts_InitializationRoutes(t *testing.T) {
 				}
 				var err error
 				l.Options.Changes, err = change.Qualify(
-					t.Context(), change.NewSet(nil), [2]*store.Store{l.Store, peer}, manifest.WorkScope{},
+					t.Context(), detectChanges(t, nil, nil), [2]*store.Store{l.Store, peer}, manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
 				l.Store.SetArtifact(source, nil)
@@ -428,8 +428,9 @@ func TestSourceFacts_ChangedFileCoordinates(t *testing.T) {
 			t.Parallel()
 			l := New(store.New())
 			l.SourceRoot = "/workspace/selected"
+			file := filepath.ToSlash(filepath.Clean(tc.file))
 			evidence := &admissionSource{
-				source: manifest.BootstrapSourceID, delta: change.NewSet([]string{tc.file}),
+				source: manifest.BootstrapSourceID, delta: detectChanges(t, []string{file}, []string{file}),
 				input:  &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: true},
 				origin: tc.origin, paired: tc.paired,
 			}
@@ -439,10 +440,14 @@ func TestSourceFacts_ChangedFileCoordinates(t *testing.T) {
 				evidence.input.InputAlias = false
 			}
 			facts := l.sourceViewFacts(evidence, true)
-			assert.Diff(t, facts.Files, []selection.SourceFile{{Path: tc.file, Indexed: tc.indexed}})
+			assert.Diff(t, facts.Files, []selection.SourceFile{{Path: file, Indexed: tc.indexed}})
+			if file != tc.file {
+				indexed, _ := evidence.input.IndexPath(l.SourceRoot, tc.file)
+				assert.Equal(t, indexed, tc.indexed)
+			}
 			again := l.sourceViewFacts(evidence, false)
 			assert.Equal(t, &facts.Files[0], &again.Files[0])
-			assert.Diff(t, evidence.delta.Paths(), []string{tc.file})
+			assert.Diff(t, evidence.delta.Paths(), []string{file})
 		})
 	}
 }

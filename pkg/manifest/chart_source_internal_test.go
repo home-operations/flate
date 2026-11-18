@@ -24,7 +24,7 @@ func TestHelmChartSource_OCIRepository(t *testing.T) {
 		Interval:      metav1.Duration{Duration: time.Hour},
 		Timeout:       &metav1.Duration{Duration: 3 * time.Minute},
 	}
-	chart := NewHelmChartSource(sourcev1.HelmChart{
+	chart := newHelmChartSource(sourcev1.HelmChart{
 		Name: "chart", Namespace: "sources",
 		Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0"},
 	})
@@ -78,7 +78,7 @@ func TestHelmChartSource_OCIRepositoryVersion(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			chart := NewHelmChartSource(
+			chart := newHelmChartSource(
 				sourcev1.HelmChart{Spec: sourcev1.HelmChartSpec{Chart: "app", Version: tc.version}},
 			)
 			got := chart.OCIRepository(&HelmRepository{URL: "oci://registry.example/charts"})
@@ -103,7 +103,7 @@ func TestHelmChartSource_OCIRepositoryTimeout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			chart := NewHelmChartSource(sourcev1.HelmChart{Spec: sourcev1.HelmChartSpec{Chart: "app"}})
+			chart := newHelmChartSource(sourcev1.HelmChart{Spec: sourcev1.HelmChartSpec{Chart: "app"}})
 			repository := &HelmRepository{URL: "oci://registry.example", Timeout: tc.timeout}
 			got := chart.OCIRepository(repository)
 			assert.Equal(t, got.OperationTimeout(), tc.want)

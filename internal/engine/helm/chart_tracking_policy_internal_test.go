@@ -36,8 +36,8 @@ func testTemplateCacheNonOCITrackingModeCase(
 		},
 		&store.SourceArtifact{Kind: (*testCaseInput), FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir},
 	)
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	var first []map[string]any
 	var key string
 	for _, disabled := range []bool{false, true} {

@@ -160,7 +160,7 @@ func testRemovedRequiredInputWork(t *testing.T, name string) {
 			[]Tree{witnessTree(root, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
-		assert.Equal(t, errors.Is(err, manifest.ErrFlux), name == "component" && side == 1)
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), side == 1)
 		full[side] = runs[0].Result
 	}
 	var previous []byte
@@ -173,7 +173,7 @@ func testRemovedRequiredInputWork(t *testing.T, name string) {
 				Selection:   selection.Request{Roots: []manifest.NamedResource{owner}},
 			},
 		)
-		assert.Equal(t, errors.Is(err, manifest.ErrFlux), name == "component")
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 		for side, run := range runs {
 			assert.Diff(
 				t,
@@ -181,15 +181,19 @@ func testRemovedRequiredInputWork(t *testing.T, name string) {
 				witnessOutput(full[side], []manifest.NamedResource{owner}),
 			)
 			want := manifest.WorkCounts{Attempts: 1, Completed: 1}
-			if name == "component" && side == 1 {
+			if side == 1 {
+				want = manifest.WorkCounts{}
+			}
+			if side == 1 && name == "component" {
 				want = manifest.WorkCounts{Attempts: 1, Failures: 1}
 			}
-			assert.Equal(t, workCounts(run.Result.Work, owner, phase), want)
-			failures := 0
-			if name == "component" && side == 1 {
-				failures = 1
+			if name == "chart-dependency" && side == 1 {
+				preparation := workCounts(run.Result.Work, owner, manifest.WorkPreparation)
+				assert.Equal(t, preparation.OwnerPrepares > 0, true)
+				assert.Equal(t, preparation.Failures, uint64(1))
 			}
-			assert.Equal(t, len(run.Result.Failed), failures)
+			assert.Equal(t, workCounts(run.Result.Work, owner, phase), want)
+			assert.Equal(t, len(run.Result.Failed), side)
 			assert.Equal(
 				t,
 				workCounts(run.Result.Work, testutil.KustomizationID("apps", "b"), manifest.WorkKustomize),

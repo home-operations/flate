@@ -18,7 +18,7 @@ import (
 func TestRecordRender_AcceptedLimit(t *testing.T) {
 	t.Parallel()
 	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
-	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)

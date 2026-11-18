@@ -53,7 +53,7 @@ func testRecordRenderCapturedEmission(t *testing.T, branch, capture string) {
 	t.Helper()
 	c, st := newTestController(t, nil)
 	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
-	c.Helm = helm.NewClient(c.Cache)
+	c.Helm = helm.NewClient(c.Cache, nil)
 	root := testutil.WriteTree(t, map[string]string{
 		"chart/Chart.yaml": "apiVersion: v2\nname: fixture\nversion: 1.0.0\n",
 		"chart/templates/child.yaml": testutil.KustomizationYAML(
@@ -83,7 +83,7 @@ func testRecordRenderCapturedEmission(t *testing.T, branch, capture string) {
 		t.Context(),
 		owner,
 		nil,
-		helm.RenderOptions{Sources: helm.NewSources(&first.run.Reads)},
+		helm.RenderOptions{Sources: helm.NewSources(&first.run.Reads, nil)},
 	)
 	assert.NoError(t, err)
 	publisher, ok := receipt.Value().(interface {
@@ -128,7 +128,7 @@ func testRecordRenderCapturedEmission(t *testing.T, branch, capture string) {
 		t.Context(),
 		owner,
 		nil,
-		helm.RenderOptions{Sources: helm.NewSources(&current.run.Reads)},
+		helm.RenderOptions{Sources: helm.NewSources(&current.run.Reads, nil)},
 	)
 	assert.NoError(t, err)
 	attempt := store.Emission{Render: receipt}

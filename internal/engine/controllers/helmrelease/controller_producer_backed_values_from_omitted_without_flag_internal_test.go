@@ -221,7 +221,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	}
 	st.AddObject(src)
 
-	resolver := helm.NewSources(c.Store)
+	resolver := helm.NewSources(c.Store, nil)
 	got := resolver.Declaration(src.Named()).(*manifest.HelmChartSource)
 	if got == nil {
 		t.Fatalf("resolver.HelmChart(%q, %q) returned nil; expected the just-added source", src.Namespace, src.Name)

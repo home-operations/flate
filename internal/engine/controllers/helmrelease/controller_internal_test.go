@@ -61,9 +61,9 @@ func newTestControllerWithOptions(t *testing.T, opts *base.Options) (*Controller
 	}
 	ts := task.NewBounded(2)
 	owner := cachetest.New(t, "", sourcecache.New)
-	hc := helm.NewClient(owner)
+	hc := helm.NewClient(owner, nil)
 	controller := base.New(st, ts)
-	c := New(controller, hc, helm.Options{})
+	c := New(controller, hc, helm.Options{}, nil)
 	assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
 	configured := *opts
 	configured.Cache = owner

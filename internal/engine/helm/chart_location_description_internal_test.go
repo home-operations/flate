@@ -32,8 +32,8 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	for _, location := range []string{"first", "second"} {
 		request := hr.Clone()
 		request.Chart.Name = location

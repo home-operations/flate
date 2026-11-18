@@ -62,7 +62,7 @@ func testPrepareTemplateInputGeneration(t *testing.T, first string) {
 				"{{ .Values.marker | quote }}}\n",
 		},
 	)
-	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	hr := newHR()
 	hr.ChartValuesFiles = []string{"outer.yaml"}
 	var recorder manifest.WorkRecorder
@@ -141,7 +141,7 @@ func TestPrepareTemplate_MutableSuppliedValues(t *testing.T) {
 			root := testutil.WriteTree(t, map[string]string{
 				"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 			})
-			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			hr := newHR()
 			var preparation Preparation
 			defer func() { preparation = Preparation{} }()
@@ -174,7 +174,7 @@ func TestPrepareTemplate_RetainedValuesReplacement(t *testing.T) {
 		t,
 		map[string]string{"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n"},
 	)
-	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	hr := newHR()
 	var preparation, successor Preparation
 	defer func() { preparation = Preparation{} }()
@@ -223,13 +223,13 @@ func TestPrepareTemplate_SourceBinding(t *testing.T) {
 				Content: "immutable", Digest: digest, Revision: "6.15.0@" + digest,
 			}
 			sources.SetArtifact(hr.ChartSource(), original)
-			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			var preparation Preparation
 			defer func() { preparation = Preparation{} }()
 			var recorder manifest.WorkRecorder
 			recorder.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
 			input := RenderOptions{
-				Preparation: &preparation, Sources: NewSources(sources), Work: recorder.Scope().RenderWork(),
+				Preparation: &preparation, Sources: NewSources(sources, nil), Work: recorder.Scope().RenderWork(),
 				DisableChartDigestTracking: disabled,
 			}
 			first, err := client.prepareTemplate(t.Context(), hr, nil, &input)
@@ -258,7 +258,7 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	root := testutil.WriteTree(t, map[string]string{
 		"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 	})
-	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	hr := newHR()
 	assert.Equal(t, hr.TracksDigest(), false)
 	sources := store.New()
@@ -274,7 +274,7 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 	defer func() { preparation = Preparation{} }()
 	input := RenderOptions{
 		Preparation: &preparation,
-		Sources:     NewSources(sources),
+		Sources:     NewSources(sources, nil),
 		SkipKinds:   []string{"Pod"},
 		Work:        recorder.Scope().RenderWork(),
 	}

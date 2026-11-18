@@ -151,7 +151,12 @@ items:
 	hr := newHR()
 	hr.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
 	out, _, err := NewClient(
-		cachetest.New(t, "", sourcecache.New),
+		cachetest.New(
+			t,
+			"",
+			sourcecache.New,
+		),
+		nil,
 	).Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	assert.NoError(t, err)
 	names := make([]string, 0, len(out))
@@ -198,7 +203,7 @@ func TestTemplate_RetainsFailedStream(t *testing.T) {
 		"mychart/templates/output.yaml",
 		"null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata: {key: first, key: duplicate}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\n",
 	)
-	client := NewClient(cachetest.New(t, "", sourcecache.New))
+	client := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	var diagnostic string
 	for _, phase := range []string{"cold", "repeat"} {
@@ -249,7 +254,7 @@ func testTemplateEmittedListsCase(t *testing.T, testCaseInput *struct {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/list.yaml", testCaseInput.input)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	docs, _, err := testutil.RenderMaps(
 		cli.Template(
 			t.Context(),

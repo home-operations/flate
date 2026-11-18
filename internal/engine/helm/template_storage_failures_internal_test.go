@@ -52,7 +52,7 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	}
 	root := t.TempDir()
 	owner := cachetest.New(t, root, cache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", chartDir)
 	hr := newHR()
 	var contentKey string
@@ -88,7 +88,7 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
 			assert.NoError(t, os.Remove(blob))
 			assert.NoError(t, os.Mkdir(blob, 0o750))
-			cli = NewClient(owner)
+			cli = NewClient(owner, nil)
 			cliSources = localChartResolver(t, "chart-repo", "flux-system", chartDir)
 		} else {
 			assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)

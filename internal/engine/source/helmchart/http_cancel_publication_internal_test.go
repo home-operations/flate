@@ -12,17 +12,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func testFetchHTTPChartCancellationDoesNotPublishCase(
 	t *testing.T, backing *string,
 	endpoint *string,
+	route string,
 ) {
 	t.Helper()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
@@ -52,6 +56,20 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 	r := httpRepo(srv.URL)
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return r }}
 	f := New(nil, Config{Cache: c, Network: newTestNetwork(t)})
+	fetch := f.Fetch
+	if route == "dependency" {
+		fetch = func(ctx context.Context, obj *manifest.HelmChartSource, reads *store.ReadSet, policy *sourcecache.Policy) (source.PreparedFetch, error) {
+			return f.FetchDependency(
+				ctx,
+				obj.Namespace,
+				&chart.Dependency{Name: obj.Chart, Version: obj.Version, Repository: srv.URL},
+				nil,
+				reads,
+				policy,
+				false,
+			)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -59,7 +77,7 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 	go func() {
 		_, err := fetchtest.Fetch(
 			ctx,
-			f.Fetch,
+			fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
@@ -91,7 +109,7 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 	}
 	art, err := fetchtest.Fetch(
 		t.Context(),
-		f.Fetch,
+		fetch,
 		helmChart("repo", "app-template", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 		&sourcecache.Policy{},

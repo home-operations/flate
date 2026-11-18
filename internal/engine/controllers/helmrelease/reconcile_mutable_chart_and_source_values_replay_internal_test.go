@@ -330,7 +330,7 @@ func testReconcileUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, t
 	c, st := newTestController(t, nil)
 	cacheDir := t.TempDir()
 	c.Cache = cachetest.New(t, cacheDir, sourcecache.New)
-	c.Helm = helm.NewClient(c.Cache)
+	c.Helm = helm.NewClient(c.Cache, nil)
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(
@@ -409,13 +409,13 @@ func testReconcileUnreadableParentDoesNotFillRequiredValuesCase1(t *testing.T, t
 		t.Parallel()
 		reason := sourcecache.RenderPersistenceDisabledReason()
 		t.Logf("render persistence reason=%q backing=disk", reason)
-		fresh := helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
+		fresh := helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New), nil)
 		for _, inputs := range []map[string]any{original.Values, {"required": "invalid"}} {
 			if _, complete := fresh.PreviousRender(
 				t.Context(),
 				hr,
 				inputs,
-				helm.RenderOptions{Sources: helm.NewSources(st)},
+				helm.RenderOptions{Sources: helm.NewSources(st, nil)},
 			); complete {
 				t.Errorf("failed chart has successful history for values %#v", inputs)
 			}

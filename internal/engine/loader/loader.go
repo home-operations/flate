@@ -290,18 +290,6 @@ func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRe
 	return child
 }
 
-// References yields immutable authored reference evidence without hydrating its declaration.
-func (l *Loader) References(id manifest.NamedResource) iter.Seq[manifest.Reference] {
-	if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
-		return manifest.References(record.Declaration, manifest.ReferenceRelations)
-	}
-	if occurrence, ok := l.catalogOccurrence(id); ok && !l.documents.eager {
-		return occurrence.references()
-	}
-	record, _ := l.Index.Lookup(id)
-	return manifest.References(l.IndexedObject(id, record).Obj, manifest.ReferenceRelations)
-}
-
 // Load records Flux objects under root by walking the kustomize
 // resource graph. When root has a kustomization.yaml it's treated as
 // a kustomize package and only files reachable through `resources:`

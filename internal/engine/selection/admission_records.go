@@ -29,27 +29,31 @@ func (c *admissionClosure) references(
 	obj manifest.BaseManifest,
 ) iter.Seq[manifest.Reference] {
 	return func(yield func(manifest.Reference) bool) {
-		var refs iter.Seq[manifest.Reference]
-		if occurrence, authored := c.projectedOccurrence(id, obj); authored {
-			refs = occurrence.references()
-		} else if obj == nil {
-			c.yieldIndexedReferences(id, yield)
-			return
-		} else {
-			refs = manifest.References(obj, manifest.ReferenceRelations)
-		}
-		for ref := range refs {
-			if !yield(ref) {
-				return
-			}
-		}
-		if obj != nil && (c.incoming(id).Obj == nil) {
-			for ref := range c.historicalReferences(id) {
-				if !yield(ref) {
-					return
-				}
-			}
-		}
+		c.yieldReferences(id, obj, yield)
+	}
+}
+
+func (c *admissionClosure) yieldReferences(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	yield func(manifest.Reference) bool,
+) {
+	occurrence, authored := c.projectedOccurrence(id, obj)
+	if !authored && obj == nil {
+		c.yieldIndexedReferences(id, yield)
+		return
+	}
+	active := true
+	if authored {
+		active = occurrence.references(yield)
+	} else {
+		manifest.References(obj, manifest.ReferenceRelations)(func(ref manifest.Reference) bool {
+			active = yield(ref)
+			return active
+		})
+	}
+	if active && obj != nil && c.incoming(id).Obj == nil {
+		c.yieldHistoricalReferences(id, yield)
 	}
 }
 
@@ -57,14 +61,19 @@ func (c *admissionClosure) projectedOccurrence(
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
 ) (OccurrenceFacts, bool) {
-	if c.incoming(id).Obj != nil || c.facts.SelectionIndex().Records[id].Builder != "" {
+	if c.incoming(id).Obj != nil {
 		return OccurrenceFacts{}, false
 	}
 	occurrence, known := c.catalogOccurrence(id)
+	record := c.facts.SelectionIndex().Records[id]
+	if record.Builder != "" && (record.Declaration == nil || occurrence.Object != record.Declaration) {
+		return OccurrenceFacts{}, false
+	}
 	if !known {
 		return occurrence, false
 	}
-	if object == nil || object == occurrence.Object || object == occurrence.Catalog ||
+	matchesDeclaration := object == occurrence.Object || object == record.Declaration
+	if object == nil || matchesDeclaration || object == occurrence.Catalog ||
 		object == c.facts.AdmissionCandidate(id).Obj {
 		return occurrence, true
 	}
@@ -304,19 +313,11 @@ func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, 
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
 	if child := c.facts.AdmissionCandidate(id); child.Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "" {
-		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
-			if !yield(ref) {
-				return
-			}
-		}
+		manifest.References(child.Obj, manifest.ReferenceRelations)(yield)
 		return
 	}
 	if occurrence, ok := c.catalogOccurrence(id); ok {
-		for ref := range occurrence.references() {
-			if !yield(ref) {
-				return
-			}
-		}
+		occurrence.references(yield)
 		return
 	}
 

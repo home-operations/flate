@@ -116,7 +116,7 @@ func TestRenderTrees_Reach(t *testing.T) {
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, oracleCache.Close()) })
 	cfg.Cache = oracleCache
-	cfg.HelmClient = helm.NewClient(oracleCache)
+	cfg.HelmClient = helm.NewClient(oracleCache, nil)
 	controls, worlds := prepareReachWorlds(t, reachCases())
 	oracle := reachOracle{cfg: &cfg, controls: controls, worlds: worlds}
 	oracle.render(t)

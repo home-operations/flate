@@ -56,8 +56,8 @@ func testTemplateCacheSubchartPersistenceCase(
 	nextStore.SetArtifact((*testCaseInput.hr).ChartSource(), &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository, FS: updated, Digest: digest, Revision: "6.15.0@" + digest,
 	})
-	next := NewClient((*testCaseInput.owner))
-	nextSources := NewSources(nextStore)
+	next := NewClient((*testCaseInput.owner), nil)
+	nextSources := NewSources(nextStore, nil)
 	nextKey := (*testCaseInput.keyFor)(t, next, nextSources)
 
 	assert.FatalIf(

@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"context"
 	"io/fs"
 	"testing"
 	"testing/fstest"
@@ -11,6 +12,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 
+	"github.com/home-operations/flate/internal/engine/helm/chartinput"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -105,7 +107,7 @@ func testLoadFSChartCaptureIdentityOnePolicyReadAndExactHandoff(
 	assert.NoError(t, err)
 	assert.Equal(t, string(laterChart.Dependencies()[0].Templates[0].Data), "new")
 	clear(reads)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Chart: manifest.HelmChart{
@@ -118,7 +120,7 @@ func testLoadFSChartCaptureIdentityOnePolicyReadAndExactHandoff(
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	assert.Equal(t, string(loaded.chart.Dependencies()[0].Templates[0].Data), "new")
@@ -154,7 +156,7 @@ func testLoadFSChartCaptureIdentityArchiveExactHandoff(
 	assert.Equal(t, captured.fingerprint(), key)
 	assert.Equal(t, bytesRead, int64(len(data)))
 	bytesRead = 0
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Chart: manifest.HelmChart{
@@ -167,7 +169,7 @@ func testLoadFSChartCaptureIdentityArchiveExactHandoff(
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	assert.Equal(t, string(loaded.chart.Dependencies()[0].Templates[0].Data), "new")
@@ -208,4 +210,12 @@ func testLoadFSChartCaptureIdentityCase(t *testing.T, testCaseInput *testLoadFSC
 		cmp.Equal(files, after, cmpopts.IgnoreFields(archive.BufferedFile{}, "ModTime")),
 		testCaseInput.tc.same,
 	)
+}
+
+func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*archive.BufferedFile, error) {
+	files, err := chartinput.Files(ctx, input, archiveShape)
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, err, "")
+	}
+	return files, nil
 }

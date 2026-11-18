@@ -1903,3 +1903,21 @@ The matching supplied Secret fills the encrypted key.
 Every case asserts complete output and an explicit exit status twice with reset caches.
 The harness reserves half the remaining test lifetime for cancellation and cleanup.
 A fired guard fails the test after the CLI terminates.
+
+The `helm-dependencies/source-siblings-*` cases model two sibling charts from the same Git artifact.
+The build and diff case changes only the server template and uses a cold diff cache.
+The escape and missing cases require release failure with the referenced path.
+The vendored case moves both children under the parent and retains the complete output.
+Each case compares complete stdout, stderr, and exit status twice through `cli.Run`.
+The fixtures require no public network.
+
+The symlink case starts with a link to an existing sibling chart. Build and diff report a missing dependency.
+The case then points the link into the separate baseline repository. Build reports the same missing dependency.
+
+| Case | Behavior |
+| --- | --- |
+| `helm-dependencies/source-siblings-build-diff` | Both sibling charts render, and a server template edit appears in the diff. |
+| `helm-dependencies/source-siblings-escape` | A local dependency outside the artifact fails. |
+| `helm-dependencies/source-siblings-missing` | A missing sibling fails and names its path. |
+| `helm-dependencies/source-siblings-vendored` | Vendored children retain complete output bytes. |
+| `helm-dependencies/source-siblings-symlink-escape` | Both internal and escaping symlinks fail as missing dependencies. |

@@ -51,7 +51,7 @@ data:
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/crds/widgets.yaml", crd)
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	wantAll, err := testutil.SplitDocs([]byte(crd + "---\n" + cm))
 	assert.NoError(t, err)
@@ -90,7 +90,7 @@ func TestTemplate_ReleaseName(t *testing.T) {
 		"mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}', namespace: '{{ .Release.Namespace }}'}\n",
 	)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	for _, tc := range []struct{ name, target, explicit, want string }{
 		{"metadata namespace only", "", "", "demo"},
 		{"target namespace", "apps", "", "apps-demo"},
@@ -178,7 +178,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/crds/a-valid.yaml", cm)
 	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	want, err := testutil.SplitDocs([]byte(cm))
 	assert.NoError(t, err)
@@ -241,7 +241,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	_, _, wantErr := testutil.RenderMaps(
 		cli.Template(
 			t.Context(),
@@ -281,7 +281,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	want, err := testutil.SplitDocs([]byte(cm))
 	assert.NoError(t, err)
@@ -340,7 +340,7 @@ dependencies:
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	t.Parallel()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	ch := &chart.Chart{
 		Metadata: &chart.Metadata{Name: "mychart", Version: "0.1.0"},
 		Values:   map[string]any{"image": map[string]any{"tag": "default", "repository": "canonical"}},
@@ -379,7 +379,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 // not alias even with identical valuesFiles.
 func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 	t.Parallel()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	chA := &chart.Chart{
 		Metadata: &chart.Metadata{Name: "a", Version: "1.0.0"},
 		Files: []*chartcommon.File{
@@ -418,7 +418,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 	t.Parallel()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	for _, name := range []string{"A", "B"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -440,7 +440,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 	t.Parallel()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	ch := &chart.Chart{Metadata: &chart.Metadata{Name: "fixture", Version: "1.0.0"}, Files: []*chartcommon.File{
 		{Name: "first.yaml", Data: []byte("marker: first\n")},
 		{Name: "second.yaml", Data: []byte("marker: second\n")},
@@ -636,7 +636,7 @@ func testTemplateCRDsPolicyCase(t *testing.T, testCaseInput *testTemplateCRDsPol
 		assert.NoError(t, err)
 		assert.Diff(t, docs, want)
 	}
-	fresh := NewClient(cachetest.New(t, "", sourcecache.New))
+	fresh := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	cold, _, err := testutil.RenderMaps(
 		fresh.Template(
 			t.Context(),

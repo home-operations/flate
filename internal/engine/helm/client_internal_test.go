@@ -36,8 +36,8 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"},
 				&store.SourceArtifact{Kind: kind, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir},
 			)
-			cli := NewClient(cachetest.New(t, "", sourcecache.New))
-			cliSources := NewSources(st)
+			cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+			cliSources := NewSources(st, nil)
 			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			_, typed := errors.AsType[chart.ValidationError](err)
 
@@ -60,8 +60,8 @@ func TestLoadChart_sContentWithMemoryOwner(t *testing.T) {
 	second := t.TempDir()
 	writeChartFiles(t, second, "podinfo", "6.15.0")
 	testutil.WriteFile(t, second, "prod.yaml", "marker: second\n")
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	var previous string
 	for i, dir := range []string{first, second} {
 		st.SetArtifact(
@@ -158,7 +158,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 		func(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", sourcecache.New)
-			client := NewClient(owner)
+			client := NewClient(owner, nil)
 			var work [2]manifest.WorkRecorder
 			var docs [2][]manifest.DocOccurrence
 			var errs [2]error
@@ -187,7 +187,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 						Revision:  "6.15.0@sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
 					},
 				)
-				sources[side], releases[side] = NewSources(st), hr
+				sources[side], releases[side] = NewSources(st, nil), hr
 				work[side].Key = manifest.WorkKey{
 					Tree: manifest.TreeID{
 						Cluster: manifest.ClusterID(
@@ -243,7 +243,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
-	resolver := NewSources(st)
+	resolver := NewSources(st, nil)
 	assert.FatalIf(t, resolver.Declaration(raw.Named()) != nil, "%v", "provisional source reached shared resolver")
 	accepted := *raw
 	accepted.URL = "https://accepted.example"
@@ -288,8 +288,8 @@ func testLoadChartSharedChartRetainsValuesFingerprintCase(
 			LocalPath: dir,
 		},
 	)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	withoutFiles := hr.Clone()
 	withoutFiles.ChartValuesFiles = nil
 	loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles, cliSources)

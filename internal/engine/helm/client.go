@@ -11,8 +11,11 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/core/keylock"
+	"github.com/home-operations/flate/internal/engine/helm/chartinput"
 	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/helmchart"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -30,17 +33,18 @@ type Client struct {
 
 	valuesCache values.Cache
 
-	cache *cache.Cache
+	cache   *cache.Cache
+	fetcher *helmchart.Fetcher
 }
 
-// NewClient constructs a Client borrowing the supplied nonnil cache owner.
-// The caller MUST keep the owner open until all Client operations finish.
-func NewClient(owner *cache.Cache) *Client {
+// NewClient callers MUST keep the cache and fetcher open until all client operations finish.
+func NewClient(owner *cache.Cache, fetcher *helmchart.Fetcher) *Client {
 	return &Client{
 		chartCache:       map[string]chartDescription{},
 		chartValuesCache: map[string]*chartValuesEntry{},
 		chartLoadLocks:   keylock.New[string](),
 		cache:            owner,
+		fetcher:          fetcher,
 	}
 }
 
@@ -60,6 +64,8 @@ type chartDescription struct {
 	artifact      store.SourceArtifact
 	valuesFS      fs.FS
 	valuesPin     string
+	remote        bool
+	needsBuild    bool
 }
 
 func (c *Client) describeChart(
@@ -107,6 +113,7 @@ func (c *Client) describeInput(
 	var err error
 	var captured capturedChart
 	var fingerprint string
+	var freshBuild bool
 	capture := func() error {
 		captured, location, err = selector.capture(ctx, input, root)
 		if err == nil {
@@ -118,8 +125,8 @@ func (c *Client) describeInput(
 	if selector.Pin != "" {
 		cacheKey = manifest.Fingerprint(selector)
 	} else {
-		if err := capture(); err != nil {
-			return chartDescription{}, err
+		if captureErr := capture(); captureErr != nil {
+			return chartDescription{}, captureErr
 		}
 		cacheKey = fingerprint
 	}
@@ -127,9 +134,9 @@ func (c *Client) describeInput(
 	loaded, cached := c.chartCache[cacheKey]
 	c.chartMu.RUnlock()
 	if !cached {
-		release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
-		if err != nil {
-			return chartDescription{}, err
+		release, acquireErr := c.chartLoadLocks.Acquire(ctx, cacheKey)
+		if acquireErr != nil {
+			return chartDescription{}, acquireErr
 		}
 		defer release()
 		c.chartMu.RLock()
@@ -143,13 +150,46 @@ func (c *Client) describeInput(
 		}
 		if !cached {
 			loaded = chartDescription{captured: captured, fingerprint: fingerprint, key: cacheKey, location: location}
-			loaded = c.rememberDescription(&loaded, nil)
+			loaded, err = c.describeCaptured(ctx, input, &loaded, selector.Auto)
+			freshBuild = true
 		}
 	}
 	if selector.Pin == "" {
 		loaded.location = location
 	}
+	if loaded.needsBuild {
+		loaded, err = c.completeDescription(ctx, input, &loaded, freshBuild)
+	}
+	if err != nil {
+		return chartDescription{}, chartLoadError(location, root, err)
+	}
 	return loaded, nil
+}
+
+func (c *Client) describeCaptured(
+	ctx context.Context,
+	input fs.FS,
+	loaded *chartDescription,
+	auto bool,
+) (chartDescription, error) {
+	if !auto && loaded.captured.files != nil {
+		options := chartinput.Options{
+			Name:     loaded.location,
+			Parent:   loaded.captured.files,
+			Validate: validateDependencyPath,
+		}
+		description, _, err := chartinput.Describe(ctx, input, options, nil)
+		if err != nil {
+			return chartDescription{}, manifest.NewError(manifest.ErrInput, err, "")
+		}
+		loaded.captured.parent = description.Chart
+		if len(description.Dependencies) != 0 {
+			built := description
+			loaded.captured.dependencies = &built
+			loaded.needsBuild = true
+		}
+	}
+	return c.rememberDescription(loaded, nil), nil
 }
 
 func (c *Client) rememberDescription(description *chartDescription, fresh *renderRecord) chartDescription {
@@ -177,6 +217,8 @@ func (c *Client) rememberDescription(description *chartDescription, fresh *rende
 		fingerprint: d.fingerprint,
 		key:         d.key,
 		location:    d.location,
+		remote:      d.remote,
+		needsBuild:  d.needsBuild,
 		chart:       d.chart,
 		analysis:    d.analysis,
 		record:      d.record,
@@ -318,16 +360,24 @@ func (s chartSelector) capture(ctx context.Context, input fs.FS, root string) (c
 			location = "."
 		}
 	}
-	label := location
-	if root != "" {
-		label = filepath.Join(root, filepath.FromSlash(location))
-	}
-	captured, missing, err := captureChart(ctx, input, location, archiveShape)
+	captured, missing, err := captureInput(ctx, input, location, archiveShape)
 	if missing {
 		return captured, location, err
 	}
 	if err != nil {
-		return captured, location, fmt.Errorf("load chart %s: %w", label, err)
+		return captured, location, chartLoadError(location, root, err)
 	}
 	return captured, location, nil
+}
+
+func chartLoadError(location, root string, err error) error {
+	if root != "" {
+		location = filepath.Join(root, filepath.FromSlash(location))
+	}
+	return fmt.Errorf("load chart %s: %w", location, err)
+}
+
+func validateDependencyPath(name string) error {
+	_, err := safepath.ArchiveName(name)
+	return err
 }

@@ -55,8 +55,8 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		testutil.WriteFile(t, root, "charts/demo/templates/fail.yaml", `{{ fail "action must wait for cache error" }}`)
 		testutil.WriteFile(t, root, "charts/demo/requirements.yaml", "dependencies: []\n")
 		owner := cachetest.New(t, t.TempDir(), cache.New)
-		cli := NewClient(owner)
-		cliSources := NewSources(st)
+		cli := NewClient(owner, nil)
+		cliSources := NewSources(st, nil)
 		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, true)
@@ -75,7 +75,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		)
 		assert.NoError(t, err)
 
-		cli = NewClient(owner)
+		cli = NewClient(owner, nil)
 		var diagnostics bytes.Buffer
 		previous := log.Writer()
 		log.SetOutput(&diagnostics)
@@ -115,8 +115,8 @@ func testReviewErrorPrecedenceChartBeforeCapabilityAndValues(t *testing.T) {
 	hr = hr.Clone()
 	hr.ChartValuesFiles = []string{"absent.yaml"}
 	hr.IgnoreMissingValuesFiles = false
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	var receipt8 *manifest.RenderReceipt
 	var err error
 	_, receipt8, err = testutil.RenderMaps(
@@ -154,8 +154,8 @@ func testReviewErrorPrecedenceCase(t *testing.T, testCaseInput *bool,
 		hr.ChartSource(),
 		&store.SourceArtifact{FS: chartFixtureFS(hr, os.DirFS(dir)), Revision: "invalid"},
 	)
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	var receipt9 *manifest.RenderReceipt
 	var err error
 	_, receipt9, err = testutil.RenderMaps(
@@ -229,8 +229,8 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	st.SetArtifact(hr.ChartSource(), art)
 	root := t.TempDir()
 	owner := cachetest.New(t, root, cache.New)
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	if hr.TracksDigest() {

@@ -85,7 +85,7 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 	}
 	if tailCaseInput.cfg.HelmClient == nil {
 		tailCaseInput.cfg.
-			HelmClient = helm.NewClient(tailCaseInput.cfg.Cache)
+			HelmClient = helm.NewClient(tailCaseInput.cfg.Cache, nil)
 	}
 	ssrfguard.Restrict(tailCaseInput.cfg.RestrictEgress)
 	tailCaseInput.cfg.

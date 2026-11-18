@@ -52,8 +52,8 @@ data:
 	})
 
 	owner := cachetest.New(t, "", cache.New)
-	cli := helm.NewClient(owner)
-	resolver := helm.NewSources(st)
+	cli := helm.NewClient(owner, nil)
+	resolver := helm.NewSources(st, nil)
 	chart := &manifest.HelmChartSource{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(chart)
 	for _, tc := range []struct {
@@ -126,7 +126,7 @@ data:
 func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	client := helm.NewClient(cachetest.New(t, "", cache.New))
+	client := helm.NewClient(cachetest.New(t, "", cache.New), nil)
 	entered, release := make(chan struct{}, 2), make(chan struct{})
 	var reads [2]store.ReadSet
 	var releases [2]*manifest.HelmRelease
@@ -175,7 +175,12 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	for i := range reads {
 		workers.Go(func() {
 			outputs[i], _, failures[i] = testutil.RenderMaps(
-				client.Template(t.Context(), releases[i], nil, helm.RenderOptions{Sources: helm.NewSources(&reads[i])}),
+				client.Template(
+					t.Context(),
+					releases[i],
+					nil,
+					helm.RenderOptions{Sources: helm.NewSources(&reads[i], nil)},
+				),
 			)
 		})
 	}
@@ -209,7 +214,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	successor.Init(st, releases[0].Named(), nil)
 	defer successor.Retire()
 	output, _, err := testutil.RenderMaps(
-		client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}),
+		client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor, nil)}),
 	)
 	assert.FatalIf(
 		t,

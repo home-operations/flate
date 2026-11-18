@@ -120,7 +120,7 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 
 	assert.NoError(t, (*recovery.renderMapsErr))
 	assert.Diff(t, (*recovery.again), (*inputs.first))
-	reopened := NewClient(cachetest.New(t, (*inputs.root), cache.New))
+	reopened := NewClient(cachetest.New(t, (*inputs.root), cache.New), nil)
 	var receipt25 *manifest.RenderReceipt
 	(*recovery.again), receipt25, (*recovery.renderMapsErr) = testutil.RenderMaps(
 		reopened.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: (*inputs.cliSources)}),

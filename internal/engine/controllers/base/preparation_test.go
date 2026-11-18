@@ -27,11 +27,11 @@ func TestExecution_RendererPreparationTransfer(t *testing.T) {
 			"chart/Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 0.1.0\n")},
 			"chart/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")},
 		}})
-		client := helm.NewClient(cachetest.New(t, "", cache.New))
+		client := helm.NewClient(cachetest.New(t, "", cache.New), nil)
 		owner := &manifest.HelmRelease{Name: "owner", Namespace: "apps", Chart: manifest.HelmChart{
 			Name: "chart", Source: source.Named(),
 		}}
-		input := helm.RenderOptions{Sources: helm.NewSources(st)}
+		input := helm.RenderOptions{Sources: helm.NewSources(st, nil)}
 		testRendererPreparationTransfer(
 			t,
 			owner,

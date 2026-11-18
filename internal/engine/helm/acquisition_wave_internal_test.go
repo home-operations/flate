@@ -34,7 +34,7 @@ func TestTemplate_ConcurrentUncacheableRender(t *testing.T) {
 		"mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Values.gate }}'}\n",
 	)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	hr := newHR()
 	hr.Install = &helmv2.Install{DisableSchemaValidation: true}
 	sources := localChartResolver(t, "chart-repo", "flux-system", dir)

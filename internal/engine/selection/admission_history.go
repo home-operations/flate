@@ -2,7 +2,6 @@ package selection
 
 import (
 	"context"
-	"iter"
 	"maps"
 	"slices"
 	"strings"
@@ -151,14 +150,12 @@ func (c *admissionClosure) declarationRecord(
 	return c.completeRecord(&id, record)
 }
 
-func (c *admissionClosure) historicalReferences(id manifest.NamedResource) iter.Seq[manifest.Reference] {
-	return func(yield func(manifest.Reference) bool) {
-		for _, records := range c.accepted {
-			for _, ref := range records[id].Refs {
-				reference := c.historicalReference(id, ref)
-				if !yield(reference) {
-					return
-				}
+func (c *admissionClosure) yieldHistoricalReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
+	for _, records := range c.accepted {
+		for _, ref := range records[id].Refs {
+			reference := c.historicalReference(id, ref)
+			if !yield(reference) {
+				return
 			}
 		}
 	}

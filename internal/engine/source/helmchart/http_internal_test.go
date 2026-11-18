@@ -573,15 +573,17 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 
 	for _, backing := range []string{"memory", "disk"} {
 		for _, endpoint := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
-			t.Run(backing+endpoint, func(t *testing.T) {
-				t.Parallel()
+			for _, route := range []string{"named", "dependency"} {
+				t.Run(backing+endpoint+"/"+route, func(t *testing.T) {
+					t.Parallel()
 
-				testFetchHTTPChartCancellationDoesNotPublishCase(
-					t,
-					&backing, &endpoint,
+					testFetchHTTPChartCancellationDoesNotPublishCase(
+						t,
+						&backing, &endpoint, route,
+					)
+				},
 				)
-			},
-			)
+			}
 		}
 	}
 }

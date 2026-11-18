@@ -47,6 +47,11 @@ func TestE2E_HelmCorpus(t *testing.T) {
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-literal-root"},
 		{"helm-dependencies", "changed-only-render-emitted-dependency"},
 		{"helm-dependencies", "ready-expr--helm-release"},
+		{"helm-dependencies", "source-siblings-build-diff"},
+		{"helm-dependencies", "source-siblings-escape"},
+		{"helm-dependencies", "source-siblings-symlink-escape"},
+		{"helm-dependencies", "source-siblings-missing"},
+		{"helm-dependencies", "source-siblings-vendored"},
 		{"helm-oci", "helm-missingoci-source"},
 	} {
 		t.Run(tc.scenario+"/"+tc.name, func(t *testing.T) {

@@ -31,7 +31,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 	pending := (*(*testCaseInput).receipt)
 	accepting := (*(*testCaseInput).hr).Named()
 	open := func() *Client {
-		renderer := NewClient(cachetest.New(t, directory, cache.New))
+		renderer := NewClient(cachetest.New(t, directory, cache.New), nil)
 		return renderer
 	}
 	renderer := open()

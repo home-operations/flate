@@ -36,7 +36,7 @@ func assertHeadOnlyWork(t *testing.T, rendered Rendered) {
 func TestWork_BorrowedOwners(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, "", sourcecache.New)
-	client := helm.NewClient(owner)
+	client := helm.NewClient(owner, nil)
 	var trees [2]Tree
 	for side := range trees {
 		root := t.TempDir()

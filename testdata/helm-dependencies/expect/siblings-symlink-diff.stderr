@@ -1,0 +1,8 @@
+
+  ✗  current snapshot: HelmRelease  flux-system/siblings  load chart @@repo@@/charts/parent: dependency server (file://../linked): stat charts/linked: file does not exist
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] HelmRelease flux-system/siblings: 2 objects not rendered on the current side; diff suppressed (load chart @@repo@@/charts/parent: dependency server (file://../linked): stat charts/linked: file does not exist)
+
+  ✗ 1 failed

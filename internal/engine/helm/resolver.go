@@ -13,11 +13,12 @@ type sourceReader interface {
 // Sources resolves chart declarations and content from one operation's inputs.
 type Sources struct {
 	reader sourceReader
+	index  *manifest.DiscoveryIndex
 }
 
-// NewSources binds chart resolution to the supplied captured or completed inputs.
-func NewSources(reader sourceReader) Sources {
-	return Sources{reader: reader}
+// NewSources requires that the index MUST remain immutable throughout the operation.
+func NewSources(reader sourceReader, index *manifest.DiscoveryIndex) Sources {
+	return Sources{reader: reader, index: index}
 }
 
 // LocalSourceArtifact returns the selected source content.

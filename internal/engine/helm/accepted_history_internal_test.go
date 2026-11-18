@@ -17,7 +17,7 @@ import (
 func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 	t.Parallel()
 	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
-	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	released := func() <-chan struct{} {
 		payload, err := testutil.EncodeRender(
 			[]map[string]any{{"value": string(bytes.Repeat([]byte{'x'}, (16<<20)+1))}},

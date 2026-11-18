@@ -51,8 +51,8 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	for _, name := range []string{"first", "second", "first", "missing-key", "invalid-metadata", "invalid-archive"} {
 		key := name
 		if name == "missing-key" {
@@ -134,9 +134,9 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 }
 
 func BenchmarkLoadChart_FSWarm(b *testing.B) {
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	st := store.New()
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	st.SetArtifact(manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "chart",
 	},
@@ -265,8 +265,8 @@ func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner := cachetest.New(t, "", sourcecache.New)
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	label := t.TempDir()
 	testutil.WriteFile(t, label, "Chart.yaml", "apiVersion: v2\nname: host\nversion: 1.0.0\n")
 	hr := &manifest.HelmRelease{
@@ -300,8 +300,8 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 	t.Parallel()
 	roots := []string{t.TempDir(), t.TempDir()}
 	st := store.New()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindGitRepository,
@@ -362,8 +362,8 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	client := NewClient(cachetest.New(t, "", sourcecache.New))
-	clientSources := NewSources(st)
+	client := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	clientSources := NewSources(st, nil)
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindGitRepository,
@@ -649,7 +649,7 @@ func testLoadChartAnonymousMutableInputsDoNotShareMemoCase(
 	t.Helper()
 	st := store.New()
 	hr := (*testCaseInput.hr).Clone()
-	sources := NewSources(st)
+	sources := NewSources(st, nil)
 	testCaseInput.st, testCaseInput.hr, testCaseInput.clientSources = &st, &hr, &sources
 
 	canonical := map[string]chartDescription{}

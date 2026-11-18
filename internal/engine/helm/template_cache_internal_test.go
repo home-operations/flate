@@ -135,8 +135,8 @@ data:
 			assert.Equal(t, reflect.DeepEqual(ch, before), true)
 			assert.Equal(t, captured.fingerprint(), fingerprint)
 		})
-		cli := NewClient(owner)
-		cliSources := NewSources(st)
+		cli := NewClient(owner, nil)
+		cliSources := NewSources(st, nil)
 		// Canonical charts MUST remain immutable; choose the loader order before admission.
 		cli.chartCache[selector] = chartDescription{
 			chart:       ch,
@@ -432,8 +432,8 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 
 	st, hr, dir := ociRenderFixture(t)
 	original := hr.Clone()
-	cli := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
+	cliSources := NewSources(st, nil)
 	opts := Options{DisableChartDigestTracking: (*testCaseInput.disable)}
 	held := acquireChartFS(t, cli.cache, chartFixtureFS(hr, os.DirFS(dir)))
 	var canonical *chart.Chart
@@ -619,8 +619,8 @@ func testTemplateCacheOCIIdentityOneAdmittedArtifact(t *testing.T) {
 	first := &store.SourceArtifact{FS: observed, Key: "untrusted", Revision: "6.15.0@" + digest, Digest: digest}
 	second := &store.SourceArtifact{Revision: "invalid", FS: fstest.MapFS{}}
 	resolver := &changingChartReader{sourceReader: st, artifacts: []*store.SourceArtifact{first, second}}
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(resolver)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(resolver, nil)
 	out, receipt4, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 	)

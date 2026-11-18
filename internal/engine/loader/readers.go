@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/engine/helm/chartinput"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -64,11 +63,23 @@ func (l *Loader) finalizeRecords(
 
 		emittedFiles: emittedFiles,
 	}
+	for id := range l.locations {
+		occurrence := l.locations[id]
+		if occurrence.facts.derivedInputs == 0 {
+			continue
+		}
+		facts := *occurrence.facts
+		facts.refs = slices.Clone(facts.refs[:len(facts.refs)-facts.derivedInputs])
+		facts.reverse = slices.Clone(facts.reverse[:len(facts.reverse)-facts.derivedInputs])
+		facts.derivedInputs = 0
+		occurrence.facts = &facts
+		l.locations[id] = occurrence
+	}
 	rf.collectEntryInputs()
 	rf.collectControls()
 	rf.objects = map[manifest.NamedResource]manifest.BaseManifest{}
 	rf.sources = map[manifest.NamedResource]graphVisit{}
-	rf.charts = map[string][]string{}
+	rf.charts = map[string]chartReaders{}
 	rf.templateBodies = map[string][][]byte{}
 	rf.templateRefs = map[[2]string]manifest.TemplateProjection{}
 	rf.templateWalks = map[[2]string]bool{}
@@ -107,7 +118,8 @@ type readerFinalizer struct {
 	controls        map[manifest.NamedResource][]string
 	objects         map[manifest.NamedResource]manifest.BaseManifest
 	sources         map[manifest.NamedResource]graphVisit
-	charts          map[string][]string
+	charts          map[string]chartReaders
+	repositories    map[string][]manifest.NamedResource
 	templateBodies  map[string][][]byte
 	templateRefs    map[[2]string]manifest.TemplateProjection
 	templateWalks   map[[2]string]bool
@@ -198,29 +210,12 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 		return nil
 	}
 	rf.visited[id] = struct{}{}
-	if rf.loader.documents.compact && !rf.loader.documents.eager {
-		if occurrence, ok := rf.loader.locations[id]; ok {
-			return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
-		}
-	}
-	for ref := range manifest.References(rf.object(id), manifest.ReferenceRelations) {
-		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {
+	if occurrence, ok := rf.loader.locations[id]; ok {
+		if err := rf.projectOccurrence(ctx, &occurrence, consumer); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-func (rf *readerFinalizer) collectOccurrence(
-	ctx context.Context,
-	occurrence *authoredOccurrence,
-	consumer manifest.NamedResource,
-	materialize bool,
-) error {
-	if err := rf.projectOccurrence(ctx, occurrence, consumer); err != nil {
-		return err
-	}
-	for ref := range occurrence.references() {
+	for ref := range rf.loader.References(id) {
 		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {
 			return err
 		}
@@ -538,30 +533,6 @@ func (rf *readerFinalizer) observeFiles(
 	}
 }
 
-func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath string) ([]string, error) {
-	names, seen := rf.charts[location]
-	if seen {
-		return names, nil
-	}
-	inputFile := new(rf.loader.documents).input(location)
-	info, err := fs.Stat(inputFile.fs, inputFile.name)
-	if err == nil {
-		if info.IsDir() {
-			names = append(names, path.Join(chartPath, ".helmignore"))
-			if sub, subErr := fs.Sub(inputFile.fs, inputFile.name); subErr == nil {
-				names = append(names, rf.readChartFiles(ctx, sub, chartPath, location)...)
-			}
-		} else if info.Mode().IsRegular() {
-			names = append(names, chartPath)
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	rf.charts[location] = names
-	return names, nil
-}
-
 func (rf *readerFinalizer) observeChart(
 	ctx context.Context,
 	ref *manifest.Reference,
@@ -579,9 +550,20 @@ func (rf *readerFinalizer) observeChart(
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
+	for _, name := range names.names {
 		v.coordinate = path.Join(v.prefix, name)
 		rf.loader.recordReader(v.coordinate, v.localCoordinate(), new(reader))
+	}
+	for _, name := range names.missing {
+		v.coordinate = path.Join(v.prefix, name)
+		missing := reader
+		missing.Exact = false
+		rf.loader.recordReader(v.coordinate, v.localCoordinate(), &missing)
+	}
+	if names.remote {
+		if err := rf.observeRepositories(ctx, reader.Reader, ref.Namespace, reader.Materialize); err != nil {
+			return err
+		}
 	}
 	namespace := reader.Reader.Namespace
 	if object := rf.object(reader.Reader); manifest.KindOf(object).Parent {
@@ -636,29 +618,6 @@ func productionSources(productions []manifest.Production) []manifest.NamedResour
 		}
 	}
 	return sources
-}
-
-func (rf *readerFinalizer) readChartFiles(ctx context.Context, input fs.FS, chartPath, location string) []string {
-	var names []string
-	// Reconciliation owns chart loading errors, including policy failures.
-	_ = chartinput.Walk(ctx, input, true, func(name string, _ fs.FileInfo, data []byte) error {
-		names = append(names, path.Join(chartPath, name))
-		if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
-			if body, ok := readTemplateBody(ctx, input, name, data); ok {
-				rf.templateBodies[location] = append(rf.templateBodies[location], body)
-			}
-		}
-		return nil
-	})
-	return names
-}
-
-func readTemplateBody(_ context.Context, input fs.FS, name string, data []byte) ([]byte, bool) {
-	if data != nil {
-		return data, true
-	}
-	data, err := fs.ReadFile(input, name)
-	return data, err == nil
 }
 
 func (rf *readerFinalizer) projectOccurrence(
@@ -728,4 +687,81 @@ func (rf *readerFinalizer) retainTemplateProjection(
 		projection.Objects = append(projection.Objects, refs.Objects...)
 		rf.loader.templateProjections[consumer] = projection
 	}
+}
+
+func (rf *readerFinalizer) observeRepositories(
+	ctx context.Context,
+	consumer manifest.NamedResource,
+	namespace string,
+	materialize bool,
+) error {
+	ids := rf.repositoryInputs(namespace)
+	object := rf.object(consumer)
+	if object == nil {
+		return nil
+	}
+	occurrence, present := rf.loader.catalogOccurrence(consumer)
+	if !present || occurrence.object != object && occurrence.facts.catalog != object {
+		projection, _ := manifest.ProjectProducer(object, nil)
+		previous := occurrence
+		occurrence = compactOccurrence(object, projection)
+		record := rf.loader.Index.Records[consumer]
+		if present && record.Path == filepath.Join(previous.Declaration.Source, previous.Declaration.File) {
+			occurrence.Declaration, occurrence.Authored = previous.Declaration, previous.Authored
+			occurrence.requiresBuild = previous.requiresBuild
+		}
+		occurrence.object = object
+	}
+	facts := *occurrence.facts
+	facts.refs, facts.reverse = slices.Clone(facts.refs), slices.Clone(facts.reverse)
+	for _, id := range ids {
+		candidate := rf.object(id)
+		if candidate == nil {
+			continue
+		}
+		record := rf.loader.Index.Records[id]
+		record.Declaration = candidate
+		rf.loader.Index.Records[id] = record
+		ref := manifest.Reference{NamedResource: id, Content: true}
+		if !slices.ContainsFunc(facts.refs, func(r manifest.Reference) bool { return r.NamedResource == id }) {
+			facts.refs = append(facts.refs, ref)
+			facts.reverse = append(facts.reverse, id)
+			facts.derivedInputs++
+		}
+		rf.observeContent(&ref, consumer, materialize)
+		if err := rf.collect(ctx, id, consumer, materialize); err != nil {
+			return err
+		}
+	}
+	occurrence.facts = &facts
+	occurrence.object = object
+	if rf.loader.locations == nil {
+		rf.loader.locations = map[manifest.NamedResource]authoredOccurrence{}
+	}
+	rf.loader.locations[consumer] = occurrence
+	return nil
+}
+
+func (rf *readerFinalizer) repositoryInputs(namespace string) []manifest.NamedResource {
+	if rf.repositories == nil {
+		rf.repositories = map[string][]manifest.NamedResource{}
+	}
+	ids, known := rf.repositories[namespace]
+	if !known {
+		for id := range rf.loader.Index.Records {
+			if id.Group == manifest.SourceDomain && id.Kind == manifest.KindHelmRepository &&
+				id.Namespace == namespace {
+				ids = append(ids, id)
+			}
+		}
+		for _, object := range rf.loader.Store.ListObjects(manifest.SourceDomain, manifest.KindHelmRepository) {
+			if object.Named().Namespace == namespace {
+				ids = append(ids, object.Named())
+			}
+		}
+		slices.SortFunc(ids, manifest.NamedResource.Compare)
+		ids = slices.Compact(ids)
+		rf.repositories[namespace] = ids
+	}
+	return ids
 }

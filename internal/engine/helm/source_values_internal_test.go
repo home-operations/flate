@@ -94,8 +94,8 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 			}
 			st := store.New()
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: artifact, Revision: "1.0.0"})
-			cli := NewClient(owner)
-			cliSources := NewSources(st)
+			cli := NewClient(owner, nil)
+			cliSources := NewSources(st, nil)
 			for _, tc := range []struct {
 				name  string
 				files []string
@@ -220,8 +220,8 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	t.Parallel()
 	root, st, hr := sourceValuesCacheFixture(t)
 	owner := cachetest.New(t, "", cache.New)
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.Equal(t, d.valuesPin, "")
@@ -274,8 +274,8 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	root, st, hr := sourceValuesCacheFixture(t)
 	owner := cachetest.New(t, "", cache.New)
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS
@@ -327,8 +327,8 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 	t.Parallel()
 	root, st, hr := sourceValuesCacheFixture(t)
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	var previousPin, chartFingerprint string
 	for _, marker := range []string{"first", "changed", ""} {
 		if marker == "" {
@@ -417,7 +417,7 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 	if (*testCaseInput.kind) == manifest.KindBucket {
 		input = acquireChartFS(t, owner, os.DirFS(root))
 	}
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
@@ -434,7 +434,7 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 		IgnoreMissingValuesFiles: (*testCaseInput.ignore),
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	for _, tc := range []struct {
 		name      string
 		files     []string
@@ -574,7 +574,7 @@ func testTemplateValuesFilesFailuresCase(t *testing.T, testCaseInput *testTempla
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cli := NewClient((*testCaseInput.owner))
+			cli := NewClient((*testCaseInput.owner), nil)
 			ch := minimalChart()
 			_, err := cli.mergeChartValuesFiles(
 				t.Context(), &chartDescription{
@@ -609,8 +609,8 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	testutil.WriteFile(t, root, "config/other.yaml", "marker: other\nnested:\n  value: shared\n")
 	owner := cachetest.New(t, "", cache.New)
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.FatalIf(t, d.valuesPin == "", "%s", "fixture has no acquired values pin")
@@ -686,8 +686,8 @@ func testObserveValuesFilesRetryFailuresCase(
 	root, st, hr := sourceValuesCacheFixture(t)
 	owner := cachetest.New(t, "", cache.New)
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS

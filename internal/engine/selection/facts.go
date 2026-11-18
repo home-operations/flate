@@ -1,8 +1,6 @@
 package selection
 
 import (
-	"iter"
-
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -191,23 +189,26 @@ type RootEvidence struct {
 	BuiltCurrent      bool
 }
 
-//nolint:gocritic // The iterator MUST capture an immutable occurrence snapshot.
-func (o OccurrenceFacts) references() iter.Seq[manifest.Reference] {
-	return func(yield func(manifest.Reference) bool) {
-		if o.Witness == nil && !o.CatalogKnown && o.Refs == nil {
-			if o.Object != nil {
-				manifest.References(o.Object, manifest.ReferenceRelations)(yield)
-			}
-			return
+//nolint:gocritic // References MUST use an immutable occurrence snapshot.
+func (o OccurrenceFacts) references(yield func(manifest.Reference) bool) bool {
+	if o.Witness == nil && !o.CatalogKnown && o.Refs == nil {
+		active := true
+		if o.Object != nil {
+			manifest.References(o.Object, manifest.ReferenceRelations)(func(ref manifest.Reference) bool {
+				active = yield(ref)
+				return active
+			})
 		}
-		for i := range o.Refs {
-			ref := o.Refs[i]
-			if ref.NamespaceDefault {
-				ref.Namespace = o.Identity.Namespace
-			}
-			if !yield(ref) {
-				return
-			}
+		return active
+	}
+	for i := range o.Refs {
+		ref := o.Refs[i]
+		if ref.NamespaceDefault {
+			ref.Namespace = o.Identity.Namespace
+		}
+		if !yield(ref) {
+			return false
 		}
 	}
+	return true
 }

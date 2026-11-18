@@ -126,7 +126,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 			b.Fatal(err)
 		}
 		config, tree := cfg.Config, cfg.Tree
-		config.Cache, config.Network, config.HelmClient = owner, new(source.Network), helm.NewClient(owner)
+		config.Cache, config.Network, config.HelmClient = owner, new(source.Network), helm.NewClient(owner, nil)
 		config.chartFetcher = helmchart.New(
 			&oci.Fetcher{Cache: config.Cache, Network: config.Network, RegistryConfig: config.RegistryConfig},
 			helmchart.Config{

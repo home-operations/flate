@@ -1,166 +1,146 @@
 package helm
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"path"
-	"strings"
 
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/chart/v2/loader"
 
 	"github.com/home-operations/flate/internal/engine/helm/chartinput"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type capturedChart struct {
-	files   []*archive.BufferedFile
-	archive []byte
+	files        []*archive.BufferedFile
+	archive      []byte
+	dependencies *chartinput.Description
+	parent       *chart.Chart
 }
 
-func (c capturedChart) fingerprint() string {
-	if c.files == nil {
-		return manifest.Fingerprint(c.archive)
-	}
-	content := make([]chartFileContent, len(c.files))
-	for i, f := range c.files {
-		content[i] = chartFileContent{Name: f.Name, Data: f.Data}
-	}
-	return manifest.Fingerprint(content)
-}
-
-func (c capturedChart) load() (*chart.Chart, error) {
-	if c.files != nil {
-		//nolint:wrapcheck // The caller adds the chart path; preserve Helm's exact diagnostic and structured cause.
-		return loader.LoadFiles(c.files)
-	}
-	//nolint:wrapcheck // The caller adds the chart path; preserve Helm's exact diagnostic and structured cause.
-	return loader.LoadArchive(bytes.NewReader(c.archive))
-}
-
-// A missing requested location is distinct from a read failure within a chart.
-func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bool) (capturedChart, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return capturedChart{}, false, err
-	}
-	info, err := fs.Stat(input, name)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return capturedChart{}, true, manifest.NewError(
-				manifest.ErrInput,
-				fmt.Errorf("chart not found at %s: %w", name, err),
-				"",
-			)
-		}
-		return capturedChart{}, false, manifest.NewError(
-			manifest.ErrInput,
-			fmt.Errorf("stat chart %s: %w", name, err),
-			"",
-		)
-	}
-	if info.IsDir() {
-		input, err = fs.Sub(input, name)
-		if err != nil {
-			return capturedChart{}, false, manifest.NewError(
-				manifest.ErrInput,
-				fmt.Errorf("chart directory %s: %w", name, err),
-				"",
-			)
-		}
-		files, chartFilesInFSErr := chartFilesInFS(ctx, input, archiveShape)
-		return capturedChart{files: files}, false, chartFilesInFSErr
-	}
-	r, err := input.Open(name)
-	if err != nil {
-		return capturedChart{}, false, manifest.NewError(
-			manifest.ErrInput,
-			fmt.Errorf("open chart %s: %w", name, err),
-			"",
-		)
-	}
-	data, readErr := io.ReadAll(r)
-	if err := errors.Join(readErr, r.Close()); err != nil {
-		return capturedChart{}, false, manifest.NewError(
-			manifest.ErrInput,
-			fmt.Errorf("read chart %s: %w", name, err),
-			"",
-		)
-	}
-	return capturedChart{archive: data}, false, nil
-}
-
-// Capture MUST finish before LoadFiles consumes the records.
-func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*archive.BufferedFile, error) {
-	files := []*archive.BufferedFile{}
-	remaining := archive.MaxDecompressedChartSize
-	visit := func(name string, info fs.FileInfo, data []byte) error {
-		rooted := name
-		if archiveShape {
-			var err error
-			rooted, err = archiveFileName(name)
-			if err != nil {
-				return err
-			}
-		}
-		if data == nil {
-			r, err := input.Open(name)
-			if err != nil {
-				//nolint:wrapcheck // The outer chart-input boundary retains the filesystem cause and Helm-compatible diagnostic.
-				return err
-			}
-			var readErr error
-			data, readErr = io.ReadAll(io.LimitReader(r, remaining+1))
-			if err := errors.Join(readErr, r.Close()); err != nil {
-				return err
-			}
-		}
-		remaining -= int64(len(data))
-		if remaining < 0 || archiveShape && remaining == 0 {
-			return fmt.Errorf("chart exceeds maximum decompressed size")
-		}
-		file := &archive.BufferedFile{
-			Name:    rooted,
-			ModTime: info.ModTime(),
-			Data:    bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}),
-		}
-		files = append(files, file)
+func (c *capturedChart) dependencyInputs() []chartinput.Dependency {
+	if c.dependencies == nil {
 		return nil
 	}
-	err := chartinput.Walk(ctx, input, !archiveShape, visit)
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, err, "")
-	}
-	return files, nil
+	return c.dependencies.Dependencies
 }
 
-func archiveFileName(name string) (string, error) {
-	delimiter := "/"
-	if strings.ContainsRune(name, '\\') {
-		delimiter = "\\"
+func (c *capturedChart) fingerprint() string {
+	var parent string
+	if c.files == nil {
+		parent = manifest.Fingerprint(c.archive)
+	} else {
+		content := make([]chartFileContent, len(c.files))
+		for i, f := range c.files {
+			content[i] = chartFileContent{Name: f.Name, Data: f.Data}
+		}
+		parent = manifest.Fingerprint(content)
 	}
-	base, relative, _ := strings.Cut(name, delimiter)
-	relative = strings.ReplaceAll(relative, delimiter, "/")
-	if path.IsAbs(relative) {
-		return "", errors.New("chart illegally contains absolute paths")
+	dependencies := c.dependencyInputs()
+	if len(dependencies) == 0 {
+		return parent
 	}
-	relative = path.Clean(relative)
-	if relative == "." {
-		return "", fmt.Errorf("chart illegally contains content outside the base directory: %q", name)
+	type child struct {
+		Name    string
+		Content string
 	}
-	if strings.HasPrefix(relative, "..") {
-		return "", errors.New("chart illegally references parent directory")
+	children := make([]child, len(dependencies))
+	for i := range dependencies {
+		dep := &dependencies[i]
+		content := capturedChart{files: dep.Capture.Files, archive: dep.Capture.Archive}
+		children[i] = child{Name: dep.Name, Content: content.fingerprint()}
 	}
-	if len(relative) >= 3 && relative[1:3] == ":/" &&
-		(relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
-		return "", errors.New("chart contains illegally named files")
+	return manifest.Fingerprint(struct {
+		Parent       string
+		Dependencies []child
+	}{parent, children})
+}
+
+func (c *capturedChart) load() (*chart.Chart, error) {
+	dependencies := c.dependencyInputs()
+	parent := c.parent
+	if parent == nil {
+		var err error
+		parent, err = (chartinput.Capture{Files: c.files, Archive: c.archive}).Load()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if base == "Chart.yaml" {
-		return "", errors.New("chart yaml not in base directory")
+	if len(dependencies) != 0 && c.parent != nil {
+		parent = cloneChartForRender(parent)
 	}
-	return relative, nil
+	for i := range dependencies {
+		dep := &dependencies[i]
+		if dep.Capture.Files == nil && dep.Capture.Archive == nil {
+			return nil, manifest.NewError(
+				manifest.ErrInput,
+				nil,
+				fmt.Sprintf("unresolved chart dependency %s (%s)", dep.Name, dep.Declaration.Repository),
+			)
+		}
+		child, err := dep.Capture.Load()
+		if err != nil {
+			return nil, fmt.Errorf("dependency %s: %w", dep.Name, err)
+		}
+		if dep.Declaration.Alias != "" {
+			child.Metadata.Name = dep.Declaration.Alias
+		}
+		parent.AddDependency(child)
+	}
+	return parent, nil
+}
+
+func captureInput(ctx context.Context, input fs.FS, name string, archiveShape bool) (capturedChart, bool, error) {
+	parent, _, missing, err := chartinput.CaptureAt(
+		ctx,
+		input,
+		chartinput.Options{Name: name, Archive: archiveShape},
+		nil,
+	)
+	if err != nil {
+		if missing {
+			err = fmt.Errorf("chart not found at %s: %w", name, err)
+		}
+		err = manifest.NewError(manifest.ErrInput, err, "")
+	}
+	return capturedChart{files: parent.Files, archive: parent.Archive}, missing, err
+}
+
+func (c *Client) completeDescription(
+	ctx context.Context,
+	input fs.FS,
+	description *chartDescription,
+	fresh bool,
+) (chartDescription, error) {
+	d := *description
+	built := *description.captured.dependencies
+	if !fresh {
+		options := chartinput.Options{Name: d.location, Validate: validateDependencyPath}
+		var err error
+		built, _, err = description.captured.dependencies.Complete(ctx, input, options)
+		if err != nil {
+			return chartDescription{}, manifest.NewError(manifest.ErrInput, err, "")
+		}
+	}
+	d.captured = capturedChart{
+		files:        built.Parent.Files,
+		archive:      built.Parent.Archive,
+		dependencies: &built,
+		parent:       built.Chart,
+	}
+	d.fingerprint = d.captured.fingerprint()
+	if d.fingerprint == description.fingerprint {
+		return d, nil
+	}
+	d.key = d.fingerprint
+	d.needsBuild = false
+	c.chartMu.RLock()
+	cached, found := c.chartCache[d.key]
+	c.chartMu.RUnlock()
+	if found {
+		cached.location = d.location
+		return cached, nil
+	}
+	return c.rememberDescription(&d, nil), nil
 }

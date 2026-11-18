@@ -1,15 +1,28 @@
 package orchestrator
 
 import (
+	"compress/gzip"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/controllers/helmrelease"
+	"github.com/home-operations/flate/internal/engine/controllers/kustomization"
 	"github.com/home-operations/flate/internal/engine/helm"
+	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -18,6 +31,291 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+//nolint:paralleltest // NewInvocation changes the process-wide egress policy.
+func TestRenderTrees_ChartDependencyContexts(t *testing.T) {
+	for _, mode := range []string{"shared_invocation", "separate_invocations"} {
+		t.Run(mode, func(t *testing.T) {
+			testChartDependencyContexts(t, mode == "separate_invocations")
+		})
+	}
+	for _, file := range []string{"repository.yaml", "secret.yaml"} {
+		t.Run("late_"+file, func(t *testing.T) {
+			testChartDependencyPublication(t, file)
+		})
+	}
+}
+
+func testChartDependencyContexts(t *testing.T, separate bool) {
+	t.Helper()
+	first := renderChartDependencyContexts(t, separate)
+	second := renderChartDependencyContexts(t, separate)
+	assert.Diff(t, second, first)
+}
+
+func renderChartDependencyContexts(t *testing.T, separate bool) [2][]byte {
+	t.Helper()
+	var output [2][]byte
+	archives := map[string][]byte{}
+	for _, name := range []string{"alpha", "omega"} {
+		archives[name] = testutil.TarGz(t, map[string]string{
+			"child/Chart.yaml":        "apiVersion: v2\nname: child\nversion: 1.0.0\n",
+			"child/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dependency}\ndata: {value: " + name + "}\n",
+		}, 0o644, gzip.BestSpeed)
+	}
+	entered, release := make(chan string, 2), make(chan struct{})
+	released := false
+	server := httptest.NewServer(dependencyContextRepository(archives, entered, release))
+	t.Cleanup(server.Close)
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	trees := make([]Tree, 0, 2)
+	for _, name := range []string{"alpha", "omega"} {
+		trees = append(trees, chartDependencyTree(t, server.URL, name, ""))
+	}
+	count := 1
+	if separate {
+		count = 2
+	}
+	invocations := make([]*Invocation, 0, count)
+	done := make(chan error, count)
+	for i := range count {
+		invocation, err := NewInvocation(t.Context(), Config{Concurrency: 2})
+		assert.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+		invocations = append(invocations, invocation)
+		group := trees
+		if separate {
+			group = trees[i : i+1]
+		}
+		go func() { done <- invocation.Render(t.Context(), group) }()
+	}
+	var arrivals []string
+	for range 2 {
+		select {
+		case name := <-entered:
+			arrivals = append(arrivals, name)
+		case err := <-done:
+			t.Fatalf("dependency renders did not overlap: %v", err)
+		}
+	}
+	slices.Sort(arrivals)
+	assert.Diff(t, arrivals, []string{"alpha", "omega"})
+	close(release)
+	released = true
+	for range count {
+		assert.NoError(t, <-done)
+	}
+	var results []Rendered
+	for _, invocation := range invocations {
+		results = append(results, invocation.Results...)
+	}
+	assert.Equal(t, len(results), 2)
+	for i, name := range []string{"alpha", "omega"} {
+		result := results[i]
+		id := testutil.HelmReleaseID("apps", "release")
+		docs := outputByParent(result.Result.Manifests)[id]
+		assert.Equal(t, len(docs), 1)
+		assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any(name))
+		data, err := json.Marshal(docs)
+		assert.NoError(t, err)
+		output[i] = data
+	}
+	for _, invocation := range invocations {
+		assert.NoError(t, invocation.Close())
+		assert.NoError(t, invocation.Close())
+	}
+	return output
+}
+
+func chartDependencyTree(t *testing.T, url, username, lateFile string) Tree {
+	t.Helper()
+	const selfURL = "https://fixture.invalid/cluster.git"
+	root := t.TempDir()
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/source.yaml",
+		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: "+selfURL+"}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/release.yaml",
+		"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: release, namespace: apps}\nspec:\n  chart:\n    spec:\n      chart: parent\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"parent/Chart.yaml",
+		"apiVersion: v2\nname: parent\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 1.0.0\n  repository: "+url+"\n",
+	)
+	for name, body := range map[string]string{
+		"repository.yaml": "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: declared, namespace: flux-system}\nspec: {url: " + url + ", secretRef: {name: auth}}\n",
+		"secret.yaml":     "apiVersion: v1\nkind: Secret\nmetadata: {name: auth, namespace: flux-system}\nstringData: {username: " + username + ", password: password}\n",
+	} {
+		directory := "flux"
+		if name == lateFile {
+			directory = "inputs"
+			testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: ["+name+"]\n")
+			testutil.WriteFile(t, root, "flux/producer.yaml", testutil.KustomizationYAML("publish", "flux-system",
+				"  path: ./inputs\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+			))
+		}
+		testutil.WriteFile(t, root, directory+"/"+name, body)
+	}
+	return Tree{
+		ID:       manifest.TreeID{Cluster: manifest.ClusterID(username), Side: manifest.TreeHead},
+		RepoRoot: root,
+		Path:     filepath.Join(root, "flux"),
+		SelfURLs: []string{selfURL},
+	}
+}
+
+func testChartDependencyPublication(t *testing.T, lateFile string) {
+	t.Helper()
+	const username = "publisher"
+	archive := testutil.TarGz(t, map[string]string{
+		"child/Chart.yaml":        "apiVersion: v2\nname: child\nversion: 1.0.0\n",
+		"child/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dependency}\ndata: {value: published}\n",
+	}, 0o644, gzip.BestSpeed)
+	requests := new(atomic.Int32)
+	downloaded, serve := make(chan string, 1), make(chan struct{})
+	close(serve)
+	handler := dependencyContextRepository(map[string][]byte{username: archive}, downloaded, serve)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	invocation, err := NewInvocation(ctx, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+	tree := chartDependencyTree(t, server.URL, username, lateFile)
+	tree.Input = testDirectoryInput(t, tree.RepoRoot)
+	o, err := newOrchestrator(ctx, invocation.Config, &tree, invocation.budget.Fork())
+	assert.NoError(t, err)
+	defer o.stop()
+	assert.NoError(t, o.bootstrap(ctx))
+
+	input := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "auth"}
+	if lateFile == "repository.yaml" {
+		input = (&manifest.HelmRepository{Name: "declared", Namespace: "flux-system"}).Named()
+		record, found := o.index.Lookup(input)
+		assert.FatalIf(t, !found || record.Declaration == nil, "repository missing from discovery: %v", record)
+	}
+	assert.Equal(t, o.store.GetDeclaration(input) == nil, true)
+
+	release := testutil.HelmReleaseID("apps", "release")
+	publish := make(chan struct{})
+	o.controllers.Kustomization = &chartDependencyPublisher{Controller: o.ksc, publish: publish}
+	o.controllers.HelmRelease = &chartDependencyWaiter{
+		Controller: o.hrc,
+		wait: sync.OnceFunc(func() {
+			assert.Equal(t, requests.Load(), int32(0))
+			assert.Equal(t, o.store.GetDeclaration(input) == nil, true)
+			_, _, emission := o.store.GetEmission(release)
+			assert.Equal(t, len(emission.Manifests), 0)
+			emission.Finish()
+			close(publish)
+		}),
+		input: input,
+	}
+	result, err := o.collectResult(ctx, o.run(ctx))
+	if err != nil {
+		result.Close()
+		t.Fatal(err)
+	}
+	defer result.Close()
+	select {
+	case <-publish:
+	default:
+		t.Fatalf("release did not wait for %s", input)
+	}
+	select {
+	case got := <-downloaded:
+		assert.Equal(t, got, username)
+	default:
+		t.Fatal("no authenticated chart download")
+	}
+	assert.Equal(t, requests.Load(), int32(2))
+	docs := outputByParent(result.Manifests)[release]
+	assert.FatalIf(t, len(docs) != 1, "release output = %v, want one child document", docs)
+	assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any("published"))
+}
+
+type chartDependencyPublisher struct {
+	*kustomization.Controller
+
+	publish <-chan struct{}
+}
+
+func (c *chartDependencyPublisher) ReconcileNode(
+	ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result,
+) *base.Execution {
+	c.Tasks.YieldSlot(func() {
+		select {
+		case <-c.publish:
+		case <-ctx.Done():
+		}
+	})
+	return c.Controller.ReconcileNode(ctx, id, level, previous)
+}
+
+type chartDependencyWaiter struct {
+	*helmrelease.Controller
+
+	wait  func()
+	input manifest.NamedResource
+}
+
+func (c *chartDependencyWaiter) ReconcileNode(
+	ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result,
+) *base.Execution {
+	execution := c.Controller.ReconcileNode(ctx, id, level, previous)
+	if execution.Outcome() == schedule.Blocked && slices.Contains(slices.Collect(execution.Reads.Inputs()), c.input) {
+		c.wait()
+	}
+	return execution
+}
+
+func dependencyContextRepository(
+	archives map[string][]byte,
+	entered chan<- string,
+	release <-chan struct{},
+) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || password != "password" || archives[username] == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/index.yaml" {
+			_, _ = io.WriteString(
+				w,
+				"apiVersion: v1\nentries:\n  child:\n  - name: child\n    version: 1.0.0\n    urls: [child.tgz]\n",
+			)
+			return
+		}
+		select {
+		case entered <- username:
+		case <-r.Context().Done():
+			return
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write(archives[username])
+	})
+}
 
 func TestRenderTrees_SharedHelmContext(t *testing.T) {
 	t.Parallel()
@@ -66,7 +364,7 @@ spec:
 		RecordWork:  true,
 		Cache:       owner,
 		Network:     new(source.Network),
-		HelmClient:  helm.NewClient(owner),
+		HelmClient:  helm.NewClient(owner, nil),
 		Concurrency: 2,
 	}
 	t.Cleanup(cfg.Network.Close)

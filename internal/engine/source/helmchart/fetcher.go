@@ -5,7 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"slices"
+	"strings"
 	"sync"
+
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/core/keylock"
 	"github.com/home-operations/flate/internal/engine/source"
@@ -90,13 +95,6 @@ func (f *operation) fetchSource(
 	if err := ctx.Err(); err != nil {
 		return source.PreparedFetch{}, fmt.Errorf("prepare helm chart: %w", err)
 	}
-	f.work.Scope = f.reads.Work().Scope().Source(hc.Named())
-	if policy.Work != nil {
-		f.work.Scope = policy.Work.Attribution().Source(hc.Named())
-	}
-	policy.Work = &f.work
-	f.indexWork.Scope = f.work.Scope
-	policy.HistoryWork = &f.indexWork
 
 	var dependency manifest.DependencyRef
 	for ref := range manifest.References(hc, manifest.ReferenceAll) {
@@ -114,6 +112,24 @@ func (f *operation) fetchSource(
 			fmt.Sprintf("%s not found", manifest.DiagnosticFor(id, nil).Label()),
 		)
 	}
+	return f.fetchRepository(ctx, hc, r, &policy)
+}
+
+func (f *operation) fetchRepository(
+	ctx context.Context,
+	hc *manifest.HelmChartSource,
+	r *manifest.HelmRepository,
+	policyValue *cache.Policy,
+) (source.PreparedFetch, error) {
+	policy := *policyValue
+	f.work.Scope = f.reads.Work().Scope().Source(hc.Named())
+	if policy.Work != nil {
+		f.work.Scope = policy.Work.Attribution().Source(hc.Named())
+	}
+	policy.Work = &f.work
+	f.indexWork.Scope = f.work.Scope
+	policy.HistoryWork = &f.indexWork
+
 	policy.MaxAge = r.SourceInterval()
 	if f.disableChartDigestTracking && hc.ExactVersion() {
 		policy.MaxAge = cache.Forever
@@ -220,4 +236,132 @@ func (f *operation) fetchOCIChart(
 		return source.PreparedFetch{}, &wrapped
 	}
 	return restamp(prepared), err
+}
+
+// FetchDependency MUST require admission of the selected repository before credential access.
+// A probe MUST capture identities without preparing credentials or transports.
+//
+//nolint:revive // The acquisition boundary MUST retain discovery, captured reads, cache policy, and probe mode without another public options type.
+func (f *Fetcher) FetchDependency(
+	ctx context.Context,
+	namespace string,
+	dependency *chart.Dependency,
+	index *manifest.DiscoveryIndex,
+	reads *store.ReadSet,
+	policy *cache.Policy,
+	probe bool,
+) (source.PreparedFetch, error) {
+	if err := ctx.Err(); err != nil {
+		return source.PreparedFetch{}, fmt.Errorf("prepare chart dependency: %w", err)
+	}
+	target, err := dependencyURL(dependency.Repository)
+	if err != nil {
+		return source.PreparedFetch{}, err
+	}
+	ids := dependencyRepositories(namespace, index, reads)
+	var winner *manifest.HelmRepository
+	var selected manifest.NamedResource
+	var admitted bool
+	for _, id := range ids {
+		repository, live, lookupErr := dependencyDeclaration(id, index, reads)
+		if lookupErr != nil {
+			return source.PreparedFetch{
+				Inputs: []manifest.DependencyRef{{NamedResource: id, RequiresDeclaration: true}},
+			}, lookupErr
+		}
+		if repository == nil {
+			continue
+		}
+		normalized, normalizeErr := dependencyURL(repository.URL)
+		if normalizeErr == nil && normalized == target && winner == nil {
+			winner, selected, admitted = repository, id, live
+		}
+	}
+	if winner != nil && !admitted {
+		return source.PreparedFetch{
+			Inputs: []manifest.DependencyRef{{NamedResource: selected, RequiresDeclaration: true}},
+		}, nil
+	}
+	if winner == nil {
+		winner = &manifest.HelmRepository{Namespace: namespace, URL: target}
+	}
+	if probe {
+		for ref := range manifest.References(winner, manifest.ReferenceRelations) {
+			if ref.ContentInput() {
+				reads.GetDeclaration(ref.NamedResource)
+			}
+		}
+		return source.PreparedFetch{}, nil
+	}
+	hc := &manifest.HelmChartSource{
+		Namespace: namespace,
+		Name:      dependency.Name,
+		Chart:     dependency.Name,
+		Version:   dependency.Version,
+	}
+	op := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	return op.fetchRepository(ctx, hc, winner, policy)
+}
+
+func dependencyDeclaration(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+	reads *store.ReadSet,
+) (*manifest.HelmRepository, bool, error) {
+	object := reads.GetDeclaration(id)
+	live := object != nil
+	if object == nil {
+		record, _ := index.Lookup(id)
+		object = record.Declaration
+	}
+	if object == nil {
+		return nil, false, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			nil,
+			fmt.Sprintf("dependency repository %s declaration unavailable", id),
+		)
+	}
+	repository, _ := object.(*manifest.HelmRepository)
+	return repository, live, nil
+}
+
+func dependencyRepositories(
+	namespace string,
+	index *manifest.DiscoveryIndex,
+	reads *store.ReadSet,
+) []manifest.NamedResource {
+	ids := make([]manifest.NamedResource, 0)
+	if index != nil {
+		for id := range index.Records {
+			if id.Group == manifest.SourceDomain && id.Kind == manifest.KindHelmRepository &&
+				id.Namespace == namespace {
+				ids = append(ids, id)
+			}
+		}
+	}
+	for _, object := range reads.ListObjects(manifest.SourceDomain, manifest.KindHelmRepository) {
+		if object.Named().Namespace == namespace {
+			ids = append(ids, object.Named())
+		}
+	}
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	ids = slices.Compact(ids)
+	return ids
+}
+
+func dependencyURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", manifest.NewError(manifest.ErrInput, err, "")
+	}
+	if u.Host == "" || u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "oci" {
+		return "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("invalid dependency repository URL %q", raw))
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = strings.TrimRight(u.RawPath, "/")
+	if u.Scheme != "oci" {
+		u.Path += "/"
+		u.RawPath += "/"
+	}
+	return u.String(), nil
 }

@@ -331,7 +331,7 @@ func assertOpaqueInputInventory(
 		var reads store.ReadSet
 		reads.Init(run.store, id, nil)
 		controller := *run.hrc
-		controller.Helm = helm.NewClient(owner)
+		controller.Helm = helm.NewClient(owner, nil)
 		preparedHistory318 := controller.PreviousRender(
 			t.Context(),
 			run.store.GetObject(id),

@@ -29,8 +29,8 @@ func testTemplateAcceptedHistoryDisabledPreparation(
 	objects.SetArtifact((*testCaseInput.hr).ChartSource(), &artifact)
 	sources := &historyCountingSources{sourceReader: objects}
 	observed := (*testCaseInput.input)
-	observed.Sources = NewSources(sources)
-	fresh := NewClient(cachetest.New(t, "", cache.New))
+	observed.Sources = NewSources(sources, nil)
+	fresh := NewClient(cachetest.New(t, "", cache.New), nil)
 	{
 		previous, complete := fresh.PreviousRender(
 			t.Context(),

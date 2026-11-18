@@ -101,7 +101,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 					Digest:    digest,
 				},
 			)
-			cli := NewClient(cachetest.New(t, "", sourcecache.New))
+			cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 			{
 				_, _, err := testutil.RenderMaps(
@@ -109,7 +109,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 						t.Context(),
 						hr,
 						nil,
-						RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)},
+						RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st, nil)},
 					),
 				)
 				assert.NoError(t, err)
@@ -121,7 +121,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 						t.Context(),
 						hr,
 						nil,
-						RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)},
+						RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st, nil)},
 					),
 				)
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
@@ -148,7 +148,7 @@ func testTemplateOCIConcurrentIdentitiesCase(
 	t.Helper()
 
 	st, hr, dir := ociRenderFixture(t)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	hrB := hr.Clone()
 	hrB.Name = "second"
@@ -201,7 +201,7 @@ func testTemplateOCIConcurrentIdentitiesCase(
 						nil,
 						RenderOptions{
 							DisableChartDigestTracking: testCaseInput.disable,
-							Sources:                    NewSources(st),
+							Sources:                    NewSources(st, nil),
 						},
 					),
 				)

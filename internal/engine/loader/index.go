@@ -3,7 +3,6 @@ package loader
 import (
 	"cmp"
 	"context"
-	"iter"
 	"path/filepath"
 	"slices"
 
@@ -546,53 +545,16 @@ func (l *Loader) markCompleteSources() {
 }
 
 func (l *Loader) indexRecordInputs() {
-	var currentReader *manifest.NamedResource
-	var recordInput func(manifest.Reference) bool
-	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-	for id, record := range l.Index.Records {
-		refs := l.recordInputReferences(id, &record)
-		if refs == nil {
-			continue
-		}
-		if recordInput == nil {
-			reader := new(manifest.NamedResource)
-			currentReader = reader
-			recordInput = func(ref manifest.Reference) bool {
-				if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
-					return true
-				}
-				if !slices.Contains(l.inputReaders[ref.NamedResource], *reader) {
-					l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], *reader)
-				}
-				return true
+	for id := range l.Index.Records {
+		for ref := range l.References(id) {
+			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
+				continue
+			}
+			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
+				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
 			}
 		}
-		// Reference iterators MUST consume the current reader synchronously.
-		*currentReader = id
-		refs(recordInput)
 	}
-}
-
-func (l *Loader) recordInputReferences(
-	id manifest.NamedResource,
-	record *manifest.DiscoveryRecord,
-) iter.Seq[manifest.Reference] {
-	var refs iter.Seq[manifest.Reference]
-	object := l.Store.GetDeclaration(id)
-	if occurrence, known := l.locations[id]; known && record.Builder == "" {
-		if object == nil || object == occurrence.object || object == occurrence.facts.catalog ||
-			object == l.candidates[id].Obj {
-			return occurrence.references()
-		}
-	}
-	if object != nil {
-		refs = manifest.References(object, manifest.ReferenceRelations)
-	} else if child := l.candidates[id]; child.Obj != nil && record.Path == "" {
-		refs = manifest.References(child.Obj, manifest.ReferenceRelations)
-	} else if occurrence, ok := l.locations[id]; ok {
-		refs = occurrence.references()
-	}
-	return refs
 }
 
 func (l *Loader) producerFactCurrent(object manifest.BaseManifest) bool {

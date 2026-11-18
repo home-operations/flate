@@ -51,7 +51,7 @@ func testTemplateActionSchemaPolicyCase1(t *testing.T, tc *struct {
 ) {
 	t.Helper()
 
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	hr := newHR()
 	hr.DisableSchemaValidation = tc.install
@@ -131,7 +131,7 @@ func TestTemplate_SchemaErrorOrder(t *testing.T) {
     }}
   }
 }`)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	hr := newHR()
 	values := map[string]any{
 		"alpha": nil, "middle": nil, "zeta": nil,
@@ -177,7 +177,7 @@ func TestTemplate_SchemaPropertyOrder(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
 	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","additionalProperties":false}`)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	hr := newHR()
 	values := map[string]any{"zulu": true, "alpha": true, "mu": true, "beta": true, "theta": true, "omega": true}
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}

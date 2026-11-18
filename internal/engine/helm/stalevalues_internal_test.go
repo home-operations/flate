@@ -291,7 +291,7 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 		"Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")},
 		"templates/cm.yaml": {Data: []byte("{{ .Values.first }}")},
 	}
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Chart: manifest.HelmChart{
@@ -317,8 +317,7 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 				"second",
 			), &RenderOptions{
 				Sources: NewSources(
-					st,
-				),
+					st, nil),
 			},
 		),
 
@@ -329,13 +328,15 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 	input["templates/cm.yaml"].Data = []byte("{{ .Values.second }}")
 	assert.Diff(
 		t,
-		cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st)}),
+		cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st, nil)}),
 		[]string{"first"},
 	)
 	input["Chart.yaml"].Data = []byte("invalid")
 	assert.Equal(
 		t,
-		len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st)})),
+		len(
+			cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), &RenderOptions{Sources: NewSources(st, nil)}),
+		),
 		0,
 	)
 }

@@ -66,7 +66,7 @@ func TestPrepare_AuthoredReferencePolicy(t *testing.T) {
 	root := testutil.WriteTree(t, map[string]string{
 		"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 	})
-	client := NewClient(cachetest.New(t, "", cache.New))
+	client := NewClient(cachetest.New(t, "", cache.New), nil)
 	var previous Preparation
 	defer func() { previous = Preparation{} }()
 	request := RenderOptions{

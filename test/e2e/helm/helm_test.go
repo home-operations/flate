@@ -39,6 +39,7 @@ func TestE2E_HelmCorpus(t *testing.T) {
 		{"helm-values", "unreadable-parent-does-not-fill-required-values-diff-current"},
 		{"helm-values", "unreadable-parent-does-not-fill-required-values-diff-orig"},
 		{"helm-values", "stale-values-warning"},
+		{"helm-values", "targetpath-inline-list-schema"},
 		{"helm-dependencies", "changed-onlyhr-depends-on-unchanged-dep"},
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-templated"},
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-templated-root"},

@@ -74,6 +74,21 @@
           "delete": "repo/cluster/source.yaml"
         }
       ]
+    },
+    {
+      "name": "targetpath-inline-list-schema",
+      "directory": "overlays/targetpath-inline-list-schema",
+      "operations": [
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment"
+        },
+        {
+          "delete": "repo/cluster/source.yaml"
+        }
+      ]
     }
   ],
   "cases": [
@@ -331,6 +346,48 @@
             "expect": {
               "stdout": "expect/stale-test.stdout",
               "stderr": "expect/stale-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "targetpath-inline-list-schema",
+      "description": "A target supplies the required bucket on the second inline list entry.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "targetpath-inline-list-schema"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "targetpath-inline-list",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/targetpath-inline-list.stdout",
+              "stderr": "expect/targetpath-inline-list.stderr",
               "code": 0
             }
           }
@@ -629,7 +686,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -640,7 +698,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -651,7 +710,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -662,7 +722,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -673,7 +734,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -684,7 +746,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -695,7 +758,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -706,7 +770,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -717,7 +782,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -728,7 +794,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -739,7 +806,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -750,7 +818,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -761,7 +830,8 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
     },
@@ -772,9 +842,59 @@
         "unreadable-parent-does-not-fill-required-values-changed-only",
         "unreadable-parent-does-not-fill-required-values-diff-current",
         "unreadable-parent-does-not-fill-required-values-diff-orig",
-        "stale-values-warning"
+        "stale-values-warning",
+        "targetpath-inline-list-schema"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/targetpath-inline-list.stderr",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "expect/targetpath-inline-list.stdout",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "overlays/targetpath-inline-list-schema/repo/charts/backup/Chart.yaml",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "overlays/targetpath-inline-list-schema/repo/charts/backup/templates/configmap.yaml",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "overlays/targetpath-inline-list-schema/repo/charts/backup/values.schema.json",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "overlays/targetpath-inline-list-schema/repo/charts/backup/values.yaml",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
+    },
+    {
+      "path": "overlays/targetpath-inline-list-schema/repo/cluster/helmrelease.yaml",
+      "cases": [
+        "targetpath-inline-list-schema"
+      ],
+      "purpose": "Local schema regression input or independently authored complete output."
     }
   ]
 }

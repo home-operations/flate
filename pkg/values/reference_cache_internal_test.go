@@ -1,7 +1,9 @@
 package values
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -80,6 +82,52 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 			refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0]"}},
 			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{"Always"}},
 		},
+		{
+			name:   "inline map collision",
+			inline: map[string]any{"image": map[string]any{"tag": "inline"}},
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.tag"},
+			},
+			want: map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "inline"},
+				"env":   []any{map[string]any{"name": "A", "value": "1"}},
+			},
+		},
+		{
+			name:   "inline list collision",
+			inline: map[string]any{"env": []any{map[string]any{"name": "inline", "value": "original"}}},
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
+			},
+			want: map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "v1"},
+				"env":   []any{map[string]any{"name": "inline", "value": "Always"}},
+			},
+		},
+		{
+			name:   "partial inline ordinary failure",
+			inline: map[string]any{"env": []any{map[string]any{"name": "inline", "value": "original"}}},
+			refs: []manifest.ValuesReference{
+				{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]"},
+			},
+			want:    map[string]any{"env": []any{map[string]any{"name": "inline", "value": "original"}}},
+			wantErr: true,
+		},
+		{
+			name:   "partial inline literal failure",
+			inline: map[string]any{"env": []any{map[string]any{"name": "inline", "value": "original"}}},
+			refs: []manifest.ValuesReference{
+				{
+					Kind:       "ConfigMap",
+					Name:       "inject",
+					ValuesKey:  "v",
+					TargetPath: "env[0].value=changed,broken[bad]",
+					Literal:    true,
+				},
+			},
+			want:    map[string]any{"env": []any{map[string]any{"name": "inline", "value": "original"}}},
+			wantErr: true,
+		},
 		{name: "yaml between writes", refs: []manifest.ValuesReference{
 			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].name", Literal: true},
 			{Kind: "ConfigMap", Name: "platform"},
@@ -119,6 +167,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 			hr.ValuesFrom = append(hr.ValuesFrom, tc.refs...)
 			hr.Values = tc.inline
 			inlineBefore := manifest.DeepCopyMap(tc.inline)
+			before, refsBefore := hr.Clone(), slices.Clone(hr.ValuesFrom)
 			ready.Done()
 			<-start
 			err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), cache)
@@ -128,6 +177,12 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 			}
 			assert.Diff(t, hr.Values, tc.want)
 			assert.Diff(t, tc.inline, inlineBefore)
+			assert.Diff(t, hr.ValuesFrom, refsBefore)
+			if tc.wantErr {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+				assert.Equal(t, manifest.Equal(hr, before), true)
+			}
 		})
 	}
 	ready.Wait()
@@ -245,6 +300,81 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 				canonical, ok := cache.lookup(document.cm.Data["values.yaml"].(string))
 				assert.FatalIf(t, !ok, "%s", "missing cached document")
 				assert.Diff(t, canonical, document.want)
+			}
+		})
+	}
+}
+
+func TestExpandValueReferences_InterleavedInputIsolation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		regime, scenario string
+	}{
+		{regime: "disabled", scenario: "repeated root"},
+		{regime: "disabled", scenario: "private inline"},
+		{regime: "empty", scenario: "repeated root"},
+		{regime: "empty", scenario: "private inline"},
+		{regime: "populated", scenario: "repeated root"},
+		{regime: "populated", scenario: "private inline"},
+	} {
+		regime, scenario := tc.regime, tc.scenario
+		t.Run(regime+"/"+scenario, func(t *testing.T) {
+			t.Parallel()
+			cm := nestedValuesCM()
+			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
+				Name: "inject", Namespace: "default", Data: map[string]any{"first": "first", "second": "second"},
+			}}}
+			var cache *Cache
+			if regime != "disabled" {
+				cache = &Cache{}
+			}
+			var prior *manifest.HelmRelease
+			if regime == "populated" {
+				prior = wholeDocHR()
+				expandValuesForTest(t, prior, provider, cache)
+			}
+			original := map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "v1"},
+				"env":   []any{map[string]any{"name": "A", "value": "1"}},
+			}
+			hr := wholeDocHR()
+			want := manifest.DeepCopyMap(original)
+			if scenario == "repeated root" {
+				hr.Values = map[string]any{"keep": true}
+				hr.ValuesFrom = append(
+					hr.ValuesFrom,
+					manifest.ValuesReference{
+						Kind:       "ConfigMap",
+						Name:       "inject",
+						ValuesKey:  "first",
+						TargetPath: "env[0].value",
+					},
+					manifest.ValuesReference{Kind: "ConfigMap", Name: "platform"},
+				)
+				want["keep"] = true
+			} else {
+				hr.Values = map[string]any{"image": map[string]any{"tag": "inline"}}
+				hr.ValuesFrom = []manifest.ValuesReference{
+					{Kind: "ConfigMap", Name: "inject", ValuesKey: "first", TargetPath: "image.tag"},
+					{Kind: "ConfigMap", Name: "platform"},
+					{Kind: "ConfigMap", Name: "inject", ValuesKey: "second", TargetPath: "image.tag"},
+				}
+				want["image"].(map[string]any)["tag"] = "first"
+			}
+			inline, inlineBefore := hr.Values, manifest.DeepCopyMap(hr.Values)
+			refs, refsBefore := hr.ValuesFrom, slices.Clone(hr.ValuesFrom)
+			expandValuesForTest(t, hr, provider, cache)
+			assert.Diff(t, hr.Values, want)
+			assert.Diff(t, inline, inlineBefore)
+			assert.Diff(t, refs, refsBefore)
+			assert.Diff(t, hr.ValuesFrom, refsBefore)
+			if cache != nil {
+				canonical, ok := cache.lookup(cm.Data["values.yaml"].(string))
+				assert.FatalIf(t, !ok, "%s", "missing cached document")
+				assert.Diff(t, canonical, original)
+			}
+			if prior != nil {
+				assert.Diff(t, prior.Values, original)
 			}
 		})
 	}

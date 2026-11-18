@@ -1,0 +1,47 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+  ref:
+    branch: main
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-bucket
+  namespace: apps
+data:
+  bucket: archive
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: backup
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/backup
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  valuesFrom:
+    - kind: ConfigMap
+      name: backup-bucket
+      valuesKey: bucket
+      targetPath: configuration.backupStorageLocation[1].bucket
+  values:
+    configuration:
+      backupStorageLocation:
+        - name: primary
+          bucket: inline-primary
+          provider: aws
+          prefix: daily
+        - name: secondary
+          provider: aws
+          prefix: monthly

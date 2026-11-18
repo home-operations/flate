@@ -70,11 +70,15 @@ func TestExpandValueReferences_PreservesAuthoredDeclarations(t *testing.T) {
 		name      string
 		filter    bool
 		malformed bool
+		target    bool
+		literal   bool
 	}{
 		{name: "all_used"},
 		{name: "unnamed_and_omitted", filter: true},
 		{name: "malformed_all_used", malformed: true},
 		{name: "malformed_after_omission", filter: true, malformed: true},
+		{name: "malformed_after_target", filter: true, malformed: true, target: true},
+		{name: "malformed_after_literal_target", filter: true, malformed: true, target: true, literal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -84,11 +88,21 @@ func TestExpandValueReferences_PreservesAuthoredDeclarations(t *testing.T) {
 					Kind: manifest.KindSecret, Name: "absent", Optional: true,
 				})
 			}
+			if tc.target {
+				refs = append(refs, manifest.ValuesReference{
+					Kind: manifest.KindConfigMap, Name: "inject", ValuesKey: "v",
+					TargetPath: "nested.items[0].value", Literal: tc.literal,
+				})
+			}
 			refs = append(refs, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "later"})
 			hr := &manifest.HelmRelease{
 				Name: "consumer", Namespace: "apps", ValuesFrom: refs,
 				Values: map[string]any{"inline": "fixed"},
 			}
+			if tc.target {
+				hr.Values["nested"] = map[string]any{"items": []any{map[string]any{"value": "original"}}}
+			}
+			inline, inlineBefore := hr.Values, manifest.DeepCopyMap(hr.Values)
 			before, borrowed := hr.Clone(), slices.Clone(refs)
 			later := "value: later\n"
 			if tc.malformed {
@@ -97,11 +111,14 @@ func TestExpandValueReferences_PreservesAuthoredDeclarations(t *testing.T) {
 			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{
 				{Name: "first", Namespace: "apps", Data: map[string]any{"values.yaml": "value: first\n"}},
 				{Name: "later", Namespace: "apps", Data: map[string]any{"values.yaml": later}},
+				{Name: "inject", Namespace: "apps", Data: map[string]any{"v": "changed"}},
 			}}
 			err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
 			assert.Diff(t, refs, borrowed)
+			assert.Diff(t, inline, inlineBefore)
 			if tc.malformed {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, manifest.Equal(hr, before), true)
 				return
 			}
@@ -337,11 +354,13 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	t.Parallel()
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Values: map[string]any{"existing": "kept"},
+		Values: map[string]any{"existing": "kept", "nested": map[string]any{"items": []any{"original"}}},
 		ValuesFrom: []manifest.ValuesReference{
 			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
 		},
 	}
+	inline, inlineBefore := hr.Values, manifest.DeepCopyMap(hr.Values)
+	refs, refsBefore := hr.ValuesFrom, slices.Clone(hr.ValuesFrom)
 	provider := &sliceProvider{}
 	{
 		err := ExpandValueReferences(hr, resolveInputsForTest(hr, provider, nil), nil)
@@ -352,6 +371,10 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	}
 	assert.ErrorIf(t, hr.Values["existing"] != "kept",
 		"inline values should remain: %+v", hr.Values)
+	assert.Diff(t, inline, inlineBefore)
+	assert.Diff(t, hr.Values, inlineBefore)
+	assert.Diff(t, refs, refsBefore)
+	assert.Equal(t, len(hr.ValuesFrom), 0)
 }
 
 func TestExpandValueReferences_MissingReferences(t *testing.T) {

@@ -621,6 +621,7 @@ Both sequence replays start with empty caches.
 | `helm-values/unreadable-parent-does-not-fill-required-values-diff-current` | unreadable parent does not fill required values diff current. | Reuse within sequence; reset on replay. |
 | `helm-values/unreadable-parent-does-not-fill-required-values-diff-orig` | unreadable parent does not fill required values diff orig. | Reuse within sequence; reset on replay. |
 | `helm-values/stale-values-warning` | stale values warning. | Reuse within sequence; reset on replay. |
+| `helm-values/targetpath-inline-list-schema` | `build hr`: a local ConfigMap supplies the second inline bucket through `targetPath`. The chart schema requires both buckets. Complete output retains both entries and their surrounding fields. | Two cold replays at concurrency 2 reset all caches and the isolated home. |
 | `helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` | changed onlyhr depends on unchanged dep. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-templated` | changed only emitted kustomization path templated. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-templated-root` | changed only emitted kustomization path templated root. | Reuse within sequence; reset on replay. |

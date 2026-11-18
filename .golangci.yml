@@ -134,199 +134,49 @@ linters:
               desc: tests use the standard testing package
             - pkg: github.com/onsi/gomega
               desc: tests use the standard testing package
+        core:
+          files: ["**/internal/core/**", "!$test"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg
+              desc: core primitives sit below the SDK and engine
+            - pkg: github.com/home-operations/flate/internal/engine
+              desc: core primitives sit below the engine
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: core primitives sit below the CLI
+        manifest:
+          files: ["**/pkg/manifest/**", "!$test"]
+          deny:
+            - pkg: github.com/home-operations/flate/internal/engine
+              desc: manifest depends on core primitives only
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: manifest sits below the CLI
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: manifest sits below orchestration
+        engine:
+          files: ["**/internal/engine/**", "!$test"]
+          deny:
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: the engine sits below the CLI
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: the engine sits below the SDK boundary
+        public-orchestrator:
+          files: ["**/pkg/orchestrator/**", "!$test"]
+          deny:
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: the SDK boundary sits below the CLI
+        testutil:
+          files: ["$all", "!$test", "!**/test/**", "!**/internal/testutil/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/internal/testutil
+              desc: test support belongs only to tests
         tree-stdlib-only:
           list-mode: strict
-          files: ["**/pkg/tree/**", "!$test"]
+          files: ["**/internal/engine/tree/**", "!$test"]
           allow: ["$gostd"]
         claimpath-stdlib-only:
           list-mode: strict
-          files: ["**/internal/claimpath/**", "!$test"]
+          files: ["**/internal/core/claimpath/**", "!$test"]
           allow: ["$gostd"]
-        inputprojection:
-          list-mode: strict
-          files: ["**/internal/inputprojection/**"]
-          allow:
-            - $gostd
-            - github.com/home-operations/flate/pkg/manifest
-        leaf:
-          files:
-            - "**/pkg/manifest/**"
-            - "**/pkg/task/**"
-            - "**/pkg/source/safepath/**"
-            - "**/pkg/source/sourceignore/**"
-            - "**/pkg/source/ssrfguard/**"
-            - "**/internal/assert/**"
-            - "**/internal/chartinput/**"
-            - "**/internal/fetcherr/**"
-            - "**/internal/httpconditional/**"
-            - "**/internal/kustpath/**"
-            - "**/internal/kustomizeinput/**"
-            - "**/internal/resourcesetinput/**"
-            - "!$test"
-          deny:
-            - pkg: github.com/home-operations/flate/pkg
-              desc: leaf packages import nothing from pkg/
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: leaf packages are below orchestration
-        selection:
-          list-mode: strict
-          files: ["**/pkg/selection/**", "!$test"]
-          allow:
-            - $gostd
-            - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/pkg/store
-            - github.com/home-operations/flate/pkg/change
-        selection-foundation:
-          files:
-            - "**/pkg/manifest/**"
-            - "**/pkg/store/**"
-            - "**/pkg/change/**"
-            - "**/pkg/source/**"
-            - "**/pkg/values/**"
-            - "**/pkg/schedule/**"
-            - "!$test"
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/selection
-              desc: facts do not depend on render selection
-        store:
-          files: ["**/pkg/store/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/loader
-              desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/values
-              desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/depwait
-              desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/change
-              desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/source
-              desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/kustomize
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/helm
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/discovery
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/baseline
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/resourceset
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/diff
-              desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/controllers
-              desc: store is below the controllers
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: store is below the orchestrator
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: store is below the orchestrator
-        schedule:
-          # Scheduling depends only on stdlib, manifest and task.
-          list-mode: strict
-          files: ["**/pkg/schedule/**", "!$test"]
-          allow:
-            - $gostd
-            - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/pkg/task
-        middle:
-          files:
-            - "**/pkg/loader/**"
-            - "**/pkg/values/**"
-            - "**/pkg/depwait/**"
-            - "**/pkg/change/**"
-            - "**/pkg/source/**"
-            - "!$test"
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/kustomize
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/helm
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/discovery
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/baseline
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/resourceset
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/diff
-              desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/controllers
-              desc: below the controllers
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: below the orchestrator
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: below the orchestrator
-        diff:
-          files: ["**/pkg/diff/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/internal/output
-              desc: diff owns comparison and presentation names
-            - pkg: github.com/home-operations/flate/internal/cli
-              desc: diff sits below CLI adaptation
-        output:
-          files: ["**/internal/output/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/internal/cli
-              desc: output sits below CLI presentation
-        render:
-          files:
-            - "**/pkg/kustomize/**"
-            - "**/pkg/helm/**"
-            - "**/pkg/discovery/**"
-            - "**/pkg/baseline/**"
-            - "**/pkg/resourceset/**"
-            - "**/pkg/diff/**"
-            - "!$test"
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/controllers
-              desc: below the controllers
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: below the orchestrator
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: below the orchestrator
-        controllers-base:
-          files: ["**/pkg/controllers/base/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/controllers/helmrelease
-              desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/kustomization
-              desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/artifactgenerator
-              desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/resourceset
-              desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/source
-              desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: below the orchestrator
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: below the orchestrator
-        controllers:
-          files: ["**/pkg/controllers/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: controllers are below the orchestrator
-            - pkg: github.com/home-operations/flate/internal/orchestrator
-              desc: controllers are below the orchestrator
-        public-orchestrator:
-          list-mode: strict
-          files: ["**/pkg/orchestrator/**", "!$test"]
-          allow:
-            - $gostd
-            - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/internal/orchestrator
-            - github.com/home-operations/flate/pkg/selection
-            - github.com/home-operations/flate/pkg/helm
-            - github.com/home-operations/flate/pkg/source/cache
-            - github.com/home-operations/flate/pkg/store
-        internal-orchestrator:
-          files: ["**/internal/orchestrator/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/pkg/orchestrator
-              desc: execution does not depend on the public boundary
-        no-upward-to-cli:
-          files: ["**/pkg/**", "**/internal/orchestrator/**", "!$test"]
-          deny:
-            - pkg: github.com/home-operations/flate/internal/cli
-              desc: orchestration and pkg/ never import internal/cli
     embeddedstructfieldcheck:
       forbid-mutex: true
     errcheck:
@@ -462,8 +312,8 @@ linters:
         - generic
         # Manifest and artifact owners return heterogeneous implementations.
         - ^github\.com/home-operations/flate/pkg/manifest\.BaseManifest$
-        - ^github\.com/home-operations/flate/pkg/store\.Artifact$
-        - ^github\.com/home-operations/flate/pkg/source/git\.Connection$
+        - ^github\.com/home-operations/flate/internal/engine/store\.Artifact$
+        - ^github\.com/home-operations/flate/internal/engine/source/git\.Connection$
     errorlint:
       errorf: true
       asserts: true
@@ -543,10 +393,10 @@ linters:
       # Flux still consumes these deprecated Kustomize inputs.
       - linters:
           - staticcheck
-        path: ^(internal/kustomizeinput/input|pkg/kustomize/generate|pkg/loader/(kustomization|occurrences|paths))\.go$
+        path: ^(internal/engine/kustomize/kustomizeinput/input|internal/engine/kustomize/generate|internal/engine/loader/(kustomization|occurrences|paths))\.go$
         text: SA1019:.*(Bases|PatchesJson6902|PatchesStrategicMerge|ImageTags|HelmChartInflationGenerator|Vars|/api/builtins).*deprecated
       # Adapter methods must implement the paired upstream signatures.
-      - path: ^(internal/(cli|orchestrator|testfixture|testutil)|pkg/(baseline|helm|kustomize|source/(git|gittree)))/
+      - path: ^internal/(cli|engine/(orchestrator|baseline|helm|kustomize|source/(git|gittree))|testutil)/
         linters:
           - ireturn
         source: ^func \(
@@ -602,7 +452,7 @@ linters:
       - path: ^(internal/cli|cmd)/
         linters:
           - forbidigo
-      - path: pkg/(source/httpinput|kustomize/flux)\.go
+      - path: internal/engine/(source/httpinput|kustomize/flux)\.go
         text: context.Background
         linters:
           - forbidigo
@@ -610,7 +460,7 @@ linters:
         linters:
           - errcheck
           - unparam
-      - path: (_test\.go|^test/e2e/internal/harness/|^internal/testfixture/)
+      - path: (_test\.go|^test/e2e/internal/harness/|^internal/testutil/testfixture/)
         linters:
           - gosec
   default: standard

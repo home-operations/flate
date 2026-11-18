@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestBindCommon_SkipKindsRenderKey(t *testing.T) {

@@ -7,13 +7,13 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/engine/selection"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/schedule"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 // Dispatch groups the caller-owned dependencies for a reconciliation.

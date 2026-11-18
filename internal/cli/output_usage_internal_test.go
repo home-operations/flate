@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/diff"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestBindOutput_Usage(t *testing.T) {

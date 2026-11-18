@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

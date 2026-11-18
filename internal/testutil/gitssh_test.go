@@ -14,8 +14,8 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestGitSSH_SessionAdmission(t *testing.T) {

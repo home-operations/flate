@@ -1,0 +1,49 @@
+package orchestrator
+
+import (
+	"testing"
+
+	"github.com/home-operations/flate/internal/engine/schedule"
+
+	"github.com/home-operations/flate/internal/engine/controllers/base"
+
+	"github.com/home-operations/flate/internal/engine/controllers/resourceset"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/task"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
+	for _, mode := range []string{"controller", "dispatcher", "observation_reads"} {
+		b.Run(mode, func(b *testing.B) {
+			s := store.New()
+			c := resourceset.New(s, task.NewBounded(2), nil)
+			c.Configure(base.Options{})
+			c.StartLifecycle()
+
+			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
+			s.AddObject(rs)
+			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
+			d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
+			b.ReportAllocs()
+			for b.Loop() {
+				switch mode {
+				case "controller":
+					c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
+				case "dispatcher":
+					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
+				case "observation_reads":
+					before, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+					if s.GetArtifact(rs.Named(), store.ArtifactContent) != before {
+						b.Fatal("artifact changed")
+					}
+					info, _ := s.GetStatus(rs.Named())
+					_, present := s.Get[*manifest.ResourceSet](rs.Named())
+					if info.Status != store.StatusReady || !present {
+						b.Fatal("resource disappeared")
+					}
+				}
+			}
+		})
+	}
+}

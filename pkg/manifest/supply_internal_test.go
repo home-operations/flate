@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestData_WithSupplied(t *testing.T) {

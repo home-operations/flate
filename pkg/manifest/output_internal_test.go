@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestDocumentBatch_IdentityAccessor(t *testing.T) {

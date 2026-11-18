@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func runAdvisoryDestinationsCase(t *testing.T, command *[]string, k8s *string) {

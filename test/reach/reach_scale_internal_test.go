@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:tparallel // The second cold request compares bytes from the completed first request.

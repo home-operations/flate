@@ -7,7 +7,7 @@ import (
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestTuneGC_Overrides(t *testing.T) {

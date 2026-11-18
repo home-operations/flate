@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestStripResourceFields(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 
-	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/cache"
 )
 
 func TestCacheGC_ExplicitRoot(t *testing.T) {

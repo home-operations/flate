@@ -1,0 +1,284 @@
+package orchestrator
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func TestRender_ScanAndPathWarnings(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name     string
+		sameRoot bool
+		category string
+	}{
+		{name: "empty scan", category: "EmptyScan"},
+		{name: "same root", sameRoot: true, category: "PathConfig"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testRenderScanAndPathWarningsCase(t, &tt)
+		},
+		)
+	}
+}
+
+// TestRender_StaleValuesWarning is the konflate-facing contract: a HelmRelease
+// pinning a value no chart template references surfaces as a structured
+// Result.Warnings entry (Category WarnStaleValues, attributed to the HR, Detail
+// = the unused keys) — not just a log line. A sibling HR on a chart that
+// consumes .Values wholesale (toYaml) produces no warning.
+func TestRender_StaleValuesWarning(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [hr.yaml]\n")
+	testutil.WriteFile(t, dir, "hr.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: app
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/app
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hi
+    oldUnusedKey: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opaque
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/opaque
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hi
+    oldUnusedKey: true
+`)
+	// appchart names .Values.greeting → flate flags the unreferenced oldUnusedKey.
+	testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "charts/app/values.yaml", "greeting: hi\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/app/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ .Values.greeting | quote }}\n",
+	)
+	// opaquechart dumps .Values wholesale → detection must stay silent.
+	testutil.WriteFile(t, dir, "charts/opaque/Chart.yaml", "apiVersion: v2\nname: opaque\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "charts/opaque/values.yaml", "greeting: hi\n")
+	testutil.WriteFile(
+		t,
+		dir,
+		"charts/opaque/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n",
+	)
+
+	renderedSingleton1, err := renderTreesForTest(context.Background(), t,
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{},
+	)
+
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
+
+	res := renderedSingleton1[0].Result
+
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(res.Failed) != 0,
+		"advisory must not fail the render; Failed=%v", res.Failed)
+
+	app := testutil.HelmReleaseID("apps", "app")
+	opaque := testutil.HelmReleaseID("apps", "opaque")
+
+	var got *manifest.Warning
+	for i := range res.Warnings {
+		w := res.Warnings[i]
+
+		assert.ErrorIf(t, w.Resource == opaque, "a chart consuming .Values wholesale must not warn; got %+v", w)
+
+		if w.Resource == app && w.Category == manifest.WarnStaleValues {
+			got = &res.Warnings[i]
+		}
+	}
+	assert.FatalIf(t, got == nil,
+		"missing StaleValues warning for %s; Warnings=%+v", app, res.Warnings)
+	assert.ErrorIf(t, !slices.Equal(got.Detail, []string{"oldUnusedKey"}),
+		"warning Detail = %v, want [oldUnusedKey]", got.Detail)
+}
+
+func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/cluster-apps.yaml",
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-secrets
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/flux/other-apps.yaml",
+		testutil.KustomizationYAML("other-apps", "flux-system", `  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-secrets
+`),
+	)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n",
+	)
+	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
+
+	renderedSingleton2, err := renderTreesForTest(t.Context(), t,
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{Concurrency: 2},
+	)
+
+	assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
+
+	res := renderedSingleton2[0].Result
+	assert.FatalIf(t, err == nil || len(res.Failed) != 2,
+		"required absent Secrets were admitted: error=%v failures=%v", err, res.Failed)
+
+	for _, warning := range res.Warnings {
+		assert.FatalIf(
+			t,
+			warning.Category == manifest.WarnUnresolvedSubstitution,
+			"failed reference reported success warning: %+v",
+			warning,
+		)
+	}
+	permitted, err := renderTreesForTest(t.Context(), t,
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{Concurrency: 2, AllowMissingKinds: []string{manifest.KindSecret}},
+	)
+	assert.FatalIf(t, err != nil || len(permitted) != 1, "permitted absent-input render: %v", err)
+	assert.Equal(t, len(permitted[0].Result.Failed), 0)
+	var warnings []manifest.Warning
+	for _, warning := range permitted[0].Result.Warnings {
+		if warning.Category == manifest.WarnUnresolvedSubstitution {
+			warnings = append(warnings, warning)
+		}
+	}
+	want := manifest.Warning{
+		Category: manifest.WarnUnresolvedSubstitution,
+		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
+			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
+			"or resolve to defaults or empty values",
+		Count: 2,
+	}
+	assert.Diff(t, warnings, []manifest.Warning{want})
+	testutil.WriteFile(t, dir, "kubernetes/apps/external-secret.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: cluster-secrets, namespace: flux-system}
+spec:
+  target: {name: cluster-secrets}
+`)
+	testutil.WriteFile(
+		t,
+		dir,
+		"kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n  - ./external-secret.yaml\n",
+	)
+	renderedSingleton2, err = renderTreesForTest(t.Context(), t,
+		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+		Config{Concurrency: 2},
+	)
+
+	assert.FatalIf(t, err != nil || len(renderedSingleton2) != 1, "producer-declared render: %v", err)
+
+	res = renderedSingleton2[0].Result
+	assert.Equal(t, len(res.Failed), 0)
+	warnings = nil
+	for _, warning := range res.Warnings {
+		if warning.Category == manifest.WarnUnresolvedSubstitution {
+			warnings = append(warnings, warning)
+		}
+	}
+	assert.Diff(t, warnings, []manifest.Warning(nil))
+}
+
+func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
+	name string
+
+	sameRoot bool
+	category string
+},
+) {
+	t.Helper()
+
+	root := t.TempDir()
+	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root}
+	if testCaseInput.sameRoot {
+		cfg.Input = testDirectoryInput(t, root)
+		cfg.BaseInput = cfg.Input
+	}
+	cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{cfg.Tree}, cfg.Config)
+
+	assert.FatalIf(t, len(runs) != 1, "missing run: %v", err)
+
+	res := runs[0].Result
+
+	assert.FatalIf(t, err != nil, "%v", err)
+
+	var warnings []manifest.Warning
+	{
+		wValues := res.Warnings
+		for wIndex := range wValues {
+			w := wValues[wIndex]
+
+			if w.Category == testCaseInput.category {
+				warnings = append(warnings, w)
+			}
+		}
+	}
+	assert.FatalIf(t, len(warnings) != 1,
+		"warnings = %+v, want one %s", res.Warnings, testCaseInput.category)
+
+	assert.Equal(t, warnings[0].Count, 1)
+	if testCaseInput.sameRoot {
+		assert.Diff(t, warnings[0].Detail, []string{root})
+	}
+}

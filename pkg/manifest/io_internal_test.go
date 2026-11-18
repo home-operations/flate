@@ -10,7 +10,7 @@ import (
 
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for ReleaseDoc.

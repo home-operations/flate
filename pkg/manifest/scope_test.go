@@ -4,16 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 
-	"github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/internal/engine/kustomize/krusty"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestKindInfo_NonScopeFactsDoNotResolveScope(t *testing.T) {
 	t.Parallel()
 
-	kustomize.BuildMutex.Lock()
+	krusty.BuildMutex.Lock()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -27,9 +27,9 @@ func TestKindInfo_NonScopeFactsDoNotResolveScope(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		kustomize.BuildMutex.Unlock()
+		krusty.BuildMutex.Unlock()
 	case <-time.After(5 * time.Second):
-		kustomize.BuildMutex.Unlock()
+		krusty.BuildMutex.Unlock()
 		<-done
 		t.Fatal("non-scope facts tried to resolve scope")
 	}

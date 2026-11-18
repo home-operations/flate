@@ -11,9 +11,9 @@ import (
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.

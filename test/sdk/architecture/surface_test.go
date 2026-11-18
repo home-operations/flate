@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 const modulePath = "github.com/home-operations/flate/"
@@ -223,9 +223,9 @@ func TestPublicSurface_Traversal(t *testing.T) {
 			fset := token.NewFileSet()
 			imports := make(fixtureImporter)
 			for _, fixture := range []struct{ path, source string }{
-				{modulePath + "pkg/store", "package store; type Leak struct{}"},
+				{modulePath + "internal/engine/store", "package store; type Leak struct{}"},
 				{"example.com/box", "package box; type Box[T any] struct { value T }"},
-				{modulePath + "pkg/orchestrator", `package orchestrator; import bad "` + modulePath + `pkg/store"; import box "example.com/box"; ` + tc.source},
+				{modulePath + "pkg/orchestrator", `package orchestrator; import bad "` + modulePath + `internal/engine/store"; import box "example.com/box"; ` + tc.source},
 			} {
 				file, err := parser.ParseFile(fset, "fixture.go", fixture.source, 0)
 				assert.NoError(t, err)
@@ -236,7 +236,9 @@ func TestPublicSurface_Traversal(t *testing.T) {
 			}
 			var want []string
 			if tc.reach != "" {
-				want = []string{modulePath + "pkg/orchestrator" + tc.reach + " -> " + modulePath + "pkg/store.Leak"}
+				want = []string{
+					modulePath + "pkg/orchestrator" + tc.reach + " -> " + modulePath + "internal/engine/store.Leak",
+				}
 			}
 			assert.Diff(t, surfaceLeaks(imports[modulePath+"pkg/orchestrator"]), want)
 		})

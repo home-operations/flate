@@ -1,0 +1,293 @@
+// Package kustomization reconciles Flux Kustomizations: wait on
+// dependsOn / sourceRef / structural parent, resolve postBuild
+// substitutions, run the kustomize SDK, parse the result back into the
+// Store, and publish an Emission. Failures bubble up to
+// the orchestrator.
+package kustomization
+
+import (
+	"context"
+	"errors"
+
+	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/discovery"
+	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/schedule"
+	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/task"
+	"github.com/home-operations/flate/internal/engine/values"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+// Controller orchestrates Kustomization reconciliation. Reconcile-
+// shaping state (Filter, ParentOf) flows in via Configure exactly once
+// before StartLifecycle. The invariant — "config is read-only after StartLifecycle" — is
+// encoded in the embedded *base.Controller, not just in code review.
+type Controller struct {
+	*base.Controller
+
+	retry cache.RetryConfig
+
+	// Trees shares remote fetches and persisted renders.
+	Trees     *kustomize.TreeCache
+	Discovery *discovery.Result
+
+	strictSubstitutions bool
+	restricted          bool
+}
+
+// Options carries the post-bootstrap state the orchestrator wires onto the
+// controller before StartLifecycle. base.Options holds the common reconcile config.
+type Options struct {
+	base.Options
+
+	Discovery *discovery.Result
+
+	// StrictSubstitutions rejects undefined variables without defaults.
+	StrictSubstitutions bool
+}
+
+type execution struct {
+	*Controller
+
+	base.Preparation[kustomize.Preparation]
+
+	run base.Execution
+}
+
+func (c *Controller) newExecution(id manifest.NamedResource) *execution {
+	execution := &execution{Controller: c}
+	execution.run.Init(c.Controller, id)
+	return execution
+}
+
+// New constructs a Kustomization controller.
+func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache) *Controller {
+	return &Controller{
+		Controller: base.New(s, t),
+		Trees:      trees,
+	}
+}
+
+// Configure installs the post-bootstrap state. Panics if called after
+// StartLifecycle — encodes the invariant that reconcile-shaping config is
+// read-only once the controller is dispatching.
+//
+//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
+func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
+	c.Controller.Configure(opts.Options)
+	c.Discovery = opts.Discovery
+	if c.Discovery != nil && c.Discovery.Binding.Failure != nil {
+		c.Store.UpdateFailure(c.Discovery.Binding.Producer, c.Discovery.Binding.Failure)
+	}
+	c.retry = retry
+	c.strictSubstitutions = opts.StrictSubstitutions
+	c.restricted = !opts.Session.Snapshot().Output(manifest.NamedResource{})
+}
+
+// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
+// dependency set (nil = terminalized). The
+// orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
+func (c *Controller) ReconcileNode(
+	ctx context.Context,
+	id manifest.NamedResource,
+	level manifest.DrainLevel,
+	previous schedule.Result,
+) *base.Execution {
+	ex := c.newExecution(id)
+	ex.run.Take(previous)
+	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
+	return &ex.run
+}
+
+// Owns reports whether id belongs to the Kustomization controller.
+func (*Controller) Owns(id manifest.NamedResource) bool {
+	return id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization
+}
+
+func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, level manifest.DrainLevel) error {
+	var err error
+	ks, err = c.run.RequireRefresh(ctx, ks, manifest.GateInputs, level)
+	if err != nil {
+		return err
+	}
+	if _, localErr := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); localErr != nil {
+		return localErr
+	}
+	source, _, err := kustomize.SourceInput(&c.run.Reads, ks)
+	if err != nil {
+		return err
+	}
+	inputs, err := c.run.DataInputs(ctx, ks, c.run.Data())
+	if err != nil {
+		return err
+	}
+	return c.run.AwaitData(
+		ctx,
+		base.DataWait{
+			Inputs: inputs,
+			Resume: func(ctx context.Context, _ manifest.DrainLevel, results []values.Result) error {
+				return c.render(ctx, ks, source, results)
+			},
+		},
+		level,
+	)
+}
+
+func (c *execution) render(
+	ctx context.Context,
+	ks *manifest.Kustomization,
+	source *store.SourceArtifact,
+	inputs []values.Result,
+) error {
+	id := ks.Named()
+	unreadable := values.UnreadableSubstitutions(ks, inputs)
+	ks, err := kustomize.Prepare(ks, inputs)
+	if err != nil {
+		return err
+	}
+	var attempt store.Emission
+	defer attempt.Finish()
+	if c.restricted {
+		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, nil, &attempt)
+		_, handled, innerLocalErr := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+		if handled || innerLocalErr != nil {
+			return innerLocalErr
+		}
+	} else if checkpointErr := c.run.Checkpoint(); checkpointErr != nil {
+		return checkpointErr
+	}
+
+	_, _, attempt = c.run.Reads.GetEmission(id)
+	request := kustomize.RenderRequest{
+		Work:                    c.run.Reads.Work().Scope().RenderWork(),
+		Source:                  source,
+		ApplyIgnore:             kustomize.ApplySourceIgnore(ks, source),
+		SubPath:                 ks.Path,
+		Spec:                    ks,
+		HeldSlot:                c.Tasks,
+		SkipKinds:               c.SkipKinds,
+		StrictSubstitutions:     c.strictSubstitutions,
+		SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
+		UnreadableSubstitutions: unreadable,
+	}
+	request.Preparation = c.run.Prepare(
+		&c.Preparation,
+		c.Discovery.Preparation(ks.Named()),
+		func(p *kustomize.Preparation) bool {
+			return p.Matches(c.Trees, &request)
+		},
+	)
+	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
+	if err != nil {
+		return err
+	}
+	attempt.Render = receipt
+	shaping := kustomize.PrepareShape(&request, docs)
+	defer shaping.Retire()
+	content := shaping.Content()
+	acceptance := cache.RenderAcceptance{
+		Work:    c.run.Reads.Work().Scope().RenderWork(),
+		Owner:   id,
+		Source:  source.HistoryIdentity(ks.EffectiveSourceID()),
+		Content: content,
+	}
+	fingerprintDedupResult2, fingerprintDedupResult2Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+	fp, handled, err := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
+	if handled || err != nil {
+		if err != nil {
+			return err
+		}
+		return c.recordRender(ctx, &attempt, &acceptance)
+	}
+
+	if err := shaping.Apply(
+		ctx,
+		kustomize.ShapeOptions{
+			Strict: c.strictSubstitutions,
+			Work:   c.run.Reads.Work().Scope().RenderWork().Substitution(),
+		},
+	); err != nil {
+		return c.run.RenderFailure(ctx, err, docs, nil)
+	}
+
+	parseChildrenResult3 := c.run.ParseChildren(
+		ks,
+		docs,
+		manifest.ParseDocOptions{},
+	)
+	attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult3.Children, parseChildrenResult3.Visible, parseChildrenResult3.Failures
+	if err := c.run.RenderFailure(ctx, nil, attempt.Failures, nil); errors.Is(err, manifest.ErrSourceSkipped) {
+		return err
+	}
+	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
+	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
+		return err
+	}
+	return c.recordRender(ctx, &attempt, &acceptance)
+}
+
+func (c *execution) recordRender(
+	ctx context.Context,
+	attempt *store.Emission,
+	acceptance *cache.RenderAcceptance,
+) error {
+	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
+	acceptance.Records = attempt.Footprint()
+	acceptance.Sources = attempt.SourcePaths()
+	return c.Cache.RecordRender(ctx, *acceptance)
+}
+
+// PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.
+func (c *Controller) PreviousRender(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	previous schedule.Result,
+) base.History {
+	ks, ok := obj.(*manifest.Kustomization)
+	if !ok || ctx.Err() != nil {
+		return base.History{}
+	}
+	var ex execution
+	history, results, err := ex.run.Probe(ctx, c.Controller, obj, previous)
+	if err != nil {
+		return history
+	}
+	reads := &ex.run.Reads
+	unreadable := values.UnreadableSubstitutions(ks, results)
+	prepared, err := kustomize.Prepare(ks, results)
+	if err != nil {
+		return history
+	}
+	source, ignore, err := kustomize.SourceInput(reads, prepared)
+	if err != nil {
+		return history
+	}
+	request := kustomize.RenderRequest{
+		Work:                    reads.Work().Scope().RenderWork(),
+		Source:                  source,
+		ApplyIgnore:             ignore,
+		SubPath:                 prepared.Path,
+		Spec:                    prepared,
+		SkipKinds:               c.SkipKinds,
+		StrictSubstitutions:     c.strictSubstitutions,
+		SubstitutionActive:      values.ResolvedSubstitutionActive(results),
+		UnreadableSubstitutions: unreadable,
+	}
+	request.Preparation = ex.run.Prepare(
+		&ex.Preparation,
+		c.Discovery.Preparation(prepared.Named()),
+		func(p *kustomize.Preparation) bool {
+			return p.Matches(c.Trees, &request)
+		},
+	)
+	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
+	if !found {
+		return history
+	}
+	shaping := kustomize.PrepareShape(&request, docs)
+	content := shaping.Content()
+	history.Records, history.Complete = c.Trees.RenderHistory(ks.Named(), receipt, content)
+	return history
+}

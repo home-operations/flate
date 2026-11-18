@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/helm"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/internal/engine/helm"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 // TestBindCommon_DefaultValues sanity-checks the persistent flag set:

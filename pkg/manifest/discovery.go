@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/claimpath"
+	"github.com/home-operations/flate/internal/core/claimpath"
 )
 
 // Production identifies one source-qualified contribution to a queried target.

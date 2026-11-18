@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
 )
 
 func bindOutput[F ~string](fs *pflag.FlagSet, target *string, values ...F) {

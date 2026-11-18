@@ -3,15 +3,15 @@ package cli
 import (
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/engine/selection"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/orchestrator"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {

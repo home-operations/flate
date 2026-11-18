@@ -3,10 +3,10 @@ package harness
 import (
 	"context"
 
-	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
-	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/task"
+	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
+	"github.com/home-operations/flate/internal/engine/discovery"
+	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/task"
 )
 
 //nolint:gocritic // Test admission MUST preserve the caller configuration snapshot.

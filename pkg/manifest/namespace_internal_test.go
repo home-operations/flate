@@ -3,7 +3,7 @@ package manifest
 import (
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestEnsureMetadata_PreservesMap(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func runClusterGroupsPartialFailureCase(t *testing.T, command, root, format *string) {

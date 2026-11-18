@@ -26,9 +26,9 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/home-operations/flate/internal/assert"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/internal/testutil"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.

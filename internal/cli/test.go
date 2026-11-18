@@ -3,8 +3,8 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/testrunner"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/cli/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

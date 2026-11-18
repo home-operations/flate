@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
-	"github.com/home-operations/flate/internal/testfixture"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/testfixture"
 )
 
 // Result retains output and exit status for each invocation independently.

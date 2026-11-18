@@ -1,0 +1,206 @@
+package kustomize
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+
+	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
+
+	"github.com/home-operations/flate/internal/engine/source"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func (c *TreeCache) recordTestRender(
+	t *testing.T,
+	incoming *RenderRequest,
+	receipt *manifest.RenderReceipt,
+) {
+	t.Helper()
+	req := *incoming
+	assert.FatalIf(t, receipt == nil, "%v", "first render returned no receipt")
+	assert.NoError(t, recordPendingRender(t.Context(), c.owner, receipt))
+	reader, _, _, lookupErr := c.owner.Blob(
+		t.Context(),
+		sourcecache.BlobKey{Content: receipt.Value().(renderFrame).Key, Render: sourcecache.RenderPending},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
+	assert.Equal(t, reader != nil, true)
+	assert.NoError(t, lookupErr)
+	_, stored, hit := readTestRenderFrame(t, c, receipt.Value().(renderFrame).Key)
+	assert.FatalIf(t, !hit, "%v", "pending render was not retained")
+	replayed, replayReceipt, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
+	assert.NoError(t, err)
+	assert.FatalIf(t, replayReceipt == nil, "%v", "unchanged input returned no receipt")
+	frame := replayReceipt.Value().(renderFrame)
+	publication, err := frame.Stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{})
+	assert.NoError(t, err)
+	assert.FatalIf(t, publication.Identity() == "", "%v", "unchanged input did not hit the pending render cache")
+	assert.Diff(t, replayed, stored)
+}
+
+func TestRender_CacheMissesOnDirectoryMembership(t *testing.T) {
+	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
+	cache := newTestTreeCache(t, t.TempDir())
+	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: spec}
+	first, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+	assert.FatalIf(t, err != nil || !hasRenderField(first, "name", "a"), "first = %q, %v", first, err)
+	cache.recordTestRender(t, &req, receipt)
+	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
+	second, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(second, "name", "b"),
+		"a file added to an auto-generated directory replayed a stale render: %q, %v",
+		second,
+		err,
+	)
+}
+
+func TestTreeFS_LocalConstraints(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	testutil.WriteFile(t, root, "folder/value", "inside")
+	testutil.WriteFile(t, parent, "outside", "outside")
+	testutil.WriteFile(t, parent, "root-sibling/value", "sibling")
+	for name, target := range map[string]string{
+		"file-link": "folder/value", "directory-link": "folder", "dangling": "missing", "escaping-link": "../outside",
+	} {
+		assert.NoError(t, os.Symlink(target, filepath.Join(root, name)))
+	}
+	artifact := localSource(t, root)
+
+	for _, tc := range []struct {
+		name, path string
+		constraint bool
+	}{
+		{name: "ordinary read", path: filepath.Join(root, "folder", "value")},
+		{name: "parent escape", path: root + "/../outside", constraint: true},
+		{name: "outside absolute", path: filepath.Join(parent, "outside"), constraint: true},
+		{name: "sibling prefix", path: filepath.Join(parent, "root-sibling", "value"), constraint: true},
+		{name: "file link", path: filepath.Join(root, "file-link")},
+		{name: "directory link", path: filepath.Join(root, "directory-link", "value")},
+		{name: "dangling", path: filepath.Join(root, "dangling")},
+		{name: "escaping link", path: filepath.Join(root, "escaping-link")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lower, _, err := source.OperationView(t.Context(), artifact.FS)
+			assert.NoError(t, err)
+			adapter := newTreeFS(lower, root, nil)
+			data, err := adapter.ReadFile(tc.path)
+			switch {
+			case tc.constraint:
+				_, ok := errors.AsType[*fluxfilesys.ConstraintError](err)
+				assert.FatalIf(t, !ok, "lexical escape error = %v; want ConstraintError", err)
+
+			case tc.name == "ordinary read":
+				assert.FatalIf(t, err != nil || string(data) != "inside", "ordinary read = %q, %v", data, err)
+
+			case !errors.Is(err, fs.ErrPermission):
+				t.Fatalf("denied link read = %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
+	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
+	artifact := localSource(t, root)
+	cache := newTestTreeCache(t, t.TempDir())
+	req := RenderRequest{Source: artifact, SubPath: "app", Spec: spec}
+	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+	assert.NoError(t, err)
+	cache.recordTestRender(t, &req, receipt)
+	assert.NoError(t, os.RemoveAll(filepath.Join(root, "app")))
+	testutil.WriteFile(t, root, "app", "file")
+	{
+		_, _, err := testutil.RenderMaps(
+			Render(t.Context(), cache, req, sourcecache.RetryConfig{}),
+		)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			manifest.ErrInput,
+		), "directory-to-file transition replayed a successful frame: %v", err)
+	}
+	assert.NoError(t, os.Remove(filepath.Join(root, "app")))
+	assert.NoError(t, os.Symlink(".", filepath.Join(root, "app")))
+	{
+		_, _, err := testutil.RenderMaps(
+			Render(t.Context(), cache, req, sourcecache.RetryConfig{}),
+		)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			manifest.ErrInput,
+		), "directory link replayed a successful frame: %v", err)
+	}
+}
+
+func TestRender_CacheMissingComponentAppearance(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{
+		"kustomization.yaml": "resources: [cm.yaml]\n",
+		"cm.yaml":            cmYAML("base"),
+	})
+	cache := newTestTreeCache(t, t.TempDir())
+	req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(map[string]any{
+		"components": []any{"./missing"}, "ignoreMissingComponents": true,
+	}))}
+	_, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+	assert.NoError(t, err)
+	cache.recordTestRender(t, &req, receipt)
+	testutil.WriteFile(
+		t,
+		root,
+		"missing/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [cm.yaml]\n",
+	)
+	testutil.WriteFile(t, root, "missing/cm.yaml", cmYAML("arrived"))
+	out, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out, "name", "arrived"),
+		"missing component arrival replayed stale output: %s, %v",
+		out,
+		err,
+	)
+}
+
+func TestRender_ArtifactWithoutPayloadRejected(t *testing.T) {
+	t.Parallel()
+	spec := &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+	label := testutil.WriteTree(t, map[string]string{"cm.yaml": cmYAML("host")})
+	for _, key := range []string{"", "pin"} {
+		t.Run("key="+key, func(t *testing.T) {
+			t.Parallel()
+			sourceID := &store.SourceArtifact{LocalPath: label, Key: key}
+			out, _, err := testutil.RenderMaps(
+				Render(
+					t.Context(),
+					newTestTreeCache(t, ""),
+					RenderRequest{Source: sourceID, SubPath: ".", Spec: spec},
+					sourcecache.RetryConfig{},
+				),
+			)
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInput) || hasRenderField(out, "name", "host"),
+				"render = %q, %v",
+				out,
+				err,
+			)
+		})
+	}
+}

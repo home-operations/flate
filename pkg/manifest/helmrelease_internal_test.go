@@ -5,7 +5,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestHelmChart_DisplayNames(t *testing.T) {

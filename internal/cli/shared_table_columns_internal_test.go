@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestPrepareGetTables_SharedColumns(t *testing.T) {

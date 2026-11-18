@@ -14,18 +14,18 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/orchestrator"
-	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/baseline"
+	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/diff"
+	"github.com/home-operations/flate/internal/engine/helm"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 const (

@@ -19,16 +19,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/orchestrator"
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/helm"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/selection"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 // TestBindCommon_CacheDirFlag pins that --cache-dir is wired on every

@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/cli"
-	"github.com/home-operations/flate/internal/testfixture"
+	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/internal/testutil/testfixture"
 )
 
 //nolint:paralleltest // The fixture replaces process-wide HTTP and Git transports.

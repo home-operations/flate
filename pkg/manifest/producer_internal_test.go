@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func secret(ns, name string, keys ...string) ProducerTarget {

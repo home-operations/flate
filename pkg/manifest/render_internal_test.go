@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestRenderCodec_Fidelity(t *testing.T) {

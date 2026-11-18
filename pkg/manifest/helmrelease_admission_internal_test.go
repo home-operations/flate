@@ -7,7 +7,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestParseHelmRelease_ChartTemplateAdmission(t *testing.T) {

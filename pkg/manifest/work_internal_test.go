@@ -6,7 +6,7 @@ import (
 	"testing"
 	"weak"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestWorkRecorder_ConcurrentCounts(t *testing.T) {

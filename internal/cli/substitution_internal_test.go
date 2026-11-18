@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func substitutionFixture(t *testing.T, postBuild, expression string) string {

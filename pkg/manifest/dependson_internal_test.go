@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestParseDoc_DependsOnNames(t *testing.T) {

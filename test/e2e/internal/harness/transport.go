@@ -20,8 +20,8 @@ import (
 	gittransport "github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/plumbing/transport/file"
 
-	"github.com/home-operations/flate/internal/testfixture"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
+	"github.com/home-operations/flate/internal/testutil/testfixture"
 )
 
 type fixtureTransport struct {

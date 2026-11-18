@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestTemplateInputs_StaticReferences(t *testing.T) {

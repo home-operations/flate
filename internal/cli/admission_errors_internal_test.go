@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:paralleltest // preservePersistenceNoticeState changes FLATE_* variables and restores shared CLI logging and persistence state.

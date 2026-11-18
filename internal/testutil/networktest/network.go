@@ -4,7 +4,7 @@ package networktest
 import (
 	"testing"
 
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/internal/engine/source"
 )
 
 // New keeps the network alive until test cleanup, including deferred source reads.

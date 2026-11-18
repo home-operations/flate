@@ -15,9 +15,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // barSink is the slog routing adapter active while the live status bar runs; nil

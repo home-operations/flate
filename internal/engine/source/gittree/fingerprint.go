@@ -1,0 +1,497 @@
+package gittree
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"maps"
+	"path"
+	"path/filepath"
+	"slices"
+	"sync"
+	"sync/atomic"
+
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6/plumbing"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
+
+	"github.com/home-operations/flate/internal/engine/source/sourceignore"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+type contentFingerprint struct {
+	files atomic.Pointer[map[string]string]
+	types map[string]fs.FileMode
+	once  sync.Once
+	key   string
+	err   error
+}
+
+// ContentFingerprint identifies selected bytes once per stable admitted view.
+// Immutable views retain their acquisition identity; mutable identities remain separate.
+func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	g, ok := input.(*FS)
+	if !ok {
+		return "", nil
+	}
+	for {
+		content := g.content.Load()
+		if content == nil {
+			content = &contentFingerprint{}
+			if !g.content.CompareAndSwap(nil, content) {
+				continue
+			}
+		}
+		run := false
+		content.once.Do(func() {
+			run = true
+			content.initialize(ctx, g, false, nil)
+		})
+		if errors.Is(content.err, context.Canceled) || errors.Is(content.err, context.DeadlineExceeded) {
+			g.content.CompareAndSwap(content, nil)
+			if !run && ctx.Err() == nil {
+				continue
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return content.key, content.err
+	}
+}
+
+func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, fresh bool) error {
+	files := inventory.files
+	var v *gitView
+	subdir, origin := ".", "."
+	nodes := map[string]noder.Noder{".": nil}
+	prefix := "."
+	root := ""
+	g.fingerprintOrigin(&v, &subdir, &origin, &root)
+	if !fresh && root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
+		idx, err := g.location.Repository.Storer.Index()
+		if err != nil {
+			return fmt.Errorf("read fingerprint index: %w", err)
+		}
+		prefix, err = filepath.Rel(g.location.RepositoryRoot, root)
+		if err != nil {
+			return fmt.Errorf("relate fingerprint root %q: %w", root, err)
+		}
+		prefix = filepath.ToSlash(prefix)
+		nodes["."] = merklefs.NewRootNodeWithOptions(
+			g.memberFilesystem(osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()), root),
+			nil,
+			merklefs.Options{Index: idx},
+		)
+	}
+	var lookup func(string) (noder.Noder, error)
+	lookup = func(name string) (noder.Noder, error) {
+		if node, known := nodes[name]; known {
+			return node, nil
+		}
+		parent, err := lookup(path.Dir(name))
+		if parent == nil || err != nil {
+			return nil, err
+		}
+		children, err := parent.Children()
+		if err != nil {
+			return nil, fmt.Errorf("list fingerprint parent %q: %w", path.Dir(name), err)
+		}
+		for _, child := range children {
+			nodes[path.Join(path.Dir(name), child.Name())] = child
+		}
+		return nodes[name], nil
+	}
+	selected := fileIdentity{git: v, origin: origin, prefix: prefix, lookup: lookup, types: inventory.types}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		identity, err := selected.identify(ctx, g, name)
+		switch {
+		case fresh && errors.Is(err, fs.ErrNotExist):
+			delete(files, name)
+		case err != nil:
+			return err
+		default:
+			files[name] = manifest.Fingerprint([formatcfg.SHA1Size]byte(identity.Bytes()))
+		}
+	}
+	return nil
+}
+
+// FileDigests borrows completed selected-file evidence without reading content.
+// Returned maps MUST remain read-only.
+func (g *FS) FileDigests() map[string]string {
+	if content := g.content.Load(); content != nil {
+		if files := content.files.Load(); files != nil {
+			return *files
+		}
+	}
+	return nil
+}
+
+// PolicyEvidence returns the ordered ignore-file content used to shape the view.
+// Policy evidence MUST NOT be used as immutable source acquisition authority.
+func (g *FS) PolicyEvidence() any {
+	if g.policy == nil {
+		return nil
+	}
+	files := g.policy.Evidence()
+	content := make([]struct {
+		Path string
+		Data []byte
+	}, 0, len(files))
+	for _, file := range files {
+		content = append(content, struct {
+			Path string
+			Data []byte
+		}{file.Path, []byte(file.Data)})
+	}
+	return content
+}
+
+// SourcePolicy returns the admission's captured Flux policy without reshaping its files.
+func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if g.policy != nil {
+		return g.policy, nil
+	}
+	return g.snapshot.load(g)
+}
+
+func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, requested []string) {
+	policy, err := g.SourcePolicy(ctx)
+	if err != nil {
+		c.err = err
+		return
+	}
+	v, native := g.view.(*gitView)
+	inventory, err := g.fingerprintFiles(ctx, v, native, fresh || native && v.identity != "")
+
+	c.err = err
+	if c.err != nil {
+		return
+	}
+
+	selectedPolicy := selectedSourcePolicy(policy, v, native, inventory.files)
+	if requested != nil {
+		inventory.files = selectFiles(inventory.files, requested)
+	}
+	if !selectedPolicy {
+		sourceignore.Select(policy, inventory.files, inventory.ignores)
+	}
+	if c.err = g.identifyFiles(ctx, inventory, fresh); c.err != nil {
+		return
+	}
+	if !fresh {
+		if v, ok := g.view.(*gitView); ok && v.identity != "" {
+			c.key = v.identity
+			if g.membership.directory != "" {
+				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.membership.directory})
+			}
+		} else {
+			c.key = manifest.Fingerprint(inventory.files)
+		}
+	}
+	files := inventory.files
+	c.types = inventory.types
+	c.files.Store(&files)
+}
+
+func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe bool) (fingerprintInventory, error) {
+	inventory := fingerprintInventory{files: map[string]string{}}
+	if observe {
+		inventory.types = map[string]fs.FileMode{}
+	}
+	contentParents := native && v.mode == Source
+	visit := func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return inventory.visit(ctx, name, entry, contentParents)
+	}
+	var err error
+	if native {
+		inventory.files = make(map[string]string, len(v.nodes))
+		for name := range v.nodes {
+			if g.excludes(name) {
+				continue
+			}
+			if err = visit(name, gitEntry{v, name}, nil); err != nil {
+				break
+			}
+		}
+	} else {
+		err = fs.WalkDir(g, ".", visit)
+	}
+	if !observe || !contentParents {
+		return inventory, err //nolint:wrapcheck // fingerprintFiles forwards fs.WalkDir PathError fields and callback cancellation with its partial inventory.
+	}
+	// File observations retain content parents independently of admitted empty directories.
+	inventory.types["."] = fs.ModeDir
+	for name := range inventory.files {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			inventory.types[parent] = fs.ModeDir
+		}
+	}
+	//nolint:wrapcheck // fingerprintFiles forwards fs.WalkDir PathError fields and callback cancellation with its partial inventory.
+	return inventory, err
+}
+
+type fingerprintInventory struct {
+	types   map[string]fs.FileMode
+	files   map[string]string
+	ignores []string
+}
+
+func (i *fingerprintInventory) visit(ctx context.Context, name string, entry fs.DirEntry, contentParents bool) error {
+	if i.types != nil && (!contentParents || !entry.IsDir()) {
+		i.types[name] = entry.Type()
+	}
+	if err := ctx.Err(); err != nil || entry.IsDir() {
+		return err
+	}
+	if entry.Name() == ".sourceignore" {
+		i.ignores = append(i.ignores, name)
+	}
+	i.files[name] = ""
+	return nil
+}
+
+func selectedSourcePolicy(policy *sourceignore.Matcher, v *gitView, native bool, files map[string]string) bool {
+	selectedPolicy := native && v.mode == Source
+	for _, file := range policy.Evidence() {
+		if _, admitted := files[file.Path]; !admitted {
+			selectedPolicy = false
+			break
+		}
+	}
+	return selectedPolicy
+}
+
+func (g *FS) fingerprintOrigin(v **gitView, subdir, origin, root *string) {
+	for input := g; input != nil; {
+		switch current := input.view.(type) {
+		case *localView:
+			(*root) = filepath.Join(current.root, filepath.FromSlash((*subdir)))
+			input = nil
+		case *scopedView:
+			(*subdir) = path.Join(current.path, (*subdir))
+			input = current.parent
+		case *gitView:
+			if (*v) == nil && current.commit != plumbing.ZeroHash {
+				(*v), (*origin) = current, (*subdir)
+			}
+			input, _ = current.current.(*FS)
+		default:
+			input = nil
+		}
+	}
+}
+
+type fileIdentity struct {
+	buffer         []byte
+	types          map[string]fs.FileMode
+	git            *gitView
+	origin, prefix string
+	lookup         func(string) (noder.Noder, error)
+}
+
+func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbing.Hash, error) {
+	if err := ctx.Err(); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	var identity plumbing.Hash
+	member := path.Join(s.origin, name)
+	if s.git != nil && (s.git.identity != "" || s.git.changes[member]) {
+		identity = s.git.nodes[member].hash
+	}
+	if identity == plumbing.ZeroHash {
+		node, err := s.lookup(path.Join(s.prefix, name))
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if node != nil {
+			identity, _ = plumbing.FromBytes(node.Hash()[:formatcfg.SHA1Size])
+		}
+	}
+	if identity != plumbing.ZeroHash {
+		return identity, nil
+	}
+	mode, observed := s.types[name]
+	if !observed || !mode.IsRegular() {
+		data, err := g.ReadFile(name)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, int64(len(data)))
+		_, _ = hasher.Write(data)
+		return hasher.Sum(), nil
+	}
+	file, err := g.OpenRegular(name)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return plumbing.ZeroHash, errors.Join(err, file.Close())
+	}
+	if s.buffer == nil {
+		const bufferSize = 32 * 1024
+		s.buffer = make([]byte, bufferSize)
+	}
+	hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, info.Size())
+	n, err := io.CopyBuffer(hasher, identityReader{ctx: ctx, input: file}, s.buffer)
+	if err == nil && n != info.Size() {
+		err = &fs.PathError{Op: "read", Path: name, Err: io.ErrUnexpectedEOF}
+	}
+	if readErr := errors.Join(err, file.Close()); readErr != nil {
+		return plumbing.ZeroHash, readErr
+	}
+	return hasher.Sum(), nil
+}
+
+//nolint:containedctx // This adapter retains cancellation only for its enclosing file read.
+type identityReader struct {
+	ctx   context.Context
+	input io.Reader
+}
+
+//nolint:wrapcheck // io.Reader MUST preserve EOF and cancellation identities.
+func (r identityReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.input.Read(p)
+	if cancelErr := r.ctx.Err(); cancelErr != nil {
+		return n, cancelErr
+	}
+	return n, err
+}
+
+// InputObservations borrows selected identities and node kinds from one admitted view.
+// Both maps MUST remain read-only.
+type InputObservations struct {
+	Files map[string]string
+	Types map[string]fs.FileMode
+}
+
+// FreshInputs MUST observe mutable bytes and membership without prior operation memos or Git stat evidence.
+// A nil observation refreshes membership and policy; captured node kinds retain the caller's admitted selection.
+// A nil request observes every file. An explicit request reads only those bodies while retaining complete node membership.
+func (g *FS) FreshInputs(
+	ctx context.Context,
+	requested []string,
+	observed map[string]fs.FileMode,
+) (InputObservations, error) {
+	if observed != nil {
+		files := make(map[string]string, len(observed))
+		for name, mode := range observed {
+			if mode.IsRegular() && !g.excludes(name) {
+				files[name] = ""
+			}
+		}
+		files = selectFiles(files, requested)
+		inventory := fingerprintInventory{files: files, types: observed}
+		if err := g.identifyFiles(ctx, inventory, true); err != nil {
+			return InputObservations{}, err
+		}
+		return InputObservations{
+			Files: files,
+			Types: observed,
+		}, ctx.Err()
+	}
+	if view, ok := g.view.(*gitView); ok && view.identity != "" {
+		if _, err := ContentFingerprint(ctx, g); err != nil {
+			return InputObservations{}, err
+		}
+		evidence := g.content.Load()
+		files := g.FileDigests()
+		files = selectFiles(files, requested)
+		return InputObservations{Files: files, Types: evidence.types}, nil
+	}
+	input, err := g.freshInput(ctx, g.membership.directory)
+	if err != nil {
+		return InputObservations{}, err
+	}
+	var evidence contentFingerprint
+	evidence.initialize(ctx, input, true, requested)
+	if evidence.err != nil {
+		return InputObservations{}, evidence.err
+	}
+	return InputObservations{Files: *evidence.files.Load(), Types: evidence.types}, nil
+}
+
+func selectFiles(files map[string]string, requested []string) map[string]string {
+	if requested == nil {
+		return files
+	}
+	selected := make(map[string]string, len(requested))
+	for _, name := range requested {
+		if digest, known := files[name]; known {
+			selected[name] = digest
+		}
+	}
+	return selected
+}
+
+func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
+	directory = cmp.Or(directory, g.membership.directory)
+	switch v := g.view.(type) {
+	case *localView:
+		admission, err := openDirectoryAt(ctx, g.location, directory)
+		if err != nil {
+			return nil, err
+		}
+		captured := admission.membership
+		_ = admission.Close()
+		input := newLocal(v.root, true, &localPolicy{})
+		input.location = g.location
+		input.membership = captured
+		return input, nil
+	case *scopedView:
+		parentDirectory := ""
+		if directory != "" {
+			parentDirectory = path.Join(v.path, directory)
+		}
+		parent, err := v.parent.freshInput(ctx, parentDirectory)
+		if err != nil {
+			return nil, err
+		}
+		input, err := Sub(parent, v.path)
+		if err != nil {
+			return nil, err
+		}
+		return input.(*FS), nil //nolint:errcheck // Sub returns a scoped *FS for the native parent selected by freshInput.
+	case *gitView:
+		if v.refresh == nil {
+			return g, nil
+		}
+		opts := *v.refresh
+		opts.membership = g.membership
+		opts.membership.directory = directory
+		opts.membership.captured = false
+		opts.policy = nil
+		if current, ok := opts.Current.(*FS); ok {
+			var err error
+			opts.Current, err = current.freshInput(ctx, directory)
+			if err != nil {
+				return nil, err
+			}
+		}
+		input, _, err := New(ctx, v.backing, v.commit, opts)
+		return input, err
+	default:
+		selected := g.membership
+		selected.directory = directory
+		return &FS{view: g.view, location: g.location, membership: selected, snapshot: &localPolicy{}}, nil
+	}
+}

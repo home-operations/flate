@@ -1,0 +1,495 @@
+package kustomize
+
+import (
+	"encoding/json"
+	"errors"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/fluxcd/pkg/envsubst"
+	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+	yamlv4 "go.yaml.in/yaml/v4"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/kustomize/api/resource"
+	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
+	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/internal/engine/depwait"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/values"
+	"github.com/home-operations/flate/pkg/manifest"
+
+	"github.com/google/go-cmp/cmp"
+)
+
+func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		doc    map[string]any
+		vars   map[string]string
+		strict bool
+		want   map[string]any
+	}{
+		{"literal", map[string]any{"data": map[string]any{"key": "literal", "boolean": "yes", "date": "2001-01-01"}}, map[string]string{"VAR": "example"}, true, nil},
+		{"nested scalars", map[string]any{"spec": map[string]any{"values": []any{nil, true, 3, 1.5, int64(42)}}}, map[string]string{"VAR": "example"}, true, nil},
+		{"negative zero", map[string]any{"value": math.Copysign(0, -1)}, map[string]string{"VAR": "example"}, true, nil},
+		{"large signed integer", map[string]any{"value": int(9007199254740993)}, map[string]string{"VAR": "example"}, true, nil},
+		{"large unsigned integer", map[string]any{"value": uint64(18446744073709551615)}, map[string]string{"VAR": "example"}, true, nil},
+		{"timestamp", map[string]any{"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)}, map[string]string{"VAR": "example"}, true, nil},
+		{
+			"opaque dollar preserves int64 conversion",
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": int64(9007199254740993),
+			},
+			map[string]string{"VAR": "example"},
+			true,
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": float64(9007199254740992),
+			},
+		},
+		{
+			"opaque dollar preserves timestamp conversion",
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+			map[string]string{"VAR": "example"},
+			true,
+			map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"data":  map[string]any{"TOKEN": "ENC[AES256_GCM,data:$TOKEN,iv:y,tag:z,type:str]"},
+				"value": "2001-01-01T00:00:00Z",
+			},
+		},
+		{"bare dollars", map[string]any{"$PID": []any{"$", "echo $PID", "$- $9", "cost $5"}}, map[string]string{"VAR": "example"}, true, nil},
+		{"key reference", map[string]any{"${VAR}": 1}, map[string]string{"VAR": "example"}, true, nil},
+		{"value reference", map[string]any{"value": "${VAR}"}, map[string]string{"VAR": "example"}, true, nil},
+		{"supplied default", map[string]any{"value": "${ENV:=prod}"}, map[string]string{"ENV": "stage"}, true, map[string]any{"value": "stage"}},
+		{"nested default", map[string]any{"value": "${ENV:=${OTHER:=prod}}"}, map[string]string{"OTHER": "stage"}, true, map[string]any{"value": "stage"}},
+		{"escaped default", map[string]any{"value": "$${ENV:=prod}"}, map[string]string{"ENV": "stage"}, true, map[string]any{"value": "${ENV:=prod}"}},
+		{"colon question upstream control", map[string]any{"value": "${MISSING:?required}"}, nil, true, map[string]any{"value": "required"}},
+		{"eager strict operand", map[string]any{"value": "${SET:=${MISSING}}"}, map[string]string{"SET": "present"}, true, nil},
+		{
+			"replacement is not recursive",
+			map[string]any{"value": "${SET}"},
+			map[string]string{"SET": "${MISSING}"},
+			true,
+			map[string]any{"value": "${MISSING}"},
+		},
+		{"strict missing bare", map[string]any{"value": "${MISSING}"}, nil, true, nil},
+		{"default reference", map[string]any{"value": "${MISSING:=yes}"}, map[string]string{"VAR": "example"}, true, nil},
+		{"escape after bare dollar", map[string]any{"value": "$PID $$PID"}, map[string]string{"VAR": "example"}, true, nil},
+		{"nested escape", map[string]any{"spec": []any{map[string]any{"$$PID": "literal"}}}, map[string]string{"VAR": "example"}, true, nil},
+		{"infinity", map[string]any{"spec": []any{math.Inf(1)}}, map[string]string{"VAR": "example"}, true, nil},
+		{"NaN", map[string]any{"spec": map[string]any{"value": math.NaN()}}, map[string]string{"VAR": "example"}, true, nil},
+		{
+			"double dollar value",
+			map[string]any{"data": map[string]any{"script": "echo $$PID"}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"data": map[string]any{"script": "echo $PID"}},
+		},
+		{
+			"double dollar key",
+			map[string]any{"data": map[string]any{"$$PID": "literal"}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"data": map[string]any{"$PID": "literal"}},
+		},
+		{
+			"double dollar nested list",
+			map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $$PID"}}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"spec": map[string]any{"args": []any{"literal", "echo $PID"}}},
+		},
+		{
+			"double dollar nested map in list",
+			map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $$PID"}}}},
+			map[string]string{"PID": "expanded"},
+			true,
+			map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"command": "echo $PID"}}}},
+		},
+		{"substituted map key", map[string]any{
+			"apiVersion": "external-secrets.io/v1", "kind": "ClusterSecretStore",
+			"spec": map[string]any{"provider": map[string]any{"onepassword": map[string]any{"vaults": map[string]any{"${OP_VAULT}": 1}}}},
+		}, map[string]string{"OP_VAULT": "homelab"}, false, map[string]any{
+			"apiVersion": "external-secrets.io/v1", "kind": "ClusterSecretStore",
+			"spec": map[string]any{"provider": map[string]any{"onepassword": map[string]any{"vaults": map[string]any{"homelab": float64(1)}}}},
+		}},
+		{
+			"key collision last wins",
+			map[string]any{"${OP_VAULT}": 1, "homelab": 2},
+			map[string]string{"OP_VAULT": "homelab"},
+			false,
+			map[string]any{"homelab": float64(2)},
+		},
+		{
+			"escaped dollar key",
+			map[string]any{"data": map[string]any{"$${OP_VAULT}": 1}},
+			map[string]string{"OP_VAULT": "homelab"},
+			false,
+			map[string]any{"data": map[string]any{"${OP_VAULT}": float64(1)}},
+		},
+		{
+			"integer coercion",
+			map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
+			map[string]string{"VALUE": "3"},
+			false,
+			map[string]any{"spec": map[string]any{"value": float64(3)}},
+		},
+		{
+			"date coercion",
+			map[string]any{"spec": map[string]any{"value": "${VALUE}"}},
+			map[string]string{"VALUE": "2001-01-01"},
+			false,
+			map[string]any{"spec": map[string]any{"value": "2001-01-01"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testSubstituteDocPrecheckEquivalenceCase(t, &tc)
+		},
+		)
+	}
+}
+
+func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
+	t.Parallel()
+	for _, expression := range []string{
+		"literal", "${USED}", "${MISSING:=fallback}", "${USED:=${OTHER:=fallback}}",
+		"${SET:=${MISSING}}", "${#USED}", "${USED#${PREFIX}}", "${USED%${SUFFIX}}",
+		"${USED/${SEARCH}/${REPLACEMENT}}", "${USED:${START}:${LENGTH}}", "$${ESCAPED}", "${USED^^}",
+	} {
+		t.Run(expression, func(t *testing.T) {
+			t.Parallel()
+			doc := map[string]any{"${KEY}": expression}
+			raw, err := yamlv4.Marshal(doc)
+			assert.NoError(t, err)
+			want := make(map[string]struct{})
+			_, err = envsubst.Eval(string(raw), func(name string) (string, bool) {
+				want[name] = struct{}{}
+				return "1", true
+			})
+			assert.NoError(t, err)
+			{
+				diff := cmp.Diff(
+					want,
+					values.SubstitutionNames(raw),
+				)
+				assert.ErrorIf(t, diff != "", "names (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRenderRequestContent_UnprovedAlways(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		postBuild *kustomizev1.PostBuild
+		invalid   bool
+	}{
+		{name: "nil PostBuild"},
+		{name: "empty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{}}},
+		{name: "nonempty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"OTHER": "first"}}, invalid: true},
+		{name: "Always empty", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, invalid: true},
+		{
+			name: "Always whole bag",
+			postBuild: &kustomizev1.PostBuild{
+				SubstituteStrategy: kustomizev1.SubstituteStrategyAlways,
+				Substitute:         map[string]string{"OTHER": "first"},
+			},
+			invalid: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testRenderRequestContentUnprovedAlwaysCase(t, &tc)
+		},
+		)
+	}
+}
+
+func testSubstituteDocPrecheckEquivalenceCase(
+	t *testing.T,
+	testCaseInput *struct {
+		name   string
+		doc    map[string]any
+		vars   map[string]string
+		strict bool
+		want   map[string]any
+	},
+) {
+	t.Helper()
+
+	data, prepareErr := values.SubstitutionDocument(manifest.DocOccurrence{Document: testCaseInput.doc}, true)
+	input := substitutionDocument{data: data, err: prepareErr}
+	got, gotErr := input.apply(
+		&manifest.DocOccurrence{Document: testCaseInput.doc},
+		testCaseInput.vars,
+		ShapeOptions{Strict: testCaseInput.strict},
+		nil,
+	)
+	if testCaseInput.want != nil {
+		assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
+		{
+			diff := cmp.Diff(testCaseInput.want, got)
+			assert.ErrorIf(t, diff != "", "substitution (-want +got):\n%s", diff)
+		}
+	}
+	raw, err := yaml.Marshal(testCaseInput.doc)
+	if err != nil {
+		assert.FatalIf(t, gotErr == nil, "precheck error = nil, round-trip error = %v", err)
+		return
+	}
+	node, err := kyaml.Parse(string(raw))
+	assert.NoError(t, err)
+	vars := make(map[string]any, len(testCaseInput.vars))
+	for key, value := range testCaseInput.vars {
+		vars[key] = value
+	}
+	res, err := fluxkustomize.SubstituteVariables(
+		t.Context(),
+		nil,
+		unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{"postBuild": map[string]any{"substitute": vars}},
+		}},
+		&resource.Resource{RNode: *node},
+		fluxkustomize.SubstituteWithDryRun(
+			true,
+		),
+		fluxkustomize.SubstituteWithAlways(true),
+		fluxkustomize.SubstituteWithStrict(testCaseInput.strict),
+	)
+	assert.FatalIf(t, (gotErr != nil) != (err != nil), "precheck error = %v, Flux error = %v", gotErr, err)
+	if err != nil {
+		return
+	}
+	raw, err = res.MarshalJSON()
+	assert.NoError(t, err)
+	encoded, err := json.Marshal(got)
+	assert.NoError(t, err)
+	{
+		diff := cmp.Diff(string(raw), string(encoded))
+		assert.ErrorIf(t, diff != "", "precheck equivalence (-want +got):\n%s", diff)
+	}
+}
+
+func testRenderRequestContentUnprovedAlwaysCase(
+	t *testing.T,
+	testCaseInput *struct {
+		name      string
+		postBuild *kustomizev1.PostBuild
+		invalid   bool
+	},
+) {
+	t.Helper()
+
+	ks := &manifest.Kustomization{Name: "app", Namespace: "apps", PostBuild: testCaseInput.postBuild}
+	docs := []manifest.DocOccurrence{
+		{
+			Document: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "result"},
+				"data":       map[string]any{"value": "${ARR[@]}"},
+			},
+		},
+	}
+	var preparation Preparation
+	t.Cleanup(func() { preparation = Preparation{} })
+	req := RenderRequest{Spec: ks, Source: &store.SourceArtifact{}, Preparation: &preparation}
+	shaping := PrepareShape(&req, docs)
+	content := shaping.Content()
+	before := manifest.Fingerprint(content)
+	if testCaseInput.postBuild != nil && len(testCaseInput.postBuild.Substitute) != 0 {
+		next := ks.Clone()
+		next.PostBuild.Substitute["OTHER"] = "second"
+		req.Spec = next
+		assert.FatalIf(
+			t,
+			manifest.Fingerprint(PrepareShape(&req, docs).Content()) == before,
+			"%s",
+			"unproved syntax omitted the conservative whole bag",
+		)
+	}
+	err := shaping.Apply(t.Context(), ShapeOptions{Strict: false})
+	assert.FatalIf(
+		t,
+		errors.Is(err, manifest.ErrInvalidSubstituteReference) != testCaseInput.invalid,
+		"Shape error = %v, want invalid substitution %t",
+		err,
+		testCaseInput.invalid,
+	)
+	assert.FatalIf(t, manifest.Fingerprint(content) != before, "%s", "Shape mutated the captured content")
+	assert.Equal(t, shaping.inputs == nil && shaping.docs == nil && shaping.spec == nil, true)
+}
+
+func TestShaping_ReusesPreparedDocuments(t *testing.T) {
+	t.Parallel()
+	for _, sanitize := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "sanitized"}[sanitize], func(t *testing.T) {
+			t.Parallel()
+			encodings := 0
+			doc := map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"metadata": map[string]any{"name": "input"},
+				"data":     map[string]any{"value": "${VALUE}", "counted": countedYAML{count: &encodings}},
+			}
+			if sanitize {
+				doc["sops"] = map[string]any{"mac": "unreadable"}
+			}
+			docs := []manifest.DocOccurrence{{Document: doc}}
+			ks := &manifest.Kustomization{
+				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "readable"}},
+			}
+			var preparation Preparation
+			t.Cleanup(func() { preparation = Preparation{} })
+			request := RenderRequest{Spec: ks, Preparation: &preparation}
+			shaping := PrepareShape(&request, docs)
+			before := manifest.Fingerprint(shaping.Content())
+			assert.Equal(t, encodings, 1)
+			shaping = PrepareShape(&request, docs)
+			assert.Equal(t, encodings, 1)
+			raw := string(shaping.inputs[0].data)
+			prepared := preparation.shaping
+			assert.NoError(t, shaping.Apply(t.Context(), ShapeOptions{Strict: true}))
+			assert.Equal(t, preparation.shaping == nil, true)
+			assert.Equal(t, string(prepared.inputs[0].data), raw)
+			want := 1
+			if sanitize {
+				want++
+			}
+			assert.Equal(t, encodings, want)
+			assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "readable", "counted": "readable"})
+			assert.Equal(t, docs[0].Document["sops"] == nil, true)
+			assert.Equal(t, manifest.Fingerprint(shaping.Content()), before)
+			assert.Equal(t, shaping.inputs == nil && shaping.docs == nil && shaping.spec == nil, true)
+			again := PrepareShape(&request, []manifest.DocOccurrence{{Document: doc}})
+			assert.Equal(t, encodings, want+1)
+			assert.Equal(t, string(again.inputs[0].data), raw)
+			again.Retire()
+			assert.Equal(t, preparation.shaping == nil && again.preparation == nil, true)
+		})
+	}
+}
+
+func TestShaping_DependencySubstitutionInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, inline, childInline, wantName, wantNamespace string
+		references                                         bool
+	}{
+		{name: "parent inline", inline: "  postBuild: {substitute: {DEP: ready, TEAM: shared}}\n", wantName: "ready", wantNamespace: "shared"},
+		{name: "parent references", references: true, wantName: "reference-ready", wantNamespace: "reference-shared"},
+		{name: "inline precedence", references: true, inline: "  postBuild: {substitute: {DEP: ready, TEAM: shared}}\n", wantName: "ready", wantNamespace: "shared"},
+		{name: "child values excluded", childInline: "  postBuild: {substitute: {DEP: child-ready, TEAM: child-shared}}\n", wantName: "${DEP}", wantNamespace: "${TEAM}"},
+		{name: "unrelated values excluded", wantName: "${DEP}", wantNamespace: "${TEAM}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			decode := func(name, spec string) manifest.ParsedDoc {
+				t.Helper()
+				docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
+				assert.NoError(t, err)
+				parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				return parsed
+			}
+			parsedParent := decode("parent", tc.inline)
+			parent := parsedParent.Object.(*manifest.Kustomization).Clone()
+			if tc.references {
+				if parent.PostBuild == nil {
+					parent.PostBuild = &kustomizev1.PostBuild{}
+				}
+				parent.PostBuild.SubstituteFrom = []kustomizev1.SubstituteReference{
+					{Kind: "ConfigMap", Name: "first"},
+					{Kind: "ConfigMap", Name: "last"},
+				}
+			}
+			st.AddObject(parent)
+			before := parent.Clone()
+			st.AddObject(
+				&manifest.ConfigMap{
+					Name:      "first",
+					Namespace: "apps",
+					Data:      map[string]any{"DEP": "earlier", "TEAM": "earlier"},
+				},
+			)
+			last := &manifest.ConfigMap{
+				Name:      "last",
+				Namespace: "apps",
+				Data:      map[string]any{"DEP": "reference-ready", "TEAM": "reference-shared"},
+			}
+			st.AddObject(last)
+			st.AddObject(
+				decode(
+					"unrelated",
+					"  postBuild: {substitute: {DEP: unrelated-ready, TEAM: unrelated-shared}}\n",
+				).Object,
+			)
+			parsedChild := decode(
+				"child",
+				"  path: ./leaf\n  dependsOn: [{name: '${DEP}', namespace: '${TEAM}', readyExpr: 'true'}]\n"+tc.childInline,
+			)
+			original := parsedChild.Object.(*manifest.Kustomization)
+			childBefore := original.Clone()
+			originalBytes := manifest.Fingerprint(parsedChild.Document)
+			effective := parent.Clone()
+			assert.NoError(
+				t,
+				values.ExpandPostBuildSubstituteReference(
+					effective,
+					resolveTestInputs(effective, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)),
+				),
+			)
+			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(parsedChild.Document)}}
+			shaping := PrepareShape(&RenderRequest{Spec: effective}, docs)
+			content := manifest.Fingerprint(shaping.Content())
+			changed := parent.Clone()
+			changed.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "later", "TEAM": "later"}}
+			st.AddObject(changed)
+			changedLast := *last
+			changedLast.Data = map[string]any{"DEP": "later", "TEAM": "later"}
+			st.AddObject(&changedLast)
+			assert.NoError(t, shaping.Apply(t.Context(), ShapeOptions{}))
+			parsed, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			child := parsed.Object.(*manifest.Kustomization)
+			assert.Equal(t, child.DependsOn[0].Name, tc.wantName)
+			assert.Equal(t, child.DependsOn[0].Namespace, tc.wantNamespace)
+			assert.Equal(t, child.DependsOn[0].ReadyExpr, "true")
+			assert.Equal(t, child.Path, "./leaf")
+			assert.Equal(t, manifest.Equal(parent, before), true)
+			assert.Equal(t, manifest.Equal(original, childBefore), true)
+			assert.Equal(t, manifest.Fingerprint(parsedChild.Document), originalBytes)
+			assert.Equal(t, manifest.Fingerprint(shaping.Content()), content)
+			assert.Diff(t, last.Data, map[string]any{"DEP": "reference-ready", "TEAM": "reference-shared"})
+			for ref := range manifest.References(child, manifest.ReferenceRelations) {
+				if ref.Use == "dependsOn" {
+					assert.Equal(t, ref.NamedResource, testutil.KustomizationID(tc.wantNamespace, tc.wantName))
+				}
+			}
+		})
+	}
+}
+
+type countedYAML struct{ count *int }
+
+func (c countedYAML) MarshalYAML() (any, error) {
+	*c.count++
+	return "${VALUE}", nil
+}

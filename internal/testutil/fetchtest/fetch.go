@@ -4,11 +4,11 @@ package fetchtest
 import (
 	"context"
 
+	"github.com/home-operations/flate/internal/engine/source"
+	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // Fetch copies the policy because preparation retains it for deferred acquisition.

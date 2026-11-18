@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/internal/testutil"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 // cli.Run and SIGTERM MUST remain serial because they change process state.

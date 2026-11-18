@@ -3,7 +3,7 @@ package manifest_test
 import (
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

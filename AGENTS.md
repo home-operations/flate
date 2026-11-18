@@ -5,8 +5,8 @@ binary: no cluster or kubectl; helm, kustomize, git and OCI are linked libraries
 Docker credential helpers and AWS credential processes may execute external programs.
 Output matches Flux bit-for-bit and is byte-identical run to run. Speed is the point:
 changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/orchestrator` and
-`pkg/manifest` form the supported SDK. Other `pkg/` packages remain implementation owners
-until S2 moves them. Konflate migrates with the supported boundary.
+`pkg/manifest` form the supported SDK and are the only public packages.
+Implementation owners live under `internal/engine/`. Konflate migrates with the supported boundary.
 
 ## Working here
 
@@ -49,7 +49,7 @@ until S2 moves them. Konflate migrates with the supported boundary.
   discard old cache directories; upgrade notes go in the PR body.
 - **Call upstream.** Use helm, Flux, kustomize, go-git, oras and the stdlib instead of
   re-implementing them; if upstream lacks a hook, post-process its output. No compatibility shims
-  or aliases past their last caller. Approved replacements are `internal/kustomize.Build`
+  or aliases past their last caller. Approved replacements are `internal/engine/kustomize/krusty.Build`
   (it keeps the builtin schema loaded across builds) and `helmchart.Fetcher.loadIndex`
   (it follows Flux source-controller's internal `IndexFromBytes` without temporary files).
 - **The SDK.** List every exported `pkg/` API or `Warning.Category` change in the PR; remove unused
@@ -59,23 +59,31 @@ until S2 moves them. Konflate migrates with the supported boundary.
 ## Layout
 
 `cmd/flate` is the entrypoint. `internal/cli` owns flags, exit codes (0 or 1), signal handling
-and `slog.SetDefault`. `internal/orchestrator` owns execution and invocation lifetime.
+and `slog.SetDefault`. `internal/engine/orchestrator` owns execution and invocation lifetime.
 `pkg/orchestrator` converts supported inputs and completed results. A non-nil SDK `Run`
 requires `Close` after every result and selection consumer, including error returns.
 The caller keeps borrowed collections and manifest data immutable until closure.
-Other implementation owners remain under `pkg/` until S2. Dependencies flow one way and never upward;
-`depguard` in `.golangci.yml` enforces this graph:
+`internal/` contains four directories. `cli` owns the command layer and its output and test runner.
+`core` holds primitives below `pkg/manifest` and the engine. `engine` holds all render owners.
+`testutil` holds test support and is imported only by tests.
+Dependencies flow one way and never upward. `depguard` in `.golangci.yml` enforces these directory boundaries:
+
+```
+internal/core <- pkg/manifest <- internal/engine <- pkg/orchestrator <- internal/cli
+```
+
+The engine retains this concern ordering:
 
 ```
 manifest <- store <- {loader, values, depwait, change, source}
 manifest <- store <- change <- selection <- {loader, depwait, discovery, controllers/base, orchestrator}
-         <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- internal/orchestrator <- internal/cli
+         <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- internal/engine/orchestrator <- internal/cli
                                                                                ^
                                                                          pkg/orchestrator
 ```
 
 Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its private dispatcher seam, `source/{safepath,sourceignore,ssrfguard}`,
-`internal/assert`) are the graph's bottom; `depguard` holds the exact rules.
+`internal/testutil/assert`) sit below the render layer.
 
 **Concern owners.** Each concern is decided in exactly one place:
 
@@ -90,7 +98,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its private dispatc
 | Readiness                                                                                                               | `depwait`                      |
 | Scheduling                                                                                                              | `schedule`                     |
 | Root membership, requested reach, execution membership, demand, output and fatal scope                                  | `selection`                    |
-| Render lifecycle and invocation resource lifetime                                                                       | `internal/orchestrator`        |
+| Render lifecycle and invocation resource lifetime                                                                       | `internal/engine/orchestrator` |
 | Supported SDK input and result conversion                                                                               | `pkg/orchestrator`             |
 | Flags and exit codes                                                                                                    | `internal/cli`                 |
 
@@ -119,7 +127,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its private dispatc
   `lockAll`/`rLockAll`.
 - **The scheduler holds no store, pool or dispatcher under its mutex.** Drop `mu` before
   `tasks.Go`. Termination is a structural fixpoint plus drain, never a timeout.
-- **One global serialization point.** Every krusty build holds `internal/kustomize.BuildMutex`;
+- **One global serialization point.** Every krusty build holds `internal/engine/kustomize/krusty.BuildMutex`;
   add no other on the render path.
 - **Changed-only mode.** `KeepEmitted`/`AddEmitted` before `AddObject`.
 - **Secrets.** Data flate cannot read is absent, warned once, and supplied by the user.
@@ -204,7 +212,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its private dispatc
   `testing/synctest`; no real `time.Sleep` outside benchmarks.
 - `TestE2E_*` asserts only through `cli.Run`; anything else belongs in the package's tests.
 - Fixtures: `t.TempDir()` plus `testutil.WriteFile`; shared corpora live in `testdata/<scenario>/`
-  and are documented in `testdata/TESTDATA.md`. Assert with `internal/assert` or `cmp.Diff`
+  and are documented in `testdata/TESTDATA.md`. Assert with `internal/testutil/assert` or `cmp.Diff`
   (`-want +got`). No golden files, except reviewed `testdata/<scenario>/expect/*.stdout` and `*.stderr` for end-to-end fixture cases. Compare complete bytes and explicit exit codes. Only the tokens of the expectation resolver in `TESTDATA.md` replace host- or build-dependent bytes: `<DUR>` for the trailing elapsed duration of a `test` summary, `<CONCURRENCY_DEFAULT>`, and `<PERSISTENCE:enabled|disabled>` with `<PERSISTENCE_REASON>` for the render persistence notice. All other bytes remain unchanged. No automatic mechanism creates, regenerates or accepts expectations from actual test output. Every replacement expectation is an independently reviewed source change.
 - Every fix lands with a regression test for the reported symptom.
 - Test flate's own logic: nothing an upstream library already covers, nothing for trivial

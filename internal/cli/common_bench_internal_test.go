@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/engine/selection"
 )
 
 func BenchmarkSelectedWarnings_Empty(b *testing.B) {

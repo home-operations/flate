@@ -8,7 +8,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 // defaultParseDocOptions returns the standard ParseDoc options — secrets wiped.

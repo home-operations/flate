@@ -11,7 +11,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestResourceSetInputProvider_InputPlan(t *testing.T) {

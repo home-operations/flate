@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testfixture"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/testfixture"
 )
 
 //nolint:paralleltest // CLI invocations change process logging and environment.

@@ -12,11 +12,11 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/home-operations/flate/internal/assert"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.

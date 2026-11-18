@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestProjectProducer_EntryPrecondition(t *testing.T) {

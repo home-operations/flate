@@ -3,7 +3,7 @@ package manifest
 import (
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:paralleltest // testing.AllocsPerRun measures process-wide allocation counters for DocIdentity.

@@ -1,0 +1,178 @@
+package git
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
+
+	gitlib "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/home-operations/flate/internal/engine/source"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+//nolint:paralleltest // The test changes HOME for SSH credentials.
+func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
+	for _, phase := range []string{"view", "publication"} {
+		t.Run(phase, func(t *testing.T) {
+			testFetcherAmbientPostAuthenticationFailureCase(
+				t,
+				&phase,
+			)
+		},
+		)
+	}
+}
+
+func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
+	identity, key := testSSHIdentity(t)
+	_, host := testSSHIdentity(t)
+	closed, opened, _ := acquisitionAgent(t, identity)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
+	root, leaf := t.TempDir(), t.TempDir()
+	tr := &testutil.GitSSH{Host: host, Allowed: key.PublicKey(), Roots: []string{root, leaf}}
+	address := testutil.LocalGitSSH(t, tr)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{address}, host.PublicKey())+"\n")
+	mustInitRepo(t, leaf)
+	mustInitRepoWithFiles(
+		t,
+		root,
+		map[string]string{
+			"hello.txt":   "parent",
+			".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@" + address + leaf + "\n",
+		},
+	)
+	repository, err := gitlib.PlainOpen(root)
+	assert.NoError(t, err)
+	entries, err := repository.Storer.Index()
+	assert.NoError(t, err)
+	entries.Entries = append(
+		entries.Entries,
+		&index.Entry{Name: "lib", Mode: filemode.Submodule, Hash: plumbing.NewHash(mustHead(t, leaf))},
+	)
+	assert.NoError(t, repository.Storer.SetIndex(entries))
+	worktree, err := repository.Worktree()
+	assert.NoError(t, err)
+	_, err = worktree.Commit(
+		"fixture submodule",
+		&gitlib.CommitOptions{
+			Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)},
+		},
+	)
+	assert.NoError(t, err)
+	repo := gitRepoWithSecret("modules", "ssh://git@"+address+root, "auth")
+	repo.RecurseSubmodules = true
+	reads := (testInputs{}).readSet(repo)
+	defer reads.Close()
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
+	_, err = fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
+	assert.NoError(t, err)
+	<-closed
+	if opened.Load() != 1 || tr.Authenticated.Load() < 2 {
+		t.Fatalf("attempt sharing: opened=%d authenticated=%d", opened.Load(), tr.Authenticated.Load())
+	}
+	data, err := fs.ReadFile(artifact.FS, "lib/hello.txt")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "hi")
+}
+
+func testFetcherAmbientPostAuthenticationFailureCase(
+	t *testing.T, phase *string,
+) {
+	t.Helper()
+	identity, key := testSSHIdentity(t)
+	_, host := testSSHIdentity(t)
+	closed, opened, _ := acquisitionAgent(t, identity)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	testutil.WriteFile(
+		t,
+		homeDir,
+		".ssh/known_hosts",
+		knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+	)
+	root := t.TempDir()
+	mustInitRepo(t, root)
+	if (*phase) == "view" {
+		repository, err := gitlib.PlainOpen(root)
+		assert.NoError(t, err)
+		head, err := repository.Head()
+		assert.NoError(t, err)
+		commit, err := repository.CommitObject(head.Hash())
+		assert.NoError(t, err)
+		tree, err := commit.Tree()
+		assert.NoError(t, err)
+		tree.Entries[0].Name = ".."
+		var encoded plumbing.EncodedObject = testutil.GitMalformedTree(t, tree, 0)
+		commit.TreeHash, err = repository.Storer.SetEncodedObject(encoded)
+		assert.NoError(t, err)
+		encoded = repository.Storer.NewEncodedObject()
+		assert.NoError(t, commit.Encode(encoded))
+		hash, err := repository.Storer.SetEncodedObject(encoded)
+		assert.NoError(t, err)
+		assert.NoError(t, repository.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)))
+	}
+	tr := &testutil.GitSSH{
+		Host:    host,
+		Roots:   []string{root},
+		Allowed: key.PublicKey(),
+	}
+	address := testutil.LocalGitSSH(t, tr)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{address}, host.PublicKey())+"\n")
+	cacheDir := t.TempDir()
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, cacheDir, sourcecache.New)}
+	if (*phase) == "publication" {
+		blobDir := filepath.Join(cacheDir, "oci", "blobs", "sha256")
+		assert.NoError(t, os.MkdirAll(blobDir, 0o750))
+		tr.AfterAuth = func() error {
+			if err := os.Rename(blobDir, blobDir+".held"); err != nil {
+				return err
+			}
+			return os.WriteFile(blobDir, []byte("publication blocked"), 0o600)
+		}
+		defer func() { _ = os.Remove(blobDir); _ = os.Rename(blobDir+".held", blobDir) }()
+	}
+	repo := gitRepoWithSecret("failure", "ssh://git@"+address+root, "auth")
+	reads := (testInputs{}).readSet(repo)
+	defer reads.Close()
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
+	assert.FatalIf(t, artifact != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || (*phase) ==
+		"publication" && !strings.Contains(err.Error(), "blobs") || (*phase) ==
+		"view" &&
+		!errors.Is(err, manifest.ErrInput), "ambient %s failure = %v, %v", (*phase), artifact, err)
+	assert.Equal(t, sourcecache.CredentialsUnavailable(err), false)
+	assert.ErrorIf(
+		t,
+		err.Error() == "machine credential acquisition failed",
+		"post-authentication cause masked: %v",
+		err,
+	)
+	<-closed
+	if opened.Load() != 1 || tr.Authenticated.Load() == 0 {
+		t.Fatalf("post-auth failure: opened=%d authenticated=%d", opened.Load(), tr.Authenticated.Load())
+	}
+}

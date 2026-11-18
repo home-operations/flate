@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/orchestrator"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 //nolint:gocritic // The fixture MUST match the SDK configuration value boundary.

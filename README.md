@@ -427,8 +427,8 @@ A non-nil run requires closure even when rendering returns an error.
 `Close` releases retained resources and returns teardown errors. Repeated calls are safe.
 
 The supported SDK consists of `pkg/orchestrator` and `pkg/manifest`.
-`internal/orchestrator` owns execution and resource lifetime.
-Other `pkg/` packages remain implementation details until their separate relocation.
+`internal/engine/orchestrator` owns execution and resource lifetime.
+All implementation packages live under `internal/`.
 
 ## License
 

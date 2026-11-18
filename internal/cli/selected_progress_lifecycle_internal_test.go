@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func runSelectedProgressLifecycleName(t *testing.T, name *string) {

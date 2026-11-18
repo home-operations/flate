@@ -3,7 +3,7 @@ package manifestscope_test
 import (
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"sigs.k8s.io/kustomize/kyaml/yaml"

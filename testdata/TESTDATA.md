@@ -348,16 +348,16 @@ Source archive reuse is separate from persistent render-cache eligibility.
 Focused routine proof (race instrumentation is separate from RSS collection):
 
 ```fish
-go test -race ./pkg/orchestrator ./pkg/baseline ./pkg/source/gittree ./pkg/source/cache ./pkg/change -run 'Memory|Sparse|LazyBaseReads' -count=1 -v
+go test -race ./pkg/orchestrator ./internal/engine/baseline ./internal/engine/source/gittree ./internal/engine/source/cache ./internal/engine/change -run 'Memory|Sparse|LazyBaseReads' -count=1 -v
 ```
 
 Exact synthetic fixture correctness, one fixture at a time without reducing
 reconcile concurrency:
 
 ```fish
-env FLATE_E8_SLOW=1 go test ./pkg/baseline ./pkg/source/gittree ./pkg/orchestrator -run 'TestAutoResolve_SparseGitMemory/exact|TestSelection_SparseGitBodies/exact|TestGitView_SparseBodyReads/exact|TestRender_MemorySparseGit/sparse-git|TestRender_MemoryContained' -count=1 -v -p=1 -parallel=1
-env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=128MiB go test ./pkg/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
-env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=256MiB go test ./pkg/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
+env FLATE_E8_SLOW=1 go test ./internal/engine/baseline ./internal/engine/source/gittree ./pkg/orchestrator -run 'TestAutoResolve_SparseGitMemory/exact|TestSelection_SparseGitBodies/exact|TestGitView_SparseBodyReads/exact|TestRender_MemorySparseGit/sparse-git|TestRender_MemoryContained' -count=1 -v -p=1 -parallel=1
+env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=128MiB go test ./internal/engine/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
+env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=256MiB go test ./internal/engine/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
 ```
 
 For the corpus SDK row the collector must supply `FLATE_E8_HOME` as an absolute
@@ -427,7 +427,7 @@ depth 64 and 64-way diamond fan-in at both task bounds; an ordinary test skip
 is not a large-campaign pass. Run the large race campaign with:
 
 ```sh
-env FLATE_E8_SLOW=1 mise exec -- go test -race ./pkg/schedule ./pkg/orchestrator -run '^(TestScheduler_ScaleDAG|TestDAG_ScalePublications)$' -count=1
+env FLATE_E8_SLOW=1 mise exec -- go test -race ./internal/engine/schedule ./pkg/orchestrator -run '^(TestScheduler_ScaleDAG|TestDAG_ScalePublications)$' -count=1
 ```
 
 E8-4 runs the routine package race proof. E8-5 owns the exact large race
@@ -436,7 +436,7 @@ campaign, full repository gates and the final candidate commit.
 ## Fixture scenarios
 
 A scenario is a repository tree with declared edits and CLI invocations.
-`internal/testfixture` owns all file copies, overlays, commits, inputs, and caches.
+`internal/testutil/testfixture` owns all file copies, overlays, commits, inputs, and caches.
 The end-to-end harness reads `scenario.json` and calls `cli.Run` for each invocation.
 Tests use `harness.Open`, `Case.Want`, and two calls to `Case.Run`.
 They compare each complete ordered result, including stdout, stderr, and the exit code.
@@ -673,7 +673,7 @@ The whole-source cases derive dedicated before, after, and baseline commits from
 Both repository declarations copy `@git/` to `@artifact/` once, without `pathPattern`, and retain the `./payload/one` consumer.
 Their directory baseline marks `copied-baseline` as shallow history.
 The reviewed copied-input expectations also describe the whole-source results because the consumer path, payload values, and ownership labels stay identical.
-The package tests under `pkg/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
+The package tests under `internal/engine/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
 U6 removes both ArtifactGenerator files from the migration allowlist.
 The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U7 consumers until U9 removes their last callers.
 
@@ -894,7 +894,7 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 
 `helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` preserves the shared Helm dependency consumer, merged in U3. Its unchanged dependency producer remains skipped.
 
-The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `pkg/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
+The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `internal/engine/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
 
 The ancestor-patch cases follow `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`, `kubernetes/flux/cluster/ks.yaml`. They retain the parent patch and child ownership structure. Local ConfigMaps replace unrelated workloads. The dependency cases follow `truxnell/home-cluster` at `0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c`, `kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml`. The readiness expressions, emitted sources, and negative variants are authored reductions.
 
@@ -928,7 +928,7 @@ The image case adds tagged, digest, bare, and init-container references.
 The Secret contains synthetic test data.
 
 Expected objects follow Flux Kustomization ownership labels and Helm template behavior.
-Expected presentation follows `internal/output`, the command definitions in `internal/cli`, and Cobra help.
+Expected presentation follows `internal/cli/output`, the command definitions in `internal/cli`, and Cobra help.
 The cases compare complete streams and integer exit codes twice.
 Each render uses concurrency 2 except the explicit zero and negative controls.
 The default working-directory case omits `--path`.
@@ -1704,7 +1704,7 @@ The Git package retains HEAD, index, status, and file-byte observations. Low-lev
 
 ## Reach precision
 
-`reach-precision/` replaces the finite inputs of `TestRenderTrees_Reach` through `internal/testfixture.Materialize`.
+`reach-precision/` replaces the finite inputs of `TestRenderTrees_Reach` through `internal/testutil/testfixture.Materialize`.
 The original application names, namespaces, paths, self URLs, and expected work identities remain fixed.
 The source is the authored `testdata/e6-reach` corpus at flate revision `d53d49455876634fcc92802c60763ec54f17b0bc`.
 Its reductions group excluded declarations and replace empty packages with application resources from two pinned repositories.

@@ -3,12 +3,12 @@ package orchestrator
 import (
 	"context"
 
-	engine "github.com/home-operations/flate/internal/orchestrator"
-	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/internal/engine/helm"
+	engine "github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/selection"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // RenderTrees requires Close for every non-nil run, including returns with an error.

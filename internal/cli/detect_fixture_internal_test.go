@@ -5,8 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/store"
 )
 
 func detectChanges(tb testing.TB, before, after []string) *change.Set {

@@ -18,9 +18,9 @@ import (
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/application"
-	"github.com/home-operations/flate/internal/keylock"
-	"github.com/home-operations/flate/internal/resourcesetinput"
+	"github.com/home-operations/flate/internal/core/application"
+	"github.com/home-operations/flate/internal/core/keylock"
+	"github.com/home-operations/flate/internal/core/resourcesetinput"
 )
 
 // TemplateProjection contains positive inputs, output identities, and applications from unrendered documents.

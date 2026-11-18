@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func BenchmarkInputf(b *testing.B) {

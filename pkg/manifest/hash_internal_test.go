@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestSHA256Hex(t *testing.T) {

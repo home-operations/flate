@@ -26,10 +26,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/engine/source"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
 )
 
 type renderNoticeKey struct{}

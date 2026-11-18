@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/orchestrator"
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestRenderTrees_InputWarningOnly(t *testing.T) {

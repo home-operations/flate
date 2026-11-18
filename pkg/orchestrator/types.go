@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"time"
 
-	engine "github.com/home-operations/flate/internal/orchestrator"
+	engine "github.com/home-operations/flate/internal/engine/orchestrator"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

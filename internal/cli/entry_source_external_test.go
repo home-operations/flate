@@ -15,10 +15,10 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/internal/testutil"
-	sourcegit "github.com/home-operations/flate/pkg/source/git"
+	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
 func TestE2E_DeclaredEntrySource(t *testing.T) {

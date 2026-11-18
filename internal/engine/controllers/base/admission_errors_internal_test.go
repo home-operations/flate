@@ -1,0 +1,123 @@
+package base
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/home-operations/flate/internal/engine/values"
+
+	"github.com/home-operations/flate/internal/engine/selection"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/engine/depwait"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+type admissionFailure struct{ cause error }
+
+func (admissionFailure) IsFileIndexed(manifest.NamedResource) bool { return true }
+func (p admissionFailure) Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error) {
+	return false, p.cause
+}
+
+type countedDataLookup struct{ calls int }
+
+func (p *countedDataLookup) Lookup(manifest.NamedResource) store.ReferenceFacts {
+	p.calls++
+	return store.ReferenceFacts{}
+}
+
+func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		object       manifest.BaseManifest
+		allowMissing bool
+	}{
+		{"helm_optional", &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}}}, false},
+		{"helm_allow_missing", &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "input"}}}, true},
+		{"substitute_optional", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}}}}, false},
+		{"substitute_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, false},
+		{"substitute_permitted_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, true},
+		{"substitute_permitted_configmap", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cause := errors.New("exact occurrence unavailable")
+			st := store.New()
+			st.AddObject(tc.object)
+			c := New(st, nil)
+			var missingKinds []string
+			if tc.allowMissing {
+				for ref := range manifest.References(tc.object, manifest.ReferenceRelations) {
+					missingKinds = append(missingKinds, ref.Kind)
+				}
+			}
+			c.Configure(
+				Options{
+					Existence: admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
+					Missing:   depwait.NewMissingPolicy(missingKinds),
+				},
+			)
+			var execution Execution
+			execution.Init(c, tc.object.Named())
+			defer execution.Close()
+			provider := &countedDataLookup{}
+			inputs, err := execution.DataInputs(t.Context(), tc.object, provider)
+			assert.Equal(t, errors.Is(err, cause), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, len(inputs), 0)
+			assert.Equal(t, provider.calls, 0)
+			assert.Equal(t, len(execution.Unreadable), 0)
+		})
+	}
+}
+
+func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
+	t.Parallel()
+	for _, materializer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("materializer=%t", materializer), func(t *testing.T) {
+			t.Parallel()
+			cause := manifest.NewError(manifest.ErrInput, nil, "exact input could not be read")
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			st.AddObject(owner)
+			c := New(st, nil)
+			c.Configure(Options{Existence: admissionFailure{cause}})
+			var execution Execution
+			execution.Init(c, owner.Named())
+			defer execution.Close()
+			input := store.ReferenceFacts{Offline: true}
+			if materializer {
+				input.Materializers = []manifest.NamedResource{
+					{
+						Group:     manifest.FluxKustomizeDomain,
+						Kind:      manifest.KindKustomization,
+						Namespace: "apps",
+						Name:      "producer",
+					},
+				}
+			}
+			resumed := false
+			err := execution.AwaitData(t.Context(), DataWait{
+				Inputs: []depwait.DataDependency{
+					{
+						Kind:      manifest.KindConfigMap,
+						Namespace: "apps",
+						Name:      "input",
+						Input:     input,
+						Optional:  true,
+					},
+				},
+				Resume: func(context.Context, manifest.DrainLevel, []values.Result) error { resumed = true; return nil },
+			}, manifest.DrainForce)
+			assert.Equal(t, errors.Is(err, cause), true)
+			assert.Equal(t, resumed, false)
+		})
+	}
+}

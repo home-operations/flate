@@ -11,9 +11,9 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // barModel is the live, single-line progress indicator flate paints to stderr
@@ -157,7 +157,7 @@ func (m *barModel) track(id manifest.NamedResource, status store.Status, observe
 	m.done++
 }
 
-// View composes one frame, styled via internal/output and truncated to the
+// View composes one frame, styled via internal/cli/output and truncated to the
 // terminal width (ANSI- and wide-rune-aware). An empty frame after finishMsg
 // clears the line so the bar vanishes without a trace.
 //

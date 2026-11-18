@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/internal/engine/discovery"
+	"github.com/home-operations/flate/internal/engine/source"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // CLI invocations replace process-wide state.

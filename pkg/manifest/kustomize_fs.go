@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/kustpath"
+	"github.com/home-operations/flate/internal/core/kustpath"
 )
 
 // KSClaim pairs a Flux Kustomization id with one of its slash-terminated,

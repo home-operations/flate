@@ -13,15 +13,15 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/imageutil"
-	"github.com/home-operations/flate/internal/orchestrator"
-	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/testrunner"
+	"github.com/home-operations/flate/internal/cli/output"
+	"github.com/home-operations/flate/internal/cli/testrunner"
+	"github.com/home-operations/flate/internal/engine/diff"
+	"github.com/home-operations/flate/internal/engine/image/imageutil"
+	"github.com/home-operations/flate/internal/engine/orchestrator"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
 )
 
 func runClusterInputs(t *testing.T, argv ...string) cliResult {

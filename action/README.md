@@ -16,12 +16,13 @@ The action downloads the release archive from GitHub, verifies its SHA-256, inst
 
 ## Inputs
 
-| Name      | Description                                                                                 | Default                   |
-| --------- | ------------------------------------------------------------------------------------------- | ------------------------- |
-| `version` | flate version to install (e.g. `0.1.25`) or `latest`                                        | _see [Version](#version)_ |
-| `token`   | GitHub token used to resolve releases and avoid unauthenticated rate limits on GitHub's API | `${{ github.token }}`     |
-| `cache`   | Restore and save flate's on-disk cache between runs                                         | `false`                   |
-| `bindir`  | Alternative install location for the flate binary                                           | `$RUNNER_TOOL_CACHE/...`  |
+| Name        | Description                                                                                 | Default                   |
+| ----------- | ------------------------------------------------------------------------------------------- | ------------------------- |
+| `version`   | flate version to install (e.g. `0.1.25`) or `latest`                                        | _see [Version](#version)_ |
+| `token`     | GitHub token used to resolve releases and avoid unauthenticated rate limits on GitHub's API | `${{ github.token }}`     |
+| `cache`     | Restore and save flate's on-disk cache between runs                                         | `false`                   |
+| `cache_dir` | Parent directory for the flate cache. The action appends `/flate`.                          | `${{ runner.temp }}`      |
+| `bindir`    | Alternative install location for the flate binary                                           | `$RUNNER_TOOL_CACHE/...`  |
 
 ## Outputs
 
@@ -53,9 +54,9 @@ The SHA-to-tag lookup uses `inputs.token` (defaulted to `${{ github.token }}`) a
 
 ## Caching
 
-The action always exports `FLATE_CACHE_DIR=${RUNNER_TEMP}/flate-cache` (auto-bound to flate's `--cache-dir`), so every `flate` invocation in the job writes to that path regardless of OS.
+The action sets `FLATE_CACHE_DIR` to `<cache_dir>/flate` for later steps in the job. The default path is `$RUNNER_TEMP/flate`. flate reads this variable as the default for `--cache-dir`.
 
-Setting `cache: true` wraps the install in [`actions/cache`](https://github.com/actions/cache), pointed at the same path. This persists fetched git sources, Helm chart tarballs, OCI blobs, and bare git mirrors across runs.
+To save and restore this directory across runs, set `cache: true`. The action uses [`actions/cache`](https://github.com/actions/cache) for this step. The directory stores fetched Git sources, Helm chart archives, OCI blobs, and bare Git mirrors.
 
 The cache key is keyed on OS, architecture, and the current run — every run saves a fresh entry and restores the most recent one for that runner shape. flate's cache is content-addressed, so cross-run reuse is safe regardless of which flate version produced it.
 

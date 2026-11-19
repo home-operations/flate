@@ -29,8 +29,8 @@ func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot st
 	}
 	occurrences := d.loader.PathObjects()
 	pinnedWorkingTreeClaimsResult1 := d.pinnedWorkingTreeClaims(repoRoot, occurrences)
-	prefixes, pinnedSources := pinnedWorkingTreeClaimsResult1.claims, pinnedWorkingTreeClaimsResult1.sources
-	if len(prefixes) == 0 {
+	index, pinnedSources := pinnedWorkingTreeClaimsResult1.index, pinnedWorkingTreeClaimsResult1.sources
+	if len(index.Claims) == 0 {
 		return nil
 	}
 	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
@@ -40,7 +40,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot st
 		if _, pinned := pinnedSources[id]; pinned {
 			continue
 		}
-		if !d.pinnedWorkingTreeFile(repoRoot, prefixes, id, &record) {
+		if !d.pinnedWorkingTreeFile(repoRoot, &index, id, &record) {
 			continue
 		}
 		d.cfg.Store.DeleteObject(id)
@@ -50,7 +50,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot st
 }
 
 type pinnedClaims struct {
-	claims  []manifest.KSClaim
+	index   manifest.DiscoveryIndex
 	sources map[manifest.NamedResource]struct{}
 }
 
@@ -60,33 +60,36 @@ func (d *Session) pinnedWorkingTreeClaims(
 	scratch []selection.OccurrenceFacts,
 ) pinnedClaims {
 	pinned := scratch[:0]
-	sources := map[manifest.NamedResource]struct{}{}
-	{
-		oValues := scratch
-		for oIndex := range oValues {
-			o := oValues[oIndex]
-
-			ref, _, hasPath := o.SourcePath()
-			if !hasPath {
-				continue
-			}
-			sourceViewResult1 := loader.SourceView(d.cfg.Store, ref, repoRoot)
-			if _, pin, _ := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External; pin {
-				pinned = append(pinned, o)
-				sources[ref] = struct{}{}
-			}
+	var sources map[manifest.NamedResource]struct{}
+	for i := range scratch {
+		o := &scratch[i]
+		ref, _, hasPath := o.SourcePath()
+		if !hasPath || !loader.SourceView(d.cfg.Store, ref, repoRoot).Pinned {
+			continue
 		}
+		if sources == nil {
+			sources = map[manifest.NamedResource]struct{}{}
+		}
+		pinned = append(pinned, *o)
+		sources[ref] = struct{}{}
 	}
-	return pinnedClaims{claims: d.loader.OccurrenceClaims(repoRoot, pinned), sources: sources}
+	if len(pinned) == 0 {
+		return pinnedClaims{}
+	}
+	index := manifest.DiscoveryIndex{Claims: map[string][]manifest.NamedResource{}}
+	for _, claim := range d.loader.OccurrenceClaims(repoRoot, pinned) {
+		index.Claims[claim.Prefix] = append(index.Claims[claim.Prefix], claim.ID)
+	}
+	return pinnedClaims{index: index, sources: sources}
 }
 
 func (d *Session) pinnedWorkingTreeFile(
 	repoRoot string,
-	prefixes []manifest.KSClaim,
+	index *manifest.DiscoveryIndex,
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) bool {
-	if len(prefixes) == 0 {
+	if index == nil || len(index.Claims) == 0 {
 		return false
 	}
 	file := record.File
@@ -104,8 +107,10 @@ func (d *Session) pinnedWorkingTreeFile(
 			return false
 		}
 	}
-	_, owned := manifest.StrictParent(prefixes, file, id, nil)
-	return owned
+	for range index.ClaimOwners(file, manifest.NamedResource{}, id, nil) {
+		return true
+	}
+	return false
 }
 
 // The Loader deduplicates unchanged views; unavailable followed paths fail during reconciliation.

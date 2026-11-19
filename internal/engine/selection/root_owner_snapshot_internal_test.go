@@ -56,14 +56,24 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Close()
 	c.objects, c.proposal.reads = &reads, &reads
-	coordinates := c.rootOwnerFacts(owner)
+	coordinates := rootOwnerFact(owner, c.rootReader())
+	missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
+	assert.Equal(t, c.coversDeclaration(&coordinates, missing), false)
+	assert.Equal(t, len(c.ownerClaims), 0)
+	assert.Equal(t, c.materializerTargetsMatch(
+		owner.Named(),
+		&OccurrenceFacts{Catalog: owner, Targets: []manifest.ProducerTarget{{NamedResource: inputs[0]}}},
+		&materializerDemand{target: inputs[0]}, nil,
+	), true)
+	assert.Equal(t, len(c.ownerClaims), 0)
 	for _, id := range inputs {
 		assert.Equal(t, c.coversDeclaration(&coordinates, id), true)
 		assert.Equal(t, counted.occurrences[id], 1)
 	}
+	assert.Equal(t, len(c.ownerClaims), 1)
 	assert.Equal(t, owner.paths, 1)
 	owner.Path = "../outside"
-	coordinates = c.rootOwnerFacts(owner)
+	coordinates = rootOwnerFact(owner, c.rootReader())
 	assert.Equal(t, coordinates.Path, "")
 	for _, id := range inputs {
 		assert.Equal(t, c.coversDeclaration(&coordinates, id), false)
@@ -78,6 +88,35 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	c.ownersKnown = true
 	assert.Equal(t, c.bootstrapPrerequisite(parented), false)
 	assert.Equal(t, owner.paths, 0)
+}
+
+func TestAdmission_OwnerClaimsReuse(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	root := t.TempDir()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	owner.Path = "."
+	facts := &solverFacts{
+		store: st, index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+		occurrences: map[manifest.NamedResource]OccurrenceFacts{},
+	}
+	facts.context.Root = root
+	c := solverClosure(t, st, facts)
+	c.context.Root = root
+	coordinates := rootOwnerFact(owner, c.rootReader())
+	first := c.rootOwnerClaims(&coordinates)
+	repeated := c.rootOwnerClaims(&coordinates)
+	assert.Equal(t, repeated == first, true)
+	added := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "added"}
+	facts.index.Records[added] = manifest.DiscoveryRecord{Path: filepath.Join(root, "added.yaml")}
+	assert.NoError(t, c.refreshPrerequisites(t.Context(), nil, &PrepareRequest{}))
+	refreshed := c.rootOwnerClaims(&coordinates)
+	assert.Equal(t, refreshed == first, false)
+	_, previous := first.Records[added]
+	_, current := refreshed.Records[added]
+	assert.Equal(t, previous, false)
+	assert.Equal(t, current, true)
 }
 
 func TestAdmission_EmptyRootOwnerInventoryShared(t *testing.T) {

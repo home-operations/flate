@@ -46,7 +46,7 @@ func TestRootSupport_SuppliedDeclarationRetainsRepositoryAuthority(t *testing.T)
 		},
 		Scope: selection.RootScopeFacts{NamespaceEligible: true, Candidate: true},
 	}
-	rootSupport(&evidence, &reads, index, &manifest.DiscoveryIndex{}, t.TempDir())
+	evidence = selection.CaptureRoot(evidence, &reads, index)
 	assert.Equal(t, evidence.Supplied, true)
 	assert.Equal(t, evidence.Sources[0].Source, source)
 	assert.Equal(t, evidence.Sources[0].Available, true)
@@ -78,7 +78,7 @@ func TestCatalog_ApplicationScopeAfterClose(t *testing.T) {
 			var before store.ReadSet
 			before.Init(l.Store, manifest.NamedResource{}, nil)
 			defer before.Retire()
-			evidence := l.RootEvidence(child, &before, true)
+			evidence := rootEvidenceForTest(l, child, &before)
 			assert.Equal(t, evidence.Scope.Application, true)
 			assert.Equal(t, evidence.Scope.ApplicationSource, source.Named())
 			assert.Equal(t, evidence.Scope.ApplicationPath, "./payload")
@@ -94,7 +94,7 @@ func TestCatalog_ApplicationScopeAfterClose(t *testing.T) {
 			defer detached.Retire()
 			assert.Equal(t,
 				cmp.Diff(
-					evidence, catalog.RootEvidence(child, &detached, true),
+					evidence, rootCatalogEvidenceForTest(catalog, child, &detached),
 					cmp.Exporter(func(reflect.Type) bool { return true }),
 				),
 				"",
@@ -111,7 +111,7 @@ func TestCatalog_ApplicationScopeAfterClose(t *testing.T) {
 					var reads store.ReadSet
 					reads.Init(l.Store, manifest.NamedResource{}, nil)
 					defer reads.Retire()
-					results[i] = catalog.RootEvidence(child, &reads, true)
+					results[i] = rootCatalogEvidenceForTest(catalog, child, &reads)
 					valid[i] = reads.Valid()
 				})
 			}

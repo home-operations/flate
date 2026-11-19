@@ -148,8 +148,8 @@ func testStoreProductionsScopedFileBridgeEmptyDirectNeedsAcceptedRoot(t *testing
 		bare: {Productions: []manifest.Production{first, second}},
 	}}
 	s.SetDiscoveryIndex(index)
-	s.coverage[a].binding.artifact = &SourceArtifact{Key: "a"}
-	s.coverage[b].binding.artifact = &SourceArtifact{Key: "b"}
+	s.coverage[a].binding(source).artifact = &SourceArtifact{Key: "a"}
+	s.coverage[b].binding(source).artifact = &SourceArtifact{Key: "b"}
 	assert.Diff(t, s.Productions(target, index), []manifest.Production{first})
 }
 
@@ -180,7 +180,9 @@ func testStoreProductionsScopedFileBridgeCase(
 	s.SetDiscoveryIndex(index)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.a), (*testCaseInput.b)} {
 		if c := s.coverage[id]; c != nil {
-			c.binding.artifact = &SourceArtifact{Key: id.Name}
+			for _, binding := range c.bindings {
+				binding.artifact = &SourceArtifact{Key: id.Name}
+			}
 		}
 	}
 	assert.Diff(t, s.Productions(target, nil), testCaseInput.tc.want)
@@ -220,7 +222,7 @@ func testStoreProductionsScopedFileBridgeHiddenBareOnlyAfterWithdrawal(t *testin
 
 	assert.Equal(t, len(s.Productions(target, nil)), 0)
 	assert.Diff(t, s.ReferenceFacts(target, nil, manifest.NamedResource{}), ReferenceFacts{})
-	parent, ok := s.RenderedParent(target, nil)
+	parent, ok := s.Parent(target, nil)
 	assert.Equal(t, parent, manifest.NamedResource{})
 	assert.Equal(t, ok, false)
 }
@@ -278,12 +280,12 @@ func testStoreProductionsScopedFileBridgeCase2(
 	}
 	s.SetDiscoveryIndex(index)
 	if *testCaseInput.differentBinding {
-		s.coverage[fileOwner].binding.artifact = &SourceArtifact{Key: "other"}
+		s.coverage[fileOwner].binding(other).artifact = &SourceArtifact{Key: "other"}
 	}
 	result := s.Productions(target, index)
 	facts := s.ReferenceFacts(target, index, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, result)
-	parent, ok := s.RenderedParent(target, nil)
+	parent, ok := s.Parent(target, nil)
 	assert.FatalIf(
 		t,
 		!ok || parent != renderer,
@@ -346,7 +348,7 @@ func testStoreProductionsScopedFileBridgeCase3(
 	s.SetDiscoveryIndex(index)
 	assert.Diff(t, s.Productions(target, nil), []manifest.Production{proof})
 	{
-		parent, ok := s.RenderedParent(target, nil)
+		parent, ok := s.Parent(target, nil)
 		assert.FatalIf(
 			t,
 			ok || parent != (manifest.NamedResource{}),
@@ -397,7 +399,7 @@ func testStoreProductionsScopedFileBridgeCase4(
 	}
 	slices.SortFunc(want, compareProduction)
 	assert.Diff(t, s.Productions(target, nil), want)
-	parent, ok := s.RenderedParent(target, nil)
+	parent, ok := s.Parent(target, nil)
 	assert.FatalIf(
 		t,
 		ok || parent != (manifest.NamedResource{}),

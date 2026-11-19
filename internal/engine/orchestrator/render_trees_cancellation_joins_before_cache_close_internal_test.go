@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/baseline"
 	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/diff"
 	"github.com/home-operations/flate/internal/engine/discovery"
@@ -196,14 +198,36 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 	}
 }
 
-func TestProjectEntryReaders_ZeroBinding(t *testing.T) {
+func TestWithReaders_ZeroBinding(t *testing.T) {
 	t.Parallel()
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
 	index := &manifest.DiscoveryIndex{
 		Readers: map[string][]manifest.FileReader{"root.yaml": {{Reader: entry, Source: manifest.BootstrapSourceID}}},
 	}
 	for _, pair := range [][2]discovery.Binding{{{}, {Producer: entry}}, {{Producer: entry}, {}}, {{}, {}}} {
-		assert.Equal(t, projectEntryReaders(index, pair[0].Producer, pair[1].Producer), index)
+		indexes := [2]*manifest.DiscoveryIndex{}
+		files := [2][]string{}
+		for side, binding := range pair {
+			if binding.Producer != (manifest.NamedResource{}) {
+				copyIndex := *index
+				copyIndex.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{entry: entry}
+				indexes[side] = &copyIndex
+				files[side] = []string{"root.yaml"}
+			}
+		}
+		changes, err := detectChanges(t, files[0], files[1]).WithReaders(t.Context(), indexes,
+			[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
+		assert.NoError(t, err)
+		want := map[manifest.NamedResource]change.InputChange{}
+		if pair[0].Producer != (manifest.NamedResource{}) || pair[1].Producer != (manifest.NamedResource{}) {
+			want[entry] = change.InputChange{File: "root.yaml"}
+		}
+		assert.Diff(t, maps.Collect(changes.Inputs(manifest.NamedResource{})), want)
+		assert.Diff(
+			t,
+			index.Readers["root.yaml"],
+			[]manifest.FileReader{{Reader: entry, Source: manifest.BootstrapSourceID}},
+		)
 	}
 }
 
@@ -420,7 +444,7 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			testutil.WriteFile(
 				t,
 				root,
-				"clusters/"+name+"/ks.yaml",
+				"clusters/ks-"+name+".yaml",
 				testutil.KustomizationYAML(name, "apps", "  path: ./workload/"+name+"\n"),
 			)
 			testutil.WriteFile(t, root, "workload/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
@@ -437,8 +461,8 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			testutil.WriteFile(
 				t,
 				root,
-				"kustomization.yaml",
-				"resources: [clusters/a/ks.yaml, clusters/b/ks.yaml]\n",
+				"clusters/kustomization.yaml",
+				"resources: [ks-a.yaml, ks-b.yaml]\n",
 			)
 		}
 		if qualification == "authored" {
@@ -446,13 +470,17 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			testutil.WriteFile(
 				t,
 				root,
-				"owner.yaml",
-				testutil.KustomizationYAML("root-owner", "apps", "  path: ./\n"),
+				"clusters/owner.yaml",
+				testutil.KustomizationYAML("root-owner", "apps", "  path: ./clusters\n"),
 			)
 		}
 		trees = append(
 			trees,
-			Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: root, RepoRoot: root},
+			Tree{
+				ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+				Path:     filepath.Join(root, "clusters"),
+				RepoRoot: root,
+			},
 		)
 	}
 	var previous []byte

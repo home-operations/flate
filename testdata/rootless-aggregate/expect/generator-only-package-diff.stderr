@@ -1,0 +1,5 @@
+
+  ⚠ warnings (<PERSISTENCE:2|3>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [EmptyScan] orig snapshot: no Flux Kustomization or HelmRelease objects found under the input path
+    [EmptyScan] current snapshot: no Flux Kustomization or HelmRelease objects found under the input path

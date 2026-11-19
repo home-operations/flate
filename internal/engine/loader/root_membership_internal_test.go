@@ -182,7 +182,7 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), tc.owned)
 			assert.Equal(t, slices.Contains(proposal.Needed, otherOwner.Named()), tc.owned)
-			evidence := l.RootEvidence(child, nil, true)
+			evidence := rootEvidenceForTest(l, child, nil)
 			assert.Equal(t, evidence.Scope.LocalApplication, tc.localApplication)
 			if tc.nested || tc.mode == "failed" {
 				assert.Equal(t, evidence.Scope.Claim, tc.claim)

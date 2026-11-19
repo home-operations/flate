@@ -13,6 +13,11 @@ type Request struct {
 	Labels  map[string]string
 }
 
+// AllRoots reports whether all root identities are eligible before change filtering.
+func (s Request) AllRoots() bool {
+	return len(s.Roots) == 0 || s.Roots[0].Namespace == "" && s.includesRenderKinds(true)
+}
+
 // Matches reports whether an identity is eligible under the requested roots.
 // Namespace restrictions retain cluster-scoped output; complete render-kind requests include standalone output.
 func (s Request) Matches(id manifest.NamedResource) bool {

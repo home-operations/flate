@@ -10,7 +10,7 @@ import (
 
 type projectionFacts interface {
 	CatalogObject(manifest.NamedResource) manifest.BaseManifest
-	RootEvidence(manifest.NamedResource, *store.ReadSet, bool) RootEvidence
+	RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence
 	SourceExternal(manifest.NamedResource, *store.ReadSet) bool
 }
 
@@ -85,23 +85,11 @@ func (s *Snapshot) CollectEmissions() {
 	}
 }
 
-func (s *Snapshot) parentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if record, _ := s.Index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
-		return record.Parent, true
-	}
-	return s.Store.RenderedParent(id, s.Index)
-}
-
 func (s *Snapshot) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, obj := range s.Store.ListObjects("", "") {
-		productions := s.Store.Productions(obj.Named(), s.Index)
-		for i := range productions {
-			production := &productions[i]
-			if production.Owner != (manifest.NamedResource{}) && production.Owner != obj.Named() &&
-				production.Authored == (manifest.NamedResource{}) && production.Declaration == (manifest.NamedResource{}) {
-				children[production.Owner] = append(children[production.Owner], obj.Named())
-			}
+		for parent := range s.Store.RenderedParents(obj.Named(), s.Index) {
+			children[parent] = append(children[parent], obj.Named())
 		}
 	}
 	if s.Index != nil {
@@ -138,7 +126,7 @@ func (s *selectionSide) catalogObject(id manifest.NamedResource) manifest.BaseMa
 
 func (s *selectionSide) rootEvidence(id manifest.NamedResource, _ *manifest.DiscoveryRecord) RootEvidence {
 	if s.run.Facts != nil {
-		return s.run.Facts.RootEvidence(id, &s.reads, true)
+		return CaptureRoot(s.run.Facts.RootEvidence(id, &s.reads), &s.reads, s.run.Index)
 	}
 	return RootEvidence{}
 }

@@ -22,7 +22,10 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	files := fstest.MapFS{}
 	reads := map[string]*atomic.Int64{}
 	for _, side := range []string{"left", "right"} {
-		files[side+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [owner.yaml]\n")}
+		files[side+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [bootstrap.yaml, owner.yaml]\n")}
+		files[side+"/bootstrap.yaml"] = &fstest.MapFile{Data: []byte(
+			"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: bootstrap, namespace: apps}\nspec:\n  path: ./" + side + "\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+		)}
 		files[side+"/owner.yaml"] = &fstest.MapFile{
 			Data: []byte(
 				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec:\n  path: ./" + side + "/leaf\n  sourceRef: {kind: GitRepository, name: cluster}\n",
@@ -51,11 +54,11 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	for _, record := range recorder.Scope().Snapshot(0) {
 		counts.Add(&record.Counts)
 	}
-	assert.Equal(t, counts.OwnerPrepares, uint64(3))
-	assert.Equal(t, counts.FileEntries, uint64(25))
-	assert.Equal(t, counts.ReaderEdges, uint64(10))
+	assert.Equal(t, counts.OwnerPrepares, uint64(5))
+	assert.Equal(t, counts.FileEntries, uint64(43))
+	assert.Equal(t, counts.ReaderEdges, uint64(24))
 	assert.NoError(t, err)
-	// The owner ruling restores #1379's two owner-scoped prepared entries.
+	// Request Ruling 1 requires explicit bootstrap roots for these isolated handoffs.
 	assert.FatalIf(t, len(entries) != 2 || len(entries[0].prepared.aliasViews) == 0,
 		"expected two prepared alias-backed entries: %+v", entries)
 

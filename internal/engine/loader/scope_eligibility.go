@@ -20,7 +20,7 @@ func (s staticScope) ResetStatic() {
 }
 
 func (l *Loader) resetAdmissions() {
-	l.roots.retainIndependent()
+	l.roots.retainMembership()
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for file, doc := range l.documents.cache {
 		doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = selection.RootUnknown, false, false, false
@@ -68,7 +68,7 @@ func (s staticScope) DirectoryFile(dir string) string { return s.loader.document
 func (s staticScope) Coordinate(file string) string {
 	return s.loader.fileCoordinate(new(s.loader.documents).localPath(file))
 }
-func (s staticScope) Claims() []manifest.KSClaim { return s.loader.scopes.claims }
+func (s staticScope) SelectionIndex() *manifest.DiscoveryIndex { return s.loader.Index }
 func (s staticScope) Owner(id manifest.NamedResource) (string, bool) {
 	r, indexed := s.loader.Index.Lookup(id)
 	return r.Path, indexed

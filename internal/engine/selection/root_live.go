@@ -1,8 +1,8 @@
 package selection
 
 import (
-	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -15,142 +15,158 @@ func (c *admissionClosure) rootEvidence(id manifest.NamedResource) RootResult {
 }
 
 func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
-	facts := *c.capturedRoot(id)
-	if !facts.Captured {
-		return facts
-	}
-	record := c.record(id)
-	facts.Record = RootRecordFrom(&record)
-	facts.Declaration = c.objects.GetDeclaration(id)
-	facts.Incoming = c.incoming(id).Obj != nil
-	object, policy := c.objects.Lookup(id)
-	facts.Supplied = !facts.Incoming && object != nil && policy.Origin == manifest.SuppliedDeclaration &&
-		facts.Declaration == object &&
-		manifest.AdmitsRoot(object)
-	if facts.Supplied {
-		facts.Stale = facts.Stale || !c.proposal.reads.Valid()
-		return facts
-	}
-	if !Root(facts).NeedsOwnerSupport && !facts.Scope.NativeEntry {
-		return facts
-	}
-	facts.Productions = c.productions(id)
-	facts.LiveProductions = c.objects.Productions(id, &currentRootIndex)
-	facts.StaticOwner = c.states[id].staticOwner
-	facts.DeclarationSource = c.declarationSource(id)
-	for i, source := range [...]manifest.NamedResource{c.source(id), manifest.BootstrapSourceID} {
-		_, input, _ := c.delta(source)
-		support := RootSourceSupport{
-			Source:    source,
-			Allowed:   c.objects.SourceAdmission(id, source),
-			Available: input != nil,
+	physical := c.capturedRoot(id)
+	captured := c.capturedRoots[id]
+	if !captured.supported {
+		facts := *physical
+		record := c.record(id)
+		facts.Record = RootRecordFrom(&record)
+		facts.Incoming = c.incoming(id).Obj != nil
+		facts.Productions = c.productions(id)
+		facts.StaticOwner = c.states[id].staticOwner
+		facts.DeclarationSource = c.declarationSource(id)
+		object := c.catalogObject(id)
+		if child := c.incoming(id); child.Obj != nil {
+			object = child.Obj
 		}
-		if input != nil {
-			support.Path, support.Origin = input.LocalPath, input.OriginPath(input.LocalPath)
-		}
-		facts.Sources[i] = support
+		c.captureRootApplication(&facts, object)
+		facts = CaptureRoot(
+			facts,
+			c.rootReader(),
+			c.facts.SelectionIndex(),
+		)
+		c.captureRootApplication(&facts, object)
+		captured.support, captured.supported = facts, true
 	}
-	if application, valid := manifest.ApplicationFor(c.catalogObject(id)); valid {
-		facts.Scope.Application = true
-		facts.Scope.ApplicationSource, facts.Scope.ApplicationPath = application.Source, application.Path
-		location := c.boundSource(application.Source)
-		facts.Scope.LocalApplication = !location.Pinned && !location.External
-		facts.Scope.Claim = ""
-		if coordinate, known := location.Input.IndexPath(c.context.Root, application.Path); known {
-			facts.Scope.Claim = coordinate + "/"
-		} else {
-			facts.Scope.LocalApplication = false
-		}
-	}
-	if Root(facts).NeedsOwnerSupport {
-		c.captureRootOwners(&facts)
-		facts.CoveringOwners = c.ownerCandidates
-	}
+	facts := captured.support
 	facts.Stale = facts.Stale || !c.proposal.reads.Valid()
 	return facts
 }
 
-func (c *admissionClosure) captureRootOwners(facts *RootEvidence) {
-	if facts.Record.Path != "" && !c.ownersKnown {
-		c.collectOwners()
+type admissionRootReader struct {
+	admissionReader
+
+	closure *admissionClosure
+}
+
+func (c *admissionClosure) rootReader() *admissionRootReader {
+	c.rootReads.admissionReader, c.rootReads.closure = c.objects, c
+	return &c.rootReads
+}
+
+func (r *admissionRootReader) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
+	if child := r.closure.incoming(id); child.Obj != nil {
+		return child.Obj
 	}
-	pending := c.pendingRootOwners(facts)
-	for cursor := 0; cursor < len(pending); cursor++ {
-		owner := pending[cursor]
-		index := slices.IndexFunc(c.ownerCandidates, func(f RootCoveringOwner) bool { return f.Identity == owner })
-		if index < 0 {
-			c.ownerCandidates = append(c.ownerCandidates, RootCoveringOwner{Identity: owner})
-			index = len(c.ownerCandidates) - 1
-		}
-		candidate := &c.ownerCandidates[index]
-		if facts.Identity.KindInfo().Parent || candidate.Object != nil {
-			candidate.Productions = c.productions(owner)
-		}
-		if facts.Occurrence.Declaration != (OccurrenceID{}) &&
-			slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool { return p.Owner == owner }) {
-			candidate.Output, _ = c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
-			candidate.Applications, candidate.Replaced = c.accepted[owner], c.replace[owner]
-		}
-		if !facts.Identity.KindInfo().Parent {
+	return r.admissionReader.GetDeclaration(id)
+}
+
+func (r *admissionRootReader) ListProductionCandidates(
+	group, kind string,
+	index *manifest.DiscoveryIndex,
+	prospective map[manifest.NamedResource]bool,
+) []manifest.BaseManifest {
+	candidates := r.admissionReader.ListProductionCandidates(group, kind, index, prospective)
+	for i, object := range candidates {
+		candidates[i] = r.closure.object(object.Named())
+	}
+	candidates = slices.DeleteFunc(candidates, func(object manifest.BaseManifest) bool { return object == nil })
+	for i := range r.closure.generation {
+		object := r.closure.generation[i].Obj
+		if object == nil {
 			continue
 		}
-		for i := range candidate.Productions {
-			production := &candidate.Productions[i]
-			ancestor := production.Materializer(owner)
-			if ancestor != (manifest.NamedResource{}) && ancestor != facts.Identity &&
-				!slices.Contains(pending, ancestor) {
-				pending = append(pending, ancestor)
-			}
+		id := object.Named()
+		bare := id
+		bare.Namespace = ""
+		if id.Group != group || id.Kind != kind || !prospective[id] && !prospective[bare] ||
+			slices.ContainsFunc(candidates, func(candidate manifest.BaseManifest) bool {
+				return candidate.Named() == id
+			}) {
+			continue
 		}
+		candidates = append(candidates, object)
 	}
+	slices.SortFunc(candidates, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+	return candidates
 }
 
-func (c *admissionClosure) pendingRootOwners(facts *RootEvidence) []manifest.NamedResource {
-	var pending []manifest.NamedResource
-	for i := range facts.Productions {
-		production := &facts.Productions[i]
-		for _, owner := range [...]manifest.NamedResource{production.Materializer(facts.Identity), production.Owner} {
-			if owner != (manifest.NamedResource{}) && owner != facts.Identity && !slices.Contains(pending, owner) {
-				pending = append(pending, owner)
-			}
-		}
+func (r *admissionRootReader) Productions(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+) []manifest.Production {
+	if index == &currentRootIndex {
+		productions, _ := r.closure.mergeHistoricalProductions(id, r.admissionReader.Productions(id, index))
+		return productions
 	}
-	for i := range c.ownerCandidates {
-		candidate := &c.ownerCandidates[i]
-		if rootCoversPath(facts, candidate) && !slices.Contains(pending, candidate.Identity) {
-			pending = append(pending, candidate.Identity)
-		}
-	}
-	return pending
+	return r.closure.productions(id)
 }
 
-//nolint:gochecknoglobals // Empty immutable index requests current store productions without indexed ancestry.
-var currentRootIndex manifest.DiscoveryIndex
-
-func (c *admissionClosure) rootOwnerFacts(object manifest.BaseManifest) RootCoveringOwner {
-	facts := RootCoveringOwner{Object: object}
-	if object == nil {
-		return facts
-	}
-	facts.Identity = object.Named()
-	source, path, applies := object.SourcePath()
-	if !applies {
-		return facts
-	}
-	if source.Name == "" {
-		source = manifest.BootstrapSourceID
-	}
-	facts.Source = source
-	_, input, _ := c.delta(source)
-	if input != nil {
-		facts.Input = input
-		facts.Root = input.OriginPath(input.LocalPath)
-		facts.Path = input.OriginPath(filepath.Join(input.LocalPath, path))
-		if !containsPath(facts.Root, facts.Path) {
-			facts.Path = ""
+func (r *admissionRootReader) GetArtifact(id manifest.NamedResource, fields store.ArtifactRead) store.Artifact {
+	if id.KindInfo().SourceArtifact || id == manifest.BootstrapSourceID {
+		_, input, _ := r.closure.delta(id)
+		if input == nil {
+			return nil
 		}
+		return input
 	}
-	return facts
+	return r.admissionReader.GetArtifact(id, fields)
+}
+
+func (r *admissionRootReader) RootOwners() *[]RootCoveringOwner {
+	if !r.closure.ownersKnown {
+		r.closure.collectOwners()
+	}
+	if r.closure.ownerCandidates == nil {
+		r.closure.ownerCandidates = []RootCoveringOwner{}
+	}
+	return &r.closure.ownerCandidates
+}
+
+func (r *admissionRootReader) rootReplacement(
+	id manifest.NamedResource,
+) (map[manifest.NamedResource]manifest.DiscoveryRecord, bool) {
+	return r.closure.accepted[id], r.closure.replace[id]
+}
+
+func (r *admissionRootReader) rootOwnerStorage(id manifest.NamedResource) []RootCoveringOwner {
+	captured := r.closure.capturedRoots[id]
+	if captured == nil || captured.ownersUsed {
+		return nil
+	}
+	// Earlier evidence MUST keep its owner snapshot after a recapture.
+	captured.ownersUsed = true
+	return captured.owners[:0]
+}
+
+// Owner claim keys MUST stay within the current prerequisite snapshot.
+type ownerClaimKey struct {
+	object           manifest.BaseManifest
+	identity, source manifest.NamedResource
+	input            *store.SourceArtifact
+	root, path       string
+}
+
+func (c *admissionClosure) rootOwnerClaims(owner *RootCoveringOwner) *manifest.DiscoveryIndex {
+	key := ownerClaimKey{
+		object: owner.Object, identity: owner.Identity, source: owner.Source,
+		input: owner.Input, root: owner.Root, path: owner.Path,
+	}
+	if claims, ok := c.ownerClaims[key]; ok {
+		return claims
+	}
+	owners := [1]RootCoveringOwner{*owner}
+	index := c.facts.SelectionIndex()
+	captureOwnerClaims(owners[:], index, c.context.Root)
+	claims := owners[0].claims
+	if claims == index {
+		return claims
+	}
+	if c.ownerClaims == nil {
+		c.ownerClaims = map[ownerClaimKey]*manifest.DiscoveryIndex{}
+	}
+	c.ownerClaims[key] = claims
+	return claims
 }
 
 func (c *admissionClosure) hasOwner(matches func(*RootCoveringOwner) bool) bool {
@@ -186,7 +202,7 @@ func (c *admissionClosure) collectOwners() {
 	}
 	for source := range c.proposal.Request.Changes.Sources() {
 		delta, _, _ := c.proposal.Request.Changes.ForSource(source)
-		for id, input := range delta.Inputs(manifest.NamedResource{}) {
+		for id, input := range c.comparisonInputs(delta, manifest.NamedResource{}) {
 			include(id, input.Productions)
 		}
 	}
@@ -199,10 +215,44 @@ func (c *admissionClosure) collectOwners() {
 		if !info.Structural {
 			continue
 		}
-		candidates := c.objects.ListProductionCandidates(info.Group, info.Kind, c.facts.SelectionIndex(), prospective)
+		candidates := c.rootReader().ListProductionCandidates(
+			info.Group, info.Kind, c.facts.SelectionIndex(), prospective,
+		)
 		for _, object := range candidates {
-			c.ownerCandidates = append(c.ownerCandidates, c.rootOwnerFacts(object))
+			c.ownerCandidates = append(c.ownerCandidates, rootOwnerFact(object, c.rootReader()))
 		}
 	}
+	root := c.context.Root
+	if input, _ := c.rootReader().GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); input != nil {
+		root = input.LocalPath
+	}
+	captureOwnerClaims(c.ownerCandidates, c.facts.SelectionIndex(), root)
 	c.ownersKnown = true
+}
+
+func (c *admissionClosure) captureRootApplication(facts *RootEvidence, object manifest.BaseManifest) {
+	application, valid := manifest.ApplicationFor(object)
+	if !valid {
+		return
+	}
+	facts.Scope.Application = true
+	facts.Scope.ApplicationSource, facts.Scope.ApplicationPath = application.Source, application.Path
+	location := c.boundSource(application.Source)
+	facts.Scope.LocalApplication = !location.Pinned && !location.External
+	previousClaim := facts.Scope.Claim
+	facts.Scope.Claim = ""
+	coordinate, known := location.Input.IndexPath(c.context.Root, application.Path)
+	if !known {
+		facts.Scope.LocalApplication = false
+		return
+	}
+	claims := facts.Scope.Claims
+	if len(claims) == 0 || len(claims[coordinate+"/"]) == 0 {
+		return
+	}
+	if previousClaim != "" && strings.TrimSuffix(previousClaim, "/") == coordinate {
+		facts.Scope.Claim = previousClaim
+	} else {
+		facts.Scope.Claim = coordinate + "/"
+	}
 }

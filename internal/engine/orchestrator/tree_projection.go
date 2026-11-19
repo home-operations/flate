@@ -1,11 +1,6 @@
 package orchestrator
 
-import (
-	"maps"
-	"slices"
-
-	"github.com/home-operations/flate/pkg/manifest"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
 func pairTreeSides(trees []Tree) []Tree {
 	byID := make(map[manifest.TreeID]Tree, len(trees))
@@ -30,29 +25,4 @@ func pairTreeSides(trees []Tree) []Tree {
 		trees = append(trees, tree)
 	}
 	return trees
-}
-
-func projectEntryReaders(index *manifest.DiscoveryIndex, from, to manifest.NamedResource) *manifest.DiscoveryIndex {
-	if index == nil || from == to || from == (manifest.NamedResource{}) ||
-		to == (manifest.NamedResource{}) {
-		return index
-	}
-	projected := *index
-	projected.Readers = maps.Clone(index.Readers)
-	for file, readers := range index.Readers {
-		if !slices.ContainsFunc(
-			readers,
-			func(reader manifest.FileReader) bool { return reader.Reader == from },
-		) {
-			continue
-		}
-		readers = slices.Clone(readers)
-		for i := range readers {
-			if readers[i].Reader == from {
-				readers[i].Reader = to
-			}
-		}
-		projected.Readers[file] = readers
-	}
-	return &projected
 }

@@ -102,3 +102,50 @@ spec:
 	assert.Equal(t, strings.Contains(stderr.String(), "required valuesFrom ConfigMap/apps/input omitted"), false)
 	assert.Equal(t, strings.Contains(stdout.String(), "should-not-render"), false)
 }
+
+//nolint:paralleltest // cli.Run uses process-wide logging and configuration.
+func TestRun_DiffBootstrapPatchKeepsFatalScope(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = ""
+	const url = "https://fixture.invalid/repo"
+	const configMap = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: value, namespace: apps}\ndata: {value: "
+	const source = "  sourceRef: {kind: GitRepository, name: self}\n"
+	const substitution = "  postBuild: {substituteFrom: [{kind: Secret, name: absent}]}\n"
+	const builder = `resources: [sync.yaml, cm.yaml]
+patches:
+- target: {kind: ConfigMap}
+  patch: |-
+    - op: replace
+      path: /data/value
+      value: new
+`
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	for i, root := range roots {
+		writeBaselineGit(t, root, url)
+		testutil.WriteFile(t, root, "entry/sync/kustomization.yaml", builder)
+		testutil.WriteFile(t, root, "entry/sync/sync.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: self, namespace: apps}
+spec: {url: "`+url+`"}
+---
+`+testutil.KustomizationYAML("root", "apps", "  path: ./entry\n"+source))
+		testutil.WriteFile(t, root, "entry/sync/cm.yaml", configMap+"old}\n")
+		testutil.WriteFile(t, root, "entry/apps/ks.yaml", testutil.KustomizationYAML(
+			"apps", "apps", "  path: ./apps\n"+source+"  dependsOn: [{name: prereq}]\n"+substitution,
+		))
+		testutil.WriteFile(t, root, "entry/prereq/ks.yaml", testutil.KustomizationYAML(
+			"prereq", "apps", "  path: ./prereq\n"+source+substitution,
+		))
+		for _, path := range []string{"apps/value.yaml", "prereq/value.yaml"} {
+			testutil.WriteFile(t, root, path, configMap+[]string{"before", "after"}[i]+"}\n")
+		}
+	}
+	got := runCLI(
+		t, "diff", "all", "--path", filepath.Join(roots[1], "entry"),
+		"--path-orig", filepath.Join(roots[0], "entry"),
+		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(),
+	)
+	assert.Equal(t, got.code, 0)
+	assert.Equal(t, got.stdout, "")
+	assert.Equal(t, got.stderr, "")
+}

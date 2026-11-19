@@ -86,52 +86,55 @@ func (l *Loader) buildProductions(
 }
 
 func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord) error {
-	{
-		rValues := generators
-		for rIndex := range rValues {
-			r := rValues[rIndex]
-			// Generator names are indexed before suffix hashing, including failed inputs.
-			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
-			if r.isConfigMap {
-				id.Kind = manifest.KindConfigMap
-			}
-			record := l.Index.Records[id]
-			if record.File == "" {
-				record.File = l.fileCoordinate(r.file)
-			}
-			p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
-			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
-				p.Source = ks.EffectiveSourceID()
-			} else if p.Source.Name == "" || p.Source.Kind == "" {
-				p.Source = manifest.BootstrapSourceID
-			}
-			if !slices.Contains(record.Productions, p) {
-				record.Productions = append(record.Productions, p)
-			}
-			l.Index.Records[id] = record
-			if l.documents.compact && !l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
-				continue
-			}
-			generated, err := r.materialize(ctx, &l.Options)
-			if err != nil {
-				if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
-					return err
-				}
-				slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
-				continue
-			}
-			//nolint:errcheck // Generator materialization must panic if it produces a non-Data object.
-			data := generated.child.Obj.(manifest.Data)
-			record.ReferenceData = append(
-				record.ReferenceData,
-				manifest.ReferenceData{
-					Production: p, OfflineData: data, Warnings: generated.child.Warnings,
-					Keys: generated.keys,
-				},
-			)
-			l.Index.Records[id] = record
+	for i := range generators {
+		if err := l.addGenerator(ctx, &generators[i]); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func (l *Loader) addGenerator(ctx context.Context, r *generatorRecord) error {
+	// Generator names are indexed before suffix hashing, including failed inputs.
+	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
+	if r.isConfigMap {
+		id.Kind = manifest.KindConfigMap
+	}
+	record := l.Index.Records[id]
+	if record.File == "" {
+		record.File = l.fileCoordinate(r.file)
+	}
+	p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
+	if owner := l.Store.GetObject(r.owner); owner != nil {
+		if source, _, applies := owner.SourcePath(); applies {
+			p.Source = source
+		}
+	}
+	if !slices.Contains(record.Productions, p) {
+		record.Productions = append(record.Productions, p)
+	}
+	l.Index.Records[id] = record
+	if l.documents.compact && !l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
+		return nil
+	}
+	generated, err := r.materialize(ctx, &l.Options)
+	if err != nil {
+		if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
+			return err
+		}
+		slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
+		return nil
+	}
+	//nolint:errcheck // Generator materialization must panic if it produces a non-Data object.
+	data := generated.child.Obj.(manifest.Data)
+	record.ReferenceData = append(
+		record.ReferenceData,
+		manifest.ReferenceData{
+			Production: p, OfflineData: data, Warnings: generated.child.Warnings,
+			Keys: generated.keys,
+		},
+	)
+	l.Index.Records[id] = record
 	return nil
 }
 

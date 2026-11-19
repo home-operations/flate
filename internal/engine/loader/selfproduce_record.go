@@ -174,8 +174,10 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		b.store.GetObject(op.identity) == nil {
 		p.Path = ""
 	}
-	if ks, ok := b.store.Get[*manifest.Kustomization](pr.visit.owner); ok {
-		p.Source = ks.EffectiveSourceID()
+	if owner := b.store.GetObject(pr.visit.owner); owner != nil {
+		if source, _, applies := owner.SourcePath(); applies {
+			p.Source = source
+		}
 	}
 	if op.fact != nil {
 		projectOccurrenceProduction(op.fact, &p)

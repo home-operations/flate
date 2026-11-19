@@ -86,16 +86,19 @@ func TestAdmission_HistoryProductionPass(t *testing.T) {
 	want := []manifest.Production{{Owner: owner, Authored: child, File: "child.yaml"}}
 	facts.index.Records[owner] = manifest.DiscoveryRecord{File: "owner.yaml"}
 	facts.index.Records[child] = manifest.DiscoveryRecord{File: "child.yaml", Productions: want}
+	facts.roots = map[manifest.NamedResource]RootEvidence{child: {Identity: child}}
 	c := solverClosure(t, st, facts)
 	c.accepted = map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {}}
 	c.replace = map[manifest.NamedResource]bool{owner: true}
 	c.proposal.Request.Changes = facts.changes
 	assert.Equal(t, len(c.productions(child)), 0)
+	assert.Equal(t, len(c.rootSupport(child).Productions), 0)
 	assert.NoError(t, c.start(t.Context(), func(materializerDemand, manifest.NamedResource) bool { return false }))
 	assert.Equal(t, c.states[owner].changed, true)
 	assert.Equal(t, len(c.historyProductions), 0)
 	assert.Equal(t, c.replace[owner], false)
 	assert.Diff(t, c.productions(child), want)
+	assert.Diff(t, c.rootSupport(child).Productions, want)
 }
 
 func TestAdmission_HistoryContentAvailability(t *testing.T) {

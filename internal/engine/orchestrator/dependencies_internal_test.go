@@ -549,7 +549,7 @@ func excludedOrderingPreparations(side Rendered, persistent bool) map[manifest.W
 			OwnerPrepares:  6,
 			RawKeyPrepares: bootstrapKeys,
 			FileEntries:    362,
-			ReaderEdges:    54,
+			ReaderEdges:    56,
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
 			Attempts:      4,

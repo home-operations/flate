@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/home-operations/flate/internal/core/claimpath"
 )
 
 // Production identifies one source-qualified contribution to a queried target.
@@ -107,9 +105,11 @@ type FileDeclarations struct {
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
+	ProducerKeys    map[NamedResource]NamedResource // Accepted actual producers mapped to comparison slots.
 	Declarations    map[NamedResource]map[string]FileDeclarations
 	Records         map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims          map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
+	Components      map[string][]string               // Native component references by physical package path.
 	Readers         map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.
 	CompleteSources map[NamedResource]bool            // Sources whose declared-object census completed without missing input.
 	Visibility      []InputVisibility                 // Completed and incomplete observations of physical input availability.
@@ -160,6 +160,96 @@ type FileOwners struct {
 	Ancestors []NamedResource
 }
 
+// ClaimOwners requires an artifact index coordinate, never an unqualified source-relative path.
+// Eligibility MUST be applied before a caller chooses the deepest group.
+func (i *DiscoveryIndex) ClaimOwners(
+	file string,
+	source, subject NamedResource,
+	eligible func(NamedResource) bool,
+) iter.Seq[[]NamedResource] {
+	return func(yield func([]NamedResource) bool) {
+		if i == nil {
+			return
+		}
+		query := Production{Owner: subject, Source: source, Authored: i.Records[subject].Authored, File: file}
+		if source == (NamedResource{}) && subject == (NamedResource{}) &&
+			!i.visitClaimGroup(file+"/", &query, eligible, yield) {
+			return
+		}
+		for end := len(file); ; {
+			if end == 0 && source != BootstrapSourceID && file != "/" && !filepath.IsLocal(file) {
+				return
+			}
+			if !i.visitClaimGroup(file[:end], &query, eligible, yield) || end == 0 {
+				return
+			}
+			end = strings.LastIndexByte(file[:end-1], '/') + 1
+		}
+	}
+}
+
+func (i *DiscoveryIndex) visitClaimGroup(
+	prefix string,
+	subject *Production,
+	eligible func(NamedResource) bool,
+	yield func([]NamedResource) bool,
+) bool {
+	group := i.Claims[prefix]
+	if len(group) == 0 {
+		return true
+	}
+	owners := i.eligibleClaims(group, subject, eligible)
+	return len(owners) == 0 || yield(owners)
+}
+
+func ownsClaim(id NamedResource, r *DiscoveryRecord, subject *Production) bool {
+	own := id == subject.Owner
+	if subject.Authored != (NamedResource{}) {
+		own = own || id == subject.Authored || r.Authored == subject.Authored
+	}
+	if r.Authored != (NamedResource{}) {
+		own = own || r.Authored == subject.Owner
+	}
+	return own
+}
+
+func (i *DiscoveryIndex) eligibleClaims(
+	group []NamedResource,
+	subject *Production,
+	eligible func(NamedResource) bool,
+) []NamedResource {
+	var owners []NamedResource
+	filtered := false
+	for n, id := range group {
+		record, _ := i.Lookup(id)
+		allowed := claimAllowed(&record, subject) && (eligible == nil || eligible(id))
+		own := ownsClaim(id, &record, subject)
+		if allowed && own && subject.Owner.KindInfo().Structural {
+			return nil
+		}
+		if !allowed || own {
+			if !filtered {
+				owners = slices.Clone(group[:n])
+				filtered = true
+			}
+			continue
+		}
+		if filtered {
+			owners = appendUnique(owners, id)
+		}
+	}
+	if !filtered {
+		owners = group
+	}
+	if !slices.IsSortedFunc(owners, NamedResource.Compare) {
+		if !filtered {
+			owners = slices.Clone(owners)
+		}
+		slices.SortFunc(owners, NamedResource.Compare)
+	}
+	return owners
+}
+
 // OwnersOfFile returns deepest claimants plus render graph readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
 func (i *DiscoveryIndex) OwnersOfFile(file string) FileOwners {
@@ -167,10 +257,7 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) FileOwners {
 	if i == nil || file == "" {
 		return FileOwners{}
 	}
-	for end, ids := range claimpath.Groups(i.Claims, file+"/") {
-		if end == 0 && (file == ".." || strings.HasPrefix(file, "../")) {
-			break
-		}
+	for ids := range i.ClaimOwners(file, NamedResource{}, NamedResource{}, nil) {
 		if owners == nil {
 			owners = slices.Clone(ids)
 		} else {
@@ -219,4 +306,12 @@ func appendUnique(dst []NamedResource, id NamedResource) []NamedResource {
 		return append(dst, id)
 	}
 	return dst
+}
+
+func claimAllowed(record *DiscoveryRecord, subject *Production) bool {
+	if record.Pinned && subject.Source == BootstrapSourceID && filepath.IsLocal(subject.File) {
+		return false
+	}
+	return subject.Owner == (NamedResource{}) || record.Declaration == nil ||
+		record.Declaration.EmissionPolicy().MatchesNamespace(subject.Owner)
 }

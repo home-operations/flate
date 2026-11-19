@@ -77,7 +77,7 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			assert.Equal(t, l.Options.Session.Snapshot().Output(manifest.NamedResource{}), !restricted)
 			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			construction := l.RootEvidence(child, nil, true)
+			construction := rootEvidenceForTest(l, child, nil)
 			assert.Equal(t, construction.Captured, false)
 			assert.Equal(t, construction.Scope.NamespaceEligible, true)
 			assert.Equal(t, selection.Root(construction).Independent, true)
@@ -108,13 +108,13 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			var before store.ReadSet
 			before.Init(st, manifest.NamedResource{}, nil)
 			defer before.Retire()
-			assert.Equal(t, selection.Root(catalog.RootEvidence(child, &before, true)).Independent, true)
+			assert.Equal(t, selection.Root(rootCatalogEvidenceForTest(catalog, child, &before)).Independent, true)
 			var liveBefore store.ReadSet
 			liveBefore.Init(st, manifest.NamedResource{}, nil)
 			defer liveBefore.Retire()
-			assert.Equal(t, selection.Root(l.RootEvidence(child, &liveBefore, true)).Independent, true)
-			assert.Equal(t, l.RootEvidence(child, nil, true).Captured, true)
-			assert.Equal(t, catalog.RootEvidence(child, nil, true).Captured, false)
+			assert.Equal(t, selection.Root(rootEvidenceForTest(l, child, &liveBefore)).Independent, true)
+			assert.Equal(t, rootEvidenceForTest(l, child, nil).Captured, true)
+			assert.Equal(t, rootCatalogEvidenceForTest(catalog, child, nil).Captured, false)
 			st.RecordEmitted(
 				factory.Named(),
 				&store.Emission{Children: []store.Child{{Obj: owner}}, Complete: true},
@@ -122,15 +122,15 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			)
 			assert.Equal(t, before.Valid(), false)
 			assert.Equal(t, liveBefore.Valid(), false)
-			assert.Equal(t, l.RootEvidence(child, &liveBefore, true).Stale, true)
+			assert.Equal(t, rootEvidenceForTest(l, child, &liveBefore).Stale, true)
 			var liveCovered store.ReadSet
 			liveCovered.Init(st, manifest.NamedResource{}, nil)
 			defer liveCovered.Retire()
-			liveEvidence := l.RootEvidence(child, &liveCovered, true)
+			liveEvidence := rootEvidenceForTest(l, child, &liveCovered)
 			assert.Equal(t, selection.Root(liveEvidence).Admitted, false)
 			assert.Equal(t, selection.Root(liveEvidence).Independent, false)
 			assert.Equal(t, selection.Root(liveEvidence).Owner, owner.Named())
-			assert.Equal(t, selection.Root(l.RootEvidence(child, nil, true)).Independent, false)
+			assert.Equal(t, selection.Root(rootEvidenceForTest(l, child, nil)).Independent, false)
 			l.Close()
 			denied.Store(true)
 			count := calls.Load()
@@ -139,7 +139,7 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			var covered store.ReadSet
 			covered.Init(st, manifest.NamedResource{}, nil)
 			defer covered.Retire()
-			evidence := catalog.RootEvidence(child, &covered, true)
+			evidence := rootCatalogEvidenceForTest(catalog, child, &covered)
 			assert.Equal(t, evidence.Record.Path, filepath.Join(root, "declarations", "child.yaml"))
 			assert.Equal(t, evidence.Scope.Initial, true)
 			assert.Equal(t, selection.Root(evidence).Admitted, false)
@@ -160,7 +160,7 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			var restored store.ReadSet
 			restored.Init(st, manifest.NamedResource{}, nil)
 			defer restored.Retire()
-			result := selection.Root(catalog.RootEvidence(child, &restored, true))
+			result := selection.Root(rootCatalogEvidenceForTest(catalog, child, &restored))
 			assert.Equal(t, result.Admitted, true)
 			assert.Equal(t, result.Independent, true)
 			assert.Equal(t, result.Entry, true)
@@ -172,13 +172,12 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			var current store.ReadSet
 			current.Init(st, manifest.NamedResource{}, nil)
 			defer current.Retire()
-			assert.Equal(t, selection.Root(catalog.RootEvidence(child, &current, true)).Independent, true)
+			assert.Equal(t, selection.Root(rootCatalogEvidenceForTest(catalog, child, &current)).Independent, true)
 			assert.Equal(t, current.Valid(), true)
 			assert.Equal(t, calls.Load(), count)
 			for _, doc := range catalog.files {
 				assert.Equal(t, len(doc.objects), 0)
 				assert.Equal(t, doc.body == nil, true)
-				assert.Equal(t, doc.builtInput == nil, true)
 			}
 			catalog.Close()
 			assert.Equal(t, reflect.ValueOf(*catalog).IsZero(), true)
@@ -222,8 +221,9 @@ func TestSession_PendingRootsCoveringOwner(t *testing.T) {
 		reads := new(store.ReadSet)
 		reads.Init(l.Store, manifest.NamedResource{}, nil)
 		t.Cleanup(reads.Retire)
-		evidence := l.RootEvidence(child, reads, true)
-		deferred := l.RootEvidence(child, reads, false)
+		evidence := rootEvidenceForTest(l, child, reads)
+		deferred := selection.CaptureRoot(l.RootEvidence(child, nil), reads, l.Index)
+		deferred.CoveringOwners = nil
 		physical := evidence
 		physical.CoveringOwners = nil
 		assert.Equal(t, cmp.Diff(physical, deferred, cmp.Exporter(func(reflect.Type) bool { return true })), "")
@@ -245,7 +245,7 @@ func TestSession_PendingRootsCoveringOwner(t *testing.T) {
 		t.Cleanup(detached.Retire)
 		assert.Equal(t,
 			cmp.Diff(
-				evidence, catalog.RootEvidence(child, detached, true),
+				evidence, rootCatalogEvidenceForTest(catalog, child, detached),
 				cmp.Exporter(func(reflect.Type) bool { return true }),
 			),
 			"",
@@ -494,22 +494,22 @@ func testRootEvidenceStaticClassificationCase(
 		}
 	}
 	l.Store.SetDiscoveryIndex(l.Index)
-	construction := l.RootEvidence(id, nil, true)
+	construction := rootEvidenceForTest(l, id, nil)
 	assert.Equal(t, construction.Captured, false)
 	assert.Equal(t, construction.Scope.NamespaceEligible, tc.eligible)
 	assert.Equal(t, selection.Root(construction).Independent, tc.independent)
 	var reads store.ReadSet
 	reads.Init(l.Store, manifest.NamedResource{}, nil)
 	defer reads.Retire()
-	captured := l.RootEvidence(id, &reads, true)
+	captured := rootEvidenceForTest(l, id, &reads)
 	assert.Equal(t, captured.Captured, true)
 	assert.Equal(t, captured.Scope.NamespaceEligible, tc.eligible)
 	assert.Equal(t, selection.Root(captured).Independent, tc.independent)
 	l.frozen = true
-	assert.Equal(t, l.RootEvidence(id, nil, true).Captured, true)
+	assert.Equal(t, rootEvidenceForTest(l, id, nil).Captured, true)
 	catalog := l.DetachCatalog()
 	defer catalog.Close()
-	static := catalog.RootEvidence(id, nil, true)
+	static := rootCatalogEvidenceForTest(catalog, id, nil)
 	assert.Equal(t, static.Captured, false)
 	assert.Equal(t, static.Scope.NamespaceEligible, tc.eligible)
 	assert.Equal(t, selection.Root(static).Independent, tc.independent)
@@ -517,7 +517,7 @@ func testRootEvidenceStaticClassificationCase(
 	var detachedReads store.ReadSet
 	detachedReads.Init(l.Store, manifest.NamedResource{}, nil)
 	defer detachedReads.Retire()
-	detached := catalog.RootEvidence(id, &detachedReads, true)
+	detached := rootCatalogEvidenceForTest(catalog, id, &detachedReads)
 	assert.Equal(t, detached.Scope.NamespaceEligible, tc.eligible)
 	assert.Equal(t, selection.Root(detached).Independent, tc.independent)
 	assert.Equal(t,
@@ -541,7 +541,7 @@ func (o *countedCatalogOwner) SourcePath() (manifest.NamedResource, string, bool
 	frames := runtime.CallersFrames(callers[:count])
 	for {
 		frame, more := frames.Next()
-		if strings.HasSuffix(frame.Function, ".rootCoveringFacts") ||
+		if strings.HasSuffix(frame.Function, ".captureRootOwners") ||
 			strings.HasSuffix(frame.Function, ".collectOwners") {
 			o.inventories.Add(1)
 			break
@@ -563,14 +563,14 @@ type countedCatalogFacts struct {
 func (f *countedCatalogFacts) RootEvidence(
 	id manifest.NamedResource,
 	reads *store.ReadSet,
-	completeOwners bool,
 ) selection.RootEvidence {
-	if completeOwners {
+	facts := f.Loader.RootEvidence(id, reads)
+	if facts.Captured {
 		f.completed++
 	} else {
 		f.deferred++
 	}
-	return f.Loader.RootEvidence(id, reads, completeOwners)
+	return facts
 }
 
 func TestSession_RootOwnerInventoryShared(t *testing.T) {
@@ -657,7 +657,7 @@ func TestSession_RootOwnerInventoryShared(t *testing.T) {
 			for _, id := range roots {
 				var reads store.ReadSet
 				reads.Init(st, manifest.NamedResource{}, nil)
-				result := selection.Root(l.RootEvidence(id, &reads, true))
+				result := selection.Root(rootEvidenceForTest(l, id, &reads))
 				assert.Equal(t, result.Independent, false)
 				assert.Equal(t, result.Owner, replacement.Named())
 				reads.Retire()

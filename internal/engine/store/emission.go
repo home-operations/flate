@@ -212,15 +212,62 @@ func (e *Emission) retainRender() {
 }
 
 func (e *Emission) shadows(bindingValue *sourceBinding) bool {
-	binding := *bindingValue
-	return e != nil && slices.ContainsFunc(e.shadowed, func(other sourceBinding) bool { return binding.equal(&other) })
+	return e != nil && bindingValue != nil && slices.ContainsFunc(e.shadowed, func(other sourceBinding) bool {
+		return bindingValue.equal(&other)
+	})
 }
 
 type contributor struct {
 	slot            *producerSlot
 	records         []footprint
-	binding         sourceBinding
+	bindings        map[manifest.NamedResource]*sourceBinding
 	declaredOutputs bool
+}
+
+func (c *contributor) binding(source manifest.NamedResource) *sourceBinding {
+	if c == nil {
+		return nil
+	}
+	return c.bindings[source]
+}
+
+func (c *contributor) unambiguousSource() manifest.NamedResource {
+	if c == nil {
+		return manifest.NamedResource{}
+	}
+	var binding *sourceBinding
+	for _, current := range c.bindings {
+		if binding != nil && !binding.equal(current) {
+			return manifest.NamedResource{}
+		}
+		binding = current
+	}
+	return binding.source
+}
+
+func (c *contributor) covers(record *footprint, emission *Emission, source manifest.NamedResource) bool {
+	if c == nil || len(emission.shadowed) == 0 {
+		return false
+	}
+	return slices.ContainsFunc(record.record.Productions, func(p manifest.Production) bool {
+		binding := c.binding(p.Source)
+		return p.Owner == emission.origin && binding != nil &&
+			(source == (manifest.NamedResource{}) || binding.source == source) && emission.shadows(binding)
+	})
+}
+
+func (s *Store) discoveryBinding(
+	index *manifest.DiscoveryIndex,
+	owner, source manifest.NamedResource,
+) sourceBinding {
+	if source != (manifest.NamedResource{}) {
+		return bindSourceArtifact(source, s.GetArtifact)
+	}
+	obj := index.Records[owner].Declaration
+	if obj == nil {
+		obj = s.GetDeclaration(owner)
+	}
+	return sourcePathBinding(obj, s.GetArtifact)
 }
 
 type footprint struct {

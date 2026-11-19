@@ -126,9 +126,9 @@ func (d *Session) loadManifestsTest(ctx context.Context, root string, build bool
 	}
 }
 
-func (d *Session) partitionRootsTest(ctx context.Context) ([]entryRoot, error) {
+func (d *Session) clusterRootsTest(ctx context.Context) ([]clusterRoot, error) {
 	for {
-		roots, err := d.partitionRoots(ctx)
+		roots, err := d.clusterRoots(ctx)
 		if !errors.Is(err, errPendingSources) {
 			return roots, err
 		}

@@ -64,7 +64,7 @@ func TestClaims_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := Claims(
+	prefixes := claimsForTest(
 		s,
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
@@ -101,19 +101,17 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := Claims(
+	prefixes := claimsForTest(
 		s,
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
 	assert.FatalIf(t, len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() ||
 		prefixes[1].Prefix != "", "expected apps and source-root claims; got %+v", prefixes)
-	if parent, ok := manifest.StrictParent(
+	if parent, ok := claimParentForTest(
 		prefixes,
 		"root.yaml",
-		manifest.NamedResource{},
-		nil,
-	); !ok ||
+		manifest.NamedResource{}); !ok ||
 		parent != without.Named() {
 		t.Fatalf("root.yaml parent = %v, %t; want %v", parent, ok, without.Named())
 	}
@@ -144,30 +142,33 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 		prefixes,
 	)
 	{
-		parent, ok := manifest.StrictParent(
-			Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)),
+		parent, ok := claimParentForTest(
+			claimsForTest(
+				s,
+				"",
+				s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+			),
 			"bad.yaml",
 			manifest.NamedResource{},
-			nil,
 		)
 		assert.FatalIf(t, !ok ||
 			parent != external.Named(), "final reporting must retain external source-root ownership: parent=%v, found=%t", parent, ok)
 	}
 }
 
-// TestStrictParent_SkipsSelf locks the self-exclusion contract:
+// TestClaimOwners_SkipsSelf locks the self-exclusion contract:
 // a KS sitting on its own spec.path (rare but possible — a KS whose
 // definition file lives at the same prefix it renders) must not be
 // returned as its own parent.
-func TestStrictParent_SkipsSelf(t *testing.T) {
+func TestClaimOwners_SkipsSelf(t *testing.T) {
 	t.Parallel()
 	prefixes := []manifest.KSClaim{
 		{ID: testutil.KustomizationID("flux-system", "self"), Prefix: "apps/team-a/"},
 	}
 	self := prefixes[0].ID
 	{
-		_, ok := manifest.StrictParent(prefixes, "apps/team-a/ks.yaml", self, nil)
-		assert.ErrorIf(t, ok, "StrictParent must skip self matches")
+		_, ok := claimParentForTest(prefixes, "apps/team-a/ks.yaml", self)
+		assert.ErrorIf(t, ok, "ClaimOwners must skip self matches")
 	}
 }
 
@@ -196,7 +197,7 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := Claims(
+	prefixes := claimsForTest(
 		s,
 		root,
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
@@ -207,22 +208,22 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 		{ID: parent.Named(), Prefix: "apps/team-a/"},
 	})
 
-	got, ok := manifest.StrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
-	assert.FatalIf(t, !ok, "StrictParent missed component-dir child — components fold regression")
+	got, ok := claimParentForTest(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{})
+	assert.FatalIf(t, !ok, "ClaimOwners missed component-dir child — components fold regression")
 	assert.ErrorIf(
 		t,
 		got.Name != "parent",
-		"StrictParent = %q, want 'parent' (component-dir child should attribute to its containing KS)",
+		"ClaimOwners = %q, want 'parent' (component-dir child should attribute to its containing KS)",
 		got.Name,
 	)
 }
 
-// TestStrictParent_DeepestMatchWins exercises the typical case:
+// TestClaimOwners_DeepestMatchWins exercises the typical case:
 // a file under apps/team-a/web/ should attribute to the deepest
 // covering KS, not the shallower one — which is what
 // the descending-length sort in Claims enables. Pins the
 // integration of the two helpers.
-func TestStrictParent_DeepestMatchWins(t *testing.T) {
+func TestClaimOwners_DeepestMatchWins(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	root := &manifest.Kustomization{
@@ -235,22 +236,22 @@ func TestStrictParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := Claims(
+	prefixes := claimsForTest(
 		s,
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
-	got, ok := manifest.StrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
+	got, ok := claimParentForTest(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{})
 	assert.FatalIf(t, !ok, "expected a parent match")
 	assert.ErrorIf(t, got.Name != "leaf", "expected deepest parent 'leaf', got %q", got.Name)
 }
 
-// TestStrictParent_AbsoluteSpecPath is the #920 regression: a Kustomization
+// TestClaimOwners_AbsoluteSpecPath is the #920 regression: a Kustomization
 // whose spec.path carries a leading slash (accepted by Flux, which resolves it
 // against the artifact root) must still be found as the parent of the files
 // under that directory. Before the fix its claim prefix kept the slash, so no
 // repo-relative source file ever matched and every child was orphaned.
-func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
+func TestClaimOwners_AbsoluteSpecPath(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	ks := &manifest.Kustomization{
@@ -259,18 +260,16 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	prefixes := Claims(
+	prefixes := claimsForTest(
 		s,
 		"",
 		s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
 	)
 	hr := testutil.HelmReleaseID("", "flux-instance")
-	parent, ok := manifest.StrictParent(
+	parent, ok := claimParentForTest(
 		prefixes,
 		"kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml",
-		hr,
-		nil,
-	)
+		hr)
 	assert.FatalIf(
 		t,
 		!ok,

@@ -71,7 +71,7 @@ type NativeRootFacts struct {
 	Path       string
 	Identities []manifest.NamedResource
 	Owners     []manifest.NamedResource
-	Claims     []manifest.KSClaim
+	Index      *manifest.DiscoveryIndex
 	Entry      bool
 	Built      bool
 	Selected   bool
@@ -143,6 +143,9 @@ type RootCoveringOwner struct {
 	Replaced     bool
 	Output       *store.Emission
 	Input        *store.SourceArtifact
+	claims       *manifest.DiscoveryIndex
+	claimRoot    string
+	covering     bool
 }
 
 // RootRecord retains only the coordinates used for root classification and support.

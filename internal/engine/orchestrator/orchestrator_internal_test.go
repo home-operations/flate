@@ -169,7 +169,7 @@ func TestDetectOrphans(t *testing.T) {
 		root.Named():         {Status: store.StatusFailed, Message: "broken"},
 	}
 
-	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
+	orphans := o.detectOrphans(failed, o.reportingIndex())
 
 	{
 		_, ok := orphans[orphan.Named()]
@@ -198,7 +198,7 @@ func TestDetectOrphans(t *testing.T) {
 			Namespace: "flux-system",
 		},
 	})
-	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
+	assert.Diff(t, o.detectOrphans(failed, o.reportingIndex()), orphans)
 	generated := &manifest.Kustomization{
 		Name: "generated", Namespace: "flux-system", Path: "./kubernetes/standalone",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
@@ -211,7 +211,7 @@ func TestDetectOrphans(t *testing.T) {
 		if declared {
 			o.store.AddObject(&manifest.ExternalArtifact{Name: "generated", Namespace: "flux-system"})
 		}
-		assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
+		assert.Diff(t, o.detectOrphans(failed, o.reportingIndex()), orphans)
 	}
 }
 
@@ -249,7 +249,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		cm.Named():      {Status: store.StatusFailed, Message: "bogus"},
 		foreign.Named(): {Status: store.StatusFailed, Message: "foreign"},
 	}
-	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
+	orphans := o.detectOrphans(failed, o.reportingIndex())
 	assert.ErrorIf(t, len(orphans) != 0, "orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 }
 
@@ -284,7 +284,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 		parent.Named(): {Status: store.StatusFailed, Message: "kustomize build boom"}, // the build that emitted nothing
 		child.Named():  {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
 	}
-	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
+	orphans := o.detectOrphans(failed, o.reportingIndex())
 	{
 		_, ok := orphans[child.Named()]
 		assert.ErrorIf(

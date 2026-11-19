@@ -209,10 +209,6 @@ func testRecordEmittedArtifactPredictionsCase(
 				}, (*testCaseInput.target): {Productions: []manifest.Production{decl}},
 			}},
 		)
-
-		if contribution := s.coverage[owner.Named()]; contribution != nil {
-			contribution.binding = binding
-		}
 	}
 	proposal := &Emission{Children: []Child{g}, Complete: true, binding: binding}
 	if (*testCaseInput.mode) == "proposal" {

@@ -36,7 +36,7 @@ func (r *filterFixture) index() *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	index.Claims = map[string][]manifest.NamedResource{}
 	index.Readers = map[string][]manifest.FileReader{}
-	claims := Claims(
+	claims := claimsForTest(
 		st,
 		f.root,
 		st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
@@ -59,6 +59,7 @@ func (r *filterFixture) index() *manifest.DiscoveryIndex {
 			owners := index.OwnersOfFile(r.File).Owners
 			r.Productions = testutil.ProductionEvidence(owners)
 			for j := range r.Productions {
+				r.Productions[j].Source = manifest.BootstrapSourceID
 				r.Productions[j].Authored = id
 				r.Productions[j].Path = r.File
 				r.Productions[j].File = r.File
@@ -76,13 +77,7 @@ func (r *filterFixture) recordFiles(index *manifest.DiscoveryIndex, claims []man
 		_, pinned := f.pinned[id]
 		record := manifest.DiscoveryRecord{File: file, Refs: f.refs[id], Pinned: pinned}
 		if id.KindInfo().Structural {
-			own := map[string]struct{}{}
-			for _, c := range claims {
-				if c.ID == id {
-					own[c.Prefix] = struct{}{}
-				}
-			}
-			record.Parent, _ = manifest.StrictParent(claims, file, id, own)
+			record.Parent, _ = claimParentForTest(claims, file, id)
 		}
 		index.Records[id] = record
 	}

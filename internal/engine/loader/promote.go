@@ -38,9 +38,6 @@ func Promote(
 		return nil, nil
 	}
 	record := opts.Record
-	if record.Source == (manifest.NamedResource{}) {
-		record.Source = manifest.BootstrapSourceID
-	}
 	authored := record.Authored
 	if authored == (manifest.NamedResource{}) {
 		authored = id
@@ -97,9 +94,6 @@ func promotionDocuments(ctx context.Context, st *store.Store, opts *PromoteOptio
 		sources = opts.Reads
 	}
 	source := opts.Record.Source
-	if source == (manifest.NamedResource{}) {
-		source = manifest.BootstrapSourceID
-	}
 	mounted := map[string]*store.SourceArtifact{}
 	mountSource(mounted, sources.GetArtifact(source, store.ArtifactContent))
 	reader.setSources(mounted)
@@ -168,31 +162,24 @@ func (l *Loader) RegisterBuilt(
 			l.locations[docs[i].Obj.Named()] = locations[i]
 		}
 	}
-	cached := l.documents.cache[root]
-	previous := cached.builtInput
-	cached.built, cached.builtInput, input.Reads = append([]store.Child{}, docs...), &input, maps.Clone(input.Reads)
+	previous := l.builtBatches[input.Owner]
+	input.Reads = maps.Clone(input.Reads)
 	// Directory membership and node-kind probes MUST NOT claim descendant content.
 	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
-	l.documents.cache[root] = cached
-	for i, facts := range l.scopes.rootFacts {
-		unchanged := facts.Built == (cached.built != nil) &&
-			facts.Selected == cached.selected && facts.Excluded == cached.buildExcluded
-		if filepath.Join(l.SourceRoot, filepath.FromSlash(facts.Path)) == root && !unchanged {
-			l.scopes.rootFacts = slices.Clone(l.scopes.rootFacts)
-			l.scopes.rootFacts[i].Built, l.scopes.rootFacts[i].Selected, l.scopes.rootFacts[i].Excluded =
-				cached.built != nil, cached.selected, cached.buildExcluded
-			break
-		}
-	}
 	if l.candidates == nil {
 		l.candidates = map[manifest.NamedResource]store.Child{}
 	}
-	l.publishBuiltRecords(&input, docs, records, authored)
+	l.publishBuiltRecords(
+		&builtBatch{input: &input, documents: slices.Clone(docs), builder: builder},
+		docs, records, authored,
+	)
+	rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
+	l.refreshNativeBuildFacts(root, rebuild)
 	l.scopes.complete = false
 	err = l.admit(ctx, sourceRoot, nil)
 	retained = input.Support.Valid()
-	if previous != nil && previous.Support != input.Support {
-		l.Store.Retire(previous.Support)
+	if previous != nil && previous.input.Support != input.Support {
+		l.Store.Retire(previous.input.Support)
 	}
 	return err
 }
@@ -249,22 +236,28 @@ func (l *Loader) builtRecord(
 
 // BuiltChildren requires current construction membership and the original preparation capture.
 func (l *Loader) BuiltChildren(root string, owner manifest.NamedResource, reads *store.ReadSet) ([]store.Child, bool) {
-	return l.currentBuilt(root, owner, reads, l.documents.cache[root].built)
+	batch := l.builtBatches[owner]
+	if batch == nil || batch.input.Root != root {
+		return nil, false
+	}
+	return l.currentBuilt(batch, reads, batch.documents)
 }
 
 func (l *Loader) currentBuilt(
-	root string,
-	owner manifest.NamedResource,
+	batch *builtBatch,
 	reads *store.ReadSet,
 	built []store.Child,
 ) ([]store.Child, bool) {
-	cached := l.documents.cache[root]
-	input := cached.builtInput
-	if l.frozen || reads == nil || input == nil || input.Root != root || input.Owner != owner ||
-		input.Support == nil || !input.Support.Valid() || !reads.Matches(input.Support) || !input.Support.Valid() {
+	input := batch.input
+	owner := input.Owner
+	if l.frozen || l.builtBatches[owner] != batch {
 		return nil, false
 	}
-	builder := l.fileCoordinate(cmp.Or(cached.file, root))
+	support := input.Support
+	if reads == nil || !support.Valid() || !reads.Matches(support) || !support.Valid() {
+		return nil, false
+	}
+	builder := batch.builder
 	children := make([]store.Child, 0, len(built))
 	for i := range built {
 		child := built[i]
@@ -292,7 +285,7 @@ func (l *Loader) currentBuilt(
 		child.Obj, child.Productions, child.SourceSupport = record.Declaration, record.Productions, input.Source
 		children = append(children, child)
 	}
-	if !input.Support.Valid() || !reads.Valid() {
+	if !support.Valid() || !reads.Valid() {
 		return nil, false
 	}
 	return children, true
@@ -312,19 +305,25 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
-	return l.documents.cache[l.registeredRoot(id, &r)].built
+	if l.registeredRoot(id, &r) == "" {
+		return nil
+	}
+	return l.builtRoots[id].batch.documents
 }
 
 func (l *Loader) registeredRoot(id manifest.NamedResource, record *manifest.DiscoveryRecord) string {
 	built := l.builtRoots[id]
-	input := built.input
+	batch := built.batch
+	if batch == nil {
+		return ""
+	}
+	input := batch.input
 	if input == nil || input.Support == nil || !input.Support.Valid() ||
 		input.Owner != record.BuilderOwner {
 		return ""
 	}
-	doc := l.documents.cache[input.Root]
-	if doc.builtInput != input || doc.built[built.index].Obj != record.Declaration ||
-		l.fileCoordinate(input.Root) != record.Builder && l.fileCoordinate(doc.file) != record.Builder {
+	if l.builtBatches[input.Owner] != batch || batch.documents[built.index].Obj != record.Declaration ||
+		batch.builder != record.Builder {
 		return ""
 	}
 	return input.Root
@@ -342,10 +341,10 @@ func (l *Loader) PreparedObject(id manifest.NamedResource, reads *store.ReadSet)
 		if root == "" {
 			return store.Child{}, false
 		}
-		child = l.documents.cache[root].built[l.builtRoots[id].index]
+		child = l.builtRoots[id].batch.documents[l.builtRoots[id].index]
 	}
 	if root != "" && reads != nil && child.Obj != nil {
-		children, current := l.currentBuilt(root, record.BuilderOwner, reads, []store.Child{child})
+		children, current := l.currentBuilt(l.builtRoots[id].batch, reads, []store.Child{child})
 		if len(children) != 0 {
 			return children[0], current
 		}
@@ -353,8 +352,15 @@ func (l *Loader) PreparedObject(id manifest.NamedResource, reads *store.ReadSet)
 	return child, false
 }
 
+// Producer captures MUST survive another producer's build of the same directory.
+type builtBatch struct {
+	input     *BuiltInput
+	documents []store.Child
+	builder   string
+}
+
 type builtRoot struct {
-	input *BuiltInput
+	batch *builtBatch
 	index int
 }
 
@@ -444,8 +450,11 @@ func (l *Loader) removeReplacedRecords(
 }
 
 func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.NamedResource]store.Child) {
-	cached := l.documents.cache[input.Root]
-	batch := cached.built
+	previous := l.builtBatches[input.Owner]
+	if previous == nil {
+		return
+	}
+	batch := previous.documents
 	for i := range batch {
 		child := &batch[i]
 		id := child.Obj.Named()
@@ -468,7 +477,7 @@ func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.Named
 	}
 	for i := range batch {
 		id := batch[i].Obj.Named()
-		if l.builtRoots[id].input == cached.builtInput {
+		if l.builtRoots[id].batch == previous && id != input.Owner {
 			delete(l.builtRoots, id)
 		}
 	}
@@ -548,11 +557,15 @@ func (l *Loader) setBuiltProduction(
 }
 
 func (l *Loader) publishBuiltRecords(
-	input *BuiltInput,
+	batch *builtBatch,
 	docs []store.Child,
 	records []manifest.DiscoveryRecord,
 	authored map[manifest.NamedResource]store.Child,
 ) {
+	if l.builtBatches == nil {
+		l.builtBatches = map[manifest.NamedResource]*builtBatch{}
+	}
+	l.builtBatches[batch.input.Owner] = batch
 	if l.builtRoots == nil {
 		l.builtRoots = make(map[manifest.NamedResource]builtRoot)
 	}
@@ -560,10 +573,10 @@ func (l *Loader) publishBuiltRecords(
 		child := docs[i]
 		obj := child.Obj
 		id := obj.Named()
-		l.builtRoots[id] = builtRoot{input: input, index: i}
-		if id == input.Owner {
+		if id == batch.input.Owner {
 			continue
 		}
+		l.builtRoots[id] = builtRoot{batch: batch, index: i}
 		independent := selection.Root(l.roots.get(id).view()).Independent
 		if existing := l.Store.GetObject(
 			id,

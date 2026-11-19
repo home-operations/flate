@@ -26,8 +26,7 @@ type Session struct {
 // New MUST retain an admission session for every request.
 func New(st *store.Store, facts census, request Request) (*Session, error) {
 	s := &Session{store: st, facts: facts, request: request}
-	s.decision.Store(&Decision{seed: maphash.MakeSeed(), unrestricted: !request.Changed &&
-		(len(request.Roots) == 0 || request.includesRenderKinds(true) && request.Roots[0].Namespace == "")})
+	s.decision.Store(&Decision{seed: maphash.MakeSeed(), unrestricted: !request.Changed && request.AllRoots()})
 	return s, nil
 }
 
@@ -96,6 +95,7 @@ type Admission struct {
 	entry        *EntryRoute
 	entryReads   *store.ReadSet
 	owned        store.ReadSet
+	inputStorage [2]store.Input
 	reads        *store.ReadSet
 	preparation  *Preparation
 	local        *Preparation

@@ -9,6 +9,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -116,7 +117,7 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	if artifact != nil {
 		identity = parsedInputIdentity(artifact)
 	}
-	binding := artifact.Input(store.ArtifactContent | store.ArtifactRevision)
+	binding := inputprojection.Authored(artifact).Input(store.ArtifactContent | store.ArtifactRevision)
 	if source, ok := l.facts.sources[root]; ok && source.input == identity && *source.binding == binding {
 		return source
 	}
@@ -189,12 +190,14 @@ func (s *parsedDocuments) lookup(file string) *parsedDocument {
 
 // Matches reports whether input owns a source view retained by these parsed facts.
 func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
+	input = inputprojection.Authored(input)
 	source, ok := p.sources[input.LocalPath]
 	return ok && source.input == parsedInputIdentity(input) &&
 		(!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
 }
 
 func parsedInputIdentity(input *store.SourceArtifact) any {
+	input = inputprojection.Authored(input)
 	if view, ok := input.FS.(*gittree.FS); ok {
 		return view
 	}
@@ -213,7 +216,7 @@ func (r documentReader) restore(file string) {
 	}
 	root := new(r).mountedRoot(file)
 	source, ok := r.parsed.sources[root]
-	artifact := r.artifacts[root]
+	artifact := inputprojection.Authored(r.artifacts[root])
 	if !ok || artifact == nil {
 		return
 	}
@@ -250,7 +253,7 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 	var observations []manifest.InputVisibility
 	//nolint:gocritic // The source map supplies immutable value snapshots.
 	for root, facts := range l.facts.sources {
-		artifact := l.documents.artifacts[root]
+		artifact := inputprojection.Authored(l.documents.artifacts[root])
 		var identity any
 		if artifact != nil {
 			identity = parsedInputIdentity(artifact)
@@ -368,7 +371,7 @@ func (s *sourceScope) matchesVisibility(
 		return false
 	}
 	if parsedInputIdentity(scope.artifact) != identity ||
-		scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
+		inputprojection.Authored(scope.artifact).Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
 		return false
 	}
 	return true

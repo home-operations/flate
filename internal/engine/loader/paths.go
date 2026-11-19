@@ -592,9 +592,6 @@ func (p *substitutionResolution) projectSubstitutions(
 	roots := record.ContentRoots
 	if occurrence, ok := l.catalogOccurrence(id); roots == nil && ok {
 		source, _, _ := occurrence.SourcePath()
-		if source.Kind == "" || source.Name == "" {
-			source = manifest.BootstrapSourceID
-		}
 		roots = map[manifest.NamedResource][]string{source: occurrence.facts.roots}
 	}
 	projection, err := l.projectionNames(ctx, child, prepared, roots)
@@ -639,9 +636,6 @@ func (p *substitutionResolution) resolveInheritedPath(
 	var roots []string
 	if occurrence, located := l.catalogOccurrence(id); located && occurrence.facts.path != child.Path {
 		source, path, _ = occurrence.SourcePath()
-		if source.Kind == "" || source.Name == "" {
-			source = manifest.BootstrapSourceID
-		}
 		known, roots = true, slices.Collect(manifest.RenderRoots(occurrence.facts.structural))
 	} else {
 		path, known = p.resolveValue(ctx, owner, child.Path)

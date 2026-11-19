@@ -15,6 +15,7 @@ import (
 	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -111,16 +112,16 @@ func (l *Loader) restoreCachedInputs(ctx context.Context) error {
 		return nil
 	}
 	maps.DeleteFunc(l.inputCaches, func(root string, state *inputCache) bool {
-		input := l.documents.artifacts[root]
+		input := inputprojection.Authored(l.documents.artifacts[root])
 		return input == nil || parsedInputIdentity(input) != parsedInputIdentity(state.input) ||
 			input.Input(
 				store.ArtifactContent|store.ArtifactRevision,
-			) != state.input.Input(
+			) != inputprojection.Authored(state.input).Input(
 				store.ArtifactContent|store.ArtifactRevision,
 			)
 	})
 	for _, root := range slices.Sorted(maps.Keys(l.documents.artifacts)) {
-		input := l.documents.artifacts[root]
+		input := inputprojection.Authored(l.documents.artifacts[root])
 		view, ok := input.FS.(*gittree.FS)
 		if !ok || l.inputCaches[root] != nil {
 			continue

@@ -46,7 +46,7 @@ func TestEffectiveSourceID_Defaults(t *testing.T) {
 			assert.Equal(t, ks.SourceID(), authored)
 			assert.Equal(t, ks.SourceRef, tc.ref)
 			source, path, present := ks.SourcePath()
-			assert.Equal(t, source, authored)
+			assert.Equal(t, source, tc.want)
 			assert.Equal(t, path, "./apps")
 			assert.Equal(t, present, true)
 		})

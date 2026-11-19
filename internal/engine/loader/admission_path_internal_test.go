@@ -16,7 +16,10 @@ func preparedDeclarationPair(t *testing.T, id, owner manifest.NamedResource) (
 	inputs := [2]*store.SourceArtifact{}
 	var prepared [2]map[manifest.NamedResource]store.Child
 	for side, st := range stores {
-		inputs[side] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+		inputs[side] = &store.SourceArtifact{
+			LocalPath: t.TempDir(),
+			FS:        fstest.MapFS{"payload/kustomization.yaml": {Data: []byte("resources: []\n")}},
+		}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 		st.SetDiscoveryIndex(
 			&manifest.DiscoveryIndex{

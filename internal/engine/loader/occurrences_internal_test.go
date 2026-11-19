@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"path/filepath"
@@ -149,7 +150,138 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	for i, dir := range []string{"one", "two"} {
 		assert.Equal(t, packages[i].Path, filepath.ToSlash(filepath.Join(dir, "pkg")))
 		assert.Diff(t, packages[i].Scans, []string{".", dir, dir + "/pkg"})
-		assert.Equal(t, packages[i].Independent, false)
+		assert.Equal(t, packages[i].Independent, true)
+	}
+}
+
+func TestOccurrences_NativePatchScope(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, kind, path, value string
+		op, pathKey, components string
+		annotations             string
+		setup, extraResource    string
+		target, patchFields     string
+		patchBody, extraObject  string
+	}{
+		{name: "unrelated resource spec", kind: "Deployment", path: "/spec/replicas", value: "2"},
+		{
+			name: "container arguments", kind: "Deployment", path: "/spec/template/spec/containers/0/args/-",
+			op: "add", value: "--fixture",
+		},
+		{
+			name:  "container resources",
+			kind:  "Deployment",
+			path:  "/spec/template/spec/containers/0/resources/limits/memory",
+			value: "2Gi",
+		},
+		{name: "policy ingress", kind: "NetworkPolicy", path: "/spec/ingress", value: "[{}]"},
+		{
+			name: "policy ingress with common labels", kind: "NetworkPolicy", path: "/spec/ingress", value: "4",
+			setup: "commonLabels: {app: fixture}\n",
+		},
+		{
+			name: "policy ingress with labels", kind: "NetworkPolicy", path: "/spec/ingress", value: "4",
+			setup: "labels: [{pairs: {app: fixture}, includeSelectors: true}]\n",
+		},
+		{
+			name: "file and inline patch", kind: "Deployment", path: "/spec/replicas", value: "2",
+			patchFields: "  path: https://fixture.invalid/repo.git//patch.yaml?ref=main\n",
+		},
+		{
+			name: "namespace selector", kind: "Deployment", path: "/spec/replicas", value: "2",
+			target: ", namespace: apps",
+		},
+		{
+			name: "annotation selector", kind: "Deployment", path: "/spec/replicas", value: "2",
+			target: ", annotationSelector: 'fixture=yes'",
+		},
+		{name: "empty patch", kind: "Deployment", patchBody: "    []\n"},
+		{
+			name: "copy from metadata", kind: "Deployment",
+			patchBody: "    - op: copy\n      from: /metadata/name\n      path: /spec/replicas\n",
+		},
+		{
+			name: "multiple patch documents", kind: "Deployment",
+			patchBody: "    - op: replace\n      path: /spec/replicas\n      value: 2\n" +
+				"    ---\n    apiVersion: apps/v1\n    kind: Deployment\n    metadata: {name: app}\n",
+		},
+		{
+			name: "duplicate identity", kind: "Deployment", path: "/spec/replicas", value: "2",
+			extraObject: "---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: app, namespace: apps}\n" +
+				"spec: {replicas: 1}\n",
+		},
+		{
+			name: "uninspected resource", kind: "Deployment", path: "/spec/replicas", value: "2",
+			extraResource: ", 'https://fixture.invalid/repo.git//resources?ref=main'",
+		},
+		{name: "bootstrap spec", kind: "Kustomization", path: "/spec/path", value: "./other"},
+		{name: "kind change", kind: "Deployment", path: "/kind", value: "Kustomization"},
+		{name: "kind pattern", kind: ".*", path: "/spec/path", value: "./other"},
+		{
+			name: "incorrect path key", kind: "Deployment", path: "/spec/replicas", value: "2",
+			pathKey: "Path",
+		},
+		{
+			name: "failed patch test", kind: "Deployment", path: "/spec/replicas", value: "9",
+			op: "test",
+		},
+		{
+			name: "uninspected component", kind: "Deployment", path: "/spec/replicas", value: "2",
+			components: "components: ['https://fixture.invalid/repo.git//component?ref=main']\n",
+		},
+		{
+			name: "inconsistent prior identities", kind: "Deployment", path: "/spec/replicas", value: "2",
+			annotations: `, annotations: {internal.config.kubernetes.io/previousNames: "x,y",` +
+				" internal.config.kubernetes.io/previousNamespaces: x}",
+		},
+	}
+	for i := range cases {
+		t.Run(cases[i].name, func(t *testing.T) {
+			t.Parallel()
+			tc := &cases[i]
+			root := t.TempDir()
+			patch := cmp.Or(tc.patchBody, "    - op: "+cmp.Or(tc.op, "replace")+"\n      "+
+				cmp.Or(tc.pathKey, "path")+": "+tc.path+"\n      value: "+tc.value+"\n")
+			input := fstest.MapFS{
+				"kustomization.yaml": {
+					Data: []byte("resources: [root.yaml, deployment.yaml" + tc.extraResource + "]\n" +
+						tc.components + tc.setup + "patches:\n- target: {kind: '" + tc.kind + "'" + tc.target + "}\n" +
+						tc.patchFields + "  patch: |\n" + patch),
+				},
+				"root.yaml": {Data: []byte(testutil.KustomizationYAML("root", "apps", "  path: ./\n"))},
+				"deployment.yaml": {Data: []byte("apiVersion: apps/v1\nkind: Deployment\n" +
+					"metadata: {name: app, namespace: apps" + tc.annotations + "}\n" +
+					`spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: app
+          args: []
+          resources: {limits: {memory: 1Gi}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: app, namespace: apps}
+spec: {ingress: []}
+` + tc.extraObject)},
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			l := New(st)
+			t.Cleanup(l.Close)
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			occurrences, err := l.Occurrences(t.Context(), root, "")
+			assert.NoError(t, err)
+			index := slices.IndexFunc(occurrences, func(o selection.OccurrenceFacts) bool {
+				return o.Identity.Kind == manifest.KindKustomization
+			})
+			assert.FatalIf(t, index < 0, "missing bootstrap declaration")
+			assert.Equal(t, occurrences[index].RequiresBuild, true)
+		})
 	}
 }
 

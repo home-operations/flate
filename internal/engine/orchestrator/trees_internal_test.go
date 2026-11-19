@@ -122,11 +122,12 @@ func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
 	}}, Config{Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(results), 1)
-	assert.Equal(t, len(results[0].Result.Manifests), 0)
-	assert.Equal(t, input.walks.Load(), int32(1))
+	assert.Equal(t, len(results[0].Result.Manifests), 1)
+	assert.Diff(t, configMapNames(results[0].Result), map[string]bool{"payload": true})
+	assert.Equal(t, input.walks.Load(), int32(3))
 }
 
-func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
+func TestWithReaders_PreservesSideEvidence(t *testing.T) {
 	t.Parallel()
 	authored := testutil.KustomizationID("apps", "owner")
 	internal := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
@@ -178,12 +179,11 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 					},
 				},
 			}
-			projected := projectEntryReaders(index, from, to)
+			projected := *index
+			projected.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{from: to}
 			assert.Diff(t, projected.Declarations, index.Declarations)
 			assert.Diff(t, index.Readers["removed.yaml"], readers)
-			want := append([]manifest.FileReader{}, readers...)
-			want[0].Reader = to
-			assert.Diff(t, projected.Readers["removed.yaml"], want)
+			assert.Diff(t, projected.Readers["removed.yaml"], readers)
 
 			changes, err := change.Qualify(
 				t.Context(), detectChanges(t, []string{"removed.yaml"}, nil),
@@ -194,19 +194,16 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			opposite := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
 			paired, err := changes.WithReaders(
 				t.Context(),
-				[2]*manifest.DiscoveryIndex{projected, opposite},
+				[2]*manifest.DiscoveryIndex{&projected, opposite},
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
-			replaced := projectEntryReaders(
-				index,
-				from,
-				other,
-			)
+			replaced := *index
+			replaced.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{from: other}
 			current, err := paired.WithReaders(
 				t.Context(),
-				[2]*manifest.DiscoveryIndex{replaced, opposite},
+				[2]*manifest.DiscoveryIndex{&replaced, opposite},
 				[2]map[manifest.NamedResource]inputprojection.Projection{},
 				manifest.WorkScope{},
 			)
@@ -242,8 +239,10 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			assert.Equal(t, filter.Reconcile(from), false)
 			assert.Diff(t, changes.Paths(), []string{"removed.yaml"})
 			assert.Diff(t, index.Readers["removed.yaml"], readers)
-			projected.Readers["removed.yaml"][0].Exact = false
+			assert.Equal(t, projected.Readers["removed.yaml"][0].Exact, true)
 			assert.Equal(t, index.Readers["removed.yaml"][0].Exact, true)
+			assert.Diff(t, projected.ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{from: to})
+			assert.Diff(t, index.ProducerKeys, map[manifest.NamedResource]manifest.NamedResource(nil))
 		})
 	}
 }

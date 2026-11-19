@@ -11,6 +11,34 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (c *admissionClosure) comparisonInputs(
+	delta *change.Set,
+	input manifest.NamedResource,
+) iter.Seq2[manifest.NamedResource, change.InputChange] {
+	return func(yield func(manifest.NamedResource, change.InputChange) bool) {
+		index := c.facts.SelectionIndex()
+		if index == nil || len(index.ProducerKeys) == 0 {
+			delta.Inputs(input)(yield)
+			return
+		}
+		query := input
+		if key, mapped := index.ProducerKeys[input]; mapped {
+			query = key
+		}
+		for id, changed := range delta.Inputs(query) {
+			for actual, key := range index.ProducerKeys {
+				if key == id {
+					id = actual
+					break
+				}
+			}
+			if !yield(id, changed) {
+				return
+			}
+		}
+	}
+}
+
 func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
 		var record manifest.DiscoveryRecord
@@ -266,7 +294,7 @@ func (c *admissionClosure) comparisonInputChanged(
 	}) {
 		return false
 	}
-	for id, changed := range delta.Inputs(dependency) {
+	for id, changed := range c.comparisonInputs(delta, dependency) {
 		if c.comparisonRecordChanged(
 			id,
 			changed,

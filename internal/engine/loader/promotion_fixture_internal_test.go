@@ -79,6 +79,9 @@ func promotionReadsForTest(tb testing.TB, st *store.Store, options *PromoteOptio
 		}
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 	}
+	if options.Record.Source == (manifest.NamedResource{}) {
+		options.Record.Source = manifest.BootstrapSourceID
+	}
 	reads := options.Reads
 	if reads == nil {
 		reads = new(store.ReadSet)

@@ -161,12 +161,13 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 	if !r.qualifiedRecord(side, record) {
 		return
 	}
-	peer, indexed := r.indexes[1-side].Lookup(id)
+	peerID := r.pairedProducer(side, id)
+	peer, indexed := r.indexes[1-side].Lookup(peerID)
 	present := indexed && r.qualifiedRecord(1-side, &peer)
 	key := comparisonKey{source: r.evidence.source, owner: id, input: id}
 	comparison := r.bindings.declarations[key]
 	comparison.inputContent[side], comparison.inputKnown[side] = r.evidence.inputs[side][id]
-	comparison.inputContent[1-side], comparison.inputKnown[1-side] = r.evidence.inputs[1-side][id]
+	comparison.inputContent[1-side], comparison.inputKnown[1-side] = r.evidence.inputs[1-side][peerID]
 	r.bindings.declarations[key] = comparison
 	file, peerFile := r.fileAt(side, record.File), r.fileAt(1-side, peer.File)
 	if !r.changes.Contains(file) && (!present || !r.changes.Contains(peerFile)) {
@@ -188,7 +189,7 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 	if present {
 		peerAuthored := peer.Authored
 		if peerAuthored == (manifest.NamedResource{}) {
-			peerAuthored = id
+			peerAuthored = peerID
 		}
 		comparison.declared[1-side] = r.observation(1-side, peerFile).Objects[peerAuthored]
 		if comparison.declared[1-side] == "" {
@@ -196,7 +197,7 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 		}
 		comparison.implicitNamespace[1-side] = peer.Authored != (manifest.NamedResource{}) &&
 			peer.Authored.Namespace == ""
-	} else if !indexed {
+	} else if !indexed && peerID != (manifest.NamedResource{}) {
 		var known bool
 		comparison.declared[1-side], known = r.observeDeclaration(1-side, authored)
 		if !known {
@@ -373,12 +374,29 @@ func (r *readerScope) routeInputReader(side int, name string, reader *manifest.F
 	if r.out.inputs == nil {
 		r.out.inputs = make(map[manifest.NamedResource]InputChange)
 	}
-	input := r.out.inputs[reader.Reader]
+	id := reader.Reader
+	if key, mapped := r.indexes[side].ProducerKeys[id]; mapped {
+		id = key
+	}
+	input := r.out.inputs[id]
 	if input.File == "" || len(input.Declarations) == 0 && name < input.File {
 		input.File = name
 	}
 	input.Unbound = false
-	r.out.inputs[reader.Reader] = input
+	r.out.inputs[id] = input
+}
+
+func (r *readerScope) pairedProducer(side int, id manifest.NamedResource) manifest.NamedResource {
+	key, mapped := r.indexes[side].ProducerKeys[id]
+	if !mapped {
+		return id
+	}
+	for actual, comparison := range r.indexes[1-side].ProducerKeys {
+		if comparison == key {
+			return actual
+		}
+	}
+	return manifest.NamedResource{}
 }
 
 type readerRoute struct {
@@ -407,7 +425,11 @@ func (r *readerScope) routeRecord(
 	if r.out.inputs == nil {
 		r.out.inputs = map[manifest.NamedResource]InputChange{}
 	}
-	input := r.out.inputs[id]
+	key := id
+	if comparison, mapped := r.indexes[side].ProducerKeys[id]; mapped {
+		key = comparison
+	}
+	input := r.out.inputs[key]
 	input.File, input.Unbound = route.input.File, false
 	input.Declarations = append(slices.Clone(input.Declarations), route.input.Declarations...)
 	slices.Sort(input.Declarations)
@@ -422,7 +444,7 @@ func (r *readerScope) routeRecord(
 		)
 	})
 	input.Productions = slices.Compact(input.Productions)
-	r.out.inputs[id] = input
+	r.out.inputs[key] = input
 }
 
 func (r *readerRoute) collect() {

@@ -22,7 +22,8 @@ func (s *Session) PendingRoots() *store.ReadSet {
 			reads = &store.ReadSet{}
 			reads.Init(s.store, manifest.NamedResource{}, nil)
 		}
-		if Root(s.facts.RootEvidence(id, reads, true)).Admitted && reads.GetObject(id) == nil {
+		if Root(CaptureRoot(s.facts.RootEvidence(id, reads), reads, s.facts.SelectionIndex())).Admitted &&
+			reads.GetObject(id) == nil {
 			reads.RequireData(id)
 			required = true
 		}

@@ -53,6 +53,7 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, binding.support, (*store.ReadSet)(nil))
+			acceptedIndex := l.Index
 			accepted := a.acceptedEntry
 			assert.FatalIf(t, accepted == nil, "accepted route was not retained")
 			assert.Equal(t, accepted.Reads, support)
@@ -102,6 +103,7 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 				assert.NoError(t, err)
 			}
 			assert.Equal(t, a.acceptedEntry, accepted)
+			assert.Equal(t, l.Index, acceptedIndex)
 			assert.Equal(t, a.acceptedEntry.Root, acceptedRoot)
 			committed, err := commitSelection(t.Context(), l, proposal, selection.Execution)
 			assert.NoError(t, err)

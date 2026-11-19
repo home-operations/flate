@@ -85,7 +85,6 @@ func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 func (f *countedAdmissionFacts) RootEvidence(
 	id manifest.NamedResource,
 	reads *store.ReadSet,
-	completeOwners bool,
 ) RootEvidence {
 	f.roots[id]++
 	if f.onRoot != nil {
@@ -93,7 +92,7 @@ func (f *countedAdmissionFacts) RootEvidence(
 		f.onRoot = nil
 		onRoot()
 	}
-	return f.census.RootEvidence(id, reads, completeOwners)
+	return f.census.RootEvidence(id, reads)
 }
 
 func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {

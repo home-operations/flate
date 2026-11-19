@@ -1,0 +1,7 @@
+resources: [sync.yaml, input.yaml]
+patches:
+- target: {kind: ConfigMap, name: install-metadata}
+  patch: |-
+    - op: add
+      path: /data/value
+      value: patched

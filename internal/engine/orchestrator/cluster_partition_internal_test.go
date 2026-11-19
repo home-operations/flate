@@ -134,22 +134,29 @@ func TestRenderTrees_ClusterPartitionUnion(t *testing.T) {
 		name          string
 		before, after []string
 		identity      manifest.ClusterID
+		bootstrapOnly bool
 	}{
-		{"three_to_one", []string{"main", "test", "utility"}, []string{"main"}, "."},
-		{"one_to_three", []string{"main"}, []string{"main", "test", "utility"}, "."},
-		{"explicit_three_to_one", []string{"main", "test", "utility"}, []string{"main"}, "chosen"},
-		{"explicit_one_to_three", []string{"main"}, []string{"main", "test", "utility"}, "chosen"},
-		{"addition", []string{"main", "test"}, []string{"main", "test", "utility"}, "."},
-		{"deletion", []string{"main", "test", "utility"}, []string{"main", "test"}, "."},
-		{"rename", []string{"main", "test"}, []string{"main", "renamed"}, "."},
-		{"singleton_rename", []string{"test"}, []string{"renamed"}, "."},
+		{"three_to_one", []string{"main", "test", "utility"}, []string{"main"}, ".", false},
+		{"one_to_three", []string{"main"}, []string{"main", "test", "utility"}, ".", false},
+		{"explicit_three_to_one", []string{"main", "test", "utility"}, []string{"main"}, "chosen", false},
+		{"explicit_one_to_three", []string{"main"}, []string{"main", "test", "utility"}, "chosen", false},
+		{"addition", []string{"main", "test"}, []string{"main", "test", "utility"}, ".", false},
+		{"deletion", []string{"main", "test", "utility"}, []string{"main", "test"}, ".", false},
+		{"rename", []string{"main", "test"}, []string{"main", "renamed"}, ".", false},
+		{"singleton_rename", []string{"test"}, []string{"renamed"}, ".", false},
+		{"bootstrap_added", []string{"main", "test"}, []string{"main", "test", "utility"}, ".", true},
+		{"bootstrap_removed", []string{"main", "test", "utility"}, []string{"main", "test"}, ".", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			roots := [2]string{t.TempDir(), t.TempDir()}
 			trees := make([]Tree, 0, 2)
 			for side, clusters := range [][]string{tc.before, tc.after} {
-				writePartitionClusters(t, roots[side], clusters, false)
+				if tc.bootstrapOnly {
+					writePartitionBootstrap(t, roots[side], clusters)
+				} else {
+					writePartitionClusters(t, roots[side], clusters, false)
+				}
 				trees = append(trees, Tree{
 					ID:       manifest.TreeID{Cluster: tc.identity, Side: manifest.TreeSide(side)},
 					RepoRoot: roots[side], SelfURLs: []string{"https://fixture.invalid/partition"},
@@ -162,26 +169,76 @@ func TestRenderTrees_ClusterPartitionUnion(t *testing.T) {
 			assert.NoError(t, err)
 			assert.FatalIf(t, len(runs) != len(union)*2, "rendered %d sides, want %d", len(runs), len(union)*2)
 			assert.Equal(t, slices.IsSortedFunc(runs, func(a, b Rendered) int { return a.ID.Compare(b.ID) }), true)
-			for _, cluster := range union {
-				for side, present := range [][]string{tc.before, tc.after} {
-					id := manifest.TreeID{
-						Cluster: manifest.ClusterID("kubernetes/clusters/" + cluster),
-						Side:    manifest.TreeSide(side),
-					}
-					if tc.identity != "." && cluster == "main" {
-						id.Cluster = tc.identity
-					}
-					index := slices.IndexFunc(runs, func(run Rendered) bool { return run.ID == id })
-					assert.FatalIf(t, index < 0, "comparison side %v is missing", id)
-					run := runs[index]
-					assert.Equal(t, run.ID, id)
-					absent := !slices.Contains(present, cluster)
-					assert.Equal(t, run.Absent, absent)
-					assert.Equal(t, run.Orchestrator == nil, absent)
-					assert.NoError(t, run.Err)
-				}
+			assertPartitionUnion(t, runs, [2][]string{tc.before, tc.after}, tc.identity)
+
+			if tc.bootstrapOnly {
+				assertBootstrapPartitionDiff(t, roots, trees, runs)
 			}
 		})
+	}
+}
+
+func writePartitionBootstrap(t *testing.T, root string, clusters []string) {
+	t.Helper()
+	for _, cluster := range []string{"main", "test", "utility"} {
+		entry := "kubernetes/clusters/" + cluster
+		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [objects.yaml]\n")
+		document := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\ndata: {cluster: " + cluster + "}\n"
+		if slices.Contains(clusters, cluster) {
+			document += "---\n" + testutil.KustomizationYAML("bootstrap", "flux-system", "  path: ./"+entry+"\n")
+		}
+		testutil.WriteFile(t, root, entry+"/objects.yaml", document)
+	}
+}
+
+func assertPartitionUnion(t *testing.T, runs []Rendered, clusters [2][]string, identity manifest.ClusterID) {
+	t.Helper()
+	union := append(slices.Clone(clusters[0]), clusters[1]...)
+	slices.Sort(union)
+	union = slices.Compact(union)
+	for _, cluster := range union {
+		for side, present := range [][]string{clusters[0], clusters[1]} {
+			id := manifest.TreeID{
+				Cluster: manifest.ClusterID("kubernetes/clusters/" + cluster),
+				Side:    manifest.TreeSide(side),
+			}
+			if identity != "." && cluster == "main" {
+				id.Cluster = identity
+			}
+			index := slices.IndexFunc(runs, func(run Rendered) bool { return run.ID == id })
+			assert.FatalIf(t, index < 0, "comparison side %v is missing", id)
+			run := runs[index]
+			assert.Equal(t, run.ID, id)
+			absent := !slices.Contains(present, cluster)
+			assert.Equal(t, run.Absent, absent)
+			assert.Equal(t, run.Orchestrator == nil, absent)
+			assert.NoError(t, run.Err)
+		}
+	}
+}
+
+func assertBootstrapPartitionDiff(t *testing.T, roots [2]string, trees []Tree, runs []Rendered) {
+	t.Helper()
+	again, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	assert.Equal(t, len(again), len(runs))
+	for i := 0; i < len(runs); i += 2 {
+		pair := runs[i : i+2]
+		full := slices.Clone(pair)
+		for side, run := range pair {
+			if run.Absent {
+				continue
+			}
+			isolated, err := renderTreesForTest(t.Context(), t, []Tree{{
+				ID: run.ID, RepoRoot: roots[side], Path: filepath.Join(roots[side], string(run.ID.Cluster)),
+			}}, Config{Concurrency: 2})
+			assert.NoError(t, err)
+			assert.Equal(t, len(isolated), 1)
+			full[side] = isolated[0]
+		}
+		body := clusterDiffForTest(t, pair)
+		assert.Equal(t, string(body), string(clusterDiffForTest(t, full)))
+		assert.Equal(t, string(body), string(clusterDiffForTest(t, again[i:i+2])))
 	}
 }
 

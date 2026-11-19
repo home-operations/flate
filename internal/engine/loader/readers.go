@@ -351,11 +351,13 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 		return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 			return owner.Owner != (manifest.NamedResource{}) &&
 				(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted)
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index)).Admitted)
 		})
 	})
 	if rf.loader.documents.compact && !rf.loader.documents.eager &&
-		selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
+		selection.Root(
+			selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index),
+		).Admitted {
 		{
 			pValues := r.Productions
 			for pIndex := range pValues {
@@ -393,7 +395,9 @@ func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifes
 	compactParent := rf.loader.documents.compact && !rf.loader.documents.eager && kind.Parent
 	if compactParent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
-		!selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
+		!selection.Root(
+			selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index),
+		).Admitted {
 		var owner manifest.NamedResource
 		multiple := false
 		{
@@ -603,15 +607,14 @@ func (rf *readerFinalizer) observeChart(
 }
 
 func productionSources(productions []manifest.Production) []manifest.NamedResource {
-	sources := []manifest.NamedResource{manifest.BootstrapSourceID}
 	if len(productions) == 0 {
-		return sources
+		return []manifest.NamedResource{manifest.BootstrapSourceID}
 	}
-	sources = nil
+	var sources []manifest.NamedResource
 	for i := range productions {
 		source := productions[i].Source
 		if source == (manifest.NamedResource{}) {
-			source = manifest.BootstrapSourceID
+			continue
 		}
 		if !slices.Contains(sources, source) {
 			sources = append(sources, source)

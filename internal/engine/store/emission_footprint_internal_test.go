@@ -3,6 +3,7 @@ package store
 import (
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -149,4 +150,40 @@ func testRecordEmittedAcceptedFootprintCase(t *testing.T, testCaseInput *string,
 		"%s",
 		"stored inventory manufactured caller acceptance",
 	)
+}
+
+func TestEmission_EffectiveSource(t *testing.T) {
+	t.Parallel()
+	remote := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "remote",
+	}
+	for _, tc := range []struct {
+		name  string
+		owner manifest.BaseManifest
+		want  manifest.NamedResource
+	}{
+		{name: "application default", owner: &manifest.Kustomization{Name: "owner", Namespace: "apps"}, want: manifest.BootstrapSourceID},
+		{name: "declared unavailable source", owner: &manifest.Kustomization{Name: "owner", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: remote.Kind, Name: remote.Name}}, want: remote},
+		{name: "no application source", owner: &manifest.ResourceSet{Name: "owner", Namespace: "apps"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+			st.AddObject(tc.owner)
+			child := &manifest.ConfigMap{Name: "child", Namespace: "apps"}
+			_, _, output := st.GetEmission(tc.owner.Named())
+			output.Children, output.Complete = []Child{{Obj: child}}, true
+			st.RecordEmitted(tc.owner.Named(), &output, nil)
+			output.Finish()
+			assert.Diff(
+				t,
+				st.Productions(child.Named(), nil),
+				[]manifest.Production{{Owner: tc.owner.Named(), Source: tc.want}},
+			)
+		})
+	}
 }

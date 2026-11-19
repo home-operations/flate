@@ -24,6 +24,7 @@ import (
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
+	"github.com/home-operations/flate/internal/engine/tree"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -499,6 +500,60 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 		"changed input reused accepted output: %v",
 		changed,
 	)
+	borrowed := req.Source
+	withExtra, err := testutil.SplitDocs([]byte(cmYAML("after") + "---\n" + cmYAML("extra")))
+	assert.NoError(t, err)
+	for _, tc := range []struct {
+		name, initial, resources string
+		accepted, want           []map[string]any
+		count                    int
+	}{
+		{"added aggregate resource", "resources: [cm.yaml]\n", "resources: [cm.yaml, added.yaml]\n", changed, withExtra, 2},
+		{"removed aggregate resource", "resources: [cm.yaml, added.yaml]\n", "resources: [cm.yaml]\n", withExtra, changed, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			renderer := newTestTreeCache(t, t.TempDir())
+			request, prepared := req, preparation
+			request.Preparation = &prepared
+			overlay := tree.NewBuilder(borrowed.FS)
+			assert.NoError(t, overlay.AddFile("kustomization.yaml", []byte(tc.initial), 0o644))
+			assert.NoError(t, overlay.AddFile("added.yaml", []byte(cmYAML("extra")), 0o644))
+			inputFS, buildErr := overlay.Build()
+			assert.NoError(t, buildErr)
+			selected := *borrowed
+			selected.FS = inputFS
+			request.Source = &selected
+			accepted, acceptedReceipt, acceptedErr := testutil.RenderMaps(
+				Render(t.Context(), renderer, request, sourcecache.RetryConfig{}),
+			)
+			assert.NoError(t, acceptedErr)
+			assert.Diff(t, accepted, tc.accepted)
+			assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptanceForEmission(
+				spec.Named(), acceptedEmission(t, spec.Named(), acceptedReceipt, content), content,
+			)))
+			overlay = tree.NewBuilder(selected.FS)
+			assert.NoError(t, overlay.AddFile("kustomization.yaml", []byte(tc.resources), 0o644))
+			inputFS, buildErr = overlay.Build()
+			assert.NoError(t, buildErr)
+			updated := selected
+			updated.FS = inputFS
+			request.Source = &updated
+			output, renderReceipt, renderErr := testutil.RenderMaps(
+				Render(t.Context(), renderer, request, sourcecache.RetryConfig{}),
+			)
+			assert.NoError(t, renderErr)
+			assert.Diff(t, output, tc.want)
+			assert.Equal(t, len(output), tc.count)
+			assert.Equal(t, hasRenderField(output, "name", "extra"), tc.count == 2)
+			assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptanceForEmission(
+				spec.Named(), acceptedEmission(t, spec.Named(), renderReceipt, content), content,
+			)))
+			original, readErr := fs.ReadFile(borrowed.FS, "kustomization.yaml")
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(original), existingKustomization("cm.yaml"))
+		})
+	}
 }
 
 func TestRecordRender_AcceptanceRequired(t *testing.T) {

@@ -112,7 +112,9 @@ spec: {url: https://example.test/excluded.git}
 		if id == selected {
 			record.Authored.Namespace = "authored"
 		}
-		record.Productions = []manifest.Production{{Authored: record.Authored, Path: record.Path}}
+		record.Productions = []manifest.Production{
+			{Authored: record.Authored, Path: record.Path, Source: manifest.BootstrapSourceID},
+		}
 		index.Records[id] = record
 	}
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})

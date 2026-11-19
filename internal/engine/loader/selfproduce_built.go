@@ -2,6 +2,7 @@ package loader
 
 import (
 	"cmp"
+	"maps"
 	"path/filepath"
 	"slices"
 
@@ -15,27 +16,24 @@ func (l *Loader) prepareBuiltProductions(
 	prepared map[string][]store.Child,
 	preparedOwners map[manifest.NamedResource]manifest.NamedResource,
 ) {
-	var builtDirs []string
-	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-	for dir, doc := range l.documents.cache {
-		if doc.builtInput != nil && doc.builtInput.Support != nil && doc.builtInput.Support.Valid() {
-			builtDirs = append(builtDirs, dir)
+	owners := slices.SortedFunc(maps.Keys(l.builtBatches), manifest.NamedResource.Compare)
+	for _, owner := range owners {
+		batch := l.builtBatches[owner]
+		if batch.input.Support == nil || !batch.input.Support.Valid() {
+			continue
 		}
-	}
-	slices.Sort(builtDirs)
-	for _, dir := range builtDirs {
-		doc := l.documents.cache[dir]
+		dir := batch.input.Root
 		rel, _ := filepath.Rel(repoRoot, dir)
 		root := graphVisit{
 			root:   repoRoot,
 			dir:    filepath.ToSlash(rel),
-			owner:  doc.builtInput.Owner,
-			source: doc.builtInput.Source,
+			owner:  batch.input.Owner,
+			source: batch.input.Source,
 		}
 		l.recordBuiltOwner(&root)
 		var candidates []manifest.NamedResource
-		for i := range doc.built {
-			child := &doc.built[i]
+		for i := range batch.documents {
+			child := &batch.documents[i]
 			obj := child.Obj
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
@@ -46,7 +44,7 @@ func (l *Loader) prepareBuiltProductions(
 		builder := l.documents.read(dir).file
 		root.coordinate = l.fileCoordinate(cmp.Or(builder, dir))
 		sourceRoot := new(l.documents).mountedRoot(dir)
-		for name, exact := range doc.builtInput.Reads {
+		for name, exact := range batch.input.Reads {
 			file := filepath.Join(sourceRoot, filepath.FromSlash(name))
 			coordinate := l.fileCoordinate(file)
 			local := l.fileCoordinate(new(l.documents).localPath(file))
@@ -56,12 +54,13 @@ func (l *Loader) prepareBuiltProductions(
 				new(manifest.FileReader{Reader: root.owner, Source: root.source, Exact: exact}),
 			)
 		}
-		for i := range doc.built {
-			child := &doc.built[i]
+		for i := range batch.documents {
+			child := &batch.documents[i]
 			obj := child.Obj
-			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate {
+			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate &&
+				record.BuilderOwner == owner && record.Declaration == obj {
 				prepared[record.File] = append(prepared[record.File], *child)
-				preparedOwners[obj.Named()] = doc.builtInput.Owner
+				preparedOwners[obj.Named()] = batch.input.Owner
 				b.recordProducer(
 					&producerDeclaration{
 						obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root,

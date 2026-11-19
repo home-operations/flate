@@ -34,7 +34,6 @@ kind: Kustomization
 metadata: {name: cluster, namespace: apps}
 spec:
   path: ./entry
-  sourceRef: {kind: GitRepository, name: self}
   postBuild:
     substituteFrom: [{kind: Secret, name: vars}]
 `)

@@ -39,9 +39,9 @@ func (f *retryAdmissionFacts) AdmissionCandidate(id manifest.NamedResource) stor
 }
 
 func (f *retryAdmissionFacts) RootEvidence(
-	id manifest.NamedResource, reads *store.ReadSet, materialize bool,
+	id manifest.NamedResource, reads *store.ReadSet,
 ) selection.RootEvidence {
-	facts := f.Loader.RootEvidence(id, reads, materialize)
+	facts := f.Loader.RootEvidence(id, reads)
 	if child, known := f.children[id]; known {
 		facts.BuiltChild, facts.BuiltCurrent = child, true
 	}

@@ -265,40 +265,8 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 // Store returns the underlying object store.
 func (o *Orchestrator) Store() *store.Store { return o.store }
 
-// parentOf returns the structural parent, falling back to rendered ownership.
-// Structural ownership is immutable after discovery.
-func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
-		return record.Parent, true
-	}
-	return o.store.RenderedParent(id, o.index)
-}
-
 func (o *Orchestrator) discover(ctx context.Context) error {
-	gitFetcher := configureSourceFetchers(o.src, &o.cfg.Config)
-	o.ksc.Trees.SetGitBaseFetcher(
-		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-			artifact, err := gitFetcher.FetchRemoteBase(
-				ctx,
-				&git.RemoteBaseRequest{
-					URL:        request.URL,
-					Ref:        request.Ref,
-					Timeout:    request.Timeout,
-					Submodules: request.Submodules,
-					Work:       request.Work,
-				},
-				&sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
-			)
-			if artifact != nil {
-				for itemIndex := range artifact.Warnings {
-					warning := artifact.Warnings[itemIndex]
-
-					o.store.AddWarning(warning)
-				}
-			}
-			return artifact, err
-		},
-	)
+	configureSourceFetchers(o.src, &o.cfg.Config, o.ksc.Trees)
 	config := discovery.Config{
 		Cache:        o.cfg.Cache,
 		Work:         o.cfg.work.Scope(),
@@ -416,7 +384,7 @@ func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResou
 	return cleared
 }
 
-func configureSourceFetchers(controller *sourcectrl.Controller, cfg *Config) *git.Fetcher {
+func configureSourceFetchers(controller *sourcectrl.Controller, cfg *Config, trees *kustomize.TreeCache) {
 	gitFetcher := &git.Fetcher{
 		Network:         cfg.Network,
 		GitTransports:   cfg.GitTransports,
@@ -435,5 +403,27 @@ func configureSourceFetchers(controller *sourcectrl.Controller, cfg *Config) *gi
 			controller.Fetchers[kind] = fetcher
 		}
 	}
-	return gitFetcher
+	trees.SetGitBaseFetcher(
+		func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			artifact, err := gitFetcher.FetchRemoteBase(
+				ctx,
+				&git.RemoteBaseRequest{
+					URL:        request.URL,
+					Ref:        request.Ref,
+					Timeout:    request.Timeout,
+					Submodules: request.Submodules,
+					Work:       request.Work,
+				},
+				&sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry},
+			)
+			if artifact != nil {
+				for itemIndex := range artifact.Warnings {
+					warning := artifact.Warnings[itemIndex]
+
+					controller.Store.AddWarning(warning)
+				}
+			}
+			return artifact, err
+		},
+	)
 }

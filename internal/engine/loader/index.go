@@ -153,19 +153,9 @@ func (l *Loader) seedSourceAuthority() {
 // Retire releases admission readers while preserving completed owners' read tracking.
 func (l *Loader) Retire() {
 	l.constructionPurpose.Store(nil)
-	for root := range l.documents.cache {
-		doc := l.documents.cache[root]
-		if doc.builtInput == nil {
-			continue
-		}
-		if l.Options.Session == nil {
-			l.Store.Retire(doc.builtInput.Support)
-			doc.built, doc.builtInput = nil, nil
-			l.documents.cache[root] = doc
-		}
-	}
 	l.InputContent = nil
 	if l.Options.Session == nil {
+		l.retireBuiltBatches()
 		l.inputReaders, l.inputObjects = nil, nil
 		l.templateProjections = nil
 		for i := range l.producerFacts {
@@ -190,14 +180,24 @@ func (l *Loader) SweepPreparations() {
 	}
 	l.sweepProducerFacts()
 	l.sweepSourceBindings()
-	for root := range l.documents.cache {
-		doc := l.documents.cache[root]
-		if doc.builtInput != nil && !doc.builtInput.Support.Valid() {
-			l.Store.Retire(doc.builtInput.Support)
-			doc.built, doc.builtInput = nil, nil
-			l.documents.cache[root] = doc
+	removed := false
+	for owner, batch := range l.builtBatches {
+		if !batch.input.Support.Valid() {
+			l.Store.Retire(batch.input.Support)
+			delete(l.builtBatches, owner)
+			removed = true
 		}
 	}
+	if removed {
+		l.refreshNativeBuildFacts("", true)
+	}
+}
+
+func (l *Loader) retireBuiltBatches() {
+	for _, batch := range l.builtBatches {
+		l.Store.Retire(batch.input.Support)
+	}
+	clear(l.builtBatches)
 }
 
 func (l *Loader) sweepProducerFacts() {
@@ -245,6 +245,7 @@ func (l *Loader) Close() {
 		return
 	}
 	files := l.documents.cache
+	l.retireBuiltBatches()
 	l.Retire()
 	for root := range files {
 		doc := files[root]
@@ -252,9 +253,6 @@ func (l *Loader) Close() {
 			for i := range doc.objects {
 				manifest.ReleaseDoc(doc.objects[i].Doc)
 			}
-		}
-		if doc.builtInput != nil {
-			l.Store.Retire(doc.builtInput.Support)
 		}
 		if l.catalog != nil {
 			files[root] = document{
@@ -366,7 +364,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 		})
 		l.scopes.claims = claims
 	}
-	own := l.indexClaimOwners()
+	l.indexClaimOwners()
 	parents := l.contextualParents()
 	//nolint:gocritic // The iterator supplies a value snapshot that this loop updates before publication.
 	for id, r := range l.Index.Files() {
@@ -385,8 +383,9 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 		case kind.Parent && owner != (manifest.NamedResource{}):
 			r.Parent = owner
 		case kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})):
-			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
-				r.Parent = parent
+			for owners := range l.Index.ClaimOwners(r.File, manifest.NamedResource{}, id, nil) {
+				r.Parent = owners[0]
+				break
 			}
 		}
 		if kind.Structural {
@@ -427,6 +426,7 @@ func (l *Loader) completeIndexInputs(repoRoot string) error {
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
+	l.Index.Components = new(l.documents).claimComponentIndex()
 	return l.captureNativeRoots(repoRoot)
 }
 
@@ -493,9 +493,8 @@ func (l *Loader) indexDeclarationSource(
 	return declarations, nil
 }
 
-func (l *Loader) indexClaimOwners() map[manifest.NamedResource]map[string]struct{} {
+func (l *Loader) indexClaimOwners() {
 	l.Index.Readers = map[string][]manifest.FileReader{}
-	own := map[manifest.NamedResource]map[string]struct{}{}
 	for prefix, ids := range l.Index.Claims {
 		ids = slices.DeleteFunc(ids, func(id manifest.NamedResource) bool {
 			r, _ := l.Index.Lookup(id)
@@ -506,17 +505,7 @@ func (l *Loader) indexClaimOwners() map[manifest.NamedResource]map[string]struct
 			continue
 		}
 		l.Index.Claims[prefix] = ids
-		for _, id := range ids {
-			if _, indexed := l.Index.Lookup(id); !indexed {
-				continue
-			}
-			if own[id] == nil {
-				own[id] = map[string]struct{}{}
-			}
-			own[id][prefix] = struct{}{}
-		}
 	}
-	return own
 }
 
 func (l *Loader) markCompleteSources() {

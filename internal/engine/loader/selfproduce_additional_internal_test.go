@@ -488,7 +488,7 @@ func runEmissionParentCase(t *testing.T, scenario *emissionParentCase, ids *emis
 		err := fresh.FinalizeIndex(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	assertIndexForTest(t, *fresh.Index, snapshot)
+	assertIndexForTest(t, fresh.Index, &snapshot)
 }
 
 type emissionParentInput struct {

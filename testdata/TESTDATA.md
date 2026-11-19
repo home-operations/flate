@@ -16,6 +16,24 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`rootless-aggregate/` covers the requested-path aggregate through `cli.Run`.
+Its cases retain plain files, native transformations, authored builder authority, and incompatible package errors.
+Each case compares complete streams and exit codes twice with two workers and one reused private cache.
+The expectations retain the handwritten regression assertions and never derive from command output.
+
+| Case | Behavior |
+| --- | --- |
+| `rootless-aggregate/plain-files` | Retain one uncovered plain manifest. |
+| `rootless-aggregate/compatible-packages-and-plain-files` | Retain namespace, name, replacement, and plain-file output. |
+| `rootless-aggregate/authored-builder-authority` | Let the authored builder exclude the unrelated package. |
+| `rootless-aggregate/incompatible-packages` | Reject the aggregate with exit 1 and the `-p` diagnostic. |
+| `rootless-aggregate/generator-only-package` | Include the complete generated ConfigMap and its plain sibling. |
+| `rootless-aggregate/generator-only-package-diff` | Retain the generator literal edit and generated name change in changed-only output. |
+| `rootless-aggregate/namespace-dependencies` | Resolve dependencies across namespace packages in build and changed-only output. |
+| `rootless-aggregate/ancestor-bootstrap` | Retain sibling-target applications, their changed output, and complete blocked-input diagnostics. |
+| `rootless-aggregate/ancestor-bootstrap-indexed-producer` | Retain the indexed producer and its reader when the enclosing application is blocked. The diff allows the missing input and shows the reader value change. |
+
+
 `discovery-entry-reuse-nil-source/` covers issue #1588 through `cli.Run`.
 Two committed cluster trees use origin `https://github.com/example/cluster.git`.
 The offline external repository contains tags `6.5.0` and `6.5.1` with different Deployment images.
@@ -1550,9 +1568,15 @@ Named symlink operations supply their synthetic paths to the catalog without req
 
 ### multi-cluster
 
-`multi-cluster/root-partition`: Repository-root discovery retains three colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
+`multi-cluster/root-partition`: Repository-root discovery uses three explicit bootstrap roots and retains colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
 
 `multi-cluster/one-sided-diff`: The removed utility cluster has an unsuppressed removal, main has only its own change, and test stays unchanged; independent selected entries establish the corresponding payloads.
+
+Each fixture entry includes a FluxInstance that names its own path and repository URL.
+Both current and baseline trees retain this bootstrap evidence.
+The build-all expectation adds these three authored FluxInstance manifests.
+Every existing manifest, cluster boundary, label, removal, and named-selection expectation remains unchanged.
+These expected manifests come from the fixture definitions, not renderer output.
 
 
 ## Source-backed scope layout companions

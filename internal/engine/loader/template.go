@@ -41,9 +41,6 @@ func (l *Loader) templateProductions(
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
 			source := production.Source
-			if source == (manifest.NamedResource{}) {
-				source = manifest.BootstrapSourceID
-			}
 			input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			if input == nil || input.OriginPath(input.LocalPath) != occurrence.Declaration.Source {
 				continue

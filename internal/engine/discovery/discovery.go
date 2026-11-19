@@ -91,7 +91,10 @@ type Session struct {
 	entryBuilderInput   *store.SourceArtifact
 	entryBuilderPath    string
 	entryBuilder        bool
+	aggregate           bool
+	entryPackages       []*plannedPackage
 	planner             *entryPlanner
+	packages            []loader.PackageEvidence
 	planLoaded          bool
 	pendingSources      []manifest.NamedResource
 	sourceGroups        map[manifest.NamedResource]*entrySourceGroup
@@ -251,19 +254,29 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 	return admission
 }
 
-type declarationPreparation struct {
+type declarationRender struct {
 	preparation kustomize.Preparation
-	complete    bool
-	err         error
-	work        *manifest.RenderWork
 	owner       *manifest.Kustomization
 	source      *store.SourceArtifact
 	children    []store.Child
 	receipt     *manifest.RenderReceipt
 	content     any
-	registered  bool
-	support     store.ReadSet
 	warnings    []manifest.Warning
+}
+
+type declarationPreparation struct {
+	declarationRender
+
+	complete   bool
+	err        error
+	work       *manifest.RenderWork
+	registered bool
+	support    store.ReadSet
+}
+
+type plannedPackage struct {
+	render   declarationRender
+	register bool
 }
 
 func (p *declarationPreparation) matches(
@@ -308,11 +321,21 @@ func newDiscoverer(config *Config) *Session {
 		return d
 	}
 	if !cfg.Entry.matches(input, cfg.Path) {
+		if input == cfg.Entry.Input && cfg.Path == cfg.Entry.Path {
+			d.cfg.Entry = cfg.Entry
+			d.aliasViews = maps.Clone(prepared.aliasViews)
+			if cfg.Projections == nil {
+				l.Options.Projections = prepared.projections
+			}
+			d.aggregate = cfg.Entry.aggregate
+		}
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
+	d.entryPackages = prepared.packages
 	d.aliasViews = maps.Clone(prepared.aliasViews)
 	d.cfg.Entry = cfg.Entry
+	d.aggregate = cfg.Entry.aggregate
 	return d
 }
 
@@ -325,6 +348,10 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	if err := d.loadEntryInput(ctx, l, &total); err != nil {
 		return err
 	}
+	registeredPackage, err := d.preparePlannedPackages(ctx)
+	if err != nil {
+		return err
+	}
 	// Projection can change a source reference, which MUST resolve before its path enters scope construction.
 	l.PreferExisting = true
 	var pending []sourceExpansion
@@ -333,17 +360,8 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			return err
 		}
 		rounds++
-		if err := l.Admit(ctx, repoRoot); err != nil {
+		if err := d.admitEntrySources(ctx, repoRoot, registeredPackage); err != nil {
 			return err
-		}
-		_, sourceErr := d.resolveEntrySources(ctx, false)
-		switch {
-		case sourceErr != nil:
-			return sourceErr
-		case d.hasPins:
-			if err := d.discardPinnedWorkingTreeFiles(ctx, repoRoot); err != nil {
-				return err
-			}
 		}
 		kustomizations := d.loader.Kustomizations()
 		pending = d.enqueueExpansions(kustomizations, pending[:0])
@@ -376,6 +394,7 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		}
 	}
 	d.loading, l.PreferExisting = false, false
+	d.entryPackages = nil
 	if warning := d.resolvedSources.aliasWarning(); warning != nil {
 		d.cfg.Store.AddWarning(*warning)
 	}
@@ -390,6 +409,25 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		"source_root",
 		repoRoot,
 	)
+	return nil
+}
+
+func (d *Session) admitEntrySources(ctx context.Context, repoRoot string, registeredPackage bool) error {
+	if err := d.loader.Admit(ctx, repoRoot); err != nil {
+		return err
+	}
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return err
+	}
+	if d.hasPins {
+		if err := d.discardPinnedWorkingTreeFiles(ctx, repoRoot); err != nil {
+			return err
+		}
+	}
+	if registeredPackage {
+		_, err := d.loader.Packages(ctx)
+		return err
+	}
 	return nil
 }
 
@@ -418,6 +456,13 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	if err := d.prepareProducer(ctx, ks, sourceID, nil); err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
+		}
+		if d.aggregate {
+			err = manifest.NewError(
+				manifest.ErrInput,
+				fmt.Errorf("requested path %q (select an input path for one entry): %w", d.cfg.Path, err),
+				"",
+			)
 		}
 		d.binding.Failure = err
 		slog.Debug("discovery: declaration preparation deferred", "err", err)
@@ -590,6 +635,11 @@ func (d *Session) entryCandidateReady(
 	sourceID, _, err := kustomize.SourceInput(reads, candidate)
 	if err != nil {
 		return len(candidate.DependsOn) == 0
+	}
+	// An independent bootstrap entry stays eligible even when its preparation fails.
+	if !hasEntryPrerequisites(candidate) &&
+		sourceID == reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) {
+		return true
 	}
 	prepared, err := d.prepareDocuments(ctx, candidate, sourceID, nil)
 	if err != nil {

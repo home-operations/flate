@@ -1,0 +1,8 @@
+resources: [cm.yaml]
+namespace: transformed
+namePrefix: first-
+replacements:
+- source: {kind: ConfigMap, name: settings, fieldPath: data.value}
+  targets:
+  - select: {kind: ConfigMap, name: settings}
+    fieldPaths: [data.copy]

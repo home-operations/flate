@@ -44,8 +44,14 @@ func (q *rootQuery) promote(
 		return false, nil
 	}
 	children, err := Promote(ctx, l.Store, id, PromoteOptions{
-		Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File},
-		Reads:  reads, Documents: l.PromotionDocuments(id),
+		Record: manifest.Production{
+			Authored: record.Authored,
+			Path:     record.Path,
+			File:     record.File,
+			Source:   manifest.BootstrapSourceID,
+		},
+		Reads:     reads,
+		Documents: l.PromotionDocuments(id),
 	})
 	if err != nil {
 		return false, err

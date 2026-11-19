@@ -31,8 +31,6 @@ type ReadSet struct {
 	localRegistered    bool
 	spareRegistrations []registration
 	localDetails       inputDetails
-	localProductions   productionCapture
-	spareProductions   []productionCapture
 	spareDetails       []inputDetails
 	byID               map[manifest.NamedResource]*Input
 	originHead         *registrationHead
@@ -53,6 +51,7 @@ type Input struct {
 	details         atomic.Pointer[inputDetails]
 	production      atomic.Pointer[registration]
 	productions     atomic.Pointer[productionCapture]
+	productionData  productionCapture
 	producer        uint64
 	settled         bool
 	watchProducer   bool
@@ -119,15 +118,14 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.localRegistered = false
 	r.spareRegistrations = nil
 	r.localDetails = inputDetails{}
-	r.localProductions = productionCapture{}
 	r.local.details.Store(&r.localDetails)
-	r.local.productions.Store(&r.localProductions)
+	r.local.productions.Store(&r.local.productionData)
 	clear(inputs)
 	r.store, r.id, r.capacity = s, id, len(inputs)
 	r.inputs, r.last, r.spare, r.warnings, r.produced = nil, nil, nil, nil, nil
 	r.pendingProducers = nil
 	r.advisories = AdvisoryEvidence{}
-	r.spareDetails, r.spareProductions, r.byID = nil, nil, nil
+	r.spareDetails, r.byID = nil, nil
 	r.originHead, r.expected = nil, [2]*acceptedAssessment{}
 	r.acceptedRecord = acceptedAssessment{}
 	r.acquisition, r.hasAcquisition = AcquisitionPending, false
@@ -414,7 +412,7 @@ func (r *ReadSet) IncomingProductions(child Child, index *manifest.DiscoveryInde
 }
 
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
-	captured := r.productionDetails(input)
+	captured := input.productionDetails()
 	if captured.items == nil {
 		captured.index = index
 		result := productionResult{reads: r, captureTarget: true, watch: true}

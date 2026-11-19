@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -82,11 +83,12 @@ func TestRun_LazySelectionLifetime(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeRunCluster(t, root, "", "retained")
+			path := ""
 			switch stage {
 			case "partial_failure":
 				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [missing.yaml]\n")
 			case "discovery_failure":
-				testutil.WriteFile(t, root, "flux.yaml", "apiVersion: [\n")
+				path = filepath.Join(root, "missing")
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -95,7 +97,7 @@ func TestRun_LazySelectionLifetime(t *testing.T) {
 			}
 			run, err := RenderTrees(
 				ctx,
-				[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}},
+				[]Tree{{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root, Path: path}},
 				Config{Concurrency: 2, CacheDir: t.TempDir(), RecordWork: true},
 			)
 			assert.FatalIf(t, run == nil, "lost %s invocation: %v", stage, err)

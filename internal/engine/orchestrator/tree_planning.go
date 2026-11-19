@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/change"
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/discovery"
+	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -118,8 +119,10 @@ func (r *Invocation) planTree(
 	declarations := loader.New(st)
 	defer declarations.Close()
 	declarations.Options.Missing = cfg.missing
+	trees := kustomize.NewTreeCache(cfg.Cache, inputs, r.budget)
+	defer trees.Close()
 	session, err := discovery.Begin(ctx, discovery.Config{
-		Store: st, Cache: cfg.Cache, Loader: declarations,
+		Store: st, Cache: cfg.Cache, Loader: declarations, Trees: trees,
 		Work: tree.work.Scope(), Projections: cfg.projections,
 		Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
 		Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
@@ -134,7 +137,7 @@ func (r *Invocation) planTree(
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindBucket, manifest.KindOCIRepository, manifest.KindHelmChart} {
 		controller.Fetchers[kind] = nil
 	}
-	configureSourceFetchers(controller, cfg)
+	configureSourceFetchers(controller, cfg, trees)
 	planning := Orchestrator{
 		store:     st,
 		loader:    declarations,

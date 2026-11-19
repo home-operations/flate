@@ -120,8 +120,8 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 	}
 	snapshot := snapshotIndexForFilter(l.Index)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	assertFilterIndexForTest(t, *l.Index, snapshot)
-	assertFilterIndexForTest(t, *build().Index, snapshot)
+	assertFilterIndexForTest(t, l.Index, &snapshot)
+	assertFilterIndexForTest(t, build().Index, &snapshot)
 }
 
 func readerLoaderForFilter(st *store.Store, files map[manifest.NamedResource]string) *loader.Loader {

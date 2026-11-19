@@ -16,7 +16,18 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			root := b.TempDir()
 			for _, dir := range []string{"alpha", "omega"} {
-				testutil.WriteFile(b, root, dir+"/kustomization.yaml", tc.projection+"resources: [objects.yaml]\n")
+				testutil.WriteFile(
+					b,
+					root,
+					dir+"/kustomization.yaml",
+					tc.projection+"resources: [objects.yaml, root.yaml]\n",
+				)
+				testutil.WriteFile(
+					b,
+					root,
+					dir+"/root.yaml",
+					testutil.KustomizationYAML("root", "apps", "  path: ./"+dir+"\n"),
+				)
 				testutil.WriteFile(
 					b,
 					root,
@@ -28,7 +39,6 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 			for b.Loop() {
 				entries, err := Plan(b.Context(), Config{Path: root})
 				assert.NoError(b, err)
-				// The owner ruling restores #1379's multi-entry benchmark assertions.
 				assert.FatalIf(b, len(entries) != 2, "entries: got %d, want 2", len(entries))
 				for i, dir := range []string{"alpha", "omega"} {
 					assert.Equal(b, entries[i].Path, filepath.Join(root, dir))

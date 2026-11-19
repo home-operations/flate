@@ -140,14 +140,15 @@ func (c *admissionClosure) preparedObject(id manifest.NamedResource) store.Child
 
 func (c *admissionClosure) capturedRoot(id manifest.NamedResource) *RootEvidence {
 	if facts, known := c.capturedRoots[id]; known {
-		return facts
+		return &facts.physical
 	}
-	facts := c.facts.RootEvidence(id, c.proposal.reads, false)
+	captured := &capturedRootEvidence{physical: c.facts.RootEvidence(id, c.proposal.reads)}
+	captured.physical.Captured = true
 	if c.capturedRoots == nil {
-		c.capturedRoots = make(map[manifest.NamedResource]*RootEvidence)
+		c.capturedRoots = make(map[manifest.NamedResource]*capturedRootEvidence)
 	}
-	c.capturedRoots[id] = &facts
-	return &facts
+	c.capturedRoots[id] = captured
+	return &captured.physical
 }
 
 func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {

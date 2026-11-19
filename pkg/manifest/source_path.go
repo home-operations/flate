@@ -1,8 +1,8 @@
 package manifest
 
-// SourcePath returns the resolved source identity and authored path, including an empty path.
+// SourcePath MUST preserve the authored path; SourceID retains the authored reference.
 func (k *Kustomization) SourcePath() (NamedResource, string, bool) {
-	return k.SourceID(), k.Path, true
+	return k.EffectiveSourceID(), k.Path, true
 }
 
 // SourcePath reports no source-qualified path for this manifest.

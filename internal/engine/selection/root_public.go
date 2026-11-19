@@ -1,9 +1,7 @@
 package selection
 
 import (
-	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -23,7 +21,7 @@ func Root(facts RootEvidence) RootResult {
 	initialOccurrence := result.Occurrence.Declaration
 	if facts.Captured {
 		if result.Occurrence.Declaration == (OccurrenceID{}) {
-			result.Independent = result.Admitted
+			result.Independent = result.Admitted || preparedCandidate(&facts)
 		}
 		needsOwners := !facts.Stale && result.Independent && !facts.Supplied && !facts.Scope.NativeEntry
 		var owner manifest.NamedResource
@@ -35,21 +33,22 @@ func Root(facts RootEvidence) RootResult {
 		supportRoot(&facts, &result, owner, accepted)
 		result.NeedsOwnerSupport = needsOwners
 	}
-	result.InitialAdmitted = facts.StaticRecord != nil && initialAdmitted
-	result.InitialIndependent = facts.StaticRecord != nil && initialIndependent
-	if result.Occurrence.Declaration == (OccurrenceID{}) && !facts.Needed && !facts.Supplied &&
+	initialLocated := facts.StaticRecord != nil && initialOccurrence != (OccurrenceID{})
+	result.InitialAdmitted = initialLocated && initialAdmitted
+	result.InitialIndependent = initialLocated && initialIndependent
+	preparedAuthored := facts.Scope.Prepared && facts.Record.Authored != (manifest.NamedResource{})
+	runtimeRoot := facts.Needed && !preparedAuthored || localEntryApplication(&facts.Scope)
+	if result.Occurrence.Declaration == (OccurrenceID{}) && !runtimeRoot && !facts.Supplied &&
 		!facts.Scope.NativeEntry {
 		result.Entry = false
 	}
-	result.InitialEntry = facts.Scope.NativeEntry ||
-		result.InitialIndependent && initialOccurrence != (OccurrenceID{})
+	result.InitialEntry = facts.Scope.NativeEntry || result.InitialIndependent
 	result.Construction = rootConstruction(facts.Native)
 	return result
 }
 
 func publicRootOwner(facts *RootEvidence, occurrence OccurrenceID) manifest.NamedResource {
 	id, record := facts.Identity, &facts.Record
-	native := record.Parent.ReportHidden() && record.Parent == record.BuilderOwner && facts.Scope.Prepared
 	productions := facts.Productions
 	if occurrence != (OccurrenceID{}) {
 		productions = facts.LiveProductions
@@ -60,7 +59,7 @@ func publicRootOwner(facts *RootEvidence, occurrence OccurrenceID) manifest.Name
 		if owner == (manifest.NamedResource{}) && facts.StaticOwner {
 			owner = production.Owner
 		}
-		if native && owner == record.BuilderOwner {
+		if preparedRootBuilder(facts, owner) {
 			continue
 		}
 		if owner != (manifest.NamedResource{}) && owner != id && !publicRootPeer(facts, owner) {
@@ -79,6 +78,15 @@ func publicRootOwner(facts *RootEvidence, occurrence OccurrenceID) manifest.Name
 	return manifest.NamedResource{}
 }
 
+func preparedRootBuilder(facts *RootEvidence, owner manifest.NamedResource) bool {
+	return preparedNativeBuilder(facts) && owner == facts.Record.BuilderOwner
+}
+
+func preparedNativeBuilder(facts *RootEvidence) bool {
+	return facts.Scope.Prepared && facts.Record.Parent.ReportHidden() &&
+		facts.Record.Parent == facts.Record.BuilderOwner
+}
+
 func coveringRoot(facts *RootEvidence, candidate *RootCoveringOwner) bool {
 	if candidate.Object == nil || candidate.Input == nil || candidate.Path == "" ||
 		!slices.ContainsFunc(candidate.Productions, func(p manifest.Production) bool {
@@ -91,30 +99,7 @@ func coveringRoot(facts *RootEvidence, candidate *RootCoveringOwner) bool {
 		!candidate.Object.EmissionPolicy().MatchesNamespace(facts.Identity) {
 		return false
 	}
-	return rootCoversPath(facts, candidate)
-}
-
-func rootCoversPath(facts *RootEvidence, candidate *RootCoveringOwner) bool {
-	if candidate.Input == nil || facts.Record.Path == "" {
-		return false
-	}
-	source := facts.DeclarationSource
-	if source == "" {
-		source = facts.Occurrence.Declaration.Source
-	}
-	if source == "" {
-		source = facts.Sources[0].Origin
-	}
-	if source != candidate.Input.LocalPath && source != candidate.Root {
-		return false
-	}
-	file := candidate.Input.OriginPath(facts.Record.Path)
-	return containsRoot(candidate.Root, candidate.Path) && containsRoot(candidate.Path, file)
-}
-
-func containsRoot(root, target string) bool {
-	relative, err := filepath.Rel(root, target)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+	return candidate.covering
 }
 
 func publicRootPeer(facts *RootEvidence, owner manifest.NamedResource) bool {
@@ -122,7 +107,8 @@ func publicRootPeer(facts *RootEvidence, owner manifest.NamedResource) bool {
 	if id.KindInfo().Parent && rootAncestor(facts, owner) {
 		return true
 	}
-	if !id.KindInfo().Structural || !facts.Scope.Application || !facts.Scope.LocalApplication {
+	if !id.KindInfo().Structural || !facts.Scope.Application || !facts.Scope.LocalApplication ||
+		facts.Scope.Claim == "" {
 		return false
 	}
 	group := facts.Scope.Claims[facts.Scope.Claim]
@@ -176,13 +162,10 @@ func acceptedRootEntry(facts *RootEvidence) bool {
 }
 
 func acceptedRootApplication(facts *RootEvidence, candidate *RootCoveringOwner) bool {
-	if !facts.Incoming && slices.ContainsFunc(candidate.Output.Children, func(child store.Child) bool {
-		return manifest.Equal(child.Obj, facts.Declaration)
-	}) {
-		return true
-	}
 	if !candidate.Replaced {
-		return false
+		return !facts.Incoming && slices.ContainsFunc(candidate.Output.Children, func(child store.Child) bool {
+			return manifest.Equal(child.Obj, facts.Declaration)
+		})
 	}
 	application := candidate.Applications[facts.Identity].Application
 	if application == "" {
@@ -222,9 +205,15 @@ func supportRoot(facts *RootEvidence, evidence *RootResult, owner manifest.Named
 	evidence.Independent = supported
 	evidence.Entry = supported || accepted
 	if supported {
-		evidence.Admitted = true
+		evidence.Admitted = evidence.Admitted || !preparedCandidate(facts) || facts.Needed
 		evidence.Owner = manifest.NamedResource{}
 	} else if !evidence.Entry {
 		evidence.Occurrence = OccurrenceFacts{}
 	}
+}
+
+func preparedCandidate(facts *RootEvidence) bool {
+	record := &facts.Record
+	return preparedNativeBuilder(facts) && facts.Scope.Candidate && record.Path == "" &&
+		record.Authored != (manifest.NamedResource{})
 }

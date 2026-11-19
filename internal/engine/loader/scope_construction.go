@@ -220,6 +220,7 @@ func (l *Loader) publishScopeClaims(repoRoot string) {
 		return repoRoot == "" || !input.scanRequired || view.ready
 	})
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
+	l.Index.Components = new(l.documents).claimComponentIndex()
 	for _, claim := range l.scopes.claims {
 		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
 	}

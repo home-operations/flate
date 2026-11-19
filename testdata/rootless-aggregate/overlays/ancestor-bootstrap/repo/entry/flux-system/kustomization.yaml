@@ -1,0 +1,7 @@
+resources: [sync.yaml]
+patches:
+- target: {kind: Kustomization, name: flux-system}
+  patch: |-
+    - op: add
+      path: /spec/prune
+      value: true

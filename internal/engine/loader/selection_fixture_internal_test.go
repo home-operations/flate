@@ -137,7 +137,7 @@ func rootAtForTest(l *Loader, object manifest.BaseManifest, file string) selecti
 	if !known || record.Path != file {
 		return selection.RootEvidence{}
 	}
-	return l.RootEvidence(object.Named(), nil, true)
+	return rootEvidenceForTest(l, object.Named(), nil)
 }
 
 func standaloneRootsForTest(t *testing.T, l *Loader, root string) []string {
@@ -154,4 +154,22 @@ func standaloneRootsForTest(t *testing.T, l *Loader, root string) []string {
 		}
 	}
 	return paths
+}
+
+func rootEvidenceForTest(l *Loader, id manifest.NamedResource, reads *store.ReadSet) selection.RootEvidence {
+	facts := l.RootEvidence(id, reads)
+	if reads != nil {
+		facts = selection.CaptureRoot(facts, reads, l.Index)
+	} else if l.frozen {
+		facts = selection.CaptureRoot(facts, l.Store, l.Index)
+	}
+	return facts
+}
+
+func rootCatalogEvidenceForTest(c *Catalog, id manifest.NamedResource, reads *store.ReadSet) selection.RootEvidence {
+	facts := c.RootEvidence(id, reads)
+	if reads != nil {
+		facts = selection.CaptureRoot(facts, reads, c.index)
+	}
+	return facts
 }

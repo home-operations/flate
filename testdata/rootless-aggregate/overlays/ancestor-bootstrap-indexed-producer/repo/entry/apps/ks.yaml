@@ -1,0 +1,14 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  path: ./suite
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
+  postBuild:
+    substituteFrom: [{kind: Secret, name: unavailable-values}]
+  patches:
+    - target: {kind: ConfigMap}
+      patch: |
+        - op: add
+          path: /metadata/labels
+          value: {from-parent: "true"}

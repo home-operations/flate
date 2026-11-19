@@ -173,10 +173,6 @@ linters:
           list-mode: strict
           files: ["**/internal/engine/tree/**", "!$test"]
           allow: ["$gostd"]
-        claimpath-stdlib-only:
-          list-mode: strict
-          files: ["**/internal/core/claimpath/**", "!$test"]
-          allow: ["$gostd"]
     embeddedstructfieldcheck:
       forbid-mutex: true
     errcheck:

@@ -364,7 +364,7 @@ func (s *Store) staticProductionLocked(
 			} else if slot != nil && slot.hidden.Load() {
 				continue
 			}
-			if slot == nil || !slot.current.Load().shadows(new(s.contributionBinding(p.Owner))) {
+			if slot == nil || !slot.current.Load().shadows(s.coverage[p.Owner].binding(p.Source)) {
 				return true
 			}
 		}
@@ -525,15 +525,15 @@ func (s *Store) propagateReachabilityLocked(region objectRegion, queueValue *[]i
 		if e != nil {
 			e.visitEntryTargets(add)
 		}
-		if e.shadows(new(s.contributionBinding(id))) {
-			continue
-		}
 		if c := s.coverage[id]; c != nil {
 			{
 				fValues4 := c.records
 				for fIndex4 := range fValues4 {
 					f := fValues4[fIndex4]
-					if s.shardFor(f.id).cells[f.id].static != nil {
+					if s.shardFor(f.id).cells[f.id].static != nil &&
+						slices.ContainsFunc(f.record.Productions, func(p manifest.Production) bool {
+							return p.Owner == id && !e.shadows(c.binding(p.Source))
+						}) {
 						add(f.id)
 					}
 				}

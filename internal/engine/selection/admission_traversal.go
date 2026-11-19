@@ -272,8 +272,7 @@ func (c *admissionClosure) walkObject(
 	if !evidence.known() {
 		parent = cmp.Or(root.Owner, parent)
 	}
-	needsParent := !evidence.independent || !parent.ReportHidden()
-	if !bootstrap && needsParent && evidence.allowsOwner(parent) {
+	if !bootstrap && evidence.allowsOwner(parent) {
 		c.add(parent, admissionRole{needed: true, ordinary: true, dirty: c.states[parent].changed})
 	}
 	pathBearing := false
@@ -516,7 +515,10 @@ func (c *admissionClosure) hydrateDeclaration(
 		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.rootEvidence(id).Admitted) {
 		return obj, nil
 	}
-	if !evidence.independent && c.role(id).selected && c.context.NativeEntry {
+	physical := *c.capturedRoot(id)
+	physical.Captured = false
+	// Prepared support MUST NOT replace physical membership before the entry producer publishes.
+	if !Root(physical).Independent && c.role(id).selected && c.context.NativeEntry {
 		path, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
 			Named()

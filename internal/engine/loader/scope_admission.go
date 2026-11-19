@@ -3,7 +3,6 @@ package loader
 import (
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -66,14 +65,11 @@ func (l *Loader) visitRootScopes(repoRoot string, kss []store.Child) {
 	}
 	for _, dir := range l.scopes.roots {
 		v := graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource}
-		if l.anchorRoot(repoRoot, dir) &&
-			slices.ContainsFunc(
-				l.scopes.claims,
-				func(claim manifest.KSClaim) bool { return strings.HasPrefix(dir+"/", claim.Prefix) },
-			) {
-			l.visitScope(new(v), true)
-		} else {
-			l.visitScope(new(v), false)
+		claimed := false
+		for range l.Index.ClaimOwners(dir+"/", manifest.BootstrapSourceID, manifest.NamedResource{}, nil) {
+			claimed = true
+			break
 		}
+		l.visitScope(new(v), l.anchorRoot(repoRoot, dir) && claimed)
 	}
 }

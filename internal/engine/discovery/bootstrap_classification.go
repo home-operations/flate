@@ -315,7 +315,7 @@ func (d *Session) addLoadedSources(
 			return err
 		}
 		id := child.Obj.Named()
-		evidence := d.loader.RootEvidence(id, nil, true)
+		evidence := selection.CaptureRoot(d.loader.RootEvidence(id, nil), d.loader.Store, d.loader.Index)
 		if evidence.Occurrence.RequiresBuild && evidence.Record.Builder == "" {
 			continue
 		}
@@ -362,7 +362,7 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]*en
 			}) {
 			continue
 		}
-		evidence := d.loader.RootEvidence(id, nil, true)
+		evidence := selection.CaptureRoot(d.loader.RootEvidence(id, nil), d.loader.Store, d.loader.Index)
 		prepared := !evidence.Occurrence.RequiresBuild || evidence.Record.Builder != ""
 		eager := d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) &&
 			evidence.Scope.EntryKustomize && evidence.Scope.Eligibility != selection.RootInactive && prepared
@@ -385,7 +385,7 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 			continue
 		}
 
-		application, valid := manifest.ApplicationFor(partitionObject(&child))
+		application, valid := manifest.ApplicationFor(occurrenceObject(&child))
 		if valid {
 			group := entrySourceGroupFor(groups, application.Source)
 			group.entry = group.entry || d.admission().appliesEntry(&application)
@@ -400,7 +400,7 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 		group := groups[ref]
 		declared := group != nil && group.object != nil
 		if allowMissing || declared || d.cfg.Store.GetObject(ref) != nil {
-			reference := sourceReference(partitionObject(&child), ref)
+			reference := sourceReference(occurrenceObject(&child), ref)
 			addEntrySource(groups, ref, child.Identity, &reference)
 		}
 	}

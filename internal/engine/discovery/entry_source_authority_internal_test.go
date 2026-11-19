@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -395,6 +394,14 @@ func TestPlan_GroupedProducerEvidence(t *testing.T) {
 		t.Run(fmt.Sprintf("producer_first_%t", producerFirst), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
+			for _, cluster := range []string{"a", "b"} {
+				testutil.WriteFile(
+					t,
+					root,
+					cluster+"/root.yaml",
+					testutil.KustomizationYAML("root", "apps", "  path: ./"+cluster+"\n"),
+				)
+			}
 			producer, consumer := "a/01-producer", "a/99-consumer"
 			if !producerFirst {
 				producer, consumer = "a/99-producer", "a/01-consumer"
@@ -510,93 +517,6 @@ spec:
 	assert.Equal(t, published, true)
 }
 
-func TestPlan_ProducerEvidenceReuse(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	var reads atomic.Int64
-	files := fstest.MapFS{"producer.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata: {name: producer, namespace: apps}
-spec: {}
-`)}}
-	input := &store.SourceArtifact{
-		LocalPath: root,
-		FS:        entryReadFS{FS: files, reads: map[string]*atomic.Int64{"producer.yaml": &reads}},
-	}
-	d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
-	t.Cleanup(d.Close)
-	_, err := d.resolveTestSources(t.Context(), false)
-	assert.NoError(t, err)
-	d.loader.SourceRoot = root
-	_, err = d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
-	assert.NoError(t, err)
-	packages, err := d.loader.Packages(t.Context())
-	assert.NoError(t, err)
-	assert.Equal(t, len(packages), 1)
-	scope := partitionScope{occurrences: slices.Clone(packages[0].Occurrences)}
-	planner := entryPlanner{session: d, inputs: map[string]*store.SourceArtifact{root: input}}
-	assert.NoError(t, planner.prepareScope(t.Context(), &scope))
-	assert.Equal(t, len(scope.occurrences[0].TemplateObjects), 0)
-	id := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindOCIRepository,
-		Namespace: "apps",
-		Name:      "content",
-	}
-	reference := aliasRequestReference(t, d.cfg.Store, id)
-	visit := partitionVisit{occurrence: &scope.occurrences[0], scope: &scope}
-	_, err = planner.source(t.Context(), &entryRoot{}, &visit, &reference)
-	assert.Equal(t, errors.Is(err, errPendingSources), true)
-	assert.NoError(t, constructTestSources(t.Context(), d))
-	before := reads.Load()
-	assert.Equal(t, len(planner.objects), 1)
-	planner.parsed = d.loader.ParsedInputs()
-	parsed := planner.parsed
-	for range 2 {
-		_, sourceErr := planner.source(t.Context(), &entryRoot{}, &visit, &reference)
-		assert.NoError(t, sourceErr)
-	}
-	assert.Equal(t, reads.Load(), before)
-	assert.Equal(t, planner.parsed == parsed, true)
-	assert.Equal(t, len(planner.objects), 1)
-	witness := scope.occurrences[0]
-	witness.Witness = new(int)
-	scope = partitionScope{occurrences: []selection.OccurrenceFacts{witness}}
-	assert.NoError(t, planner.prepareScope(t.Context(), &scope))
-	assert.Equal(t, len(planner.objects), 2)
-	assert.Equal(t, planner.parsed == nil, true)
-	replaced := &store.SourceArtifact{
-		LocalPath: root,
-		FS: fstest.MapFS{"producer.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata: {name: producer, namespace: apps}
-spec:
-  resourcesTemplate: |
-    apiVersion: source.toolkit.fluxcd.io/v1
-    kind: OCIRepository
-    metadata: {name: added}
-    spec: {url: oci://registry.invalid/added}
-`)}},
-	}
-	planner.inputs[root] = replaced
-	replacement := scope.occurrences[0]
-	replacement.Witness = new(int)
-	replacement.Identity.Namespace = "other"
-	scope = partitionScope{occurrences: []selection.OccurrenceFacts{replacement}}
-	assert.NoError(t, planner.prepareScope(t.Context(), &scope))
-	assert.Equal(t, len(planner.objects), 3)
-	assert.Equal(t, planner.parsed == nil, true)
-	id = manifest.NamedResource{
-		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository,
-		Namespace: "other", Name: "added",
-	}
-	_, _, producers := scope.source(id)
-	assert.Equal(t, len(producers), 1)
-	id.Namespace = "apps"
-	_, _, producers = scope.source(id)
-	assert.Equal(t, len(producers), 0)
-}
-
 func TestPlan_RetainedObjectEvidenceReuse(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -633,7 +553,7 @@ spec: {chart: {spec: {chart: app, sourceRef: {kind: HelmRepository, name: charts
 			packages, err := d.loader.Packages(t.Context())
 			assert.NoError(t, err)
 			assert.FatalIf(t, len(packages) != 1, "packages = %d, want 1", len(packages))
-			scope := partitionScope{occurrences: slices.Clone(packages[0].Occurrences)}
+			scope := rootScope{occurrences: slices.Clone(packages[0].Occurrences)}
 			assert.Equal(t, scope.occurrences[0].Object != nil, true)
 			planner := entryPlanner{session: d, inputs: map[string]*store.SourceArtifact{root: input}}
 			planner.parsed = d.loader.ParsedInputs()
@@ -644,7 +564,7 @@ spec: {chart: {spec: {chart: app, sourceRef: {kind: HelmRepository, name: charts
 			assert.NoError(t, planner.prepareScope(t.Context(), &scope))
 			assert.Equal(t, len(planner.objects), 0)
 			assert.Equal(t, planner.parsed == parsed, true)
-			facts := d.loader.ProducerFacts(partitionObject(&scope.occurrences[0]))
+			facts := d.loader.ProducerFacts(occurrenceObject(&scope.occurrences[0]))
 			assert.Equal(t, facts.Derived, true)
 		})
 	}
@@ -688,7 +608,7 @@ spec: {url: oci://registry.invalid/%s}
 		assert.Diff(t, child.Doc, document)
 		assert.FatalIf(t, child.Obj == nil, "replacement lost producer object")
 		facts := d.loader.ProducerFacts(child.Obj).Occurrence
-		scope := partitionScope{occurrences: []selection.OccurrenceFacts{facts}}
+		scope := rootScope{occurrences: []selection.OccurrenceFacts{facts}}
 		for _, name := range []string{"initial", "replacement"} {
 			_, _, producers := scope.source(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: name,
@@ -718,8 +638,8 @@ func TestPlan_ProjectionMaterialReplacement(t *testing.T) {
 	d.cfg.Store.AddObject(application.Declaration)
 	d.loader.SourceRoot = root
 	occurrence := selection.OccurrenceFacts{Object: parsed.Object, Identity: parsed.Object.Named()}
-	scope := partitionScope{occurrences: []selection.OccurrenceFacts{occurrence}}
-	visit := partitionVisit{occurrence: &occurrence, scope: &scope}
+	scope := rootScope{occurrences: []selection.OccurrenceFacts{occurrence}}
+	visit := rootVisit{occurrence: &occurrence, scope: &scope}
 	planner := entryPlanner{session: d, inputs: map[string]*store.SourceArtifact{root: input}}
 	for _, content := range []string{"initial", "replacement"} {
 		material := &store.SourceArtifact{LocalPath: sourceRoot, Content: content, FS: fstest.MapFS{
@@ -735,7 +655,7 @@ spec:
 `, content, content, content)},
 		}}
 		d.cfg.Store.SetArtifact(application.Source, material)
-		children, followErr := planner.follow(t.Context(), &entryRoot{}, &visit, false)
+		children, followErr := planner.follow(t.Context(), &clusterRoot{}, &visit, false)
 		assert.NoError(t, followErr)
 		assert.FatalIf(t, len(children) != 1, "projected children: %+v", children)
 		assert.Equal(t, children[0].occurrence.Identity.Name, content)

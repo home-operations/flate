@@ -329,6 +329,7 @@ func (o *Orchestrator) acceptEntry(ctx context.Context, binding *discovery.Bindi
 	}
 	previous := o.entryBinding
 	o.entryBinding = accepted
+	o.index = o.loader.Index
 	if previous.Producer.ReportHidden() && previous.Producer != accepted.Producer {
 		var seen []manifest.NamedResource
 		owner := manifest.NamedResource{}
@@ -336,7 +337,7 @@ func (o *Orchestrator) acceptEntry(ctx context.Context, binding *discovery.Bindi
 			owner = accepted.Entry.Owner
 		}
 		for id := owner; id != (manifest.NamedResource{}); {
-			parent, found := o.parentOf(id)
+			parent, found := o.store.Parent(id, o.index)
 			if !found || slices.Contains(seen, parent) {
 				break
 			}

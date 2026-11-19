@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
@@ -34,8 +35,6 @@ type document struct {
 	possible         bool
 	objects          []parsedObject
 	decodeErr        error
-	built            []store.Child
-	builtInput       *BuiltInput
 	lookup           map[manifest.NamedResource]store.Child
 	pathInputs       map[manifest.NamedResource]manifest.Data
 	plugins          *[]pluginInputs
@@ -174,7 +173,7 @@ func (r *documentReader) mountSources(
 		r.bootstrap = bootstrap.LocalPath
 	}
 	if input != nil {
-		mounted[input.LocalPath] = input
+		mountSource(mounted, input)
 	}
 	return r.setSources(mounted)
 }
@@ -213,6 +212,9 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 			continue
 		}
 		r.views[root] = art.FS
+		if overlay, ok := art.FS.(*inputprojection.Overlay); ok {
+			r.views[root] = overlay.Authored.FS
+		}
 		if art.FS == nil {
 			r.views[root] = unavailableSource{}
 		}
@@ -229,13 +231,8 @@ func (r *documentReader) invalidateSources(changed []string, mounted map[string]
 		}
 		for file := range r.cache {
 			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
-				cached := r.cache[file]
-				if cached.selected || cached.built != nil {
-					r.cache[file] = document{
-						selected:   cached.selected,
-						built:      cached.built,
-						builtInput: cached.builtInput,
-					}
+				if r.cache[file].selected {
+					r.cache[file] = document{selected: true}
 				} else {
 					delete(r.cache, file)
 				}

@@ -148,20 +148,28 @@ func (r *entryResolution) sameClassification(candidate *entryResolution) bool {
 }
 
 func (a *Admission) appliesEntry(application *manifest.EntryApplication) bool {
-	if a.input == nil || a.path == "" || a.store == nil || !application.Source.CanBindLocal() {
+	return a.appliesEntryAt(application, a.path)
+}
+
+func (a *Admission) appliesEntryAt(application *manifest.EntryApplication, path string) bool {
+	if a.input == nil || path == "" || a.store == nil || !application.Source.CanBindLocal() {
 		return false
 	}
 	artifact, _ := a.store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	resolved := entryResolution{object: a.store.GetDeclaration(application.Source), artifact: artifact}
-	return a.applicationApplies(application, &resolved)
+	return a.applicationApplies(application, &resolved, path)
 }
 
-func (a *Admission) applicationApplies(application *manifest.EntryApplication, resolved *entryResolution) bool {
+func (a *Admission) applicationApplies(
+	application *manifest.EntryApplication,
+	resolved *entryResolution,
+	path string,
+) bool {
 	selected := a.resolvedSources.snapshot()[application.Source]
 	if selected.input == a.input && selected.artifact != nil {
 		resolved = &selected
 	}
-	return loader.AppliesToEntry(resolved, application, a.input, a.path)
+	return loader.AppliesToEntry(resolved, application, a.input, path)
 }
 
 // A source MUST NOT replace its construction input with its own rendered declaration.

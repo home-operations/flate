@@ -31,17 +31,18 @@ type entrySource interface {
 }
 
 type entryResolution struct {
-	producers []occurrenceKey
-	object    manifest.BaseManifest
-	input     *store.SourceArtifact
-	git       *manifest.GitRepository
-	synthetic bool
-	entry     bool
-	projected bool
-	pinned    bool
-	artifact  *store.SourceArtifact
-	warnings  []manifest.Warning
-	viewKey   string
+	producers  []occurrenceKey
+	object     manifest.BaseManifest
+	input      *store.SourceArtifact
+	git        *manifest.GitRepository
+	synthetic  bool
+	entry      bool
+	projected  bool
+	pinned     bool
+	unfiltered bool
+	artifact   *store.SourceArtifact
+	warnings   []manifest.Warning
+	viewKey    string
 }
 
 func (r *entryResolution) merge(next *entryResolution) {
@@ -63,6 +64,17 @@ func (r *entryResolution) merge(next *entryResolution) {
 
 func (r *entryResolution) reusesSynthetic(candidate *entryResolution) bool {
 	return r.synthetic && candidate.synthetic && r.input == candidate.input && r.artifact != nil
+}
+
+func (r *entryResolution) usesUnfilteredInput(input, observed *store.SourceArtifact) bool {
+	if r.input != input || r.pinned ||
+		!observed.SameMaterial(r.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
+		return false
+	}
+	if r.artifact == input {
+		return true
+	}
+	return observed.InputAlias && r.unfiltered
 }
 
 func (r *entryResolution) ownsDeclaration(object manifest.BaseManifest) bool {
@@ -679,6 +691,7 @@ func (a *Admission) entrySourceView(
 	artifact.Warnings = nil
 	artifact.LocalPath = label
 	artifact.LocalRoot = repoRoot
+	candidate.unfiltered = mode == gittree.Source && ignore == "" && len(sparse) == 0 && !recurse
 	return artifact, viewKey, nil
 }
 

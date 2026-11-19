@@ -1,0 +1,6 @@
+
+data.version  (v1/ConfigMap/default/podinfo)
+  ± value change
+    - 1.0.0
+    + 1.0.1
+

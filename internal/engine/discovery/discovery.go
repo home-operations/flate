@@ -632,20 +632,20 @@ func (d *Session) entryCandidateReady(
 	if d.cfg.Trees == nil {
 		return len(candidate.DependsOn) == 0
 	}
-	sourceID, _, err := kustomize.SourceInput(reads, candidate)
+	artifact, _, err := kustomize.SourceInput(reads, candidate)
 	if err != nil {
 		return len(candidate.DependsOn) == 0
 	}
+	selected := d.resolvedSources.snapshot()[candidate.EffectiveSourceID()]
+	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact)
 	// An independent bootstrap entry stays eligible even when its preparation fails.
-	if !hasEntryPrerequisites(candidate) &&
-		sourceID == reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) {
+	if workingInput && !hasEntryPrerequisites(candidate) {
 		return true
 	}
-	prepared, err := d.prepareDocuments(ctx, candidate, sourceID, nil)
+	prepared, err := d.prepareDocuments(ctx, candidate, artifact, nil)
 	if err != nil {
 		slog.Debug("discovery: entry candidate preparation deferred", "err", err)
-		return len(candidate.DependsOn) == 0 &&
-			sourceID == reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+		return workingInput && len(candidate.DependsOn) == 0
 	}
 	eligibility := entryPrerequisites{loader: d.loader, reads: reads}
 	return eligibility.eligible(candidate, prepared.children)

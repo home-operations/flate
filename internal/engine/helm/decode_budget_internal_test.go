@@ -28,7 +28,7 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 	owner := cachetest.New(t, t.TempDir(), cache.New)
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 	assert.Equal(t, owner.CanPersistRenders(), persistent)
-	client := NewClient(owner)
+	client := NewClient(owner, nil)
 	hr := newHR()
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
 	_, receipt, err := client.Template(t.Context(), hr, nil, input)
@@ -47,7 +47,7 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		),
 	)
 	synctest.Test(t, func(t *testing.T) {
-		client := NewClient(owner)
+		client := NewClient(owner, nil)
 		tasks := task.NewBounded(2)
 		entered, release := make(chan struct{}, 2), make(chan struct{})
 		for range 2 {

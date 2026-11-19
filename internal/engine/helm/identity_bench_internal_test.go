@@ -45,8 +45,8 @@ func BenchmarkChartValues_Cached(b *testing.B) {
 		},
 		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir},
 	)
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)
 	if err != nil {
 		b.Fatal(err)
@@ -75,7 +75,7 @@ func BenchmarkChartValues_PinnedSource(b *testing.B) {
 		)
 	}
 	owner := cachetest.New(b, "", sourcecache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	cliSources := benchChartResolver(b, dir, acquireChartFS(b, owner, os.DirFS(dir)))
 	hr := newHR()
 	hr.ChartValuesFiles = names
@@ -119,7 +119,7 @@ func benchmarkLoadChartModeCase(b *testing.B, disk, warm *bool) {
 		},
 	}
 	newClient := func() *Client {
-		cli := NewClient(owner)
+		cli := NewClient(owner, nil)
 		return cli
 	}
 	cli := newClient()
@@ -163,8 +163,8 @@ func benchmarkTemplateOCIIdentityCase(b *testing.B, disk, disabled *bool) {
 	if *disk {
 		root = b.TempDir()
 	}
-	cli := NewClient(cachetest.New(b, root, sourcecache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(b, root, sourcecache.New), nil)
+	cliSources := NewSources(st, nil)
 	opts := Options{DisableChartDigestTracking: (*disabled)}
 	_, receipt1, err := cli.Template(
 		b.Context(),

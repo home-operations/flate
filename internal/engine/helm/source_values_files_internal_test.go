@@ -65,8 +65,8 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 	root, st, hr := sourceValuesCacheFixture(t)
 	cacheRoot := t.TempDir()
 	owner := cachetest.New(t, cacheRoot, cache.New)
-	cli := NewClient(owner)
-	cliSources := NewSources(st)
+	cli := NewClient(owner, nil)
+	cliSources := NewSources(st, nil)
 	first, receipt34, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 	)
@@ -166,8 +166,8 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	sourceValuesCacheFixtureRoot, st, hr := sourceValuesCacheFixture(t)
 	cacheRoot := t.TempDir()
 	owner := cachetest.New(t, cacheRoot, cache.New)
-	newClientCli := NewClient(owner)
-	newSourcesCliSources := NewSources(st)
+	newClientCli := NewClient(owner, nil)
+	newSourcesCliSources := NewSources(st, nil)
 	first, receipt35, err := testutil.RenderMaps(
 		newClientCli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: newSourcesCliSources}),
 	)
@@ -235,8 +235,8 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	fresh := NewClient(cachetest.New(t, cacheRoot, cache.New))
-	freshSources := NewSources(st)
+	fresh := NewClient(cachetest.New(t, cacheRoot, cache.New), nil)
+	freshSources := NewSources(st, nil)
 	hit, receipt36, err := testutil.RenderMaps(
 		fresh.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: freshSources}),
 	)
@@ -277,8 +277,8 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	st.SetArtifact(hr.ChartSource(), artifact)
 	cacheRoot := t.TempDir()
 	owner := cachetest.New(t, cacheRoot, cache.New)
-	newClientCli2 := NewClient(owner)
-	newSourcesCliSources2 := NewSources(st)
+	newClientCli2 := NewClient(owner, nil)
+	newSourcesCliSources2 := NewSources(st, nil)
 	first, receipt37, err := testutil.RenderMaps(
 		newClientCli2.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: newSourcesCliSources2}),
 	)
@@ -328,8 +328,8 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	sourceHR := hr.Clone()
 	sourceHR.Chart.Source.Kind = manifest.KindGitRepository
 	st.SetArtifact(sourceHR.ChartSource(), artifact)
-	fresh := NewClient(cachetest.New(t, cacheRoot, cache.New))
-	freshSources := NewSources(st)
+	fresh := NewClient(cachetest.New(t, cacheRoot, cache.New), nil)
+	freshSources := NewSources(st, nil)
 	out, receipt38, err := testutil.RenderMaps(
 		fresh.Template(t.Context(), sourceHR, nil, RenderOptions{Options: Options{}, Sources: freshSources}),
 	)

@@ -25,7 +25,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			root := testutil.WriteTree(t, map[string]string{
 				"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 			})
-			client := NewClient(cachetest.New(t, "", cache.New))
+			client := NewClient(cachetest.New(t, "", cache.New), nil)
 			hr := newHR()
 			var preparation, successor Preparation
 			defer func() { preparation = Preparation{} }()
@@ -39,7 +39,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 				artifact.Content = "immutable-source"
 				sources := store.New()
 				sources.SetArtifact(hr.ChartSource(), &artifact)
-				input.Sources = NewSources(sources)
+				input.Sources = NewSources(sources, nil)
 			}
 			first, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 			assert.NoError(t, err)
@@ -131,7 +131,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 				"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
 			})
 			cacheDir := t.TempDir()
-			client := NewClient(cachetest.New(t, cacheDir, cache.New))
+			client := NewClient(cachetest.New(t, cacheDir, cache.New), nil)
 			hr := newHR()
 			var preparation, successor Preparation
 			defer func() { preparation = Preparation{} }()
@@ -158,7 +158,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			current.Omitted = []manifest.NamedResource{b, a, b}
 			if regime == "disk" {
 				assert.NoError(t, client.cache.Close())
-				client = NewClient(cachetest.New(t, cacheDir, cache.New))
+				client = NewClient(cachetest.New(t, cacheDir, cache.New), nil)
 				current.Preparation = nil
 			}
 			if regime == "transferred preparation" {
@@ -243,7 +243,7 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 		"mychart/Chart.yaml":        "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 		"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
 	})
-	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	hr := newHR()
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	documents, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))

@@ -108,6 +108,17 @@
       "parents": [
         "base"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "siblings",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "sibling-initial"
     }
   ],
   "overlays": [
@@ -207,6 +218,79 @@
         },
         {
           "delete": "repo/charts/emitter"
+        }
+      ]
+    },
+    {
+      "name": "sibling-initial",
+      "directory": "overlays/sibling-initial",
+      "operations": [
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/flux/apps.yaml"
+        },
+        {
+          "delete": "repo/charts/mychart"
+        }
+      ]
+    },
+    {
+      "name": "sibling-edited",
+      "directory": "overlays/sibling-edited",
+      "operations": []
+    },
+    {
+      "name": "sibling-escape",
+      "directory": "overlays/sibling-escape",
+      "operations": []
+    },
+    {
+      "name": "sibling-missing",
+      "directory": "overlays/sibling-missing",
+      "operations": [
+        {
+          "delete": "repo/charts/server"
+        }
+      ]
+    },
+    {
+      "name": "sibling-vendored",
+      "directory": "overlays/sibling-vendored",
+      "operations": [
+        {
+          "delete": "repo/charts/server"
+        },
+        {
+          "delete": "repo/charts/controller"
+        }
+      ]
+    },
+    {
+      "name": "sibling-symlink",
+      "directory": "overlays/sibling-symlink",
+      "operations": [
+        {
+          "symlink": {
+            "path": "repo/charts/linked",
+            "target": "server"
+          }
+        }
+      ]
+    },
+    {
+      "name": "sibling-symlink-escape",
+      "directory": "overlays/sibling-symlink-escape",
+      "operations": [
+        {
+          "delete": "repo/charts/linked"
+        },
+        {
+          "symlink": {
+            "path": "repo/charts/linked",
+            "target": "../../baseline/outside"
+          }
         }
       ]
     }
@@ -703,6 +787,347 @@
               "stdout": "expect/desired-spec.stdout",
               "stderr": "expect/desired-spec.stderr",
               "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-siblings-build-diff",
+      "description": "Source artifact dependency regression: source-siblings-build-diff",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "siblings"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "siblings-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-before.stdout",
+              "stderr": "expect/siblings-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-sibling",
+          "edit": {
+            "overlay": "sibling-edited"
+          }
+        },
+        {
+          "id": "siblings-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-after.stdout",
+              "stderr": "expect/siblings-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "siblings-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "cold-diff"
+            },
+            "expect": {
+              "stdout": "expect/siblings-diff.stdout",
+              "stderr": "expect/siblings-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-siblings-escape",
+      "description": "Source artifact dependency regression: source-siblings-escape",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "siblings"
+        },
+        {
+          "overlay": "sibling-escape"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "siblings-escape",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-escape.stdout",
+              "stderr": "expect/siblings-escape.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-siblings-missing",
+      "description": "Source artifact dependency regression: source-siblings-missing",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "siblings"
+        },
+        {
+          "overlay": "sibling-missing"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "siblings-missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-missing.stdout",
+              "stderr": "expect/siblings-missing.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-siblings-vendored",
+      "description": "Source artifact dependency regression: source-siblings-vendored",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "siblings"
+        },
+        {
+          "overlay": "sibling-vendored"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "siblings-vendored",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-vendored.stdout",
+              "stderr": "expect/siblings-vendored.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-siblings-symlink-escape",
+      "description": "Reject local dependency symlinks inside and outside the source artifact.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "siblings"
+        },
+        {
+          "commit": "original"
+        },
+        {
+          "overlay": "sibling-symlink"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "siblings-symlink-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-symlink-escape.stdout",
+              "stderr": "expect/siblings-symlink-escape.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "siblings-symlink-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "cold-diff"
+            },
+            "expect": {
+              "stdout": "expect/siblings-symlink-escape.stdout",
+              "stderr": "expect/siblings-symlink-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "retarget-symlink-outside-artifact",
+          "edit": {
+            "overlay": "sibling-symlink-escape"
+          }
+        },
+        {
+          "id": "siblings-symlink-escape",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/siblings-symlink-escape.stdout",
+              "stderr": "expect/siblings-symlink-escape.stderr",
+              "code": 1
             }
           }
         }
@@ -1419,6 +1844,286 @@
         "ready-expr--helm-release"
       ],
       "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/flux/source.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/flux/release.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/charts/parent/Chart.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/charts/controller/Chart.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/charts/controller/templates/cm.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/charts/server/Chart.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-initial/repo/charts/server/templates/cm.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-edited/repo/charts/server/templates/cm.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-before.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-before.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-after.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-after.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-vendored.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-vendored.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-diff.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-diff.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-escape/repo/charts/parent/Chart.yaml",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-escape.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-escape.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-missing.stdout",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/siblings-missing.stderr",
+      "cases": [
+        "source-siblings-build-diff",
+        "source-siblings-escape",
+        "source-siblings-missing",
+        "source-siblings-vendored"
+      ],
+      "purpose": "Authored sibling dependency input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/sibling-vendored/repo/charts/parent/charts/server/Chart.yaml",
+      "cases": [
+        "source-siblings-vendored"
+      ],
+      "purpose": "Vendored child with the same output as the sibling input."
+    },
+    {
+      "path": "overlays/sibling-vendored/repo/charts/parent/charts/server/templates/cm.yaml",
+      "cases": [
+        "source-siblings-vendored"
+      ],
+      "purpose": "Vendored child with the same output as the sibling input."
+    },
+    {
+      "path": "overlays/sibling-vendored/repo/charts/parent/charts/controller/Chart.yaml",
+      "cases": [
+        "source-siblings-vendored"
+      ],
+      "purpose": "Vendored child with the same output as the sibling input."
+    },
+    {
+      "path": "overlays/sibling-vendored/repo/charts/parent/charts/controller/templates/cm.yaml",
+      "cases": [
+        "source-siblings-vendored"
+      ],
+      "purpose": "Vendored child with the same output as the sibling input."
+    },
+    {
+      "path": "overlays/sibling-symlink/repo/charts/parent/Chart.yaml",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Chart dependency that names a symlink to a sibling chart."
+    },
+    {
+      "path": "expect/siblings-symlink-diff.stderr",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Complete diagnostic for a local dependency absent from the current snapshot."
+    },
+    {
+      "path": "overlays/sibling-symlink-escape/baseline/outside/Chart.yaml",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Confined fixture input or independently authored escape diagnostic."
+    },
+    {
+      "path": "overlays/sibling-symlink-escape/baseline/outside/templates/cm.yaml",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Confined fixture input or independently authored escape diagnostic."
+    },
+    {
+      "path": "expect/siblings-symlink-escape.stdout",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Confined fixture input or independently authored escape diagnostic."
+    },
+    {
+      "path": "expect/siblings-symlink-escape.stderr",
+      "cases": [
+        "source-siblings-symlink-escape"
+      ],
+      "purpose": "Confined fixture input or independently authored escape diagnostic."
     }
   ]
 }

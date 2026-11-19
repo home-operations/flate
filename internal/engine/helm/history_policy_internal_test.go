@@ -34,7 +34,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
 	)
 	directory := t.TempDir()
-	renderer := NewClient(cachetest.New(t, directory, cache.New))
+	renderer := NewClient(cachetest.New(t, directory, cache.New), nil)
 	hr := newHR()
 	assert.NoError(
 		t,
@@ -233,7 +233,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 
 	t.Run("install", func(t *testing.T) {
 		t.Parallel()
-		renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+		renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 		hr := newHR()
 		input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
 		_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
@@ -295,7 +295,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 				assert.Equal(t, previous == nil, true)
 				warm, _, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, input))
 				assert.NoError(t, err)
-				fresh := NewClient(cachetest.New(t, "", cache.New))
+				fresh := NewClient(cachetest.New(t, "", cache.New), nil)
 				cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), changed, nil, input))
 				assert.NoError(t, err)
 				assert.Diff(t, warm, cold)
@@ -333,8 +333,8 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 			Revision:  "6.15.0@" + digest,
 		},
 	)
-	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-	input := RenderOptions{Sources: NewSources(st)}
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
+	input := RenderOptions{Sources: NewSources(st, nil)}
 	_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
 	assert.NoError(
@@ -491,7 +491,7 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	t.Helper()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 	directory := t.TempDir()
-	renderer := NewClient(cachetest.New(t, directory, cache.New))
+	renderer := NewClient(cachetest.New(t, directory, cache.New), nil)
 	hr := *testCaseInput.hr
 	input := RenderOptions{Sources: testCaseInput.input.Sources}
 	_, first, err := renderer.Template(t.Context(), hr, nil, input)
@@ -589,7 +589,7 @@ func testPreviousRenderInlineOCITemplatePolicyCase2(
 	{
 		_, complete := (*testCaseInput.renderer).PreviousRender(
 			t.Context(), (*testCaseInput.hr), nil,
-			RenderOptions{Sources: NewSources(unavailable)},
+			RenderOptions{Sources: NewSources(unavailable, nil)},
 		)
 		assert.FatalIf(t, complete, "%s", "unavailable acquisition supplied accepted history")
 	}

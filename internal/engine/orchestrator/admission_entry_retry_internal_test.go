@@ -197,7 +197,7 @@ func prepareOrderingTrees(t *testing.T, treeInputs []Tree, cfg *Config) *Invocat
 		cfg.Network.Close()
 	})
 	cfg.Cache = cache
-	cfg.HelmClient = helm.NewClient(cache)
+	cfg.HelmClient = helm.NewClient(cache, nil)
 	cfg.chartFetcher = helmchart.New(
 		&oci.Fetcher{Cache: cache, Network: cfg.Network},
 		helmchart.Config{Cache: cache, Network: cfg.Network, Concurrency: cfg.Concurrency},

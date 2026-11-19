@@ -31,8 +31,8 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 	)
 	owner := cachetest.New(t, "", cache.New)
 	newClient := func() (*Client, Sources) {
-		cli := NewClient(owner)
-		cliSources := NewSources(st)
+		cli := NewClient(owner, nil)
+		cliSources := NewSources(st, nil)
 		return cli, cliSources
 	}
 	cli, cliSources := newClient()

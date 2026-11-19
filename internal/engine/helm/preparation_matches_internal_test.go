@@ -15,7 +15,7 @@ func TestPreparation_Matches(t *testing.T) {
 	root := testutil.WriteTree(t, map[string]string{
 		"mychart/Chart.yaml": "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 	})
-	client := NewClient(cachetest.New(t, "", cache.New))
+	client := NewClient(cachetest.New(t, "", cache.New), nil)
 	hr := newHR()
 	var preparation Preparation
 	input := RenderOptions{Preparation: &preparation, Sources: localChartResolver(t, "chart-repo", "flux-system", root)}

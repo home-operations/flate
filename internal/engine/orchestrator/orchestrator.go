@@ -248,7 +248,7 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 	}
 	o.src.Fetchers[manifest.KindExternalArtifact] = source.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
 	o.ksc = kustomization.New(st, ts, trees)
-	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions)
+	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, o.loader.Index)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
 	o.controllers = base.Controllers{

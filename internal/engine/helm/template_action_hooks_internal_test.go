@@ -31,7 +31,7 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 	t.Parallel()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 	resolver := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
-	warm := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	warm := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	warmSources := resolver
 	for i, state := range []struct {
 		install, upgrade, wantHook bool
@@ -72,7 +72,7 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			_, complete := warm.PreviousRender(t.Context(), hr, nil, RenderOptions{Sources: warmSources})
 			assert.Equal(t, complete, persistent)
 			assert.Diff(t, templateResources(t, out), want)
-			fresh := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			fresh := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			freshSources := resolver
 			freshHR := newHR()
 			freshHR.Install = &helmv2.Install{DisableHooks: state.install}

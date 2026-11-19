@@ -47,7 +47,7 @@ data:
   nested: {{ include "mychart.deterministic" . | quote }}
 `)
 
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	hr := newHR()
 	values := map[string]any{
@@ -101,7 +101,7 @@ metadata:
 data:
   parsed: {{ mustToDate "2006-01-02" "invalid" | unixEpoch | quote }}
 `)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	out, _, err := testutil.RenderMaps(
 		cli.Template(
@@ -125,7 +125,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 		"mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n",
 	)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {

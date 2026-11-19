@@ -116,8 +116,8 @@ func TestDescription_SourceObservation(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
 	hr = hr.Clone()
 	hr.ChartValuesFiles = []string{"config/prod.yaml", "config/../config/prod.yaml"}
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	out, receipt1, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 	)
@@ -217,8 +217,8 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 	var want []map[string]any
 	for i := range 2 {
 		owner := cachetest.New(t, root, cache.New)
-		cli := NewClient(owner)
-		cliSources := NewSources(st)
+		cli := NewClient(owner, nil)
+		cliSources := NewSources(st, nil)
 		out, receipt5, err := testutil.RenderMaps(
 			cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 		)
@@ -353,8 +353,8 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 	}
 	var want []map[string]any
 	for i := range 2 {
-		cli := NewClient(cachetest.New(t, root, cache.New))
-		cliSources := NewSources(st)
+		cli := NewClient(cachetest.New(t, root, cache.New), nil)
+		cliSources := NewSources(st, nil)
 		out, receipt2, err := testutil.RenderMaps(
 			cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 		)
@@ -472,8 +472,8 @@ func testDescriptionHydrationKeepsDecodedCase(
 		hr = hr.Clone()
 		hr.Chart.Name = "chart.tgz"
 	}
-	cli := NewClient(cachetest.New(t, "", cache.New))
-	cliSources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
+	cliSources := NewSources(st, nil)
 	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	ch, err := d.captured.load()
@@ -556,8 +556,8 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 	defer log.SetOutput(previous)
 	for range 2 {
 		diagnostics.Reset()
-		cli := NewClient(cachetest.New(t, cacheRoot, cache.New))
-		cliSources := NewSources(st)
+		cli := NewClient(cachetest.New(t, cacheRoot, cache.New), nil)
+		cliSources := NewSources(st, nil)
 		var receipt6 *manifest.RenderReceipt
 		var err error
 		_, receipt6, err = testutil.RenderMaps(

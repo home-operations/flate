@@ -24,7 +24,7 @@ func TestSources_SelectedRevision(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			owner := cachetest.New(t, "", cache.New)
-			client := NewClient(owner)
+			client := NewClient(owner, nil)
 			input := acquireChartFS(t, owner, chartFixtureFS(hr, os.DirFS(dir)))
 			artifact := &store.SourceArtifact{
 				Kind:     manifest.KindOCIRepository,
@@ -39,7 +39,7 @@ func TestSources_SelectedRevision(t *testing.T) {
 			reads.Init(st, hr.Named(), nil)
 			defer reads.Close()
 			_, _, err := testutil.RenderMaps(
-				client.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(&reads)}),
+				client.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(&reads, nil)}),
 			)
 			assert.NoError(t, err)
 			next := *artifact
@@ -50,7 +50,7 @@ func TestSources_SelectedRevision(t *testing.T) {
 			var fresh store.ReadSet
 			fresh.Init(st, hr.Named(), nil)
 			defer fresh.Close()
-			loaded, err := client.describeChart(t.Context(), hr, NewSources(&fresh).chartInput(hr))
+			loaded, err := client.describeChart(t.Context(), hr, NewSources(&fresh, nil).chartInput(hr))
 			assert.NoError(t, err)
 			assert.Equal(t, loaded.artifact.Revision, next.Revision)
 			later := next

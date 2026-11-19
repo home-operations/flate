@@ -63,7 +63,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	for name, body := range files {
 		testutil.WriteFile(t, dir, name, body)
 	}
-	cli := NewClient(cachetest.New(t, "", cache.New))
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	hr := newHR()
 	first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
@@ -123,7 +123,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 			),
 		},
 	}
-	cli := NewClient(cachetest.New(t, "", cache.New))
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
@@ -139,7 +139,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	canonical, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	snapshot := func() string {
@@ -165,7 +165,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 			value := fmt.Sprintf("rendered-%02d", i)
 			local := store.New()
 			local.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-			sources := NewSources(local)
+			sources := NewSources(local, nil)
 			out, _, renderMapsErr := testutil.RenderMaps(
 				cli.Template(
 					t.Context(),
@@ -251,9 +251,9 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		}
 		return head.Hash(), nil
 	}
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	st := store.New()
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	hr := &manifest.HelmRelease{
 		Name:      "first",
 		Namespace: "default",
@@ -416,7 +416,7 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 	if *testCaseInput.pinned {
 		input = acquireChartFS(t, owner, input)
 	}
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
@@ -432,7 +432,7 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	var charts [callers]*chart.Chart
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -482,7 +482,7 @@ func testLoadChartInvalidatesOnFileMtimeChangeCase(
 		err := os.Chtimes(filepath.Join(dir, name), *testCaseInput.stamp, *testCaseInput.stamp)
 		assert.NoError(t, err)
 	}
-	cli := NewClient(cachetest.New(t, "", cache.New))
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	before, err := loadDecodedChart(t.Context(), cli, (*testCaseInput.hr), cliSources)
 	assert.NoError(t, err)
@@ -533,7 +533,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	}
 	outputOwner := cachetest.New(t, outputRoot, cache.New)
 	assert.Equal(t, outputOwner.CanPersistRenders(), persistent && *testCaseInput.persistent)
-	renderer := NewClient(outputOwner)
+	renderer := NewClient(outputOwner, nil)
 	backing := &chartBacking{Filesystem: (*testCaseInput.generation).Backing}
 	input, _, newErr := gittree.New(
 		t.Context(),
@@ -546,7 +546,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	selected.ChartValuesFiles = []string{"config/prod.yaml"}
 	sources := store.New()
 	sources.SetArtifact(selected.ChartSource(), &store.SourceArtifact{FS: input})
-	rendererSources := NewSources(sources)
+	rendererSources := NewSources(sources, nil)
 	first, _, newErr := testutil.RenderMaps(
 		renderer.Template(
 			t.Context(),
@@ -600,8 +600,8 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	)
 	assert.NoError(t, newErr)
 
-	fresh := NewClient(cachetest.New(t, outputRoot, cache.New))
-	freshSources := NewSources(sources)
+	fresh := NewClient(cachetest.New(t, outputRoot, cache.New), nil)
+	freshSources := NewSources(sources, nil)
 	before := backing.reads.Load()
 	hit, _, newErr := testutil.RenderMaps(
 		fresh.Template(
@@ -656,9 +656,9 @@ func testLoadChartAcquiredGitWarmReuseCase2(t *testing.T, testCaseInput *struct 
 
 	cacheRoot := t.TempDir()
 	owner := cachetest.New(t, cacheRoot, cache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	st := store.New()
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	hr := &manifest.HelmRelease{
 		Chart: manifest.HelmChart{
 			Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: testCaseInput.kind, Name: "chart"},
@@ -717,7 +717,7 @@ func testLoadChartAcquiredGitWarmReuseCase2(t *testing.T, testCaseInput *struct 
 		_, err = fs.ReadFile(acquired, backingName)
 		assert.FatalIf(t, err == nil, "%s", "backing poison did not prevent chart reads")
 		if testCaseInput.shape == "file" {
-			_, loadDecodedChartErr := loadDecodedChart(t.Context(), NewClient(owner), hr, cliSources)
+			_, loadDecodedChartErr := loadDecodedChart(t.Context(), NewClient(owner, nil), hr, cliSources)
 			assert.FatalIf(
 				t,
 				!errors.Is(loadDecodedChartErr, fs.ErrNotExist) ||

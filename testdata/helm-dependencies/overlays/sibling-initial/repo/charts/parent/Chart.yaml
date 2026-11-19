@@ -1,0 +1,10 @@
+apiVersion: v2
+name: parent
+version: 1.0.0
+dependencies:
+- name: server
+  version: ^1.0.0
+  repository: file://../server
+- name: controller
+  version: 1.0.0
+  repository: file://../controller

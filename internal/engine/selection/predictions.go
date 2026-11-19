@@ -46,7 +46,12 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 			occurrence.Identity = id
 			optional := parent.ReportHidden() || occurrence.Declaration.File == "" ||
 				failure.Outcome() != store.OutcomeBlocked
-			references := append(slices.Collect(occurrence.references()), manifest.Reference{
+			var references []manifest.Reference
+			occurrence.references(func(ref manifest.Reference) bool {
+				references = append(references, ref)
+				return true
+			})
+			references = append(references, manifest.Reference{
 				NamedResource: parent, Use: "materializer", Gate: manifest.GateParents, Optional: optional,
 			})
 			if !yield(id, slices.Values(references)) {

@@ -190,13 +190,15 @@ func (c *entryCapture) collectRelations(id manifest.NamedResource) {
 			c.queue = append(c.queue, production.Declaration)
 		}
 	}
-	references := q.loader.References(id)
-	if object := st.GetDeclaration(id); object != nil {
-		references = manifest.References(object, manifest.ReferenceRelations)
-	}
-	for ref := range references {
+	collect := func(ref manifest.Reference) bool {
 		c.queue = append(c.queue, ref.NamedResource)
+		return true
 	}
+	if object := st.GetDeclaration(id); object != nil {
+		manifest.References(object, manifest.ReferenceRelations)(collect)
+		return
+	}
+	q.loader.References(id)(collect)
 }
 
 func (c *entryCapture) mapFiles() bool {

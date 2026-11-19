@@ -122,9 +122,9 @@ func testLoadFSChartAutomaticInputErrorsCase(
 	}
 	st := store.New()
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	docs, _, err := testutil.RenderMaps(
-		cli.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(st)}),
+		cli.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(st, nil)}),
 	)
 	assert.FatalIf(
 		t,
@@ -139,7 +139,7 @@ func testLoadFSChartAutomaticInputErrorsCase(
 	)
 	assert.Equal(t, len(cli.chartCache), 0)
 	broken = false
-	loaded, err := loadDecodedChart(t.Context(), cli, hr, NewSources(st))
+	loaded, err := loadDecodedChart(t.Context(), cli, hr, NewSources(st, nil))
 	assert.NoError(t, err)
 	assert.Equal(t, loaded.chart.Name(), "alternate")
 	assert.Equal(t, len(cli.chartCache), 1)

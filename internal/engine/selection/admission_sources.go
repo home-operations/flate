@@ -158,23 +158,18 @@ func (c *admissionClosure) reverse(
 	object manifest.BaseManifest,
 	refValue *manifest.Reference,
 ) bool {
-	ref := *refValue
-
+	target := refValue.NamedResource
 	if object != nil {
-		refs := manifest.References(object, manifest.ReferenceRelations)
-		if occurrence, authored := c.projectedOccurrence(id, object); authored {
-			refs = occurrence.references()
-		}
-		for input := range refs {
-			if input.AffectedInput() && input.NamedResource == ref.NamedResource {
-				return true
-			}
-		}
-		return false
+		matched := false
+		c.references(id, object)(func(input manifest.Reference) bool {
+			matched = input.AffectedInput() && input.NamedResource == target
+			return !matched
+		})
+		return matched
 	}
 	occurrence, ok := c.catalogOccurrence(id)
 	if !ok {
-		return ref.ContentInput()
+		return refValue.ContentInput()
 	}
 	for i := range occurrence.Refs {
 		original := &occurrence.Refs[i]
@@ -185,7 +180,7 @@ func (c *admissionClosure) reverse(
 		if original.NamespaceDefault {
 			input.Namespace = id.Namespace
 		}
-		if input == ref.NamedResource {
+		if input == target {
 			return true
 		}
 	}

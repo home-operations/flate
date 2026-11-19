@@ -29,7 +29,7 @@ func TestRecordRender_ChartAnalysis(t *testing.T) {
 				directory = t.TempDir()
 			}
 			owner := cachetest.New(t, directory, cache.New)
-			client := NewClient(owner)
+			client := NewClient(owner, nil)
 			hr := newHR()
 			input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 			request, err := client.prepareTemplate(t.Context(), hr, nil, &input)
@@ -112,7 +112,7 @@ func TestRecordRender_HelmCaptures(t *testing.T) {
 				"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n",
 			})
 			owner := cachetest.New(t, t.TempDir(), cache.New)
-			client := NewClient(owner)
+			client := NewClient(owner, nil)
 			hr := newHR()
 			input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 			_, receipt, err := client.Template(t.Context(), hr, nil, input)

@@ -47,7 +47,7 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 
 	assert.NoError(t, renderMapsErr)
 	assert.Diff(t, again, (*inputs.first))
-	fresh := NewClient(cachetest.New(t, (*inputs.root), cache.New))
+	fresh := NewClient(cachetest.New(t, (*inputs.root), cache.New), nil)
 	var receipt19 *manifest.RenderReceipt
 	again, receipt19, renderMapsErr = testutil.RenderMaps(
 		fresh.Template(t.Context(), newHR(), (*inputs.values), RenderOptions{Sources: (*inputs.cliSources)}),

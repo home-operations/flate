@@ -57,6 +57,7 @@ type occurrenceFacts struct {
 	structural                      *manifest.Kustomization
 	catalog                         manifest.BaseManifest
 	reverse                         []manifest.NamedResource
+	derivedInputs                   int
 	refs                            []manifest.Reference
 	templateInputs                  []manifest.TemplateInput
 	templateObjects                 []manifest.BaseManifest
@@ -572,17 +573,14 @@ func (l *Loader) OccurrenceObject(
 
 //nolint:gocritic // The iterator retains its original occurrence value snapshot.
 func (o authoredOccurrence) references() iter.Seq[manifest.Reference] {
+	refs, namespace := o.facts.refs, o.Identity.Namespace
 	return func(yield func(manifest.Reference) bool) {
-		{
-			refValues := o.facts.refs
-			for refIndex := range refValues {
-				ref := refValues[refIndex]
-				if ref.NamespaceDefault {
-					ref.Namespace = o.Identity.Namespace
-				}
-				if !yield(ref) {
-					return
-				}
+		for _, ref := range refs {
+			if ref.NamespaceDefault {
+				ref.Namespace = namespace
+			}
+			if !yield(ref) {
+				return
 			}
 		}
 	}

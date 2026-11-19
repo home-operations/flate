@@ -58,7 +58,7 @@ func testLoadFSChartFailureRecoveryCase(t *testing.T, testCaseInput *string,
 		t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
 		input[".helmignore"] = &fstest.MapFile{Data: bytes.Repeat([]byte("#"), 65)}
 	}
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Chart: manifest.HelmChart{
@@ -71,7 +71,7 @@ func testLoadFSChartFailureRecoveryCase(t *testing.T, testCaseInput *string,
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed, Key: "untrusted"})
-	cliSources := NewSources(st)
+	cliSources := NewSources(st, nil)
 	_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.FatalIf(t, err == nil, "%s", "failed input accepted")
 	assert.FatalIf(

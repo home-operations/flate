@@ -29,8 +29,8 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	}
 	st.SetArtifact(hr.ChartSource(), artifact)
 	owner := cachetest.New(t, t.TempDir(), cache.New)
-	client := NewClient(owner)
-	input := RenderOptions{Sources: NewSources(st)}
+	client := NewClient(owner, nil)
+	input := RenderOptions{Sources: NewSources(st, nil)}
 	for range 2 {
 		_, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 		assert.NoError(t, err)

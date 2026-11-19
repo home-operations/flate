@@ -684,7 +684,7 @@ spec:
 		hr := declaration.(*manifest.HelmRelease)
 		prepared, localErr := helm.Prepare(
 			hr,
-			helm.NewSources(reads).Declaration,
+			helm.NewSources(reads, nil).Declaration,
 			resolveHistoryInputs(hr, values.NewStoreProvider(reads), warm.cfg.missing),
 			warm.hrc.Helm.ValuesCache(),
 		)
@@ -696,7 +696,7 @@ spec:
 				prepared.Values,
 				helm.RenderOptions{
 					Options: warm.hrc.Options,
-					Sources: helm.NewSources(reads),
+					Sources: helm.NewSources(reads, nil),
 				},
 			),
 		)

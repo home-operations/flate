@@ -16,7 +16,7 @@ func BenchmarkTemplate_SchemaFailure(b *testing.B) {
   "properties":{"alpha":{"type":"string"},"zeta":{"type":"string"},
     "nested":{"allOf":[{"type":"object","additionalProperties":false}]}}
 }`)
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	input := RenderOptions{Sources: benchChartResolver(b, dir, os.DirFS(dir))}
 	hr := newHR()
 	values := map[string]any{"alpha": nil, "zeta": nil, "nested": map[string]any{"last": true, "first": true}}

@@ -506,7 +506,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 	)
 
 	owner := cachetest.New(t, "", sourcecache.New)
-	cli := helm.NewClient(owner)
+	cli := helm.NewClient(owner, nil)
 
 	hr := &manifest.HelmRelease{
 		Name:      "release",
@@ -538,7 +538,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 				t.Context(),
 				hr,
 				nil,
-				helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources((*testCaseInput.st))},
+				helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources((*testCaseInput.st), nil)},
 			),
 		)
 

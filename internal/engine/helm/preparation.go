@@ -2,10 +2,13 @@ package helm
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"helm.sh/helm/v4/pkg/chart/common"
 
+	"github.com/home-operations/flate/internal/engine/helm/chartinput"
+	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -18,6 +21,7 @@ type Preparation struct {
 	declaration   *manifest.HelmRelease
 	source        *store.SourceArtifact
 	complete      bool
+	chartPrepared bool
 	loaded        chartDescription
 	caps          *common.Capabilities
 	capabilityErr error
@@ -28,11 +32,14 @@ type Preparation struct {
 
 // Matches MUST NOT grant publication authority or validate current source bytes.
 func (p *Preparation) Matches(client *Client, declaration *manifest.HelmRelease, request *RenderOptions) bool {
-	if p == nil || !p.complete {
+	if p == nil || !p.complete && !p.chartPrepared {
 		return false
 	}
 	if p.client != client || declaration == nil || !manifest.Equal(p.declaration, declaration) {
 		return false
+	}
+	if !p.complete {
+		return true
 	}
 	binding := p.binding
 	binding.Policy.Options = request.Options
@@ -65,22 +72,25 @@ func (c *Client) prepareTemplate(
 		work.Finish(err)
 		return templateRequest{}, err
 	}
-	source := input.Sources.chartInput(hr)
+	artifact := input.Sources.chartInput(hr)
 	previous := input.Preparation
-	reusable := previous.Matches(c, hr, input)
+	reusable := previous.Matches(c, hr, input) && previous.complete
 	if reusable {
 		read := store.ArtifactContent
 		if hr.TracksDigest() {
 			read |= store.ArtifactRevision
 		}
-		reusable = source != nil && previous.source.SameMaterial(source, read) && previous.matchesValues(hrValues)
+		reusable = artifact != nil && previous.source.SameMaterial(artifact, read) && previous.matchesValues(hrValues)
 	}
-	if reusable && source.Content != "" {
+	if reusable && artifact.Content != "" && !previous.loaded.remote {
 		input.Work.Fingerprint(previous.key)
-		previous.bindSource(hr, source, input)
+		previous.bindSource(hr, artifact, input)
 		return previous.request(hr, input), nil
 	}
-	loaded, err := c.describeChart(ctx, hr, source)
+	loaded, err := c.preparedChart(ctx, hr, artifact, previous)
+	if err == nil {
+		err = loaded.requireDependencies(ctx, c, hr, input)
+	}
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
@@ -104,7 +114,7 @@ func (c *Client) prepareTemplate(
 		loaded.valuesErr == nil &&
 		previous.loaded.valuesErr == nil {
 		input.Work.Fingerprint(previous.key)
-		previous.bindSource(hr, source, input)
+		previous.bindSource(hr, artifact, input)
 		return previous.request(hr, input), nil
 	}
 	if previous != nil {
@@ -120,24 +130,74 @@ func (c *Client) prepareTemplate(
 	work.Finish(nil)
 	prepared := Preparation{
 		client: c, declaration: hr,
+		chartPrepared: true,
 		loaded:        loaded,
 		caps:          caps,
 		capabilityErr: capabilityErr,
 		key:           key,
 		values:        hrValues,
 	}
-	prepared.bindSource(hr, source, input)
+	prepared.bindSource(hr, artifact, input)
 	if input.Preparation != nil {
 		*input.Preparation = prepared
 	}
 	return prepared.request(hr, input), nil
 }
 
-func (p *Preparation) bindSource(hr *manifest.HelmRelease, source *store.SourceArtifact, input *RenderOptions) {
+func (c *Client) preparedChart(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	artifact *store.SourceArtifact,
+	previous *Preparation,
+) (chartDescription, error) {
+	pending := previous != nil && previous.chartPrepared && !previous.complete
+	if pending && previous.client == c && previous.source == artifact {
+		return previous.loaded, nil
+	}
+	return c.describeChart(ctx, hr, artifact)
+}
+
+func (d *chartDescription) requireDependencies(
+	ctx context.Context,
+	client *Client,
+	hr *manifest.HelmRelease,
+	input *RenderOptions,
+) error {
+	dependencies := d.captured.dependencyInputs()
+	for i := range dependencies {
+		dep := &dependencies[i]
+		if dep.Capture.Files != nil || dep.Capture.Archive != nil {
+			continue
+		}
+		reads, captured := input.Sources.reader.(*store.ReadSet)
+		if captured && client.fetcher != nil {
+			_, err := client.fetcher.FetchDependency(
+				ctx,
+				hr.ChartSource().Namespace,
+				&dep.Declaration,
+				input.Sources.index,
+				reads,
+				&cache.Policy{},
+				true,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("unresolved chart dependency %s (%s)", dep.Name, dep.Declaration.Repository),
+		)
+	}
+	return nil
+}
+
+func (p *Preparation) bindSource(hr *manifest.HelmRelease, artifact *store.SourceArtifact, input *RenderOptions) {
 	binding := cache.RenderBinding[templatePolicy]{
 		Policy: templatePolicy{Release: hr.HistoryPolicy(), Options: input.Options},
 	}
-	binding.Refresh(p.key, hr.ChartSource(), source)
+	binding.Refresh(p.key, hr.ChartSource(), artifact)
 
 	switch {
 	case p.complete:
@@ -150,8 +210,8 @@ func (p *Preparation) bindSource(hr *manifest.HelmRelease, source *store.SourceA
 			binding.Policy.Options.SkipKinds = slices.Clone(input.SkipKinds)
 		}
 	}
-	p.source = source
-	p.loaded.artifact = *source
+	p.source = artifact
+	p.loaded.artifact = *artifact
 	p.binding = binding
 	p.complete = true
 }
@@ -165,4 +225,88 @@ func (p *Preparation) request(hr *manifest.HelmRelease, input *RenderOptions) te
 	return templateRequest{
 		Preparation: *p, input: current, release: hr, content: hr.Content(p.key, omitted),
 	}
+}
+
+// PrepareChart MUST leave transport and cleanup ownership with the acquisition continuation.
+//
+//nolint:nilnil,nonamedreturns // A nil callback marks completion; the deferred work receipt needs the returned error.
+func (c *Client) PrepareChart(
+	ctx context.Context,
+	hr *manifest.HelmRelease,
+	input *RenderOptions,
+) (pending func(context.Context) (source.PreparedFetch, error), resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			work := input.Work.Preparation()
+			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+			work.Finish(resultErr)
+		}
+	}()
+	p := input.Preparation
+	artifact := input.Sources.chartInput(hr)
+	sameInput := p.client == c && p.declaration != nil && manifest.Equal(p.declaration, hr) && p.source == artifact
+	prepared := p.chartPrepared && (!p.complete || !p.loaded.remote)
+	if !sameInput || !prepared {
+		loaded, err := c.describeChart(ctx, hr, artifact)
+		if err != nil {
+			return nil, err
+		}
+		*p = Preparation{client: c, declaration: hr, source: artifact, loaded: loaded, chartPrepared: true}
+	}
+	dependencies := p.loaded.captured.dependencyInputs()
+	for i := range dependencies {
+		dep := &dependencies[i]
+		if dep.Capture.Files != nil || dep.Capture.Archive != nil {
+			continue
+		}
+		reads, ok := input.Sources.reader.(*store.ReadSet)
+		if !ok || c.fetcher == nil {
+			return nil, manifest.NewError(manifest.ErrInput, nil, "chart dependency acquisition is unavailable")
+		}
+		return func(ctx context.Context) (source.PreparedFetch, error) {
+			return c.fetcher.FetchDependency(
+				ctx,
+				hr.ChartSource().Namespace,
+				&dep.Declaration,
+				input.Sources.index,
+				reads,
+				&cache.Policy{},
+				false,
+			)
+		}, nil
+	}
+	return nil, nil
+}
+
+// AcceptChartDependency consumes the artifact before the acquisition owner closes its handle.
+func (p *Preparation) AcceptChartDependency(ctx context.Context, artifact *store.SourceArtifact) error {
+	if artifact == nil || artifact.FS == nil {
+		return manifest.NewError(manifest.ErrInput, nil, "chart dependency content unavailable")
+	}
+	input, _, err := source.OperationView(ctx, artifact.FS)
+	if err != nil {
+		return err
+	}
+	captured, _, err := (chartSelector{Auto: true}).capture(ctx, input, artifact.LocalPath)
+	if err != nil {
+		return err
+	}
+	if _, err := captured.load(); err != nil {
+		return manifest.NewError(manifest.ErrInput, err, "")
+	}
+	built := *p.loaded.captured.dependencies
+	built.Dependencies = slices.Clone(built.Dependencies)
+	p.loaded.captured.dependencies = &built
+	for i := range built.Dependencies {
+		dep := &built.Dependencies[i]
+		if dep.Capture.Files == nil && dep.Capture.Archive == nil {
+			dep.Capture = chartinput.Capture{Files: captured.files, Archive: captured.archive}
+			p.loaded.remote = true
+			p.loaded.fingerprint = p.loaded.captured.fingerprint()
+			p.loaded.key = p.loaded.fingerprint
+			p.loaded.chart, p.loaded.analysis, p.loaded.record = nil, nil, nil
+			return nil
+		}
+	}
+	panic("chart dependency completion without a pending dependency")
 }

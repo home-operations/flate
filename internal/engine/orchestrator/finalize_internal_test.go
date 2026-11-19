@@ -359,7 +359,7 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 		cfg:      treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
 	}
 	o.controllers = controllerbase.Controllers{
-		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions),
+		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions, nil),
 	}
 	var previousAll, previousLocal, savedAll, savedLocal []manifest.KSClaim
 	for pass := range 2 {

@@ -37,7 +37,7 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
@@ -87,7 +87,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n",
 	)
 
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
@@ -159,7 +159,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 
 func helmChartFixture(t *testing.T) (*Client, Sources) {
 	t.Helper()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
 	return cli, cliSources
 }
@@ -198,7 +198,7 @@ func localChartResolver(t *testing.T, name, namespace, dir string) Sources {
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
-	return NewSources(st)
+	return NewSources(st, nil)
 }
 
 func newHR() *manifest.HelmRelease {
@@ -485,7 +485,7 @@ metadata:
 
 func TestMergeChartValuesFiles(t *testing.T) {
 	t.Parallel()
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 	chartWith := func(files map[string]string) *chart.Chart {
 		c := &chart.Chart{}
 		for name, body := range files {

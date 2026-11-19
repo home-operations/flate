@@ -45,7 +45,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
-	cli := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New))
+	cli := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New), nil)
 	input := os.DirFS(chartDir)
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
@@ -97,7 +97,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 
 func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	cliSources := benchChartResolver(b, chartDir, os.DirFS(chartDir))
 
 	hr := &manifest.HelmRelease{
@@ -161,7 +161,7 @@ func BenchmarkTemplate_Cold(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		cli := NewClient(owner)
+		cli := NewClient(owner, nil)
 		docs, _, err := cli.Template(b.Context(), hr, values, RenderOptions{Sources: sources})
 		closeErr := owner.Close()
 		if err != nil {
@@ -213,7 +213,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
-	cli := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New))
+	cli := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New), nil)
 	input := os.DirFS(chartDir)
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
@@ -296,7 +296,7 @@ func BenchmarkLoadChart_Cached_Acquired(b *testing.B) {
 func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 	b.Helper()
 	chartDir := stageBenchChartDir(b)
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	input := os.DirFS(chartDir)
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
@@ -335,7 +335,7 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 // where spec.chart.spec.valuesFiles enumerates a stack of values
 // layers.
 func BenchmarkMergeChartValuesFiles(b *testing.B) {
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	const n = 10
 	files := make([]*chartcommon.File, 0, n)
 	names := make([]string, 0, n)
@@ -391,7 +391,7 @@ func benchChartResolver(b *testing.B, dir string, input fs.FS) Sources {
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
-	return NewSources(st)
+	return NewSources(st, nil)
 }
 
 func BenchmarkTemplate_AppTemplateChartConstructed(b *testing.B) {
@@ -435,7 +435,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		root = b.TempDir()
 	}
 	owner := cachetest.New(b, root, sourcecache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	input := acquireChartFS(b, owner, os.DirFS(dir))
 	cliSources := benchChartResolver(b, dir, input)
 	hr := newHR()
@@ -538,7 +538,7 @@ func benchmarkTemplateCRDsValidationCase(b *testing.B, count *int, policy *strin
 	for i := range *count {
 		testutil.WriteFile(b, dir, fmt.Sprintf("mychart/crds/%d.yaml", i), crd)
 	}
-	cli := NewClient(cachetest.New(b, "", sourcecache.New))
+	cli := NewClient(cachetest.New(b, "", sourcecache.New), nil)
 	cliSources := benchChartResolver(b, dir, os.DirFS(dir))
 	hr := newHR()
 	hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy((*policy))}

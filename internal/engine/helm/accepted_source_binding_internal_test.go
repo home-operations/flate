@@ -46,7 +46,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 			assert.NoError(t, err)
 			assert.NoError(
@@ -86,7 +86,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			objects := store.New()
 			objects.SetArtifact(changed.ChartSource(), &source)
 			current := input
-			current.Sources = NewSources(objects)
+			current.Sources = NewSources(objects, nil)
 			prepared, err := renderer.prepareTemplate(t.Context(), changed, nil, &current)
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
@@ -134,7 +134,7 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 	for _, lifetime := range []string{"retained", "transferred"} {
 		t.Run(lifetime, func(t *testing.T) {
 			t.Parallel()
-			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			var preparation, successor Preparation
 			t.Cleanup(func() { preparation = Preparation{} })
 			t.Cleanup(func() { successor = Preparation{} })
@@ -145,7 +145,7 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			objects := store.New()
 			objects.SetArtifact(hr.ChartSource(), &source)
 			current := RenderOptions{
-				Sources: NewSources(objects), Preparation: &preparation, Work: work.Scope().RenderWork(),
+				Sources: NewSources(objects, nil), Preparation: &preparation, Work: work.Scope().RenderWork(),
 			}
 			docs, receipt, err := renderer.Template(t.Context(), hr, nil, current)
 			assert.NoError(t, err)

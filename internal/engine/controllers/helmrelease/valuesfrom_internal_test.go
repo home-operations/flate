@@ -335,7 +335,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	c, st := newTestController(t, nil)
 	var err error
 	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
-	c.Helm = helm.NewClient(c.Cache)
+	c.Helm = helm.NewClient(c.Cache, nil)
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
@@ -370,7 +370,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
 	seed, err := helm.Prepare(
 		hr,
-		helm.NewSources(st).Declaration,
+		helm.NewSources(st, nil).Declaration,
 		inputs,
 		c.Helm.ValuesCache(),
 	)
@@ -381,7 +381,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 			seed,
 			seed.Values,
 			helm.RenderOptions{
-				Sources: helm.NewSources(st),
+				Sources: helm.NewSources(st, nil),
 				Omitted: values.OmittedIDs(inputs),
 			},
 		),
@@ -515,7 +515,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			t.Parallel()
 			c, st := newTestControllerWithOptions(t, &base.Options{Missing: depwait.NewMissingPolicy([]string{kind})})
 			c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
-			c.Helm = helm.NewClient(c.Cache)
+			c.Helm = helm.NewClient(c.Cache, nil)
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 			testutil.WriteFile(
@@ -554,7 +554,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
 			seed, err := helm.Prepare(
 				hr,
-				helm.NewSources(st).Declaration,
+				helm.NewSources(st, nil).Declaration,
 				inputs,
 				c.Helm.ValuesCache(),
 			)
@@ -564,7 +564,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				seed,
 				seed.Values,
 				helm.RenderOptions{
-					Sources: helm.NewSources(st),
+					Sources: helm.NewSources(st, nil),
 					Omitted: values.OmittedIDs(inputs),
 				},
 			)

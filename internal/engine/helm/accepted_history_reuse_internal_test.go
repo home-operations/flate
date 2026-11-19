@@ -33,7 +33,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	)
 	root := t.TempDir()
 	owner := cachetest.New(t, root, cache.New)
-	client := NewClient(owner)
+	client := NewClient(owner, nil)
 	hr := newHR()
 	hr.TargetNamespace = "runtime"
 	input := RenderOptions{
@@ -170,7 +170,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	assert.NoError(t, (*testCaseInput.client).cache.RecordRender(t.Context(), cache.RenderAcceptance{
 		Owner: (*testCaseInput.hr).Named(), Receipt: *testCaseInput.receipt, Records: emptyRenderInventory,
 	}))
-	fresh := NewClient(cachetest.New(t, (*testCaseInput.root), cache.New))
+	fresh := NewClient(cachetest.New(t, (*testCaseInput.root), cache.New), nil)
 	previous, complete := fresh.PreviousRender(t.Context(), (*testCaseInput.hr), nil, (*testCaseInput.input))
 	assert.Equal(t, complete, persistent)
 	assert.Equal(t, previous != nil, persistent)
@@ -273,7 +273,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 			changed.URL = "different"
 			sources := store.New()
 			sources.SetArtifact((*testCaseInput.hr).ChartSource(), &changed)
-			o.Sources = NewSources(sources)
+			o.Sources = NewSources(sources, nil)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -293,7 +293,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		assert.FatalIf(t, previousRenderComplete9, "%s", "foreign effective owner borrowed history")
 	}
 	missing := (*testCaseInput.input)
-	missing.Sources = NewSources(store.New())
+	missing.Sources = NewSources(store.New(), nil)
 	{
 		_, previousRenderComplete10 := fresh.PreviousRender(
 			t.Context(),
@@ -355,7 +355,7 @@ func testTemplateAcceptedHistoryDurableStaticOutput(
 ) {
 	t.Helper()
 
-	publisher := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	publisher := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	assert.NoError(
 		t,
 		publisher.cache.RecordRender(
@@ -392,7 +392,7 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 		if selected != "" {
 			sources = append(sources, manifest.SourceEvidence{Source: source, Path: selected, Subtree: true})
 		}
-		publisher := NewClient(cachetest.New(t, directory, cache.New))
+		publisher := NewClient(cachetest.New(t, directory, cache.New), nil)
 		assert.NoError(
 			t,
 			publisher.cache.RecordRender(
@@ -406,7 +406,7 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 			),
 		)
 		assert.NoError(t, publisher.cache.Close())
-		reopened := NewClient(cachetest.New(t, directory, cache.New))
+		reopened := NewClient(cachetest.New(t, directory, cache.New), nil)
 		for _, candidate := range []string{"apps/red", "apps/blue"} {
 			owners, producersForPathsErr := reopened.cache.ProducersForPaths(
 				t.Context(),
@@ -443,9 +443,9 @@ func testTemplateAcceptedHistoryDurablePreparation(
 	objects.SetArtifact((*(*testCaseInput).hr).ChartSource(), &artifact)
 	sources := &historyCountingSources{sourceReader: objects}
 	observed := (*(*testCaseInput).input)
-	observed.Sources, observed.Admit = NewSources(sources), nil
+	observed.Sources, observed.Admit = NewSources(sources, nil), nil
 	directory := t.TempDir()
-	publisher := NewClient(cachetest.New(t, directory, cache.New))
+	publisher := NewClient(cachetest.New(t, directory, cache.New), nil)
 	_, pending, templateErr := publisher.Template(t.Context(), (*(*testCaseInput).hr), nil, observed)
 	assert.NoError(t, templateErr)
 	assert.NoError(
@@ -460,7 +460,7 @@ func testTemplateAcceptedHistoryDurablePreparation(
 			},
 		),
 	)
-	reader := NewClient(cachetest.New(t, directory, cache.New))
+	reader := NewClient(cachetest.New(t, directory, cache.New), nil)
 	sources.calls.Store(0)
 	counted.opens.Store(0)
 	previousRenderPrevious2, previousRenderErr := reader.PreviousRender(
@@ -523,7 +523,7 @@ func testTemplateAcceptedHistoryDurableName(
 ) {
 	t.Helper()
 
-	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	invalid := *(*testCaseInput).frame
 	invalid.Stored = nil
 	tc.mutate(&invalid)
@@ -589,7 +589,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 	t.Helper()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 
-	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	assert.NoError(
 		t,
 		isolated.cache.RecordRender(
@@ -672,7 +672,7 @@ func testTemplateAcceptedHistoryDurableFrozenPreparation(
 	t.Helper()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 
-	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	current := (*(*testCaseInput).hr).Clone()
 	current.CommonMetadata = &helmv2.CommonMetadata{Annotations: map[string]string{"policy": "before"}}
 	assert.NoError(
@@ -740,7 +740,7 @@ func testTemplateAcceptedHistoryDurableUnacceptedPreparation(
 	t.Helper()
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 
-	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	original := RenderOptions{Sources: (*testCaseInput).input.Sources}
 	_, first, renderMapsErr2 := testutil.RenderMaps(
 		renderer.Template(t.Context(), (*(*testCaseInput).hr), nil, original),
@@ -798,7 +798,7 @@ func testTemplateAcceptedHistoryDurableName2(
 ) {
 	t.Helper()
 
-	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	assert.NoError(
 		t,
 		isolated.cache.RecordRender(

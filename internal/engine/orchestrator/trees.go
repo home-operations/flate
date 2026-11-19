@@ -119,9 +119,6 @@ func NewInvocation(
 		}
 		r.releaseCache = cfg.Cache.Close
 	}
-	if cfg.HelmClient == nil {
-		cfg.HelmClient = helm.NewClient(cfg.Cache)
-	}
 	cfg.chartFetcher = helmchart.New(
 		&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig},
 		helmchart.Config{
@@ -131,6 +128,9 @@ func NewInvocation(
 			DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking,
 		},
 	)
+	if cfg.HelmClient == nil {
+		cfg.HelmClient = helm.NewClient(cfg.Cache, cfg.chartFetcher)
+	}
 	cfg.projections = new(manifest.ProducerProjections)
 	return r, nil
 }

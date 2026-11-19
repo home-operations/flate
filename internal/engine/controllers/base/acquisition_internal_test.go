@@ -142,10 +142,12 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 		Kind: manifest.KindResourceSetInputProvider,
 		FS:   fstest.MapFS{"inputs.json": {Data: []byte(`[]`)}},
 	}
-	var fetches, retries, completions int
+	var fetches, retries, completions, closed, children int
 	missing.RetryAmbient = func(context.Context) (source.PreparedFetch, error) {
 		retries++
-		return fetchtest.Prepared(artifact, nil)
+		prepared, err := fetchtest.Prepared(artifact, nil)
+		prepared.Close = func() { closed++ }
+		return prepared, err
 	}
 	acquisition := Acquisition{
 		Fetch: func(context.Context) (source.PreparedFetch, error) {
@@ -165,7 +167,19 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 				level,
 			)
 
-			return nil
+			assert.Equal(t, closed, 0)
+			return run.Acquire(t.Context(), provider, Acquisition{
+				Fetch: func(context.Context) (source.PreparedFetch, error) {
+					prepared, err := fetchtest.Prepared(artifact, nil)
+					prepared.Close = func() { closed++ }
+					return prepared, err
+				},
+				Complete: func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error {
+					children++
+					assert.Equal(t, closed, 0)
+					return nil
+				},
+			}, level)
 		},
 	}
 	tasks.Go(t.Context(), "acquire", func(ctx context.Context) {
@@ -209,6 +223,10 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 		len(
 			st.Warnings(),
 		) != 0, "%v", "shared acquisition published source content or treated an evaluated empty result as unavailable")
+	assert.Equal(t, children, 1)
+	assert.Equal(t, closed, 2)
+	run.Close()
+	assert.Equal(t, closed, 2)
 }
 
 func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
@@ -234,7 +252,17 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 				Cause:  cause,
 			}
 			var got error
+			closed := 0
 			tasks.Go(t.Context(), "acquire", func(ctx context.Context) {
+				assert.NoError(t, run.Acquire(ctx, provider, Acquisition{
+					Fetch: func(context.Context) (source.PreparedFetch, error) {
+						prepared, err := fetchtest.Prepared(&store.SourceArtifact{}, nil)
+						prepared.Close = func() { closed++ }
+						return prepared, err
+					},
+					Complete: func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error { return nil },
+				}, manifest.DrainNone))
+				assert.Equal(t, closed, 1)
 				got = run.Acquire(
 					ctx,
 					provider,
@@ -253,6 +281,8 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 			if !errors.Is(got, cause) || len(st.Warnings()) != 0 {
 				t.Fatalf("canceled acquisition error=%v warnings=%+v", got, st.Warnings())
 			}
+			run.Close()
+			assert.Equal(t, closed, 1)
 
 			{
 				pending, ok := got.(interface {

@@ -48,7 +48,13 @@ func (c *Client) StaleValuePaths(
 	if len(values) == 0 {
 		return nil
 	}
-	loaded, err := c.describeChart(ctx, hr, input.Sources.chartInput(hr))
+	var loaded chartDescription
+	var err error
+	if input.Preparation != nil && input.Preparation.chartPrepared {
+		loaded = input.Preparation.loaded
+	} else {
+		loaded, err = c.describeChart(ctx, hr, input.Sources.chartInput(hr))
+	}
 	if err == nil && loaded.analysis == nil {
 		err = c.decodeChart(ctx, &loaded, &RenderOptions{Work: input.Work})
 	}

@@ -25,7 +25,7 @@ func TestTemplate_OversizedFrameMetadata(t *testing.T) {
 			16<<20,
 		) + "*/}}apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n",
 	})
-	client := NewClient(cachetest.New(t, "", cache.New))
+	client := NewClient(cachetest.New(t, "", cache.New), nil)
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	request, err := client.prepareTemplate(t.Context(), newHR(), nil, &input)
 	assert.NoError(t, err)
@@ -72,7 +72,7 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 		"mychart/Chart.yaml":        "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
 		"mychart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: valid}\n",
 	})
-	client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 	hr := newHR()
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
 	docs, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))

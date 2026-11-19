@@ -69,7 +69,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 		},
 		&store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest},
 	)
-	resolver := helm.NewSources(st)
+	resolver := helm.NewSources(st, nil)
 	c := controllertest.NewExecution(base.New(st, nil), hr.Named())
 
 	b.ReportAllocs()

@@ -93,7 +93,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		"mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: example}\ndata: {marker: {{ .Values.marker | quote }}}\n",
 	)
-	cli := NewClient(cachetest.New(t, "", cache.New))
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
 	sources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	for _, marker := range []string{"first", "second"} {
 		hr := newHR()
@@ -162,7 +162,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		"{{ if .Values.fail }}{{ fail \"cache miss action\" }}{{ end }}\n"+testCaseInput.input,
 	)
 	owner := cachetest.New(t, root, cache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	sources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	first, receipt, firstErr := testutil.RenderMaps(
 		cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: sources}),
@@ -244,7 +244,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		)
 		assert.NoError(t, err)
 		assert.NoError(t, owner.Close())
-		fresh := NewClient(cachetest.New(t, root, cache.New))
+		fresh := NewClient(cachetest.New(t, root, cache.New), nil)
 		out, _, err := testutil.RenderMaps(
 			fresh.Template(
 				t.Context(),
@@ -299,7 +299,7 @@ func testTemplateCacheTemplateIntegrationColdCoalescing(t *testing.T) {
 				"mychart/templates/cm.yaml",
 				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata:\n  action: {{ .Values.probe | quote }}\n",
 			)
-			cli := NewClient(cachetest.New(t, root, cache.New))
+			cli := NewClient(cachetest.New(t, root, cache.New), nil)
 			probe := make(templateActionProbe, 4)
 			var outputs [2][]map[string]any
 			var wg sync.WaitGroup
@@ -361,7 +361,7 @@ func testTemplateCacheTemplateIntegrationCase2(
 		}}}}}
 	}
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", body)
-	cli := NewClient(cachetest.New(t, "", cache.New))
+	cli := NewClient(cachetest.New(t, "", cache.New), nil)
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	probe := make(templateActionProbe, 4)
 	var previous error
@@ -413,7 +413,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 	dir, root := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	for range 2 {
-		cli := NewClient(cachetest.New(t, root, cache.New))
+		cli := NewClient(cachetest.New(t, root, cache.New), nil)
 		cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 		docs, receipt12, err := testutil.RenderMaps(
 			cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: cliSources}),
@@ -492,7 +492,7 @@ extra: {sequence: [{value: original}]}
 `,
 	)
 	owner := cachetest.New(t, root, cache.New)
-	cli := NewClient(owner)
+	cli := NewClient(owner, nil)
 	reads := map[string]int{}
 	input := os.DirFS(dir)
 	chartRoot := ""
@@ -508,7 +508,7 @@ extra: {sequence: [{value: original}]}
 	}
 	st := store.New()
 	st.SetArtifact(newHR().ChartSource(), &store.SourceArtifact{FS: input})
-	resolver := NewSources(st)
+	resolver := NewSources(st, nil)
 	cliSources := resolver
 	first, receipt13, err := testutil.RenderMaps(
 		cli.Template(
@@ -655,7 +655,7 @@ extra: {sequence: [{value: original}]}
 		closeErr := owner.Close()
 		assert.NoError(t, closeErr)
 	}
-	cli = NewClient(cachetest.New(t, root, cache.New))
+	cli = NewClient(cachetest.New(t, root, cache.New), nil)
 	cliSources = resolver
 	loaded, err = loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 	assert.NoError(t, err)

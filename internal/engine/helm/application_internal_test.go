@@ -89,10 +89,10 @@ func TestTemplate_EntryPrecondition(t *testing.T) {
 			}
 			st := store.New()
 			st.SetArtifact(hr.Chart.Source, &store.SourceArtifact{FS: input})
-			cli := NewClient(cachetest.New(t, "", cache.New))
+			cli := NewClient(cachetest.New(t, "", cache.New), nil)
 			calls := 0
 			docs, receipt, err := cli.Template(t.Context(), hr, tc.values, RenderOptions{
-				Sources: NewSources(st),
+				Sources: NewSources(st, nil),
 				Admit: func(admission RenderAdmission) (bool, error) {
 					possible := admission.Possible
 					calls++

@@ -93,8 +93,8 @@ func testLoadFSChartAutomaticArchiveSemanticsCase(
 		},
 	}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: input})
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	sources := NewSources(st)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
+	sources := NewSources(st, nil)
 	got, gotErr := loadDecodedChart(t.Context(), cli, hr, sources)
 	if wantErr != nil {
 		if gotErr == nil {

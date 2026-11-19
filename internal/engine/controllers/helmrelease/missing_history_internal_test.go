@@ -3,12 +3,13 @@ package helmrelease
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"sync/atomic"
 	"testing"
-
-	"github.com/home-operations/flate/internal/engine/values"
+	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
@@ -17,8 +18,11 @@ import (
 	"github.com/home-operations/flate/internal/engine/helm"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/helmchart"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -30,6 +34,143 @@ type historyInputPromotion struct {
 	input    *manifest.ConfigMap
 	indexed  []manifest.NamedResource
 	promoted []manifest.NamedResource
+}
+
+func TestPreviousRender_ChartDependencyHasNoRuntimeEffects(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{
+		"indexed_repository", "missing_secret", "remote_content", "rotated_secret", "unavailable_source", "unreadable_source",
+	} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			t.Cleanup(server.Close)
+			repository := &manifest.HelmRepository{Name: "declared", Namespace: "charts"}
+			repository.URL = server.URL
+			repository.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				repository.Named(): {Declaration: repository},
+			}}
+			promotion := &historyInputPromotion{input: &manifest.ConfigMap{Name: "unused", Namespace: "apps"}}
+			c, st := newTestControllerWithOptions(t, &base.Options{Index: index, Existence: promotion})
+			promotion.store = st
+			c.index = index
+			c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
+			network := new(source.Network)
+			t.Cleanup(network.Close)
+			c.Helm = helm.NewClient(
+				c.Cache,
+				helmchart.New(nil, helmchart.Config{Cache: c.Cache, Network: network, Concurrency: 2}),
+			)
+			chartSource := &manifest.GitRepository{Name: "input", Namespace: "charts"}
+			st.AddObject(chartSource)
+			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: fstest.MapFS{
+				"parent/Chart.yaml": {
+					Data: []byte(
+						"apiVersion: v2\nname: parent\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 1.0.0\n  repository: " + server.URL + "\n",
+					),
+				},
+			}}
+			if state == "unreadable_source" {
+				artifact.FS = nil
+			}
+			if state != "unavailable_source" {
+				st.SetArtifact(chartSource.Named(), artifact)
+			}
+			st.UpdateStatus(chartSource.Named(), store.StatusInfo{Status: store.StatusReady})
+			owner := &manifest.HelmRelease{
+				Name:      "consumer",
+				Namespace: "apps",
+				Chart:     manifest.HelmChart{Name: "parent", Source: chartSource.Named()},
+				HelmReleaseSpec: helmv2.HelmReleaseSpec{
+					Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
+						Chart: "parent",
+						SourceRef: &helmv2.CrossNamespaceObjectReference{
+							Kind:      manifest.KindGitRepository,
+							Name:      chartSource.Name,
+							Namespace: chartSource.Namespace,
+						},
+					}},
+				},
+			}
+			st.AddObject(owner)
+			st.SetIncluded(owner.Named(), false, false)
+			if state != "indexed_repository" {
+				st.AddObject(repository)
+			}
+			secret := &manifest.Secret{
+				Name:       "auth",
+				Namespace:  "charts",
+				StringData: map[string]any{"username": "user", "password": "password"},
+			}
+			if state == "remote_content" || state == "rotated_secret" {
+				st.AddObject(secret)
+			}
+			objects, warnings := st.Objects(), st.Warnings()
+			status, known := st.GetStatus(owner.Named())
+			var events atomic.Int32
+			for _, event := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
+				t.Cleanup(st.AddListener(event, func(manifest.NamedResource, any) { events.Add(1) }, false))
+			}
+			history := c.PreviousRender(t.Context(), owner, schedule.Result{})
+			assert.FatalIf(t, history.Assessment == nil, "missing dependency assessment")
+			defer history.Assessment.Close()
+			assert.Equal(t, history.Complete, false)
+			assert.Equal(t, history.Assessment.Reads.Admitted(), false)
+			assert.Equal(t, requests.Load(), int32(0))
+			assert.Equal(t, events.Load(), int32(0))
+			assert.Equal(t, len(promotion.promoted), 0)
+			assert.Equal(t, slices.Equal(st.Objects(), objects), true)
+			assert.Diff(t, st.Warnings(), warnings)
+			after, afterKnown := st.GetStatus(owner.Named())
+			assert.Equal(t, after, status)
+			assert.Equal(t, afterKnown, known)
+			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
+			assert.Equal(t, c.Tasks.Failures(), int64(0))
+
+			if !c.Cache.CanPersistRenders() {
+				return
+			}
+			inputs := chartDependencyHistoryInputs{store: st, repository: repository, secret: secret}
+			inputs.assertReads(t, &history.Assessment.Reads, state)
+		})
+	}
+}
+
+type chartDependencyHistoryInputs struct {
+	store      *store.Store
+	repository *manifest.HelmRepository
+	secret     *manifest.Secret
+}
+
+func (in chartDependencyHistoryInputs) assertReads(t *testing.T, reads *store.ReadSet, state string) {
+	t.Helper()
+	captured := slices.Collect(reads.Inputs())
+	sourceReadable := state != "unavailable_source" && state != "unreadable_source"
+	assert.Equal(t, slices.Contains(captured, in.repository.Named()), sourceReadable)
+	assert.Equal(t, slices.Contains(captured, in.secret.Named()), sourceReadable && state != "indexed_repository")
+	assert.Equal(t, reads.Valid(), true)
+	switch state {
+	case "indexed_repository":
+		in.store.AddObject(in.repository)
+	case "remote_content":
+		replacement := *in.repository
+		replacement.URL += "/changed"
+		in.store.AddObject(&replacement)
+	case "missing_secret":
+		in.store.AddObject(in.secret)
+	case "rotated_secret":
+		replacement := *in.secret
+		replacement.StringData = map[string]any{"username": "user", "password": "rotated"}
+		in.store.AddObject(&replacement)
+	default:
+		return
+	}
+	assert.Equal(t, reads.Valid(), false)
 }
 
 func (p *historyInputPromotion) IsFileIndexed(id manifest.NamedResource) bool {
@@ -68,18 +209,22 @@ metadata: {name: output, namespace: apps}
 data:
   value: {{ .Values.value | default "fallback" | quote }}
 `)
-	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
-	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{
+	chartSourceObject := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(chartSourceObject)
+	st.SetArtifact(chartSourceObject.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, FS: os.DirFS(root), LocalPath: root,
 	})
-	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	st.UpdateStatus(chartSourceObject.Named(), store.StatusInfo{Status: store.StatusReady})
 	owner := &manifest.HelmRelease{
-		Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()},
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart:     manifest.HelmChart{Name: "chart", Source: chartSourceObject.Named()},
 		HelmReleaseSpec: helmv2.HelmReleaseSpec{
 			Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
 				Chart: "chart", SourceRef: &helmv2.CrossNamespaceObjectReference{
-					Kind: manifest.KindGitRepository, Name: source.Name, Namespace: source.Namespace,
+					Kind:       manifest.KindGitRepository,
+					Name:       chartSourceObject.Name,
+					Namespace:  chartSourceObject.Namespace,
 					APIVersion: manifest.SourceDomain + "/v1",
 				},
 			}},
@@ -87,13 +232,16 @@ data:
 		},
 	}
 	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
-	c.Helm = helm.NewClient(c.Cache)
+	c.Helm = helm.NewClient(c.Cache, nil)
 	warm, warmStore := newTestController(t, nil)
 	warm.Cache = c.Cache
 	warm.Helm = c.Helm
-	warmStore.AddObject(source)
-	warmStore.SetArtifact(source.Named(), st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
-	warmStore.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	warmStore.AddObject(chartSourceObject)
+	warmStore.SetArtifact(
+		chartSourceObject.Named(),
+		st.GetArtifact(chartSourceObject.Named(), store.ArtifactContent).(*store.SourceArtifact),
+	)
+	warmStore.UpdateStatus(chartSourceObject.Named(), store.StatusInfo{Status: store.StatusReady})
 	warmStore.AddObject(owner)
 	assert.Equal(t, reconcileFixture(t, warm, owner.Named()).Status, store.StatusReady)
 	warmHistory := warm.PreviousRender(t.Context(), owner, schedule.Result{})
@@ -137,11 +285,11 @@ data:
 	assert.Equal(t, actual.Manifests[0].Document["data"].(map[string]any)["value"], any("promoted"))
 
 	full, fullStore := newTestController(t, nil)
-	fullStore.AddObject(source)
-	fullStore.SetArtifact(source.Named(), &store.SourceArtifact{
+	fullStore.AddObject(chartSourceObject)
+	fullStore.SetArtifact(chartSourceObject.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, FS: os.DirFS(root), LocalPath: root,
 	})
-	fullStore.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	fullStore.UpdateStatus(chartSourceObject.Named(), store.StatusInfo{Status: store.StatusReady})
 	fullStore.AddObject(owner)
 	fullStore.AddObject(input)
 	fullInfo := reconcileFixture(t, full, owner.Named())
@@ -237,7 +385,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	c, st := newTestController(t, nil)
 	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
-	c.Helm = helm.NewClient(c.Cache)
+	c.Helm = helm.NewClient(c.Cache, nil)
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(
@@ -271,16 +419,16 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 		Data:      map[string]any{"values.yaml": "value: stable\n"},
 	}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-	source := (&manifest.GitRepository{Name: "inputs", Namespace: "apps"}).Named()
+	chartSourceObject := (&manifest.GitRepository{Name: "inputs", Namespace: "apps"}).Named()
 	for _, object := range []manifest.BaseManifest{owner, input, producer} {
 		st.AddObject(object)
 	}
 	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
-	st.SetArtifact(source, &store.SourceArtifact{Content: "before"})
+	st.SetArtifact(chartSourceObject, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		input.Named(): {
 			Productions: []manifest.Production{
-				{Owner: producer.Named(), Declaration: producer.Named(), Source: source},
+				{Owner: producer.Named(), Declaration: producer.Named(), Source: chartSourceObject},
 			},
 		},
 	}})
@@ -292,7 +440,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	assert.Equal(t, history.Assessment.Reads.Valid(), true)
 	beforeInput, beforeProducer := st.GetObject(input.Named()), st.GetDeclaration(producer.Named())
 	replacement := &store.SourceArtifact{Content: "after"}
-	st.SetArtifact(source, replacement)
+	st.SetArtifact(chartSourceObject, replacement)
 	assert.Equal(t, history.Assessment.Reads.Valid(), false)
 	assert.Equal(t, st.GetObject(input.Named()), beforeInput)
 	assert.Equal(t, st.GetDeclaration(producer.Named()), beforeProducer)

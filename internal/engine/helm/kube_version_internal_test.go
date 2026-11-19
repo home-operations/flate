@@ -22,7 +22,7 @@ metadata:
 data:
   version: {{ .Capabilities.KubeVersion.Version | quote }}
 `)
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	cli := NewClient(cachetest.New(t, "", sourcecache.New), nil)
 
 	for _, tc := range []struct {
 		name, version, want string

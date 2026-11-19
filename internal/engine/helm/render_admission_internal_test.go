@@ -29,7 +29,7 @@ func TestTemplate_CurrentRenderAdmission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			client := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			client := NewClient(cachetest.New(t, t.TempDir(), cache.New), nil)
 			hr := newHR()
 			var initial *manifest.RenderReceipt
 			if tc.warm {
@@ -42,7 +42,7 @@ func TestTemplate_CurrentRenderAdmission(t *testing.T) {
 			artifact.Revision = tc.revision
 			sources := store.New()
 			sources.SetArtifact(hr.ChartSource(), &artifact)
-			current.Sources = NewSources(sources)
+			current.Sources = NewSources(sources, nil)
 			var observed RenderAdmission
 			calls := 0
 			current.Admit = func(admission RenderAdmission) (bool, error) {

@@ -1,5 +1,149 @@
 # Changelog
 
+## [0.8.0](https://github.com/home-operations/flate/compare/v0.7.3...v0.8.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* move implementation packages under internal ([#1617](https://github.com/home-operations/flate/issues/1617))
+* **orchestrator:** define the render SDK and remove implementation exports ([#1612](https://github.com/home-operations/flate/issues/1612))
+
+### Features
+
+* move implementation packages under internal ([#1617](https://github.com/home-operations/flate/issues/1617)) ([851d8ef](https://github.com/home-operations/flate/commit/851d8eff4f15d268a0182f11826b7b7eed699969))
+* **orchestrator:** define the render SDK and remove implementation exports ([#1612](https://github.com/home-operations/flate/issues/1612)) ([4ee66ad](https://github.com/home-operations/flate/commit/4ee66ad673e410e853b4b7121eaf96b53b42f0a0))
+
+
+### Bug Fixes
+
+* **base:** report every missing input of a Kustomization in one run ([#1595](https://github.com/home-operations/flate/issues/1595)) ([540de47](https://github.com/home-operations/flate/commit/540de47095f67d81dd833c43f9fec63c323c3901))
+* **change:** decide changed paths in one place for --base and --path-orig ([#1511](https://github.com/home-operations/flate/issues/1511)) ([cb28f72](https://github.com/home-operations/flate/commit/cb28f722a93c083e612d9c8b9d847e1a82818477))
+* **cli:** normalize --skip-kinds once so the order does not change cache keys ([#1507](https://github.com/home-operations/flate/issues/1507)) ([7f10ec3](https://github.com/home-operations/flate/commit/7f10ec30676f35ffd708c0c2e735404cfcb9f2a4))
+* **depwait:** decide when a missing input is allowed in one place ([#1517](https://github.com/home-operations/flate/issues/1517)) ([87b05f0](https://github.com/home-operations/flate/commit/87b05f0e29af99125a267396d4cd58b2c1e38319))
+* **depwait:** report every member of a dependency cycle the same way in every settle order ([#1504](https://github.com/home-operations/flate/issues/1504)) ([57ced3c](https://github.com/home-operations/flate/commit/57ced3c2ac8dd30789c9728e66382d1c075fd0e5))
+* **diff:** pair generator-renamed resources into one changed object ([#1566](https://github.com/home-operations/flate/issues/1566)) ([aa0c411](https://github.com/home-operations/flate/commit/aa0c4112cce4b6ae790451dec3c1cb18bd7db982))
+* **diff:** preview self-source branch changes ([#1500](https://github.com/home-operations/flate/issues/1500)) ([aff03a1](https://github.com/home-operations/flate/commit/aff03a1dadc05630e815582e8e7aadc53239e816))
+* **discovery:** alias an undeclared source of any kind to the working tree ([#1529](https://github.com/home-operations/flate/issues/1529)) ([#1536](https://github.com/home-operations/flate/issues/1536)) ([e454e2e](https://github.com/home-operations/flate/commit/e454e2e4495f6191231fe28666ed113ab8c8f091))
+* **discovery:** keep a remote source's path out of the working tree ([#1586](https://github.com/home-operations/flate/issues/1586)) ([022f9f6](https://github.com/home-operations/flate/commit/022f9f6fe8d95cd451570e70d613c8ce8a9e6c75))
+* **discovery:** read a Flux object the way its parent renders it ([#1547](https://github.com/home-operations/flate/issues/1547)) ([013afbd](https://github.com/home-operations/flate/commit/013afbd2da2e0505912cad346af11db9d6e91276))
+* **discovery:** render a reused entry whose source is not fetched yet ([#1596](https://github.com/home-operations/flate/issues/1596)) ([f0127fe](https://github.com/home-operations/flate/commit/f0127fe72013226b31ea9a2329f9fc36d7e2de83))
+* **discovery:** substitute dependsOn the same way for every Kustomization ([#1510](https://github.com/home-operations/flate/issues/1510)) ([bcaa6a1](https://github.com/home-operations/flate/commit/bcaa6a1c2b15d40b66aa5fe9a487491c1d0cbcd0))
+* **helm:** build chart dependencies from the source artifact like source-controller ([#1620](https://github.com/home-operations/flate/issues/1620)) ([c143540](https://github.com/home-operations/flate/commit/c143540fff679a99f832522754a52116355b4dae))
+* **helm:** refresh the history binding when a reused preparation changes revision or URL ([#1563](https://github.com/home-operations/flate/issues/1563)) ([e650030](https://github.com/home-operations/flate/commit/e65003058dfc53b06e4226d3d1799175eefb9c1d))
+* **kustomize:** name loose files in the duplicate-resource report ([#1554](https://github.com/home-operations/flate/issues/1554)) ([c6f8d36](https://github.com/home-operations/flate/commit/c6f8d3609a3e29ac6ad67f93ca82c39a6e41b3a3))
+* **loader:** follow files an ArtifactGenerator copies ([#1538](https://github.com/home-operations/flate/issues/1538)) ([#1552](https://github.com/home-operations/flate/issues/1552)) ([f84b0b9](https://github.com/home-operations/flate/commit/f84b0b92580cd6894963c70012715633973c7f44))
+* **loader:** stop bounded fixpoint loops on cancellation ([#1551](https://github.com/home-operations/flate/issues/1551)) ([8597a17](https://github.com/home-operations/flate/commit/8597a176cf991798332ff19e5b1d33ffc264367b))
+* **manifest:** warn SOPSUnreadable only for objects in the output ([#1555](https://github.com/home-operations/flate/issues/1555)) ([b4d392d](https://github.com/home-operations/flate/commit/b4d392d4e8b64be41ae5d1dd93e045d620188ba0))
+* **orchestrator:** make the warm entry application interval receipt deterministic ([#1582](https://github.com/home-operations/flate/issues/1582)) ([92acf2f](https://github.com/home-operations/flate/commit/92acf2f1f06d34fdbb419af384aedd057753622d))
+* **release:** build release binaries from the package so they carry build identity ([#1516](https://github.com/home-operations/flate/issues/1516)) ([0f82005](https://github.com/home-operations/flate/commit/0f82005629166dc81e4116dc33d56b0d607031ca))
+* **selection:** find a HelmRelease whose Kustomization comes from outside its layer ([#1539](https://github.com/home-operations/flate/issues/1539)) ([#1548](https://github.com/home-operations/flate/issues/1548)) ([403eee4](https://github.com/home-operations/flate/commit/403eee492b47ad40e6abd259338d6834ba7b462c))
+* **selection:** finish a diff when a supplied Secret shadows a SOPS Secret ([#1606](https://github.com/home-operations/flate/issues/1606)) ([2ebba9b](https://github.com/home-operations/flate/commit/2ebba9bb65ea3ad9a2a879c326aa47dac7d06d02))
+* **selection:** resolve substituted paths and selectors before changed-only selection ([#1531](https://github.com/home-operations/flate/issues/1531)) ([#1542](https://github.com/home-operations/flate/issues/1542)) ([d5f77ea](https://github.com/home-operations/flate/commit/d5f77eac528960264c8706e735a5e0cb90e8d46c))
+* **selection:** reuse unchanged preparation evidence on admission retry ([#1505](https://github.com/home-operations/flate/issues/1505)) ([8cc0830](https://github.com/home-operations/flate/commit/8cc083088375e3bd65cff7f0b1cbb024d6e62a51))
+* **selection:** see a Secret's producer in narrow builds and changed-only diffs ([#1535](https://github.com/home-operations/flate/issues/1535)) ([ef748eb](https://github.com/home-operations/flate/commit/ef748ebcd095bf273670c7fa41cba4f5ba532142))
+* **source:** apply GitRepository spec.include ([#1553](https://github.com/home-operations/flate/issues/1553)) ([a181a17](https://github.com/home-operations/flate/commit/a181a17eefcd06ee419d807838dbe1e83b5a0c9b))
+* **source:** leave gitignored untracked files out of the working tree ([#1503](https://github.com/home-operations/flate/issues/1503)) ([967317f](https://github.com/home-operations/flate/commit/967317f06e4168a7eb8cb09acc8abd73bff58f1e))
+* **source:** name the real cause of a failed OCI fetch ([#1592](https://github.com/home-operations/flate/issues/1592)) ([54168e3](https://github.com/home-operations/flate/commit/54168e36eb5549dd254b6f07a48887f9bd103e0c))
+* **source:** revalidate buckets and HTTP Helm charts instead of downloading again ([#1509](https://github.com/home-operations/flate/issues/1509)) ([d4fcb4b](https://github.com/home-operations/flate/commit/d4fcb4be0ba4cb110cb41a68e2e68bc614ad1a2a))
+* **values:** apply valuesFrom targetPath values after spec.values ([#1616](https://github.com/home-operations/flate/issues/1616)) ([adc5600](https://github.com/home-operations/flate/commit/adc56000e3392ae6379bbae26d185209ecb7354e))
+* **values:** decide unreadable Secret and ConfigMap data in one place ([#1534](https://github.com/home-operations/flate/issues/1534)) ([707c194](https://github.com/home-operations/flate/commit/707c19449c2ddc5ea854fcb200af5ada7f2a0467))
+* **values:** let --allow-missing-kinds cover required substituteFrom references ([#1545](https://github.com/home-operations/flate/issues/1545)) ([7178588](https://github.com/home-operations/flate/commit/7178588297ce78af2ceace80c24954e78a0866d0))
+* **values:** unify consumer input decisions ([#1584](https://github.com/home-operations/flate/issues/1584)) ([9a8bb1a](https://github.com/home-operations/flate/commit/9a8bb1ae0b6e9826c15402ffe234463061d91849))
+
+
+### Performance Improvements
+
+* **baseline:** share the worktree walk with the gitignore membership capture ([#1522](https://github.com/home-operations/flate/issues/1522)) ([f7717f5](https://github.com/home-operations/flate/commit/f7717f5e4477e84407eb0359eeda21b7733a4265))
+* **cache:** open render and input frames without re-fingerprinting the envelope ([#1525](https://github.com/home-operations/flate/issues/1525)) ([63653ae](https://github.com/home-operations/flate/commit/63653ae685801ddcf92359dac913bdde0f445069))
+* **gittree:** stream worktree bytes into the blob hash ([#1518](https://github.com/home-operations/flate/issues/1518)) ([ef45ed9](https://github.com/home-operations/flate/commit/ef45ed9b44a77d95b58d7db0b8dca41a49087e8e))
+* **source:** make the gitignore membership cost only what a run reads ([#1513](https://github.com/home-operations/flate/issues/1513)) ([f7865e8](https://github.com/home-operations/flate/commit/f7865e86ada8e1d974d826577ca539f09ab4b537))
+
+
+### Code Refactoring
+
+* **base:** own render preparation transfer and history probes ([#1593](https://github.com/home-operations/flate/issues/1593)) ([5016b5d](https://github.com/home-operations/flate/commit/5016b5d9dd3b6b4beab1ed4e49c29b29a224a0f7))
+* **cache:** compose generated artifacts in the cache owner ([#1524](https://github.com/home-operations/flate/issues/1524)) ([59c2a14](https://github.com/home-operations/flate/commit/59c2a1431a0cb91b80d41f4250b2de7779fdf4d8))
+* **cache:** one render-cache frame codec owned by the cache owner ([#1512](https://github.com/home-operations/flate/issues/1512)) ([87eb5cd](https://github.com/home-operations/flate/commit/87eb5cd0cc468b6fe06712a398282e01d5141963))
+* **cache:** unify render bindings and accepted publication ([#1587](https://github.com/home-operations/flate/issues/1587)) ([7a7954c](https://github.com/home-operations/flate/commit/7a7954c1e4f8a93a88191aef71120c763330abee))
+* **depwait:** share missing declaration permission ([#1572](https://github.com/home-operations/flate/issues/1572)) ([26dbc9a](https://github.com/home-operations/flate/commit/26dbc9a598995d6775faa60e3de2eaed7e2c6606))
+* **diff:** compare builds through one pipeline ([#1519](https://github.com/home-operations/flate/issues/1519)) ([58cf160](https://github.com/home-operations/flate/commit/58cf160376e787b64926c2675f2e561cba4f0553))
+* **discovery:** publish the entry source in one place ([#1514](https://github.com/home-operations/flate/issues/1514)) ([c34350e](https://github.com/home-operations/flate/commit/c34350eef92f397508a739acb4af9381f4820bb3))
+* **kustomize:** decide the bootstrap source and ignore policy once ([#1508](https://github.com/home-operations/flate/issues/1508)) ([93419f8](https://github.com/home-operations/flate/commit/93419f81821a33c9cb926faad41a486820be7c7c))
+* **lint:** clean suppressions in cli, discovery, helm, kustomize and orchestrator ([#1571](https://github.com/home-operations/flate/issues/1571)) ([dee0fa3](https://github.com/home-operations/flate/commit/dee0fa3fcecef8ab31f9073629a095033668e556))
+* **lint:** clean suppressions in manifest, store, base and their fixtures ([#1575](https://github.com/home-operations/flate/issues/1575)) ([ae58576](https://github.com/home-operations/flate/commit/ae585769d058471f9099243c7aa22d72af972cc3))
+* **lint:** clean suppressions in source controllers, git and oci ([#1573](https://github.com/home-operations/flate/issues/1573)) ([1c66a0a](https://github.com/home-operations/flate/commit/1c66a0aaa8b6fcfe8b9cda80c559cde67304c136))
+* **lint:** name blocked and cache errors and return the concrete source adapter ([#1568](https://github.com/home-operations/flate/issues/1568)) ([6f8c547](https://github.com/home-operations/flate/commit/6f8c547709734e2d0ffff6406d44918fb45a9922))
+* **loader:** derive root evidence once ([#1506](https://github.com/home-operations/flate/issues/1506)) ([c7f1dfb](https://github.com/home-operations/flate/commit/c7f1dfb40daef12ede204c977e2a9342f0e1edd6))
+* **loader:** own declaration evidence for change detection ([#1598](https://github.com/home-operations/flate/issues/1598)) ([7d1c73d](https://github.com/home-operations/flate/commit/7d1c73d890667723b350ceaaa240ad2a5869149f))
+* **loader:** simplify admission, comparisons, readers and tests ([#1577](https://github.com/home-operations/flate/issues/1577)) ([09ac507](https://github.com/home-operations/flate/commit/09ac5076b45c3ef8fb1f0b66f24dc472b44bf5a4))
+* **manifest:** decide per-kind facts once in manifest ([#1521](https://github.com/home-operations/flate/issues/1521)) ([d4724e6](https://github.com/home-operations/flate/commit/d4724e69d311acbe9b08393174b52e82185938dd))
+* **selection:** run admission through one loop ([#1523](https://github.com/home-operations/flate/issues/1523)) ([d92b6c3](https://github.com/home-operations/flate/commit/d92b6c3195783ac7b19a99b479e9a5d166dab6ef))
+* **selection:** simplify admission, driver, results and witnesses ([#1576](https://github.com/home-operations/flate/issues/1576)) ([4ebe3d4](https://github.com/home-operations/flate/commit/4ebe3d41f4881521d0496467bede2176f6ac4eea))
+* **source-gittree:** simplify admission and io within the existing owner ([#1574](https://github.com/home-operations/flate/issues/1574)) ([a52e7bb](https://github.com/home-operations/flate/commit/a52e7bbb0288bc001a6c5d1d60f75b422a7a7ba8))
+* **source:** decide credential denial and conditional HTTP responses in one place ([#1562](https://github.com/home-operations/flate/issues/1562)) ([77a9869](https://github.com/home-operations/flate/commit/77a9869a1462a7a5a2425d69579d63a07d45d9a2))
+* **store:** centralize selected material identity ([#1580](https://github.com/home-operations/flate/issues/1580)) ([cf7aab8](https://github.com/home-operations/flate/commit/cf7aab849adf722cee32981201b177ab8baa373f))
+* **store:** centralize source and discovery path mapping ([#1581](https://github.com/home-operations/flate/issues/1581)) ([8f441f6](https://github.com/home-operations/flate/commit/8f441f6178565a85199942553809abd4842ff420))
+
+
+### Documentation
+
+* **readme:** rewrite in simplified English ([21584c0](https://github.com/home-operations/flate/commit/21584c02d5eccbb0e64006722f45fd8556f4af06))
+
+
+### Tests
+
+* diff the consumed-variable sequence and drive the paused ResourceSet render through ReconcileNode ([#1561](https://github.com/home-operations/flate/issues/1561)) ([ba29467](https://github.com/home-operations/flate/commit/ba29467b44ffa38b886ae58b91cf1dadb8ec8db4))
+* **discovery:** make TestDiscovery_ComposedSeedOwnership deterministic ([#1556](https://github.com/home-operations/flate/issues/1556)) ([de2f156](https://github.com/home-operations/flate/commit/de2f156464ac1f38dc2bc00775d7bee92f6923c7))
+* **discovery:** repair the accepted-history entry binding benchmark ([#1530](https://github.com/home-operations/flate/issues/1530)) ([bdf8070](https://github.com/home-operations/flate/commit/bdf807065e3b816152ccc2d07783f4b5cf5b9ee9))
+* **discovery:** restore the BuiltPackage benchmark on main ([#1567](https://github.com/home-operations/flate/issues/1567)) ([4ace775](https://github.com/home-operations/flate/commit/4ace77563bf7d21f95e9b5d89a068d0e85c6e8e5))
+* **git:** report a failed concurrent TLS fetch instead of blocking ([#1594](https://github.com/home-operations/flate/issues/1594)) ([20627d6](https://github.com/home-operations/flate/commit/20627d6bbc2f0aac5bb328be2f47cd28b44019c9))
+* **helm:** clarify render cache lifecycle assertions ([#1589](https://github.com/home-operations/flate/issues/1589)) ([d294372](https://github.com/home-operations/flate/commit/d294372b8dc41bd9aaf9ff4cdee07a3963319bb7))
+* **kustomize:** clarify render cache fault cases ([#1590](https://github.com/home-operations/flate/issues/1590)) ([cb10e00](https://github.com/home-operations/flate/commit/cb10e006a156a7a7fc8f0b4d5590d097170533cf))
+* **kustomize:** enforce render and lookup overlap in the concurrent private overlay test ([#1527](https://github.com/home-operations/flate/issues/1527)) ([475ccf7](https://github.com/home-operations/flate/commit/475ccf7cf2eaf209af304372a69eb942b2ae6b99))
+* **kustomize:** make concurrent private overlays deterministic ([#1526](https://github.com/home-operations/flate/issues/1526)) ([2fb2670](https://github.com/home-operations/flate/commit/2fb2670080d51c9b42c0623c2c522bea7801ab97))
+* **loader:** clarify cached input lifecycle assertions ([#1608](https://github.com/home-operations/flate/issues/1608)) ([43412c4](https://github.com/home-operations/flate/commit/43412c41f46c3e76c00e1909718c4816ee3d5177))
+* **orchestrator:** clarify history and selection witnesses ([#1591](https://github.com/home-operations/flate/issues/1591)) ([5d225bc](https://github.com/home-operations/flate/commit/5d225bc9354b2b236cbaafbfce362a5336731b81))
+* **orchestrator:** drop the wall-clock deadline from the selector chain test ([#1622](https://github.com/home-operations/flate/issues/1622)) ([9767b6f](https://github.com/home-operations/flate/commit/9767b6f9c89155c4de6f09c055221feb29216838))
+* **orchestrator:** pin render persistence in work-count tests ([#1558](https://github.com/home-operations/flate/issues/1558)) ([021e5d4](https://github.com/home-operations/flate/commit/021e5d42fce373323b697eddc1ca401f694cc16c))
+* **store:** stabilize BeginExecution allocation measurement ([#1578](https://github.com/home-operations/flate/issues/1578)) ([4e38059](https://github.com/home-operations/flate/commit/4e38059dedb7d4408a18566f8c833f379e5e919f))
+
+
+### Build System
+
+* **deps:** move go-git to v6 ([#1543](https://github.com/home-operations/flate/issues/1543)) ([88fdd97](https://github.com/home-operations/flate/commit/88fdd973321bdb6c310c4bbff1496c632edb9d23))
+* **go:** pin the Go toolchain to 1.27.4 ([#1528](https://github.com/home-operations/flate/issues/1528)) ([ef9b1f1](https://github.com/home-operations/flate/commit/ef9b1f16624910a13ac5c56ea1ba81f4177b6503))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action jdx/mise-action (v5.2.6 → v5.2.7) ([#1501](https://github.com/home-operations/flate/issues/1501)) ([9cd8a21](https://github.com/home-operations/flate/commit/9cd8a21d689cb6d5ce89fa9ed7956a303adc9629))
+* **github-action:** update action jdx/mise-action (v5.2.7 → v5.2.8) ([#1579](https://github.com/home-operations/flate/issues/1579)) ([70204df](https://github.com/home-operations/flate/commit/70204df8e8c712aaab8f8b36c8f3cdab1cd1f11d))
+* **github-action:** update action jdx/mise-action (v5.2.8 → v5.2.9) ([#1621](https://github.com/home-operations/flate/issues/1621)) ([4a95a9c](https://github.com/home-operations/flate/commit/4a95a9cd92df087d56e73bf60619571236683104))
+* **github-action:** update action jdx/packslip (v1.11.3 → v1.11.4) ([#1569](https://github.com/home-operations/flate/issues/1569)) ([3427641](https://github.com/home-operations/flate/commit/3427641d91f7b4a8af6ccac1c24d62b2dba89643))
+* **go:** update module cel.dev/cel-go (v0.33.2 → v0.33.3) ([#1607](https://github.com/home-operations/flate/issues/1607)) ([68785f0](https://github.com/home-operations/flate/commit/68785f0e887d7d0c773b67a398d3b3df9b31de4c))
+* **go:** update module cel.dev/cel-go (v0.33.3 → v0.33.4) ([#1609](https://github.com/home-operations/flate/issues/1609)) ([d3a45db](https://github.com/home-operations/flate/commit/d3a45db0238f73e45dfeda07f9e50f349002686c))
+* **go:** update module charm.land/bubbletea/v2 (v2.1.1 → v2.1.2) ([#1614](https://github.com/home-operations/flate/issues/1614)) ([9b9b390](https://github.com/home-operations/flate/commit/9b9b3901308eb82f2f821abd6c09a4b54655108b))
+* **go:** update module charm.land/lipgloss/v2 (v2.0.6 → v2.1.0) ([#1498](https://github.com/home-operations/flate/issues/1498)) ([e83619b](https://github.com/home-operations/flate/commit/e83619b90b823f3921187bc0ebfc0b86423aa9b2))
+* **go:** update module charm.land/lipgloss/v2 (v2.1.0 → v2.1.1) ([#1570](https://github.com/home-operations/flate/issues/1570)) ([2a2f51c](https://github.com/home-operations/flate/commit/2a2f51cd2bcf78477a279faa496dec264cfc468f))
+* **go:** update module github.com/charmbracelet/x/ansi (v0.11.9 → v0.11.10) ([#1619](https://github.com/home-operations/flate/issues/1619)) ([a87997f](https://github.com/home-operations/flate/commit/a87997f422d66d07a8c04938699683f7c5399326))
+* **go:** update module github.com/fluxcd/pkg/apis/meta (v1.38.0 → v1.39.0) ([#1599](https://github.com/home-operations/flate/issues/1599)) ([ab58cd1](https://github.com/home-operations/flate/commit/ab58cd1ac2d8d619a64fdd1f993ee89f8d192a91))
+* **go:** update module github.com/fluxcd/pkg/kustomize (v1.44.0 → v1.45.0) ([#1601](https://github.com/home-operations/flate/issues/1601)) ([00d5eb5](https://github.com/home-operations/flate/commit/00d5eb5b4deec7f17f4e9e8e7f6c9c8660493430))
+* **go:** update module github.com/fluxcd/pkg/sourceignore (v0.22.0 → v0.23.0) ([#1602](https://github.com/home-operations/flate/issues/1602)) ([6ebe096](https://github.com/home-operations/flate/commit/6ebe096da167e26f4c35ea101a6364a6631679d2))
+* **go:** update module github.com/kimmachinegun/automemlimit (v1.0.1 → v1.0.2) ([#1585](https://github.com/home-operations/flate/issues/1585)) ([94c761a](https://github.com/home-operations/flate/commit/94c761a05c2f40a81a499149283376c7642e2e2f))
+* **go:** update module github.com/spf13/pflag to v1.1.0 ([#1549](https://github.com/home-operations/flate/issues/1549)) ([ec7b882](https://github.com/home-operations/flate/commit/ec7b882ce2a2b2eaf7f9fd2156223cf33bdc58c9))
+* **go:** update module golang.org/x/crypto (v0.58.0 → v0.59.0) ([#1533](https://github.com/home-operations/flate/issues/1533)) ([b1f021e](https://github.com/home-operations/flate/commit/b1f021e381b656d15ad5691a1b3ba5bed05ea064))
+* **go:** update module golang.org/x/mod (v0.42.0 → v0.43.0) ([#1502](https://github.com/home-operations/flate/issues/1502)) ([8c87b2e](https://github.com/home-operations/flate/commit/8c87b2e2e11beb60d33716f370903c7902f05de4))
+* **go:** update module golang.org/x/net (v0.62.0 → v0.63.0) ([#1603](https://github.com/home-operations/flate/issues/1603)) ([ae2e44d](https://github.com/home-operations/flate/commit/ae2e44dc8ebe8310a4df9895b83f666eec776f16))
+* **go:** update module golang.org/x/sync (v0.24.0 → v0.25.0) ([#1499](https://github.com/home-operations/flate/issues/1499)) ([0fdfe02](https://github.com/home-operations/flate/commit/0fdfe02e19963bf492c0c07f15435945820098a9))
+* **go:** update module helm.sh/helm/v4 (v4.3.1 → v4.3.2) ([#1546](https://github.com/home-operations/flate/issues/1546)) ([ad21386](https://github.com/home-operations/flate/commit/ad21386f54e437d139a3f670a5603aef25edfa39))
+* **lint:** encode shared policy and remove covered directives ([#1564](https://github.com/home-operations/flate/issues/1564)) ([7d277fc](https://github.com/home-operations/flate/commit/7d277fc021c6c267b6af167767ee66414655fbe9))
+* **mise:** install oxfmt from GitHub releases ([#1610](https://github.com/home-operations/flate/issues/1610)) ([7c7f881](https://github.com/home-operations/flate/commit/7c7f881cbee75caa07ea5260485b125a7946b179))
+* **mise:** lower min_version to 2026.7.18 ([#1623](https://github.com/home-operations/flate/issues/1623)) ([32753bd](https://github.com/home-operations/flate/commit/32753bdf401159f0c2b53f8ed074379a4560b170))
+* **mise:** update tool github:oxc-project/oxc (0.75.0 → 0.78.0) ([#1611](https://github.com/home-operations/flate/issues/1611)) ([05e83ff](https://github.com/home-operations/flate/commit/05e83ffa4ee633801715010b3cb0ebc88a93e169))
+* **mise:** update tool github:oxc-project/oxc (0.78.0 → 0.79.0) ([#1624](https://github.com/home-operations/flate/issues/1624)) ([6d20040](https://github.com/home-operations/flate/commit/6d20040b34e6ebbe0689caab362568f7136fdafa))
+* **mise:** update tool go:golang.org/x/tools/cmd/deadcode (0.52.0 → v0.53.0) ([#1604](https://github.com/home-operations/flate/issues/1604)) ([748eac0](https://github.com/home-operations/flate/commit/748eac0a1ef56dab352d1d7ceec78901d4612081))
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.9.0 → v1.10.0) ([#1605](https://github.com/home-operations/flate/issues/1605)) ([dfb7e39](https://github.com/home-operations/flate/commit/dfb7e392ce570e19ec7ddaccce6ceb5864fa5be6))
+
 ## [0.7.3](https://github.com/home-operations/flate/compare/v0.7.2...v0.7.3) (2026-11-09)
 
 

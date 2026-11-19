@@ -318,8 +318,9 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Parallel renders contend for the build mutex within this chain's deadline.
 func TestDAG_SelectorResourceSetChain(t *testing.T) {
+	t.Parallel()
+
 	const depth = 40
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", ksYAML("apps", "apps", ""))
@@ -378,11 +379,9 @@ spec:
 		1,
 	)
 	testutil.WriteFile(t, dir, "apps/sets.yaml", manifests)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
 	var previous []byte
 	for range 2 {
-		renderedSingleton1, err := renderTreesForTest(ctx, t,
+		renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: t.TempDir(), Concurrency: 2},
 		)

@@ -1,63 +1,55 @@
 # flate GitHub Action
 
-Install the [flate](https://github.com/home-operations/flate) CLI on Linux, macOS, or Windows runners — with optional caching of flate's on-disk store between runs.
+Install [flate](../README.md) in a GitHub Actions job. The action supports Linux, macOS, and Windows runners.
+
+## Usage
+
+Add these steps after your job checks out the repository. Replace `./kubernetes` with the directory that contains your Flux files.
 
 ```yaml
-steps:
-  # Installs flate matching the pinned action ref and reuses its
-  # on-disk cache across runs.
-  - uses: home-operations/flate/action@0.1.30
-    with:
-      cache: true
-  - run: flate get ks --path ./kubernetes
+- uses: home-operations/flate/action@v0.7.0
+  with:
+    cache: true
+- run: flate get ks --path ./kubernetes
 ```
 
-The action downloads the release archive from GitHub, verifies its SHA-256, installs into `$RUNNER_TOOL_CACHE` (or the path given via `bindir`), and exports `FLATE_CACHE_DIR` so subsequent `flate` calls write to a predictable location.
+The action downloads the release and compares its SHA-256 checksum with the published value. It adds `flate` to `PATH` for later steps.
 
 ## Inputs
 
-| Name        | Description                                                                                 | Default                   |
-| ----------- | ------------------------------------------------------------------------------------------- | ------------------------- |
-| `version`   | flate version to install (e.g. `0.1.25`) or `latest`                                        | _see [Version](#version)_ |
-| `token`     | GitHub token used to resolve releases and avoid unauthenticated rate limits on GitHub's API | `${{ github.token }}`     |
-| `cache`     | Restore and save flate's on-disk cache between runs                                         | `false`                   |
-| `cache_dir` | Parent directory for the flate cache. The action appends `/flate`.                          | `${{ runner.temp }}`      |
-| `bindir`    | Alternative install location for the flate binary                                           | `$RUNNER_TOOL_CACHE/...`  |
+| Input       | Purpose                                                         | Default                                     |
+| ----------- | --------------------------------------------------------------- | ------------------------------------------- |
+| `base`      | Git revision to compare with.                                   | The repository default branch               |
+| `bindir`    | Directory for the flate executable.                             | A directory under `$RUNNER_TOOL_CACHE`      |
+| `cache`     | Save and restore the cache across workflow runs.                | `false`                                     |
+| `cache_dir` | Parent directory for the cache. The action appends `/flate`.    | `${{ runner.temp }}`                        |
+| `token`     | Token for GitHub API requests.                                  | `${{ github.token }}`                       |
+| `version`   | flate release to install. Accepts a version number or `latest`. | See [Version selection](#version-selection) |
 
-## Outputs
+The action sets `FLATE_BASE` from `base`. This makes `build`, `get`, and `test` select resources affected by changes from that revision. To process the full tree for one command, pass `--base=`.
 
-| Name        | Description                                                                    |
-| ----------- | ------------------------------------------------------------------------------ |
-| `version`   | Resolved flate version (without the leading `v`)                               |
-| `cache-hit` | `'true'` when a previous flate cache was restored (only set when `cache=true`) |
+## Version selection
 
-## Version
+The action picks a release in this order.
 
-When `version` is not set, the action inspects the ref it was pinned to (`github.action_ref`) and resolves it to a flate release. Explicit `version:` always wins; otherwise:
+1. If you set `version`, the action uses that value.
+2. If `uses` names a release tag, the action uses that tag.
+3. If `uses` points to a Git commit, the action looks for a matching release tag.
+4. If the action finds no version, it installs the latest release.
 
-1. If the ref is a SemVer tag (e.g. `@0.1.26`, `@v0.1.26`), that version is installed.
-2. If the ref is a commit SHA (full or short), the action queries the GitHub `/tags` API for its own repo and installs the SemVer tag whose commit matches — this is the path used by workflows that pin actions to immutable digests for supply-chain security.
-3. Otherwise (branches, dangling SHAs), the action falls back to `latest`.
-
-| Pinned as                                             | Installed version |
-| ----------------------------------------------------- | ----------------- |
-| `home-operations/flate/action@0.1.26`                 | `0.1.26`          |
-| `home-operations/flate/action@v0.1.26`                | `0.1.26`          |
-| `home-operations/flate/action@2e8f4c8…` (release SHA) | matching tag      |
-| `home-operations/flate/action@main`                   | `latest`          |
-| `home-operations/flate/action@<non-release-sha>`      | `latest`          |
-| any of the above, with `version: 0.1.20`              | `0.1.20`          |
-
-The SHA-to-tag lookup uses `inputs.token` (defaulted to `${{ github.token }}`) and degrades to `latest` if the API call fails or `jq` isn't available.
-
-> On non-github.com forges (Forgejo, Gitea, GHES), `${{ github.token }}` is issued by that forge and rejected by `api.github.com`. The action detects this via `GITHUB_SERVER_URL` and drops the token for its github.com calls, so passing `token: ""` is not required.
+The commit lookup uses `jq` and the GitHub API. If the workflow runs outside `github.com`, the action ignores `token` for its requests to GitHub.
 
 ## Caching
 
-The action sets `FLATE_CACHE_DIR` to `<cache_dir>/flate` for later steps in the job. The default path is `$RUNNER_TEMP/flate`. flate reads this variable as the default for `--cache-dir`.
+The action sets `FLATE_CACHE_DIR` to `<cache_dir>/flate`, which defaults to `$RUNNER_TEMP/flate`. flate uses this value as the default for `--cache-dir`.
 
-To save and restore this directory across runs, set `cache: true`. The action uses [`actions/cache`](https://github.com/actions/cache) for this step. The directory stores fetched Git sources, Helm chart archives, OCI blobs, and bare Git mirrors.
+To keep downloaded sources and render results across runs, set `cache: true`. The action uses [`actions/cache`](https://github.com/actions/cache) and looks for a saved cache for the same runner operating system and architecture.
 
-The cache key is keyed on OS, architecture, and the current run — every run saves a fresh entry and restores the most recent one for that runner shape. flate's cache is content-addressed, so cross-run reuse is safe regardless of which flate version produced it.
+If you manage the cache in a separate step, leave `cache: false`. Use `${{ env.FLATE_CACHE_DIR }}` as the path in that step.
 
-For finer-grained control, leave `cache: false` and wire your own `actions/cache` step around the action using `${{ env.FLATE_CACHE_DIR }}` as the path.
+## Outputs
+
+| Output      | Value                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| `version`   | The installed flate version without the leading `v`.                                              |
+| `cache-hit` | The string `true` when the cache key matches exactly. The output is available with `cache: true`. |

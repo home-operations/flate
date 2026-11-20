@@ -1,0 +1,319 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "f0440e5eeb12f6ee8ab54345f87fecef6ef353a0",
+    "paths": [
+      "internal/engine/discovery",
+      "internal/engine/loader"
+    ],
+    "reductions": "The supplied checkout uses one cluster, a custom GitRepository, and a sibling infrastructure application."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/dev"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "canonical",
+      "directory": "overlays/canonical"
+    },
+    {
+      "name": "version-edit",
+      "directory": "overlays/version-edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "narrow",
+      "description": "Render the custom bootstrap source from the cluster directory.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/dev/",
+              "--allow-missing-kinds",
+              "Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "root",
+      "description": "Render the same checkout from its root.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              ".",
+              "--allow-missing-kinds",
+              "Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "canonical",
+      "description": "Render the cluster with the canonical GitRepository name.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "canonical",
+          "edit": {
+            "overlay": "canonical"
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/dev/",
+              "--allow-missing-kinds",
+              "Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/canonical.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "diff",
+      "description": "Report the working tree version edit against the same Git HEAD.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "version-edit",
+          "edit": {
+            "overlay": "version-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "clusters/dev/",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/clusters/dev/flux-system/gotk-sync.yaml",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Authored input for the checkout and its controls."
+    },
+    {
+      "path": "repo/clusters/dev/flux-system/kustomization.yaml",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Authored input for the checkout and its controls."
+    },
+    {
+      "path": "repo/clusters/dev/infrastructure.yaml",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Authored input for the checkout and its controls."
+    },
+    {
+      "path": "repo/infrastructure/kustomization.yaml",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Authored input for the checkout and its controls."
+    },
+    {
+      "path": "repo/infrastructure/podinfo/cm.yaml",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Authored input for the checkout and its controls."
+    },
+    {
+      "path": "overlays/canonical/repo/clusters/dev/flux-system/gotk-sync.yaml",
+      "cases": [
+        "canonical"
+      ],
+      "purpose": "Declare the canonical source name and use it in both Kustomizations."
+    },
+    {
+      "path": "overlays/canonical/repo/clusters/dev/infrastructure.yaml",
+      "cases": [
+        "canonical"
+      ],
+      "purpose": "Declare the canonical source name and use it in both Kustomizations."
+    },
+    {
+      "path": "overlays/version-edit/repo/infrastructure/podinfo/cm.yaml",
+      "cases": [
+        "diff"
+      ],
+      "purpose": "Change only the ConfigMap version in the working tree."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "narrow",
+        "root"
+      ],
+      "purpose": "Complete rendered cluster with its custom source."
+    },
+    {
+      "path": "expect/canonical.stdout",
+      "cases": [
+        "canonical"
+      ],
+      "purpose": "Complete rendered cluster with the canonical source name."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "diff"
+      ],
+      "purpose": "Complete one-file version diff."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "narrow",
+        "root",
+        "canonical",
+        "diff"
+      ],
+      "purpose": "Complete diagnostics with the optional render persistence notice."
+    }
+  ]
+}

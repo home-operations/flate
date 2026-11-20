@@ -34,6 +34,21 @@ The expectations retain the handwritten regression assertions and never derive f
 | `rootless-aggregate/ancestor-bootstrap-indexed-producer` | Retain the indexed producer and its reader when the enclosing application is blocked. The diff allows the missing input and shows the reader value change. |
 
 
+`custom-bootstrap-source/` covers a checkout whose bootstrap GitRepository is named `fleet`.
+The sync Kustomization targets the cluster directory.
+The infrastructure Kustomization reads a sibling directory and renders ConfigMap `default/podinfo`.
+The diff changes only `data.version` in that ConfigMap.
+Each case compares complete output, diagnostics, and exit status twice with two workers.
+The second replay reuses the private cache.
+The expected streams follow the authored resources and the output format.
+
+| Case | Behavior |
+| --- | --- |
+| `custom-bootstrap-source/narrow` | Build from the cluster directory with the custom source. |
+| `custom-bootstrap-source/root` | Build the same tree from the checkout root. |
+| `custom-bootstrap-source/canonical` | Build from the cluster directory with the canonical source name. |
+| `custom-bootstrap-source/diff` | Report the version edit without an external-source warning on either snapshot. |
+
 `discovery-entry-reuse-nil-source/` covers issue #1588 through `cli.Run`.
 Two committed cluster trees use origin `https://github.com/example/cluster.git`.
 The offline external repository contains tags `6.5.0` and `6.5.1` with different Deployment images.

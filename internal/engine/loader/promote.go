@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -136,7 +137,8 @@ func (l *Loader) RegisterBuilt(
 		return nil
 	}
 	root, selected := input.Root, map[string]bool{}
-	sourceRoot, admitted, err := l.admitBuiltRoot(ctx, root)
+	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
+	scopeRoot, admitted, err := l.admitBuiltRoot(ctx, &input, sourceRoot)
 	if err != nil || !admitted {
 		return err
 	}
@@ -176,7 +178,7 @@ func (l *Loader) RegisterBuilt(
 	rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
 	l.refreshNativeBuildFacts(root, rebuild)
 	l.scopes.complete = false
-	err = l.admit(ctx, sourceRoot, nil)
+	err = l.admit(ctx, scopeRoot, nil)
 	retained = input.Support.Valid()
 	if previous != nil && previous.input.Support != input.Support {
 		l.Store.Retire(previous.input.Support)
@@ -595,21 +597,29 @@ func (l *Loader) publishBuiltRecords(
 	}
 }
 
-//nolint:gocritic // Results distinguish the source root, rejection, and cancellation error.
-func (l *Loader) admitBuiltRoot(ctx context.Context, root string) (string, bool, error) {
+//nolint:gocritic // Results distinguish the scope root, rejection, and cancellation error.
+func (l *Loader) admitBuiltRoot(
+	ctx context.Context,
+	input *BuiltInput,
+	sourceRoot string,
+) (string, bool, error) {
+	scopeRoot := sourceRoot
+	mount := l.documents.artifacts[sourceRoot]
+	if sourceRoot != l.SourceRoot && mount.OriginPath(sourceRoot) == l.SourceRoot {
+		owner, _ := l.Index.Lookup(input.Owner)
+		if owner.Path != "" && safepath.Contains(mount.OriginPath(input.Root), owner.Path) {
+			scopeRoot = l.SourceRoot
+		}
+	}
 	if l.documents.compact {
 		l.construction++
 	}
 	l.ensureScopes()
-	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
-	if err := l.Admit(ctx, sourceRoot); err != nil {
+	if err := l.Admit(ctx, scopeRoot); err != nil {
 		return "", false, err
 	}
-	packageFile := l.documents.read(root).file
-	if packageFile != "" && l.documents.cache[packageFile].eligible == selection.RootInactive {
-		return "", false, nil
-	}
-	return sourceRoot, true, nil
+	packageFile := l.documents.read(input.Root).file
+	return scopeRoot, packageFile == "" || l.documents.cache[packageFile].eligible != selection.RootInactive, nil
 }
 
 func (l *Loader) builtInputsUnchanged(raw *manifest.DiscoveryRecord, input *BuiltInput, inputs *builtInputs) bool {

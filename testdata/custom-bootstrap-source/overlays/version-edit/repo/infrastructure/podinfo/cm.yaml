@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo
+  namespace: default
+data:
+  version: "1.0.1"

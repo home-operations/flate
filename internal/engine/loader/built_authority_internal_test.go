@@ -2,6 +2,7 @@ package loader
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -18,6 +19,87 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestRegisterBuilt_KeepsCheckoutScope(t *testing.T) {
+	t.Parallel()
+	root, mount := t.TempDir(), t.TempDir()
+	const entry = "clusters/dev"
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "flux-system",
+		Name:      "fleet",
+	}
+	owner := testutil.KustomizationID("flux-system", "flux-system")
+	sync := testutil.KustomizationYAML(owner.Name, owner.Namespace,
+		"  path: ./clusters/dev\n  sourceRef: {kind: GitRepository, name: fleet}\n")
+	testutil.WriteFile(t, root, entry+"/flux-system/kustomization.yaml", "resources: [sync.yaml]\n")
+	testutil.WriteFile(t, root, entry+"/flux-system/sync.yaml", sync)
+	testutil.WriteFile(
+		t,
+		root,
+		entry+"/apps.yaml",
+		testutil.KustomizationYAML(
+			"apps",
+			"flux-system",
+			"  path: ./apps\n  sourceRef: {kind: GitRepository, name: fleet}\n",
+		),
+	)
+
+	st := store.New()
+	admitForTest(st, root)
+	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)}
+	st.SetArtifact(source, alias)
+	l := New(st)
+	t.Cleanup(l.Close)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), filepath.Join(root, entry), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	l.PreferExisting = true
+	_, err = l.Load(t.Context(), filepath.Join(mount, entry), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, l.Admit(t.Context(), root))
+	declaration := st.GetDeclaration(owner)
+	assert.FatalIf(t, declaration == nil, "sync declaration missing before registration")
+	input := supportedBuiltInputForTest(l, &BuiltInput{Root: filepath.Join(mount, entry), Owner: owner, Source: source})
+	assert.NoError(t, l.RegisterBuilt(t.Context(), input, builtObjectsForTest(t, sync)))
+	assert.Equal(t, st.GetDeclaration(owner), declaration)
+	assert.Equal(t, input.Support.Valid(), true)
+	assert.Equal(t, l.scopesMatch(l.kustomizations(), root), true)
+	scopes := slices.Clone(l.scopes.inputs)
+	assert.NoError(t, l.Admit(t.Context(), root))
+	assert.Equal(t, st.GetDeclaration(owner), declaration)
+	assert.Equal(t, st.GetArtifact(source, store.ArtifactContent), store.Artifact(alias))
+	assert.Equal(t, slices.EqualFunc(l.scopes.inputs, scopes, func(a, b scopeInput) bool {
+		return a.owner == b.owner && a.source == b.source && a.published == b.published
+	}), true)
+}
+
+func TestAdmitBuiltRoot_MountScopeWithoutOwnerPath(t *testing.T) {
+	t.Parallel()
+	root, mount := t.TempDir(), t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+	st := store.New()
+	admitForTest(st, root)
+	repo := &manifest.GitRepository{Name: "fleet", Namespace: "flux-system"}
+	st.AddObject(repo)
+	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)}
+	st.SetArtifact(repo.Named(), alias)
+	l := New(st)
+	t.Cleanup(l.Close)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), mount, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, l.documents.artifacts[mount], alias)
+
+	input := &BuiltInput{
+		Root: mount, Owner: testutil.KustomizationID("flux-system", "flux-system"), Source: repo.Named(),
+	}
+	scope, admitted, err := l.admitBuiltRoot(t.Context(), input, mount)
+	assert.NoError(t, err)
+	assert.Equal(t, admitted, true)
+	assert.Equal(t, scope, mount)
+}
 
 func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 	t.Parallel()

@@ -444,7 +444,7 @@ func (p *entryPlanner) source(
 	default:
 		group.project(projected)
 	}
-	group.entry = application.Source == id && p.appliesEntry(&application, visit.occurrence, group.object)
+	group.entry = application.Source == id && p.appliesEntry(&application, group.object)
 	admission := p.session.admission()
 	before := p.session.resolvedSources.snapshot()[id]
 	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
@@ -575,29 +575,43 @@ func (p *entryPlanner) catalogSource(
 	return nil, nil, nil
 }
 
-func (p *entryPlanner) appliesEntry(
-	application *manifest.EntryApplication,
-	occurrence *selection.OccurrenceFacts,
-	source manifest.BaseManifest,
-) bool {
-	if p.session.admission().appliesEntry(application) {
+func (p *entryPlanner) appliesEntry(application *manifest.EntryApplication, source manifest.BaseManifest) bool {
+	admission := p.session.admission()
+	if admission.appliesEntry(application) {
 		return true
 	}
 	if _, capable := source.(entrySource); !capable {
 		return false
 	}
-	if !p.coordinates[occurrence.Declaration] || occurrence.Declaration.Source != p.session.cfg.Input.LocalPath {
-		return false
-	}
+	input := admission.input
+	self := false
 	for candidate := range p.scope.objects() {
 		other, valid := manifest.ApplicationFor(occurrenceObject(candidate))
-		if valid && other.Source != application.Source && p.session.admission().appliesEntry(&other) {
+		if !valid {
+			continue
+		}
+		competing := other.Source != application.Source
+		if competing && admission.appliesEntry(&other) {
 			return false
 		}
+		if candidate.RequiresBuild || candidate.Declaration.Source != input.LocalPath {
+			continue
+		}
+		target := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(other.Path))
+		declaration := filepath.Join(candidate.Declaration.Source, candidate.Declaration.File)
+		if (other.Path == "" && target != admission.path) || !safepath.Contains(input.LocalPath, target) ||
+			!safepath.Contains(input.OriginPath(target), input.OriginPath(declaration)) {
+			continue
+		}
+		if competing {
+			if admission.appliesEntryAt(&other, target) {
+				return false
+			}
+			continue
+		}
+		self = true
 	}
-	target := filepath.Join(p.session.cfg.Input.LocalPath, manifest.NormalizeClaimBase(application.Path))
-	declaration := filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File)
-	return target == p.session.cfg.Path && safepath.Contains(target, declaration)
+	return self
 }
 
 func (p *entryPlanner) occurrences(

@@ -7,6 +7,9 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -227,4 +230,145 @@ func TestPlan_AncestorBootstrapSiblingApplication(t *testing.T) {
 	assert.Equal(t, record.Authored, apps)
 	assert.Equal(t, record.Parent, testutil.KustomizationID("flux-system", "flux-system"))
 	assert.Equal(t, result.Binding.Producer, testutil.KustomizationID("flux-system", "flux-system"))
+}
+
+func TestPlan_CustomBootstrapSource(t *testing.T) {
+	t.Parallel()
+	for _, scan := range []string{".", "clusters/dev", "clusters/dev/flux-system"} {
+		t.Run(scan, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			source := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "fleet",
+			}
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"clusters/dev/flux-system/kustomization.yaml": {Data: []byte("resources: [sync.yaml]\n")},
+				"clusters/dev/flux-system/sync.yaml": {Data: []byte(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n" +
+						"metadata: {name: fleet, namespace: flux-system}\nspec: {url: https://fixture.invalid/fleet.git}\n---\n" +
+						testutil.KustomizationYAML("flux-system", "flux-system",
+							"  path: ./clusters/dev\n  sourceRef: {kind: GitRepository, name: fleet}\n"),
+				)},
+				"clusters/dev/apps.yaml": {Data: []byte(testutil.KustomizationYAML("apps", "flux-system",
+					"  path: ./workloads\n  sourceRef: {kind: GitRepository, name: fleet}\n"))},
+				"workloads/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+				"workloads/cm.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload}\n"),
+				},
+			}}
+			entries, err := Plan(t.Context(), testConfig(t, Config{Input: input, Path: filepath.Join(root, scan)}))
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(entries) != 1, "got %d planned entries, want one", len(entries))
+			binding := entries[0].prepared.sources[source]
+			assert.FatalIf(t, binding.artifact == nil, "no local binding for %s", source)
+			assert.Equal(t, binding.object.Named(), source)
+			assert.Equal(t, binding.entry, true)
+			assert.Equal(t, binding.input, input)
+			assert.Equal(t, binding.artifact.InputAlias, true)
+			assert.Equal(t, binding.artifact.OriginPath(binding.artifact.LocalPath), root)
+			assert.Equal(t, binding.artifact.LocalPath == root, false)
+		})
+	}
+}
+
+func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		path          string
+		file          string
+		requiresBuild bool
+		competing     bool
+		bound         bool
+	}{
+		{name: "authored", path: "./tenants/x", file: "tenants/x/sync.yaml", bound: true},
+		{name: "competing source", path: "./tenants/x", file: "tenants/x/sync.yaml", competing: true},
+		{name: "omitted path", file: "tenants/x/sync.yaml"},
+		{name: "requires build", path: "./tenants/x", file: "tenants/x/sync.yaml", requiresBuild: true},
+		{name: "target outside checkout", path: "./tenants/../../", file: "tenants/x/sync.yaml"},
+		{name: "declaration outside target", path: "./tenants/y", file: "tenants/x/sync.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			st := store.New()
+			fleet := &manifest.GitRepository{Name: "fleet", Namespace: manifest.DefaultNamespace}
+			fleet.URL = "https://fixture.invalid/fleet.git"
+			owner := &manifest.Kustomization{
+				Name: "sync", Namespace: fleet.Namespace, Path: tc.path,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindGitRepository, Name: fleet.Name,
+				},
+			}
+			occurrences := []selection.OccurrenceFacts{{
+				Identity: owner.Named(), Catalog: owner, RequiresBuild: tc.requiresBuild,
+				Declaration: selection.OccurrenceID{Source: root, File: tc.file},
+			}}
+			cfg := testConfig(t, Config{Store: st, Input: input, Path: filepath.Join(root, "tenants", "x", "nested")})
+			d := newDiscoverer(&cfg)
+			t.Cleanup(d.Close)
+			admission := d.admission()
+
+			existing := &manifest.GitRepository{Name: "existing", Namespace: fleet.Namespace}
+			var binding *store.SourceArtifact
+			if tc.competing {
+				binding = &store.SourceArtifact{
+					LocalPath: t.TempDir(), LocalRoot: root, FS: input.FS, InputAlias: true,
+				}
+				st.AddObject(existing)
+				st.SetArtifact(existing.Named(), binding)
+				other := *owner
+				other.Name, other.SourceRef.Name = "existing", existing.Name
+				occurrences = append(occurrences, selection.OccurrenceFacts{
+					Identity: other.Named(), Object: &other,
+					Declaration: selection.OccurrenceID{Source: root, File: "tenants/x/existing.yaml"},
+				})
+			}
+
+			planner := entryPlanner{session: d, scope: rootScope{occurrences: occurrences}}
+			application, valid := owner.EntryApplication()
+			assert.Equal(t, valid, true)
+			resolved, err := admission.resolve(t.Context(), fleet.Named(), &sourceRequest{
+				object: fleet, entry: planner.appliesEntry(&application, fleet),
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, resolved.artifact != nil, tc.bound)
+			if tc.competing {
+				assert.Equal(t, st.GetArtifact(existing.Named(), store.ArtifactContent), store.Artifact(binding))
+			}
+		})
+	}
+}
+
+func TestPlan_ExternalURLBootstrapSource(t *testing.T) {
+	t.Parallel()
+	for _, scan := range []string{".", "tenants/x"} {
+		t.Run(scan, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "flux-system",
+				Name:      "external",
+			}
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"tenants/x/ks.yaml": {Data: []byte(testutil.KustomizationYAML("sync", source.Namespace,
+					"  path: ./\n  sourceRef: {kind: GitRepository, name: external}\n",
+				))},
+				"tenants/x/source.yaml": {Data: []byte(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n" +
+						"metadata: {name: external, namespace: flux-system}\nspec: {url: https://other.invalid/other.git}\n",
+				)},
+			}}
+			entries, err := Plan(t.Context(), testConfig(t, Config{Input: input, Path: filepath.Join(root, scan)}))
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(entries) != 1, "got %d planned entries, want one", len(entries))
+			binding := entries[0].prepared.sources[source]
+			assert.FatalIf(t, binding.artifact == nil, "no checkout binding for %s", source)
+			assert.Equal(t, binding.artifact.InputAlias, true)
+			assert.Equal(t, binding.artifact.OriginPath(binding.artifact.LocalPath), root)
+		})
+	}
 }

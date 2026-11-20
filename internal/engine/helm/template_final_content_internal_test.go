@@ -72,28 +72,25 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 				Owner: hr.Named(), Content: first.content, Records: emptyRenderInventory, Complete: true,
 			})
 			assert.NoError(t, err)
+			header.persist, header.content = client.cache.CanPersistRenders(), first.content
 			previous := renderFrame{
 				Key:     shared.Key,
 				Binding: shared.Binding,
 				Output:  payload,
 				Stored:  publication.Frame(),
-				header:  header,
-				persist: client.cache.CanPersistRenders(),
-				content: first.content,
-				binding: first.binding,
+				Header:  header,
+				Inputs:  first.binding,
 			}
-			receipt := manifest.NewRenderReceipt(previous, equalRenderFrame)
-			record, documents, err := next.validateRecord(t.Context(), client, &renderRecord{
-				key:      first.key,
+			receipt := renderDomain.Receipt(previous)
+			record, documents, err := next.validateRecord(t.Context(), &renderRecord{
 				Output:   payload,
 				Analysis: header.Analysis,
-				binding:  first.binding,
 				frame:    previous,
 				receipt:  receipt,
-			})
+			}, &next.binding, false)
 			assert.NoError(t, err)
 			assert.Equal(t, record.receipt.Equal(receipt), false)
-			assert.Equal(t, manifest.ValueEqual(record.frame.content, next.content), true)
+			assert.Equal(t, manifest.ValueEqual(record.frame.Header.content, next.content), true)
 			_, accepted := record.frame.Stored.History(hr.Named(), next.content)
 			assert.Equal(t, accepted, false)
 			_, accepted = previous.Stored.History(hr.Named(), first.content)
@@ -108,7 +105,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, observed.Accepted, false)
 			updated, err := record.frame.Stored.PreparePublication(t.Context(), cache.FramePublicationInput{
-				Owner: hr.Named(), Content: record.frame.content, Records: emptyRenderInventory, Complete: true,
+				Owner: hr.Named(), Content: record.frame.Header.content, Records: emptyRenderInventory, Complete: true,
 			})
 			assert.NoError(t, err)
 			_, accepted = updated.Frame().History(hr.Named(), next.content)
@@ -169,12 +166,18 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			request, err := client.prepareTemplate(t.Context(), hr.Clone(), nil, &current)
 			assert.NoError(t, err)
 			assert.Equal(t, request.key, previous.Key)
-			assert.Equal(t, request.binding.Equal(&previous.binding, equalTemplatePolicy), true)
+			assert.Equal(t, request.binding.Equal(&previous.Inputs, equalTemplatePolicy), true)
 			assert.Diff(t, request.input.Omitted, []manifest.NamedResource{a, b})
 			current.Omitted[0].Name = "mutated"
 			assert.Diff(t, request.input.Omitted, []manifest.NamedResource{a, b})
 			current.Omitted = []manifest.NamedResource{a, b}
-			admission, record := request.contentRender(t.Context(), client)
+			record, docs, err := request.lookupRender(t.Context(), false)
+			assert.NoError(t, err)
+			result := templateResult{record: record, docs: docs}
+			if record != nil {
+				result.receipt = record.receipt
+			}
+			admission := result.admission(&request)
 			assert.Equal(t, record != nil, persistent || regime != "disk")
 			var observed RenderAdmission
 			request.input.Admit = func(value RenderAdmission) (bool, error) {
@@ -185,9 +188,9 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 				assert.Equal(t, admission.Accepted, false)
 				assert.Equal(t, admission.Receipt.Equal(receipt), false)
 				assert.Equal(t, bytes.Equal(record.Output, previous.Output), true)
-				assert.Equal(t, manifest.ValueEqual(record.frame.content, request.content), true)
+				assert.Equal(t, manifest.ValueEqual(record.frame.Header.content, request.content), true)
 				if persistent {
-					_, oldMatches := record.frame.Stored.History(hr.Named(), previous.content)
+					_, oldMatches := record.frame.Stored.History(hr.Named(), previous.Header.content)
 					_, currentMatches := record.frame.Stored.History(hr.Named(), request.content)
 					assert.Equal(t, oldMatches, true)
 					assert.Equal(t, currentMatches, false)
@@ -264,8 +267,8 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 		err = nil
 	}
 	assert.NoError(t, err)
-	frame.content = make(chan struct{})
-	unsupported := manifest.NewRenderReceipt(frame, equalRenderFrame)
+	frame.Header.content = make(chan struct{})
+	unsupported := renderDomain.Receipt(frame)
 	assert.NoError(t, client.cache.RecordRender(t.Context(), cache.RenderAcceptance{
 		Owner: hr.Named(), Receipt: unsupported, Records: emptyRenderInventory, Sources: []manifest.SourceEvidence{},
 	}))

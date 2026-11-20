@@ -501,10 +501,7 @@ func matchesLabels(obj manifest.BaseManifest, filter map[string]string) bool {
 	if len(filter) == 0 {
 		return true
 	}
-	var labels map[string]string
-	if o, ok := obj.(interface{ GetLabels() map[string]string }); ok {
-		labels = o.GetLabels()
-	}
+	labels := obj.GetLabels()
 	for k, v := range filter {
 		// A missing label MUST NOT match an explicitly empty filter value.
 		got, ok := labels[k]

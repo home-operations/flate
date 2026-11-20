@@ -128,8 +128,8 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 			ExcludeChildren:   policy.ExcludeChildren,
 		}
 	}
-	if labeled, ok := facts.catalog.(interface{ GetLabels() map[string]string }); ok {
-		facts.labels, facts.labeled = labeled.GetLabels(), true
+	if manifest.KindOf(facts.catalog).TypedLabels {
+		facts.labels, facts.labeled = facts.catalog.GetLabels(), true
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		facts.refs = append(facts.refs, ref.Clone())

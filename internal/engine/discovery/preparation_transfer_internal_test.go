@@ -1,9 +1,12 @@
 package discovery
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -21,6 +24,14 @@ func TestResult_PreparationTransfer(t *testing.T) {
 	t.Parallel()
 	fixture := newPreparedConstructionFixture(t, false)
 	cfg, st := fixture.cfg, fixture.cfg.Store
+	parent := fixture.parent.Clone()
+	const value = "example.net/value"
+	const substitute = manifest.SubstituteAnnotationKey
+	parent.CommonMetadata = &kustomizev1.CommonMetadata{Annotations: map[string]string{substitute: "disabled"}}
+	st.AddObject(parent)
+	applier := cfg.Input.FS.(fstest.MapFS)["parent/applier.yaml"]
+	applier.Data = bytes.Replace(applier.Data, []byte("spec:\n"),
+		[]byte("  annotations: {"+value+": '${TEAM}'}\nspec:\n"), 1)
 	result, err := Run(t.Context(), cfg)
 	assert.NoError(t, err)
 	defer result.Close()
@@ -48,12 +59,30 @@ func TestResult_PreparationTransfer(t *testing.T) {
 	assert.Equal(t, result.Preparation(id), slot)
 	assert.Equal(t, slot.Matches(cfg.Trees, &request), false)
 	assert.Equal(t, request.Preparation.Matches(cfg.Trees, &request), true)
+	frame := result.prepared[id]
+	assert.Equal(t, len(frame.children), 1)
+	discovered := manifest.DeepCopyMap(frame.children[0].Doc)
+	wantFingerprint := manifest.Fingerprint(frame.content)
 	result.Close()
 	assert.Equal(t, request.Preparation.Matches(cfg.Trees, &request), true)
 	docs, _, err := kustomize.Render(t.Context(), cfg.Trees, request, cfg.RemoteRetry)
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 1)
 	assert.Equal(t, docs[0].Document["kind"], any(manifest.KindKustomization))
+	rawAnnotations := docs[0].Document["metadata"].(map[string]any)["annotations"].(map[string]any)
+	assert.Equal(t, rawAnnotations[substitute], nil)
+	base.PrepareDocuments(owner, docs)
+	shaping := kustomize.PrepareShape(&request, docs)
+	defer shaping.Retire()
+	assert.Equal(t, manifest.Fingerprint(shaping.Content()), wantFingerprint)
+	assert.NoError(t, shaping.Apply(t.Context(), kustomize.ShapeOptions{}))
+	children := execution.ParseChildren(owner, docs, manifest.ParseDocOptions{})
+	assert.Equal(t, len(children.Failures), 0)
+	assert.Equal(t, len(children.Children), 1)
+	assert.Diff(t, children.Children[0].Doc, discovered)
+	annotations := discovered["metadata"].(map[string]any)["annotations"].(map[string]any)
+	assert.Equal(t, annotations[substitute], any("disabled"))
+	assert.Equal(t, annotations[value], any("${TEAM}"))
 	execution.Retire()
 	assert.Equal(t, request.Preparation.Matches(cfg.Trees, &request), false)
 }

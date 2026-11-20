@@ -53,6 +53,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		controller := base.New(st, task.NewBounded(2))
 		execution := controllertest.NewExecution(controller, spec.Named())
 		defer execution.Retire()
+		base.PrepareDocuments(spec, docs)
 		shaping := PrepareShape(&req, docs)
 		defer shaping.Retire()
 		content := shaping.Content()
@@ -113,6 +114,10 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	default:
 		assert.NoError(t, os.RemoveAll(cacheDir))
 	}
+	docs, receipt, found := cache.PreviousRender(t.Context(), req)
+	assert.Equal(t, docs == nil, true)
+	assert.Equal(t, receipt, nil)
+	assert.Equal(t, found, false)
 	wantDocuments := 0
 	if !persistent || (*testCaseInput) == "publication" {
 		wantDocuments = 1

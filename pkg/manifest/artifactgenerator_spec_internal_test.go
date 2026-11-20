@@ -72,10 +72,20 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 			assert.NoError(t, err)
 			var prior fingerprintSpecification
 			priorErr := json.Unmarshal(data, &prior)
+			parsed, err := parseRawObject(map[string]any{
+				"apiVersion": SourceExtensionsDomain + "/v1beta1",
+				"kind":       KindArtifactGenerator,
+				"metadata":   map[string]any{"name": "generator"},
+				"spec":       tc.spec,
+			})
+			assert.NoError(t, err)
 			raw := &RawObject{Spec: tc.spec}
-			before := Fingerprint(raw)
-			got, err := raw.ArtifactGeneratorSpec()
+			before, directBefore := Fingerprint(parsed), Fingerprint(raw)
+			got, err := parsed.ArtifactGeneratorSpec()
+			direct, directErr := raw.ArtifactGeneratorSpec()
 			assert.Equal(t, err == nil, priorErr == nil)
+			assert.Equal(t, directErr == nil, err == nil)
+			assert.Diff(t, direct, got)
 			if err != nil {
 				return
 			}
@@ -87,14 +97,31 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 				got.Sources[i].NamespaceSet = !present
 			}
 			assert.Equal(t, Fingerprint(got), Fingerprint(prior))
-			if got.CommonMetadata.Labels != nil {
-				got.CommonMetadata.Labels["app"] = "changed"
-			}
-			if len(got.Artifacts) > 0 && len(got.Artifacts[0].Copy) > 1 {
-				got.Artifacts[0].Copy[1].Exclude[0] = "changed"
-			}
-			assert.Equal(t, Fingerprint(raw), before)
+			mutateGeneratorSpec(&got)
+			mutateGeneratorSpec(&direct)
+			again, err := parsed.ArtifactGeneratorSpec()
+			assert.NoError(t, err)
+			original, err := raw.ArtifactGeneratorSpec()
+			assert.NoError(t, err)
+			assert.Diff(t, again, original)
+			assert.Equal(t, Fingerprint(parsed), before)
+			assert.Equal(t, Fingerprint(raw), directBefore)
 		})
+	}
+}
+
+func mutateGeneratorSpec(spec *ArtifactGeneratorSpec) {
+	if spec.CommonMetadata.Labels != nil {
+		spec.CommonMetadata.Labels["app"] = "changed"
+	}
+	if spec.CommonMetadata.Annotations != nil {
+		spec.CommonMetadata.Annotations["null"] = "changed"
+	}
+	if len(spec.Artifacts) > 0 && len(spec.Artifacts[0].Copy) > 1 {
+		spec.Artifacts[0].Copy[1].Exclude[0] = "changed"
+	}
+	if len(spec.Artifacts) != 0 {
+		spec.Artifacts[0].Name = "changed"
 	}
 }
 
@@ -110,8 +137,11 @@ func TestArtifactGeneratorSpec_SourceContainers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			raw := &RawObject{Spec: tc.spec}
+			raw.Kind, raw.APIVersion = KindArtifactGenerator, SourceExtensionsDomain+"/v1beta1"
 			_, err := raw.ArtifactGeneratorSpec()
 			assert.ErrorIf(t, err == nil, "noncanonical sources container decoded without an error")
+			assert.Equal(t, raw.ReferenceCapacity().References, 0)
+			assert.Equal(t, len(slices.Collect(References(raw, ReferenceRelations))), 0)
 		})
 	}
 }
@@ -125,7 +155,7 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 		Spec: map[string]any{
 			"sources": []any{
 				map[string]any{},
-				map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "repo"},
+				map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "repo", "namespace": nil},
 			},
 			"artifacts": []any{
 				map[string]any{
@@ -157,6 +187,7 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 	decoded, err := raw.ArtifactGeneratorSpec()
 	assert.Equal(t, len(decoded.Sources), len(refs))
 	assert.Equal(t, decoded.Sources[refs[1].Position].Alias, "repo")
+	assert.Equal(t, decoded.Sources[refs[1].Position].NamespaceSet, true)
 	assert.Equal(t, decoded.Sources[refs[0].Position].Alias, "")
 	assert.ErrorIf(t, err == nil, "malformed copy metadata decoded without an error")
 	catalog := CatalogObject(raw, raw.Named())
@@ -171,4 +202,50 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 		t.Errorf("borrowed references changed (-want +got):\n%s", diff)
 	}
 	assert.Equal(t, Fingerprint(raw), before)
+}
+
+func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
+	t.Parallel()
+	parsed, err := parseRawObject(map[string]any{
+		"apiVersion": SourceExtensionsDomain + "/v1beta1",
+		"kind":       KindArtifactGenerator,
+		"metadata":   map[string]any{"name": "generator", "namespace": "apps"},
+		"spec": map[string]any{
+			"sources": []any{
+				map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "input"},
+			},
+			"PathPattern": "@repo/clusters/{app}",
+			"Artifacts": []any{
+				map[string]any{"Name": "literal", "Copy": []any{map[string]any{"From": "@repo/common/file"}}},
+				map[string]any{"Name": "bundle-{app}"},
+			},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, parsed.WithNamespace("other").(*RawObject).generator == parsed.generator, true)
+	refs := slices.Collect(References(parsed, ReferenceRelations))
+	assert.Equal(t, len(refs), 1)
+	assert.Equal(t, parsed.ReferenceCapacity().References, len(refs))
+	assert.Equal(
+		t,
+		refs[0].NamedResource,
+		NamedResource{Group: SourceDomain, Kind: KindGitRepository, Namespace: "input", Name: "repo"},
+	)
+	assert.Equal(t, refs[0].NamespaceDefault, false)
+	assert.Diff(t, refs[0].Files, []string{"clusters", "common/file"})
+	target := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "bundle-prod"}
+	literal := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "literal"}
+	want := []ProducerTarget{{NamedResource: target}, {NamedResource: literal}}
+	catalog := CatalogObject(parsed, parsed.Named())
+	data, err := EncodeCatalog(catalog)
+	assert.NoError(t, err)
+	decoded, err := DecodeCatalog(data)
+	assert.NoError(t, err)
+	for _, obj := range []BaseManifest{parsed, catalog, decoded} {
+		assert.Equal(t, obj.(*RawObject).generator != nil, true)
+		assert.Equal(t, ProducerNeedsCandidates(obj), true)
+		assert.Diff(t, ProducerTargets(obj, target), want)
+	}
+	assert.Equal(t, catalog.ReferenceCapacity().References, 0)
+	assert.Equal(t, decoded.ReferenceCapacity().References, 0)
 }

@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/engine/controllers/artifactgenerator"
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/schedule"
@@ -611,13 +612,14 @@ func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
 			t.Cleanup(trees.Close)
 			d := newDiscoverer(
 				&Config{
-					Input:     input,
-					Path:      filepath.Join(root, "entry"),
-					Store:     st,
-					Loader:    l,
-					Cache:     cacheOwner,
-					Trees:     trees,
-					Selection: selection.Request{Changed: true},
+					Input:            input,
+					Path:             filepath.Join(root, "entry"),
+					Store:            st,
+					Loader:           l,
+					Cache:            cacheOwner,
+					Trees:            trees,
+					PrepareDocuments: base.PrepareDocuments,
+					Selection:        selection.Request{Changed: true},
 				},
 			)
 			defer d.Close()

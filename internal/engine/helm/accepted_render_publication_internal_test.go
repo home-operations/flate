@@ -49,10 +49,10 @@ func testTemplateAcceptedHistoryDurablePublication(
 		assert.NoError(t, readTestRecord(t.Context(), reader, &stored))
 		content := descriptor.Annotations[acceptedRenderAnnotation]
 
-		history, complete := stored.frame.Stored.History(accepting, pending.Value().(renderFrame).content)
+		history, complete := stored.frame.Stored.History(accepting, pending.Value().(renderFrame).Header.content)
 		assert.Equal(t, complete, true)
 		storedPublication, blobErr2 := stored.frame.Stored.PreparePublication(t.Context(), cache.FramePublicationInput{
-			Owner: accepting, Content: pending.Value().(renderFrame).content, Records: history, Complete: true,
+			Owner: accepting, Content: pending.Value().(renderFrame).Header.content, Records: history, Complete: true,
 		})
 		assert.NoError(t, blobErr2)
 		assert.FatalIf(

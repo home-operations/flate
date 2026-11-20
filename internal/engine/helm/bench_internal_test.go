@@ -613,14 +613,14 @@ func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValue
 	_, _, _, err := (*inputs.owner).Blob(
 		b.Context(),
 		sourcecache.BlobKey{
-			Content: inputs.loaded.record.key,
+			Content: inputs.loaded.record.frame.Key,
 			Render:  sourcecache.RenderAccepted,
 		},
 		&sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			err := writeTestRecord(b.Context(),
 				w,
-				sourcecache.BlobKey{Content: inputs.loaded.record.key, Render: sourcecache.RenderAccepted},
+				sourcecache.BlobKey{Content: inputs.loaded.record.frame.Key, Render: sourcecache.RenderAccepted},
 				&renderRecord{Output: output, Analysis: inputs.loaded.record.Analysis},
 			)
 			return sourcecache.ProducerResult{}, err

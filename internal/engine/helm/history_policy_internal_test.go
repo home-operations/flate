@@ -287,7 +287,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 				assert.NoError(t, prepareErr)
 				assert.Equal(
 					t,
-					prepared.key == frame.Key && frame.binding.Equal(&prepared.binding, equalTemplatePolicy),
+					prepared.key == frame.Key && frame.Inputs.Equal(&prepared.binding, equalTemplatePolicy),
 					tc.complete,
 				)
 				previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
@@ -437,7 +437,7 @@ func testTemplateHistoryPolicyProjectionCase(
 	frame := testCaseInput.frame
 	assert.Equal(
 		t,
-		prepared.key == frame.Key && frame.binding.Equal(&prepared.binding, equalTemplatePolicy),
+		prepared.key == frame.Key && frame.Inputs.Equal(&prepared.binding, equalTemplatePolicy),
 		testCaseInput.tc.complete,
 	)
 	previous, complete := (*testCaseInput.renderer).PreviousRender(t.Context(), changed, nil, (*testCaseInput.input))

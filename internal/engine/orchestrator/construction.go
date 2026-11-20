@@ -74,12 +74,7 @@ func (d *constructionDispatcher) Dispatch(
 	previous schedule.Result,
 ) schedule.Result {
 	object := d.controller.Store.GetObject(id)
-	composed := false
-	if facts, ok := object.(interface {
-		Composition() manifest.ArtifactComposition
-	}); ok {
-		composed = len(facts.Composition().Includes) != 0
-	}
+	composed := object != nil && len(object.Composition().Includes) != 0
 	if d.local[id] && !composed {
 		if err := d.controller.Construct(ctx, id); err != nil {
 			d.controller.Store.UpdateFailure(id, err)

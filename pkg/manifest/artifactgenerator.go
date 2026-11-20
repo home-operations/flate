@@ -34,19 +34,18 @@ type artifactToken struct {
 const artifactMatchBudget = 4096
 
 func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget {
-	view := r.artifactGeneratorView()
-	entries := view.entries("artifacts")
+	spec := &r.artifactGeneratorSpec().spec
 	var targets []ProducerTarget
 	var captures []string
-	pattern := view.str("pathPattern")
+	pattern := spec.PathPattern
 	if len(candidates) != 0 && pattern != "" {
 		alias, patternPath, ok := strings.Cut(pattern, "/")
 		if ok && strings.HasPrefix(alias, "@") && len(alias) > 1 {
 			_, captures, _ = artifactTokens(patternPath, nil, true)
 		}
 	}
-	for _, entry := range entries {
-		name := view.child(entry).str(nameKey)
+	for i := range spec.Artifacts {
+		name := spec.Artifacts[i].Name
 		if name == "" {
 			continue
 		}
@@ -167,9 +166,8 @@ func (r *RawObject) references(yield func(Reference) bool) {
 	if !r.isArtifactGenerator() {
 		return
 	}
-	view := r.artifactGeneratorView()
-	for i, entry := range view.entries("sources") {
-		source := view.source(entry)
+	decoded := r.artifactGeneratorSpec()
+	for i, source := range decoded.sources {
 		id := Resolve(
 			NamedResource{
 				Group:     referenceGroup(source.Kind, ""),
@@ -180,7 +178,7 @@ func (r *RawObject) references(yield func(Reference) bool) {
 			"",
 			r.Namespace,
 		)
-		files := view.inputPaths(source.Alias)
+		files := decoded.spec.inputPaths(source.Alias)
 		if !yield(
 			Reference{
 				NamedResource:    id,
@@ -203,7 +201,7 @@ func (r *RawObject) references(yield func(Reference) bool) {
 	}
 }
 
-func (v artifactGeneratorView) inputPaths(alias string) []string {
+func (s *ArtifactGeneratorSpec) inputPaths(alias string) []string {
 	if alias == "" {
 		return nil
 	}
@@ -223,10 +221,10 @@ func (v artifactGeneratorView) inputPaths(alias string) []string {
 			files = append(files, name)
 		}
 	}
-	add(v.str("pathPattern"))
-	for _, artifact := range v.entries("artifacts") {
-		for _, operation := range v.child(artifact).entries("copy") {
-			add(v.child(operation).str("from"))
+	add(s.PathPattern)
+	for i := range s.Artifacts {
+		for _, operation := range s.Artifacts[i].Copy {
+			add(operation.From)
 		}
 	}
 	slices.Sort(files)

@@ -13,6 +13,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -226,7 +227,10 @@ spec:
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			d := Session{
-				cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+				cfg: Config{
+					Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees,
+					PrepareDocuments: base.PrepareDocuments,
+				},
 				loader: loader.New(st),
 			}
 			d.loader.SourceRoot = root
@@ -303,7 +307,10 @@ spec:
 			st = store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			d = Session{
-				cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+				cfg: Config{
+					Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees,
+					PrepareDocuments: base.PrepareDocuments,
+				},
 				loader: loader.New(st),
 			}
 			d.loader.SourceRoot = root
@@ -339,7 +346,10 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	d := Session{
-		cfg:    Config{Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees},
+		cfg: Config{
+			Path: filepath.Join(root, "app"), Store: st, Cache: cacheOwner, Trees: trees,
+			PrepareDocuments: base.PrepareDocuments,
+		},
 		loader: loader.New(st),
 	}
 	d.loader.SourceRoot = root
@@ -801,6 +811,7 @@ func previousPackageHistory(
 ) kustomize.EntryEvidence {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
+	base.PrepareDocuments(req.Spec, docs)
 	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
 	if !available || !complete {
 		return kustomize.EntryEvidence{}

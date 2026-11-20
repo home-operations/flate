@@ -5,10 +5,11 @@ import "sigs.k8s.io/kustomize/api/konfig"
 // API group prefixes. Versions are intentionally not pinned — we accept any
 // version of these groups for forward compatibility with Flux upgrades.
 const (
-	FluxKustomizeDomain = "kustomize.toolkit.fluxcd.io"
-	KustomizeDomain     = "kustomize.config.k8s.io"
-	HelmReleaseDomain   = "helm.toolkit.fluxcd.io"
-	SourceDomain        = "source.toolkit.fluxcd.io"
+	FluxKustomizeDomain    = "kustomize.toolkit.fluxcd.io"
+	KustomizeDomain        = "kustomize.config.k8s.io"
+	HelmReleaseDomain      = "helm.toolkit.fluxcd.io"
+	SourceDomain           = "source.toolkit.fluxcd.io"
+	SourceExtensionsDomain = "source.extensions.fluxcd.io"
 	// FluxOperatorDomain is the API group for flux-operator (controlplane.io)
 	// resources — ResourceSet, ResourceSetInputProvider, FluxInstance.
 	FluxOperatorDomain = "fluxcd.controlplane.io"
@@ -28,6 +29,7 @@ const (
 	KindGitRepository            = "GitRepository"
 	KindOCIRepository            = "OCIRepository"
 	KindExternalArtifact         = "ExternalArtifact"
+	KindArtifactGenerator        = "ArtifactGenerator"
 	KindBucket                   = "Bucket"
 	KindConfigMap                = "ConfigMap"
 	KindSecret                   = "Secret"

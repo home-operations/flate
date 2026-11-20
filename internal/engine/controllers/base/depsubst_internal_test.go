@@ -90,6 +90,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 			ready.Done()
 			<-start
 			output := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(docs[i])}}
+			PrepareDocuments(parents[i], output)
 			if err := kustomize.PrepareShape(&kustomize.RenderRequest{Spec: parents[i]}, output).
 				Apply(t.Context(), kustomize.ShapeOptions{}); err != nil {
 				results <- err
@@ -149,6 +150,7 @@ func TestEmit_ParentDependencyNamespace(t *testing.T) {
 			}
 			before := manifest.Fingerprint(child.document)
 			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(child.document)}}
+			PrepareDocuments(parent.object, docs)
 			assert.NoError(t, kustomize.PrepareShape(&kustomize.RenderRequest{Spec: parent.object}, docs).
 				Apply(t.Context(), kustomize.ShapeOptions{}))
 			st.AddObject(parent.object, parent.document)

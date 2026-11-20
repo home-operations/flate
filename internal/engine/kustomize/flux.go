@@ -296,15 +296,15 @@ func RenderInputs(receipt *manifest.RenderReceipt) map[string]bool {
 	frame := receipt.Value().(renderFrame)
 	inputs := make(
 		map[string]bool,
-		len(frame.header.Reads.Files)+len(frame.header.Reads.Dirs)+len(frame.header.Reads.Nodes),
+		len(frame.Header.Reads.Files)+len(frame.Header.Reads.Dirs)+len(frame.Header.Reads.Nodes),
 	)
-	for _, item := range frame.header.Reads.Files {
+	for _, item := range frame.Header.Reads.Files {
 		inputs[item.Path] = true
 	}
-	for _, item := range frame.header.Reads.Nodes {
+	for _, item := range frame.Header.Reads.Nodes {
 		inputs[item.Path] = item.Kind == kindFile
 	}
-	for _, item := range frame.header.Reads.Dirs {
+	for _, item := range frame.Header.Reads.Dirs {
 		inputs[item.Path] = false
 	}
 	return inputs
@@ -323,27 +323,25 @@ func (r *renderRequest) validate(
 ) (bool, error) {
 	result.receipt = nil
 	frame, decoded, readFileErr := r.request.Preparation.readFrame(ctx, generation)
-	if readFileErr != nil || !decoded || frame.Key != r.key {
+	if readFileErr != nil || !decoded {
 		return false, readFileErr
 	}
-	valid, readFileErr := frame.header.Reads.stillValid(
-		ctx,
-		cache,
-		&treeFS{lower: r.lower, retry: r.retry, maxAge: r.maxAge, work: r.request.Work.Attribution()},
-		r.request.Source.Content != "",
-	)
-	if readFileErr != nil || !valid {
-		return false, readFileErr
+	read := func(header renderHeader) (bool, error) {
+		return header.Reads.stillValid(
+			ctx,
+			cache,
+			&treeFS{lower: r.lower, retry: r.retry, maxAge: r.maxAge, work: r.request.Work.Attribution()},
+			r.request.Source.Content != "",
+		)
 	}
-	result.docs, readFileErr = manifest.DecodeRender(frame.Output)
-	if readFileErr != nil {
-		//nolint:nilerr // Incomplete render output must reject cache publication without failing the local result.
-		return false, nil
+	validated, err := renderDomain.Validate(ctx, &frame, &r.binding, sourcecache.RenderCheck[renderHeader]{
+		Header: read,
+	})
+	if err != nil || !validated.Valid {
+		return false, err
 	}
-	frame.binding = r.binding
-	binding := r.binding.Fingerprint()
-	frame.Rebind(binding)
-	result.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+	result.docs = validated.Documents
+	result.receipt = renderDomain.Receipt(frame)
 	return true, nil
 }
 
@@ -402,16 +400,11 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	shared := sourcecache.RenderFrame{Key: r.key, Binding: r.binding.Fingerprint(), Output: payload}
-	frame, cleanedAbsErr := shared.Encode(frameDomain, renderHeader{Reads: rec.snapshot()})
-	if cleanedAbsErr != nil || frame == nil {
-		return sourcecache.ProducerResult{}, cleanedAbsErr
+	frame := renderFrame{
+		Key: r.key, Binding: r.binding.Fingerprint(), Output: payload,
+		Header: renderHeader{Reads: rec.snapshot()},
 	}
-	publication, cleanedAbsErr := frame.PreparePublication(ctx, sourcecache.FramePublicationInput{})
-	if cleanedAbsErr == nil {
-		_, cleanedAbsErr = publication.WriteTo(w)
-	}
-	return sourcecache.ProducerResult{}, cleanedAbsErr
+	return sourcecache.ProducerResult{}, renderDomain.WritePending(ctx, w, &frame)
 }
 
 func (r *renderRequest) generateFiles(_ context.Context, memFS *treeFS, subDir string) (string, error) {

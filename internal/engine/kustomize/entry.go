@@ -75,7 +75,7 @@ func (c *TreeCache) ApplicationReceipt(
 ) (EntryEvidence, error) {
 	if slices.ContainsFunc(evidence.Renders, func(receipt *manifest.RenderReceipt) bool {
 		frame, ok := receipt.Value().(renderFrame)
-		return ok && len(frame.header.Reads.Remotes) != 0
+		return ok && len(frame.Header.Reads.Remotes) != 0
 	}) {
 		return EntryEvidence{}, nil
 	}

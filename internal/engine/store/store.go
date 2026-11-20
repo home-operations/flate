@@ -726,7 +726,12 @@ func dispatchPublications(publications []objectPublication) {
 			changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
 			if !changed && p.document != nil {
 				comparison := reconcileInputEqual(p.after, p.document, p.nextDocument)
-				changed = !comparison.equal
+				changed = !comparison.equal || !manifest.LabelsEqual(
+					p.before,
+					p.after,
+					[2]map[string]any{p.document, p.nextDocument},
+					manifest.IsOwnershipLabel,
+				)
 			}
 			if changed {
 				p.event.run()

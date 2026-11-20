@@ -66,7 +66,7 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(t, d.record == nil, "%s", "lookup fault fixture did not warm a typed record")
-		contentKey = d.record.key
+		contentKey = d.record.frame.Key
 	}
 	switch *testCaseInput {
 	case "read":
@@ -97,6 +97,9 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	default:
 		assert.NoError(t, os.RemoveAll(root))
 	}
+	history, complete := cli.PreviousRender(t.Context(), hr, nil, RenderOptions{Sources: cliSources})
+	assert.Equal(t, history == nil, true)
+	assert.Equal(t, complete, false)
 	for range 2 {
 		admissions := 0
 		out, receipt31, err := testutil.RenderMaps(

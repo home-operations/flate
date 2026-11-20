@@ -19,9 +19,9 @@ func (b *RenderBinding[P]) Refresh(key string, source manifest.NamedResource, ar
 }
 
 // Equal MUST compare typed policy without hashing or reflection.
-func (b *RenderBinding[P]) Equal(other *RenderBinding[P], equalPolicy func(*P, *P) bool) bool {
+func (b *RenderBinding[P]) Equal(other *RenderBinding[P], equalPolicy func(P, P) bool) bool {
 	return b.Key == other.Key && b.Source == other.Source && b.Artifact == other.Artifact &&
-		equalPolicy(&b.Policy, &other.Policy)
+		equalPolicy(b.Policy, other.Policy)
 }
 
 // Fingerprint MUST derive history identity within the cache owner.

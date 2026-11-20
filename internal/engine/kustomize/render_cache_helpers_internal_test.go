@@ -89,7 +89,7 @@ func recordPendingRender(ctx context.Context, owner *sourcecache.Cache, receipt 
 		return nil
 	}
 	frame := receipt.Value().(renderFrame)
-	stored, err := frame.Encode(frameDomain, frame.header)
+	stored, err := frame.Encode(frameDomain, frame.Header)
 	if err != nil || stored == nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"io"
 	"iter"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -33,6 +34,56 @@ type RenderPublication struct {
 // Nil acceptance MUST validate the receipt without preparing persistent data.
 type renderPublisher interface {
 	RenderPublication(context.Context, *RenderAcceptance) (RenderPublication, error)
+}
+
+// WritePending stores raw output without granting ownership or acceptance.
+func (d *RenderDomain[P, H]) WritePending(ctx context.Context, w io.Writer, f *RenderReceipt[P, H]) error {
+	if d.Prepare != nil {
+		f.Header = d.Prepare(f.Header)
+	}
+	var err error
+	f.Stored, err = f.Encode(d.Name, f.Header)
+	if err != nil || f.Stored == nil {
+		return err
+	}
+	publication, err := f.Stored.PreparePublication(ctx, FramePublicationInput{})
+	if err == nil {
+		_, err = publication.WriteTo(w)
+	}
+	return err
+}
+
+// RenderPublication prepares acceptance from a copy of the immutable receipt.
+func (f RenderReceipt[P, H]) RenderPublication(_ context.Context, a *RenderAcceptance) (RenderPublication, error) {
+	d := f.domain
+	if d == nil {
+		return RenderPublication{}, manifest.NewError(manifest.ErrFlux, nil, "invalid render receipt")
+	}
+	if !d.matches(&f, f.Key) {
+		return RenderPublication{}, manifest.NewError(manifest.ErrFlux, nil, "invalid "+d.Name+" receipt")
+	}
+	if a == nil {
+		return RenderPublication{}, nil
+	}
+	content, sources := d.Accept(f.Header, a)
+	if content == nil || sources == nil {
+		return RenderPublication{}, nil
+	}
+	if f.Binding == "" {
+		// Only the unbound path needs heap storage for the fingerprint input.
+		inputs := f.Inputs
+		f.Rebind(inputs.Fingerprint())
+	}
+	var metadata any
+	if f.Stored == nil {
+		if d.Prepare != nil {
+			f.Header = d.Prepare(f.Header)
+		}
+		metadata = f.Header
+	}
+	return RenderPublication{
+		Frame: f.RenderFrame, Domain: d.Name, Metadata: metadata, Content: content, Sources: sources,
+	}, nil
 }
 
 func (a *RenderAcceptance) complete() bool {

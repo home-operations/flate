@@ -141,6 +141,7 @@ spec:
 						manifest.HelmRelease{},
 						manifest.OCIRepository{},
 						manifest.HelmChartSource{},
+						manifest.RawObject{},
 					),
 				)
 				assert.FatalIf(t, diff != "", "retained children changed (-want +got): %s", diff)

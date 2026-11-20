@@ -117,13 +117,13 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		frame := receipt.Value().(renderFrame)
 		assert.FatalIf(
 			t,
-			frame.header.Analysis != canonical,
+			frame.Header.Analysis != canonical,
 			"fresh render %s cloned immutable chart analysis",
 			marker,
 		)
 		assert.FatalIf(
 			t,
-			frame.chart != nil || frame.Stored != nil,
+			frame.Header.chart != nil || frame.Stored != nil,
 			"%s",
 			"fresh receipt retained noncompact backing",
 		)
@@ -133,7 +133,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		cached := reused.Value().(renderFrame)
 		assert.FatalIf(
 			t,
-			cached.header.Analysis != canonical,
+			cached.Header.Analysis != canonical,
 			"%s",
 			"cached render reconstructed canonical analysis",
 		)

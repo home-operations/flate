@@ -501,14 +501,17 @@ func BenchmarkProducerTargets_ArtifactGenerator(b *testing.B) {
 		{"Incompatible", "app-{app}", "api"},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			raw := &RawObject{
-				APIVersion: "source.extensions.fluxcd.io/v1beta1",
-				Kind:       "ArtifactGenerator",
-				Namespace:  "apps",
-				Spec: map[string]any{
+			raw, err := parseRawObject(map[string]any{
+				"apiVersion": SourceExtensionsDomain + "/v1beta1",
+				"kind":       KindArtifactGenerator,
+				"metadata":   map[string]any{"name": "generator", "namespace": "apps"},
+				"spec": map[string]any{
 					"pathPattern": "@repo/{app}/{env}",
 					"artifacts":   []any{map[string]any{"name": tc.template}},
 				},
+			})
+			if err != nil {
+				b.Fatal(err)
 			}
 			var candidates []NamedResource
 			if tc.candidate != "" {

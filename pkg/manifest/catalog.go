@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"maps"
+	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 )
@@ -91,7 +92,21 @@ func (*Secret) catalog(id NamedResource) BaseManifest {
 func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
 	if r.isArtifactGenerator() {
-		out.Spec = map[string]any{"artifacts": r.Spec["artifacts"], "pathPattern": r.Spec["pathPattern"]}
+		fields := [...]string{"artifacts", "pathPattern"}
+		out.Spec = make(map[string]any, len(fields))
+		for _, field := range fields {
+			found := false
+			for key, value := range r.Spec {
+				if strings.EqualFold(key, field) {
+					out.Spec[key] = value
+					found = true
+				}
+			}
+			if !found {
+				out.Spec[field] = nil
+			}
+		}
+		out.initArtifactGeneratorSpec()
 	} else if _, valid := r.EntryApplication(); valid {
 		out.Spec = map[string]any{"sync": r.Spec["sync"]}
 	}

@@ -1,13 +1,10 @@
 package kustomize
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"iter"
-	"log/slog"
 	"slices"
 
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
@@ -25,37 +22,43 @@ type renderPolicy struct {
 	Skip   []string `json:",omitempty"`
 }
 
-func equalRenderPolicy(a, b *renderPolicy) bool {
+func equalRenderPolicy(a, b renderPolicy) bool {
 	return a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip)
 }
 
-type renderFrame struct {
-	sourcecache.RenderFrame
+type renderFrame = sourcecache.RenderReceipt[renderPolicy, renderHeader]
 
-	header  renderHeader
-	binding sourcecache.RenderBinding[renderPolicy]
-}
+//nolint:gochecknoglobals // Receipts share this immutable domain definition.
+var renderDomain = sourcecache.NewRenderDomain(sourcecache.RenderDomain[renderPolicy, renderHeader]{
+	Name: frameDomain, EqualPolicy: equalRenderPolicy, EqualHeader: equalRenderHeader,
+	ValidHeader: func(h renderHeader) bool {
+		return h.Reads.Files != nil || h.Reads.Dirs != nil || h.Reads.Nodes != nil || h.Reads.Remotes != nil
+	},
+	Accept: func(h renderHeader, acceptance *sourcecache.RenderAcceptance) (any, []manifest.SourceEvidence) {
+		content, ok := acceptance.Content.(renderContent)
+		if !ok {
+			return nil, nil
+		}
+		return content, collectRenderSources(&h.Reads, acceptance.Source, acceptance.Sources)
+	},
+})
 
 type decodedRender struct {
 	identity string
 	frame    renderFrame
 }
 
+//nolint:gocritic // The decoded flag distinguishes a valid empty frame from a miss.
 func (p *Preparation) readFrame(ctx context.Context, generation fs.FS) (renderFrame, bool, error) {
 	identity := sourcecache.AcquisitionIdentity(generation)
 	if p != nil && p.decoded != nil && identity != "" && p.decoded.identity == identity {
 		return p.decoded.frame, true, nil
 	}
-	var frame renderFrame
-	var err error
-	frame.RenderFrame, err = sourcecache.OpenRenderFrame(ctx, frameDomain, generation, &frame.header)
+	frame, decoded, err := renderDomain.Read(ctx, generation)
 	if err != nil {
-		if _, ok := errors.AsType[*sourcecache.Error](err); ok {
-			return renderFrame{}, false, manifest.NewError(
-				manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "",
-			)
-		}
-		slog.Debug("kustomize: decode render frame", "err", err)
+		return renderFrame{}, false, fmt.Errorf("read kustomize render cache: %w", err)
+	}
+	if !decoded {
 		return renderFrame{}, false, nil
 	}
 	if p != nil && identity != "" {
@@ -64,16 +67,9 @@ func (p *Preparation) readFrame(ctx context.Context, generation fs.FS) (renderFr
 	return frame, true, nil
 }
 
-func equalRenderFrame(a, b any) bool {
-	left, ok := a.(renderFrame)
-	right, other := b.(renderFrame)
-	if !ok || !other || left.Key != right.Key {
-		return false
-	}
-	if !left.binding.Equal(&right.binding, equalRenderPolicy) || !bytes.Equal(left.Output, right.Output) {
-		return false
-	}
-	x, y := left.header.Reads, right.header.Reads
+//nolint:gocritic // Read evidence is an immutable stack snapshot.
+func equalRenderHeader(left, right renderHeader) bool {
+	x, y := &left.Reads, &right.Reads
 	return slices.Equal(x.Files, y.Files) && slices.Equal(x.Dirs, y.Dirs) && slices.Equal(x.Nodes, y.Nodes) &&
 		slices.EqualFunc(x.Remotes, y.Remotes, func(a, b remoteEntry) bool {
 			return a.Input == b.Input && a.Identity == b.Identity && slices.Equal(a.Parents, b.Parents)
@@ -107,24 +103,31 @@ func (c *TreeCache) PreviousRender(
 		return nil, nil, false
 	}
 	frame, decoded, err := req.Preparation.readFrame(ctx, reader)
-	validBinding := err == nil && decoded && frame.Key == prepared.key &&
-		frame.Binding == prepared.binding.Fingerprint()
-	if !validBinding || len(frame.header.Reads.Remotes) != 0 {
+	if err != nil || !decoded {
 		return nil, nil, false
 	}
-	valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
-	if err != nil || !valid {
+	read := func(header renderHeader) (bool, error) {
+		if len(header.Reads.Remotes) != 0 {
+			return false, nil
+		}
+		return header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
+	}
+	var binding *sourcecache.RenderBinding[renderPolicy]
+	if req.Preparation != nil {
+		binding = &req.Preparation.binding
+	} else {
+		// Standalone history owns only a binding snapshot, with no preparation to borrow.
+		binding = new(prepared.binding)
+	}
+	validated, err := renderDomain.Validate(ctx, &frame, binding, sourcecache.RenderCheck[renderHeader]{
+		History: true,
+		Header:  read,
+	})
+	if err != nil || !validated.Valid {
 		return nil, nil, false
 	}
-	docs, err := manifest.DecodeRender(frame.Output)
-	if err != nil {
-		return nil, nil, false
-	}
-	if ctx.Err() != nil {
-		return nil, nil, false
-	}
-	frame.binding, frame.Lookup = prepared.binding, lookup
-	return docs, manifest.NewRenderReceipt(frame, equalRenderFrame), true
+	frame.Lookup = lookup
+	return validated.Documents, renderDomain.Receipt(frame), true
 }
 
 // RenderHistory returns complete accepted inventory matching the current final inputs.
@@ -133,47 +136,18 @@ func (*TreeCache) RenderHistory(
 	receipt *manifest.RenderReceipt,
 	content any,
 ) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	if receipt == nil || content == nil {
+	if receipt == nil {
 		return nil, false
 	}
 	frame, ok := receipt.Value().(renderFrame)
-	if !ok || frame.Stored == nil {
+	if !ok {
 		return nil, false
 	}
-	return frame.Stored.History(owner, content)
-}
-
-//nolint:gocritic // Receipts retain concrete frame values, so this interface requires a value receiver.
-func (f renderFrame) RenderPublication(
-	_ context.Context,
-	acceptance *sourcecache.RenderAcceptance,
-) (sourcecache.RenderPublication, error) {
-	if f.Key == "" {
-		return sourcecache.RenderPublication{}, manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
-	}
-	if acceptance == nil {
-		return sourcecache.RenderPublication{}, nil
-	}
-	content, ok := acceptance.Content.(renderContent)
-	if !ok {
-		return sourcecache.RenderPublication{}, nil
-	}
-	if f.Binding == "" {
-		binding := f.binding
-		f.Rebind(binding.Fingerprint())
-	}
-	var metadata any
-	if f.Stored == nil {
-		metadata = f.header
-	}
-	return sourcecache.RenderPublication{
-		Frame: f.RenderFrame, Domain: frameDomain, Metadata: metadata,
-		Content: content, Sources: collectRenderSources(&f, acceptance.Source, acceptance.Sources),
-	}, nil
+	return frame.History(owner, content)
 }
 
 func collectRenderSources(
-	f *renderFrame,
+	reads *readSetSnapshot,
 	source manifest.SourceIdentity,
 	sources []manifest.SourceEvidence,
 ) []manifest.SourceEvidence {
@@ -181,10 +155,10 @@ func collectRenderSources(
 		return nil
 	}
 	sources = slices.Clone(sources)
-	for _, file := range f.header.Reads.Files {
+	for _, file := range reads.Files {
 		sources = append(sources, manifest.SourceEvidence{Source: source, Path: file.Path})
 	}
-	for _, node := range f.header.Reads.Nodes {
+	for _, node := range reads.Nodes {
 		if node.Kind == kindFile {
 			sources = append(sources, manifest.SourceEvidence{Source: source, Path: node.Path})
 		}

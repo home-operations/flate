@@ -116,6 +116,8 @@ type BuiltInput struct {
 	Reads         map[string]bool
 	// RegisterBuilt owns Support on every call, including rejection.
 	Support *store.ReadSet
+	// PrepareDocuments stamps a private authored document for comparison with build output.
+	PrepareDocuments func(manifest.BaseManifest, []manifest.DocOccurrence)
 }
 
 // RegisterBuilt MUST receive sanitized immutable build output and retire support in publication order.
@@ -219,7 +221,7 @@ func (l *Loader) builtRecord(
 		if !same {
 			same = l.builtInputsUnchanged(&raw, input, inputs)
 		}
-		if !same && original.Obj != nil {
+		if !same && original.Obj != nil && input.PrepareDocuments != nil {
 			same = l.stampedBuiltEqual(obj, &original, input)
 		}
 	}
@@ -500,30 +502,29 @@ func (l *Loader) retainBuiltDeclaration(
 	}
 }
 
-func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *store.Child, inputValue *BuiltInput) bool {
-	same := false
-	original := *originalValue
-	input := *inputValue
-	if object := l.CatalogObject(input.Owner); manifest.KindOf(object).Parent {
-		doc := original.Doc
-		if doc == nil {
-			var err error
-			doc, err = manifest.ObjectDocument(original.Obj.Named(), original.Obj)
-			if err != nil {
-				return false
-			}
-		}
-		doc = manifest.DeepCopyMap(doc)
-		object.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
-		parsed, err := manifest.ParseDoc(
-			doc,
-			manifest.ParseDocOptions{},
-		)
-		same = err == nil && manifest.Equal(obj, parsed.Object)
-		if err == nil && !same {
-			same, _ = manifest.OutputEqual(obj, parsed.Object, [2]map[string]any{})
+func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, original *store.Child, input *BuiltInput) bool {
+	parent := l.CatalogObject(input.Owner)
+	if !manifest.KindOf(parent).Parent {
+		return false
+	}
+	doc := original.Doc
+	if doc == nil {
+		var err error
+		doc, err = manifest.ObjectDocument(original.Obj.Named(), original.Obj)
+		if err != nil {
+			return false
 		}
 	}
+	doc = manifest.DeepCopyMap(doc)
+	input.PrepareDocuments(parent, []manifest.DocOccurrence{{Document: doc}})
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	if err != nil {
+		return false
+	}
+	if manifest.Equal(obj, parsed.Object) {
+		return true
+	}
+	same, _ := manifest.OutputEqual(obj, parsed.Object, [2]map[string]any{})
 	return same
 }
 

@@ -128,6 +128,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 					got,
 					cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+					cmpopts.IgnoreFields(manifest.RawObject{}, "generator"),
 				)
 				assert.FatalIf(t, diff != "", "listed objects changed (-want +got): %s", diff)
 			}
@@ -144,6 +145,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 			inventory,
 			cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 			cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+			cmpopts.IgnoreFields(manifest.RawObject{}, "generator"),
 		)
 		assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
 	}
@@ -165,6 +167,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 					[]manifest.BaseManifest{remaining},
 					cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+					cmpopts.IgnoreFields(manifest.RawObject{}, "generator"),
 				)
 				assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
 			}
@@ -176,6 +179,7 @@ func testStoreListObjectsByKindIndexCase(t *testing.T, testCaseInput *testStoreL
 			[]manifest.BaseManifest{other},
 			cmp.AllowUnexported(manifest.Kustomization{}, manifest.ConfigMap{}, manifest.Secret{}),
 			cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+			cmpopts.IgnoreFields(manifest.RawObject{}, "generator"),
 		)
 		assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
 	}

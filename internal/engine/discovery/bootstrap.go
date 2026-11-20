@@ -374,9 +374,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 		store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
 	) &&
 		current.Reads.Valid()
-	if facts, ok := candidate.object.(interface {
-		Composition() manifest.ArtifactComposition
-	}); ok && len(facts.Composition().Includes) != 0 {
+	if len(candidate.object.Composition().Includes) != 0 {
 		sameMaterial = d.sourceMaterial(id, candidate.artifact) != nil
 	}
 	previous := d.resolvedSources.snapshot()[id]
@@ -649,9 +647,7 @@ func (a *Admission) entrySourceView(
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
 	mode := gittree.Source
-	if facts, ok := candidate.object.(interface {
-		Composition() manifest.ArtifactComposition
-	}); ok && len(facts.Composition().Includes) != 0 {
+	if len(candidate.object.Composition().Includes) != 0 {
 		mode, ignore = gittree.Checkout, ""
 	}
 	label, viewKey := gittree.Label(

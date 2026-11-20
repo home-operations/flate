@@ -42,7 +42,6 @@ type sourceFacts interface {
 	manifest.BaseManifest
 	ExistenceOnly() bool
 	SourceInterval() time.Duration
-	Composition() manifest.ArtifactComposition
 }
 
 // Controller watches the Store for source-kind objects, fetches each

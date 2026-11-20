@@ -168,7 +168,7 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	assert.NoError(t, renderMapsErr)
 	assert.FatalIf(
 		t,
-		distinct.record == initial.record || distinct.record.key != alternateKey.Content,
+		distinct.record == initial.record || distinct.record.frame.Key != alternateKey.Content,
 		"%s",
 		"distinct release key reused a typed record",
 	)

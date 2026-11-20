@@ -28,6 +28,7 @@ func TestRender_CacheFrames(t *testing.T) {
 		immutable bool
 	}{
 		{name: "malformed", malformed: true},
+		{name: "missing read evidence"},
 		{name: "validated corrupt payload", corrupt: true},
 		{name: "corrupt payload invalid source", corrupt: true, invalid: true},
 		{name: "mismatched", snapshot: readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: "mismatch"}}}},
@@ -126,7 +127,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), []byte("corrupt"))
 
 	case testCaseInput.tc.empty:
-		frame = testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderEncoding(t, nil))
+		frame = testRenderFrame(t, &readSetSnapshot{Files: []localEntry{}}, testRenderEncoding(t, nil))
 	}
 	publishTestFrame(
 		t,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -85,7 +86,8 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 				Path:  filepath.Join(root, (*testCaseInput)),
 				Store: st,
 				Cache: cacheOwner, Trees: trees,
-				SelfURLs: []string{"https://fixture.invalid/self"},
+				PrepareDocuments: base.PrepareDocuments,
+				SelfURLs:         []string{"https://fixture.invalid/self"},
 			},
 		)
 		_, err := d.resolveTestSources(t.Context(), false)

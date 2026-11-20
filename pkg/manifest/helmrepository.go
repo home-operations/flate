@@ -31,6 +31,9 @@ func (h *HelmRepository) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (h *HelmRepository) Suspended() bool { return h.Suspend }
 
+// GetLabels returns nil because HelmRepository has no typed label storage.
+func (*HelmRepository) GetLabels() map[string]string { return nil }
+
 // ExistenceOnly reports whether readiness requires no artifact acquisition.
 func (h *HelmRepository) ExistenceOnly() bool { return true }
 

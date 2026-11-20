@@ -91,8 +91,8 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	assert.FatalIf(t, receipt == nil, "%s", "successful raw render supplied no receipt")
 
 	frame := receipt.Value().(renderFrame)
-	frame.Binding = manifest.Fingerprint(frame.binding)
-	frame.Stored, err = frame.Encode(frameDomain, frame.header)
+	frame.Binding = manifest.Fingerprint(frame.Inputs)
+	frame.Stored, err = frame.Encode(frameDomain, frame.Header)
 	assert.NoError(t, err)
 	original := bytes.Clone(frame.Output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
@@ -209,7 +209,12 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 		assert.FatalIf(t, complete, "%s", "pending receipt supplied accepted history")
 	}
 	t.Run("preparation", h.preparation)
-	t.Run("request key", h.requestKey)
+	t.Run("request key", func(t *testing.T) {
+		h.invalidFrame(t, func(frame *renderFrame) { frame.Key = "foreign" })
+	})
+	t.Run("missing read evidence", func(t *testing.T) {
+		h.invalidFrame(t, func(frame *renderFrame) { frame.Header = renderHeader{} })
+	})
 	t.Run("mutable history reads", h.mutableHistoryReads)
 	t.Run("frozen preparation", h.frozenPreparation)
 	t.Run("publication", h.publication)
@@ -265,19 +270,22 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	}
 }
 
-func (h *acceptedHistoryCase) requestKey(t *testing.T) {
+func (h *acceptedHistoryCase) invalidFrame(t *testing.T, mutate func(*renderFrame)) {
 	t.Helper()
 
 	frame, key, owner, records := h.frame, h.key, h.owner, h.records
 	req := h.req
 	isolated := newTestTreeCache(t, t.TempDir())
 	foreign := frame
-	foreign.Key, foreign.Stored = "foreign", nil
-	foreignReceipt, err := testEncodeFrame(t, &foreign)
+	foreign.Stored = nil
+	mutate(&foreign)
+	wire, err := testEncodeFrame(t, &foreign)
 	assert.NoError(t, err)
-	foreignFrame, err := testDecodeFrame(t, foreignReceipt)
+	opened, err := testDecodeFrame(t, wire)
 	assert.NoError(t, err)
-	accepted, err := foreignFrame.testAcceptedFrame(t, owner, maps.All(records), h.content)
+	accepted, err := testAcceptedFrame(t, &opened, &sourcecache.FramePublicationInput{
+		Owner: owner, Content: h.content, Records: maps.All(records), Complete: true,
+	})
 	assert.NoError(t, err)
 	_, _, _, err = isolated.owner.Blob(
 		t.Context(),
@@ -290,10 +298,16 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	{
-		_, complete := isolated.previousHistory(t.Context(), &req, owner, h.content)
-		assert.FatalIf(t, complete, "%s", "foreign request key supplied accepted history")
-	}
+	_, complete := isolated.previousHistory(t.Context(), &req, owner, h.content)
+	assert.FatalIf(t, complete, "%s", "invalid frame supplied accepted history")
+
+	var work manifest.WorkRecorder
+	work.Init(&manifest.WorkKey{Owner: owner}, manifest.WorkScope{})
+	req.Work = work.Scope().RenderWork()
+	_, receipt, err := Render(t.Context(), isolated, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	assert.Equal(t, receipt != nil, true)
+	assert.Equal(t, req.Work.Engine(manifest.WorkKustomize, frame.Key).Counts.Attempts, uint64(1))
 }
 
 func (h *acceptedHistoryCase) mutableHistoryReads(t *testing.T) {
@@ -449,7 +463,7 @@ func (h *acceptedHistoryCase) emptyAcceptance(t *testing.T, fresh *TreeCache) {
 func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache) {
 	t.Helper()
 	frame, cache, owner, records, req, key := h.frame, h.cache, h.owner, h.records, h.req, h.key
-	remote := frame.header
+	remote := frame.Header
 	remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
 	shared := frame.RenderFrame
 	shared.Stored = nil
@@ -458,14 +472,14 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 	assert.NoError(t, cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
 		Sources: []manifest.SourceEvidence{},
 		Owner:   owner,
-		Receipt: manifest.NewRenderReceipt(renderFrame{
+		Receipt: renderDomain.Receipt(renderFrame{
 			Key:     frame.Key,
 			Binding: frame.Binding,
 			Output:  frame.Output,
 			Stored:  remoteFrame,
-			header:  remote,
-			binding: frame.binding,
-		}, equalRenderFrame),
+			Header:  remote,
+			Inputs:  frame.Inputs,
+		}),
 		Records: maps.All(records),
 		Content: h.content,
 	}))

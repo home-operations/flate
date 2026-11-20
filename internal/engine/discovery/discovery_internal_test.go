@@ -16,6 +16,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -127,6 +128,7 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 //nolint:gocritic // Test configuration MUST share its cache owner with its renderer.
 func testConfig(t *testing.T, cfg Config) Config {
 	t.Helper()
+	cfg.PrepareDocuments = base.PrepareDocuments
 	cfg.Cache = cachetest.New(t, "", cache.New)
 	cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
 	t.Cleanup(cfg.Trees.Close)
@@ -164,6 +166,7 @@ func packageHistory(t *testing.T, trees *kustomize.TreeCache,
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
+	base.PrepareDocuments(req.Spec, docs)
 	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
 	assert.Equal(t, available, persistent)
 	assert.Equal(t, complete, persistent)

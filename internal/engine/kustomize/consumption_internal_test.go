@@ -6,6 +6,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -63,6 +64,7 @@ func TestShape_AllDocumentFailures(t *testing.T) {
 						"data": map[string]any{"value": expression},
 					}})
 				}
+				base.PrepareDocuments(prepared, docs)
 				shape := PrepareShape(&RenderRequest{
 					Spec: prepared, SubstitutionActive: values.ResolvedSubstitutionActive(inputs),
 					UnreadableSubstitutions: values.UnreadableSubstitutions(ks, inputs),

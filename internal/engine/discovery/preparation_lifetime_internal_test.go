@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
@@ -240,7 +241,12 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 	l := loader.New(st)
 	defer l.Close()
 	l.SourceRoot = root
-	d := Session{cfg: Config{Path: root, Store: st, Cache: fixture.owner, Trees: fixture.trees}, loader: l}
+	d := Session{
+		cfg: Config{
+			Path: root, Store: st, Cache: fixture.owner, Trees: fixture.trees, PrepareDocuments: base.PrepareDocuments,
+		},
+		loader: l,
+	}
 	defer d.Close()
 	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
 	initial := d.prepared[owner.Named()]

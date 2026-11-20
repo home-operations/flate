@@ -25,7 +25,9 @@ type KindInfo struct {
 	TransientOutput bool
 	Render          bool
 	SourceArtifact  bool
-	apiVersion      string
+	// TypedLabels reports label storage even when GetLabels returns nil.
+	TypedLabels bool
+	apiVersion  string
 }
 
 var (
@@ -196,21 +198,23 @@ func GroupForKind(kind string) string {
 
 func initializeRenderKinds() {
 	kindTable[kindKustomization] = kindEntry{
-		Group:      FluxKustomizeDomain,
-		Kind:       KindKustomization,
-		Tracked:    true,
-		Runnable:   true,
-		Status:     true,
-		Discovery:  true,
-		Test:       true,
-		Parent:     true,
-		Structural: true,
-		Render:     true,
-		decode:     func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) },
+		Group:       FluxKustomizeDomain,
+		Kind:        KindKustomization,
+		TypedLabels: true,
+		Tracked:     true,
+		Runnable:    true,
+		Status:      true,
+		Discovery:   true,
+		Test:        true,
+		Parent:      true,
+		Structural:  true,
+		Render:      true,
+		decode:      func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) },
 	}
 	kindTable[kindHelmRelease] = kindEntry{
 		Group:           HelmReleaseDomain,
 		Kind:            KindHelmRelease,
+		TypedLabels:     true,
 		Tracked:         true,
 		Runnable:        true,
 		Status:          true,
@@ -227,6 +231,7 @@ func initializeSourceKinds() {
 	kindTable[kindGitRepository] = kindEntry{
 		Group:          SourceDomain,
 		Kind:           KindGitRepository,
+		TypedLabels:    true,
 		Tracked:        true,
 		Runnable:       true,
 		Status:         true,
@@ -238,6 +243,7 @@ func initializeSourceKinds() {
 	kindTable[kindOCIRepository] = kindEntry{
 		Group:          SourceDomain,
 		Kind:           KindOCIRepository,
+		TypedLabels:    true,
 		Tracked:        true,
 		Runnable:       true,
 		Status:         true,
@@ -257,17 +263,19 @@ func initializeSourceKinds() {
 		decode:    func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) },
 	}
 	kindTable[kindHelmChartSource] = kindEntry{
-		Group:     SourceDomain,
-		Kind:      KindHelmChart,
-		Tracked:   true,
-		Runnable:  true,
-		Status:    true,
-		Discovery: true,
-		decode:    func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) },
+		Group:       SourceDomain,
+		Kind:        KindHelmChart,
+		TypedLabels: true,
+		Tracked:     true,
+		Runnable:    true,
+		Status:      true,
+		Discovery:   true,
+		decode:      func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) },
 	}
 	kindTable[kindExternalArtifact] = kindEntry{
 		Group:          SourceDomain,
 		Kind:           KindExternalArtifact,
+		TypedLabels:    true,
 		Tracked:        true,
 		Runnable:       true,
 		Status:         true,
@@ -278,6 +286,7 @@ func initializeSourceKinds() {
 	kindTable[kindBucket] = kindEntry{
 		Group:          SourceDomain,
 		Kind:           KindBucket,
+		TypedLabels:    true,
 		Tracked:        true,
 		Runnable:       true,
 		Status:         true,
@@ -290,22 +299,24 @@ func initializeSourceKinds() {
 
 func initializeInputKinds() {
 	kindTable[kindResourceSet] = kindEntry{
-		Group:     FluxOperatorDomain,
-		Kind:      KindResourceSet,
-		Tracked:   true,
-		Runnable:  true,
-		Status:    false,
-		Discovery: true,
-		Parent:    true,
-		decode:    func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) },
+		Group:       FluxOperatorDomain,
+		Kind:        KindResourceSet,
+		TypedLabels: true,
+		Tracked:     true,
+		Runnable:    true,
+		Status:      false,
+		Discovery:   true,
+		Parent:      true,
+		decode:      func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) },
 	}
 	kindTable[kindResourceSetInputProvider] = kindEntry{
-		Group:     FluxOperatorDomain,
-		Kind:      KindResourceSetInputProvider,
-		Tracked:   true,
-		Runnable:  false,
-		Status:    false,
-		Discovery: true,
+		Group:       FluxOperatorDomain,
+		Kind:        KindResourceSetInputProvider,
+		TypedLabels: true,
+		Tracked:     true,
+		Runnable:    false,
+		Status:      false,
+		Discovery:   true,
 		decode: func(d map[string]any) (BaseManifest, error) {
 			return parseResourceSetInputProvider(d)
 		},
@@ -322,8 +333,8 @@ func initializeInputKinds() {
 		},
 	}
 	kindTable[kindArtifactGenerator] = kindEntry{
-		Group:     "source.extensions.fluxcd.io",
-		Kind:      "ArtifactGenerator",
+		Group:     SourceExtensionsDomain,
+		Kind:      KindArtifactGenerator,
 		Tracked:   true,
 		Runnable:  true,
 		Status:    true,

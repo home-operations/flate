@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -31,13 +30,12 @@ type chartAnalysis struct {
 }
 
 type renderRecord struct {
-	key      string
 	identity string
 	Output   []byte         `json:"Output"`
 	Analysis *chartAnalysis `json:"Analysis"`
 	frame    renderFrame
 	receipt  *manifest.RenderReceipt
-	binding  cache.RenderBinding[templatePolicy]
+	accepted *cache.RenderFrame
 }
 
 type ociChartContent struct {
@@ -117,6 +115,10 @@ const frameDomain = "helm-output"
 
 type renderHeader struct {
 	Analysis *chartAnalysis `json:"Analysis"`
+
+	chart   *chart.Chart
+	content any
+	persist bool
 }
 
 type templatePolicy struct {
@@ -124,7 +126,8 @@ type templatePolicy struct {
 	Options Options                           `json:"Options"`
 }
 
-func equalTemplatePolicy(a, b *templatePolicy) bool {
+//nolint:gocritic // Value parameters keep policy snapshots on the caller's stack.
+func equalTemplatePolicy(a, b templatePolicy) bool {
 	if !a.Release.Equal(b.Release) {
 		return false
 	}
@@ -139,90 +142,26 @@ func equalTemplatePolicy(a, b *templatePolicy) bool {
 	return slices.Equal(x.SkipKinds, y.SkipKinds)
 }
 
-type renderFrame struct {
-	cache.RenderFrame
+type renderFrame = cache.RenderReceipt[templatePolicy, renderHeader]
 
-	header  renderHeader
-	binding cache.RenderBinding[templatePolicy]
-	chart   *chart.Chart
-	content any
-	persist bool
-}
-
-func equalRenderFrame(a, b any) bool {
-	left, ok := a.(renderFrame)
-	right, other := b.(renderFrame)
-	if !ok || !other || left.Key != right.Key || !bytes.Equal(left.Output, right.Output) {
-		return false
-	}
-	return left.binding.Equal(&right.binding, equalTemplatePolicy) && manifest.ValueEqual(left.content, right.content)
-}
-
-//nolint:gocritic // Receipts retain concrete frame values, so publication MUST use a value receiver.
-func (f renderFrame) RenderPublication(
-	_ context.Context,
-	acceptance *cache.RenderAcceptance,
-) (cache.RenderPublication, error) {
-	if f.Key == "" || f.header.Analysis == nil && f.chart == nil {
-		return cache.RenderPublication{}, manifest.NewError(manifest.ErrFlux, nil, "invalid helm receipt")
-	}
-	if acceptance == nil || !f.persist {
-		return cache.RenderPublication{}, nil
-	}
-	if f.header.Analysis == nil {
-		f.header.Analysis = (&chartDescription{chart: f.chart}).analyze()
-	}
-	if f.Binding == "" {
-		binding := f.binding
-		f.Rebind(binding.Fingerprint())
-	}
-	return cache.RenderPublication{
-		Frame: f.RenderFrame, Domain: frameDomain, Metadata: f.header,
-		Content: f.content, Sources: acceptance.Sources,
-	}, nil
-}
-
-func (c *Client) lookupRender(
-	ctx context.Context,
-	loaded *chartDescription,
-	key string,
-	input *RenderOptions,
-) (*renderRecord, error) {
-	record := loaded.record
-	if record != nil && record.key == key && record.frame.Lookup != "" {
-		renderMetadataResult1, renderMetadataResult1Err := c.cache.RenderMetadata(
-			ctx,
-			key,
-			record.frame.Lookup,
-			input.Work.History(),
-		)
-		identity, enabled, err := renderMetadataResult1.Identity, renderMetadataResult1.Enabled, renderMetadataResult1Err
-		if errors.Is(err, errdef.ErrNotFound) {
-			record, err = nil, nil
+//nolint:gochecknoglobals // Receipts share this immutable domain definition.
+var renderDomain = cache.NewRenderDomain(cache.RenderDomain[templatePolicy, renderHeader]{
+	Name: frameDomain, EqualPolicy: equalTemplatePolicy,
+	ValidHeader: func(h renderHeader) bool { return h.Analysis != nil || h.chart != nil },
+	EqualHeader: func(a, b renderHeader) bool { return manifest.ValueEqual(a.content, b.content) },
+	Prepare: func(h renderHeader) renderHeader {
+		if h.Analysis == nil {
+			h.Analysis = (&chartDescription{chart: h.chart}).analyze()
 		}
-		if err != nil {
-			return nil, fmt.Errorf("lookup helm render cache: %w", err)
+		return h
+	},
+	Accept: func(h renderHeader, acceptance *cache.RenderAcceptance) (any, []manifest.SourceEvidence) {
+		if !h.persist {
+			return nil, nil
 		}
-		if !enabled || identity == "" || record == nil || identity != record.identity {
-			record = nil
-		}
-	} else {
-		record = nil
-	}
-	if record == nil {
-		var err error
-		record, err = c.readRender(ctx, key, input)
-		if err != nil || record == nil {
-			return nil, err
-		}
-	}
-	if record.Analysis.RequiresLoader {
-		if err := c.decodeChart(ctx, loaded, input); err != nil {
-			return nil, err
-		}
-	}
-	return record, nil
-}
+		return h.content, acceptance.Sources
+	},
+})
 
 // PreviousRender returns complete accepted history without running an action or acquiring a chart.
 //
@@ -240,77 +179,45 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	_, record := prepared.contentRender(ctx, c)
-	if record == nil {
+	record, _, err := prepared.lookupRender(ctx, true)
+	if err != nil || record == nil {
 		return nil, false
 	}
-	if record.frame.Stored == nil {
-		return nil, false
-	}
-	records, complete := record.frame.Stored.History(hr.Named(), prepared.content)
+	records, complete := record.frame.History(hr.Named(), prepared.content)
 	if complete && record != prepared.loaded.record {
 		c.rememberDescription(&prepared.loaded, record)
 	}
 	return records, complete
 }
 
-func (r *templateRequest) contentRender(ctx context.Context, c *Client) (RenderAdmission, *renderRecord) {
-	admission := RenderAdmission{Key: r.key}
-	if ctx.Err() != nil || r.key == "" || r.loaded.valuesErr != nil || r.capabilityErr != nil {
-		return admission, nil
-	}
-	record, err := c.lookupRender(ctx, &r.loaded, r.key, &r.input)
-	if err != nil || record == nil {
-		return admission, nil
-	}
-	record, documents, err := r.validateRecord(ctx, c, record)
-	if err != nil || record == nil {
-		return admission, nil
-	}
-	admission.Receipt = record.receipt
-	if record.frame.Stored != nil {
-		if _, complete := record.frame.Stored.History(r.release.Named(), r.content); complete {
-			admission.Documents, admission.Accepted = normalizeLists(documents), true
-		}
-	}
-	return admission, record
-}
-
-func (c *Client) readRender(ctx context.Context, key string, input *RenderOptions) (*renderRecord, error) {
-	reader, _, _, err := c.cache.Blob(
+func (r *templateRequest) lookupRender(
+	ctx context.Context,
+	history bool,
+) (*renderRecord, []manifest.DocOccurrence, error) {
+	reader, _, _, err := r.client.cache.Blob(
 		ctx,
-		cache.BlobKey{
-			Content: key,
-			Render:  cache.RenderPending,
-		},
-		&cache.Policy{MaxAge: cache.Forever, Work: input.Work.History()},
+		cache.BlobKey{Content: r.key, Render: cache.RenderPending},
+		&cache.Policy{MaxAge: cache.Forever, Work: r.input.Work.History()},
 		nil,
 	)
 	if errors.Is(err, errdef.ErrNotFound) {
-		//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup helm render cache: %w", err)
+		return nil, nil, fmt.Errorf("lookup helm render cache: %w", err)
 	}
-	identity := cache.AcquisitionIdentity(reader)
-	var frame renderFrame
-	frame.RenderFrame, err = cache.OpenRenderFrame(ctx, frameDomain, reader, &frame.header)
-	if _, storage := errors.AsType[*cache.Error](err); storage {
-		return nil, err
+	record, err := r.cachedRecord(ctx, reader, cache.AcquisitionIdentity(reader))
+	if err != nil || record == nil {
+		return nil, nil, err
 	}
-	if err != nil || frame.Key != key || frame.header.Analysis == nil {
-		return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
+	var binding *cache.RenderBinding[templatePolicy]
+	if r.input.Preparation != nil {
+		binding = &r.input.Preparation.binding
+	} else {
+		// Standalone history owns only a binding snapshot, with no preparation to borrow.
+		binding = new(r.binding)
 	}
-	frame.Lookup = ""
-	record := &renderRecord{
-		key:      key,
-		identity: identity,
-		Output:   frame.Output,
-		Analysis: frame.header.Analysis,
-		frame:    frame,
-	}
-	return record, nil
+	return r.validateRecord(ctx, record, binding, history)
 }
 
 type templateResult struct {
@@ -325,14 +232,18 @@ type templateResult struct {
 
 func (r *templateResult) admit(ctx context.Context, c *Client, request *templateRequest) (bool, error) {
 	r.observed = true
+	r.handled, r.admissionErr = request.admit(ctx, c, r.admission(request))
+	return r.handled, r.admissionErr
+}
+
+func (r *templateResult) admission(request *templateRequest) RenderAdmission {
 	admission := RenderAdmission{Key: request.key, Receipt: r.receipt}
-	if r.record != nil && r.record.frame.Stored != nil {
-		if _, complete := r.record.frame.Stored.History(request.release.Named(), request.content); complete {
+	if r.record != nil {
+		if _, complete := r.record.frame.History(request.release.Named(), request.content); complete {
 			admission.Documents, admission.Accepted = normalizeLists(r.docs), true
 		}
 	}
-	r.handled, r.admissionErr = request.admit(ctx, c, admission)
-	return r.handled, r.admissionErr
+	return admission
 }
 
 func (r *templateRequest) template(

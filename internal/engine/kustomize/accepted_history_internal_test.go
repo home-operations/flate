@@ -29,10 +29,10 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 		assert.NoError(t, err)
 		done := make(chan struct{})
 		runtime.AddCleanup(&payload[0], func(done chan struct{}) { close(done) }, done)
-		receipt := manifest.NewRenderReceipt(
-			renderFrame{Key: "large-accepted-lifetime", Output: payload},
-			equalRenderFrame,
-		)
+		receipt := renderDomain.Receipt(renderFrame{
+			Key: "large-accepted-lifetime", Output: payload,
+			Header: renderHeader{Reads: readSetSnapshot{Files: []localEntry{}}},
+		})
 		owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
 		assert.NoError(
 			t,

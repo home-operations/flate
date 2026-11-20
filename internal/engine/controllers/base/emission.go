@@ -11,6 +11,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// PrepareDocuments applies producer metadata to private document occurrences.
+func PrepareDocuments(parent manifest.BaseManifest, docs []manifest.DocOccurrence) {
+	parent.EmissionPolicy().Stamp(docs)
+}
+
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // The returned objects and maps MUST remain immutable after publication.
 func (e *Execution) ParseChildren(

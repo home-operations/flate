@@ -161,7 +161,7 @@ func (c *execution) render(
 		return c.recordRender(ctx, hr.Named(), &attempt)
 	}
 
-	hr.EmissionPolicy().Stamp(docs)
+	base.PrepareDocuments(hr, docs)
 
 	parseChildrenResult2 := c.run.ParseChildren(
 		hr,

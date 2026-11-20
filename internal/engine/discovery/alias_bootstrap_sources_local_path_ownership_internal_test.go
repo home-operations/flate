@@ -609,7 +609,7 @@ func testEntrySourceViewWarningEvidenceCase(t *testing.T, testCaseInput *bool,
 	obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
 	d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
 	for range 2 {
-		artifact, _, err := d.entrySourceView(
+		artifact, _, _, err := d.entrySourceView(
 			t.Context(),
 			&entryResolution{object: obj, input: bootstrap, git: obj},
 		)

@@ -65,9 +65,9 @@ func TestEntryCandidateReady_UnconditionalBootstrap(t *testing.T) {
 				object := *git
 				object.Include = tc.includes
 				selected.git, selected.object = git, &object
-				artifact, _, err := new(Admission).entrySourceView(t.Context(), &selected)
+				artifact, _, unfiltered, err := new(Admission).entrySourceView(t.Context(), &selected)
 				assert.NoError(t, err)
-				selected.artifact = artifact
+				selected.artifact, selected.unfiltered = artifact, unfiltered
 			}
 			source := selected.artifact
 			if tc.pinned {

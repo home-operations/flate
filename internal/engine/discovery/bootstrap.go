@@ -568,8 +568,8 @@ func (a *Admission) resolve(
 	}
 	bootstrap := candidate.input
 	if candidate.viewKey != "" {
-		artifact, key, err := a.entrySourceView(ctx, &candidate)
-		candidate.artifact, candidate.viewKey = artifact, key
+		artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
+		candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
 		return candidate, err
 	}
 	if candidate.synthetic && candidate.object == nil {
@@ -581,8 +581,8 @@ func (a *Admission) resolve(
 	descriptor := candidate.git
 	if descriptor == nil || candidate.projected {
 		candidate.pinned = false
-		artifact, key, err := a.entrySourceView(ctx, &candidate)
-		candidate.artifact, candidate.viewKey = artifact, key
+		artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
+		candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
 		return candidate, err
 	}
 
@@ -625,16 +625,18 @@ func (a *Admission) resolve(
 			return candidate, nil
 		}
 	}
-	artifact, key, err := a.entrySourceView(ctx, &candidate)
-	candidate.artifact, candidate.viewKey = artifact, key
+	artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
+	candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
 	return candidate, err
 }
 
 // Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
+//
+//nolint:gocritic // Callers need the view key and readiness decision on their own resolution.
 func (a *Admission) entrySourceView(
 	ctx context.Context,
 	candidate *entryResolution,
-) (*store.SourceArtifact, string, error) {
+) (*store.SourceArtifact, string, bool, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
 	ignore := ""
@@ -681,7 +683,7 @@ func (a *Admission) entrySourceView(
 		)
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", candidate.unfiltered, err
 	}
 	id := candidate.object.Named()
 	artifact := bootstrap.WithReads(bootstrap.Reads)
@@ -691,8 +693,8 @@ func (a *Admission) entrySourceView(
 	artifact.Warnings = nil
 	artifact.LocalPath = label
 	artifact.LocalRoot = repoRoot
-	candidate.unfiltered = mode == gittree.Source && ignore == "" && len(sparse) == 0 && !recurse
-	return artifact, viewKey, nil
+	unfiltered := mode == gittree.Source && ignore == "" && len(sparse) == 0 && !recurse
+	return artifact, viewKey, unfiltered, nil
 }
 
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.

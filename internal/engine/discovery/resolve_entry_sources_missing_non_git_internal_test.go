@@ -301,7 +301,7 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 	t.Helper()
 
 	d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
-	first, key, err := d.entrySourceView(t.Context(), testCaseInput.candidate)
+	first, key, _, err := d.entrySourceView(t.Context(), testCaseInput.candidate)
 
 	assert.FatalIf(t, err != nil, "%v", err)
 
@@ -322,7 +322,7 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 		cloned.Key = ""
 		cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
 	}
-	got, _, err := d.entrySourceView(t.Context(), &selected)
+	got, _, _, err := d.entrySourceView(t.Context(), &selected)
 
 	assert.FatalIf(t, err != nil, "%v", err)
 

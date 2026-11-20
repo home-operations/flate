@@ -59,8 +59,9 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 		name       string
 		operations []any
 		path, want string
+		skipOutput bool
 	}{
-		{"directory", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}, "app/app/file.txt", "file"},
+		{"directory", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}, "app/app/file.txt", "file", false},
 		{
 			"merge",
 			[]any{
@@ -69,13 +70,16 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			},
 			"values.yaml",
 			"a: 1\nb: 3\n",
+			false,
 		},
 		{
 			"extract",
 			[]any{map[string]any{"from": "@repo/archive.TGZ", "to": "@artifact/out/", "strategy": "Extract"}},
 			"out/inside.txt",
 			"inside",
+			false,
 		},
+		{"skip_output", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}, "app/app/file.txt", "file", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -89,6 +93,9 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 				}
 			})
 			c := New(st, task.NewBounded(2), owner)
+			if tc.skipOutput {
+				c.SkipKinds = []string{manifest.KindExternalArtifact}
+			}
 
 			generatorForTestResult := generatorForTest(
 				t,
@@ -146,6 +153,14 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 				"accepted inventory = %+v",
 				accepted,
 			)
+			assert.Equal(t, accepted.Children[0].Obj.Named(), target)
+			assert.Equal(t, manifest.DocIdentity(accepted.Children[0].Doc), target)
+			assert.Equal(t, st.GetObject(target) != nil, true)
+			if tc.skipOutput {
+				assert.Equal(t, len(accepted.Manifests), 0)
+			} else {
+				assert.Equal(t, len(accepted.Manifests), 1)
+			}
 			runForTest(t, c, obj.Named())
 			assert.FatalIf(
 				t,
@@ -232,12 +247,14 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	c := New(st, tasks, nil)
 
 	generatorForTestResult2 := generatorForTest(t, nil)
-	obj, doc := generatorForTestResult2.object, generatorForTestResult2.document
-	obj.Spec["pathPattern"] = 12
+	doc := generatorForTestResult2.document
 	doc["spec"].(map[string]any)["pathPattern"] = 12
 	doc["metadata"].(map[string]any)["annotations"] = map[string]any{
 		"source.extensions.fluxcd.io/reconcile": "DiSaBlEd",
 	}
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	obj := parsed.Object.(*manifest.RawObject)
 	st.AddObject(obj, doc)
 	var emissions atomic.Int64
 	unsubscribe := st.AddListener(

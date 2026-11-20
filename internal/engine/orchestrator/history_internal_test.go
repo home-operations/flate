@@ -797,6 +797,7 @@ data: {VALUE: rendered}
 	}
 	documents, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, request, cfg.SourceRetry)
 	assert.NoError(t, err)
+	base.PrepareDocuments(prepared, documents)
 	shaping := kustomize.PrepareShape(&request, documents)
 	content := shaping.Content()
 	assert.NoError(t, shaping.Apply(t.Context(), kustomize.ShapeOptions{Strict: true}))

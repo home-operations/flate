@@ -587,7 +587,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			assert.NoError(t, err)
 		}
 		snapFrame, err := testDecodeFrame(t, testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
-		snap := snapFrame.header.Reads
+		snap := snapFrame.Header.Reads
 		assert.FatalIf(
 			t,
 			err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP,

@@ -44,7 +44,7 @@ type execution struct {
 
 // Owns reports whether id belongs to the ArtifactGenerator controller.
 func (*Controller) Owns(id manifest.NamedResource) bool {
-	return id.Group == "source.extensions.fluxcd.io" && id.Kind == "ArtifactGenerator"
+	return id.Group == manifest.SourceExtensionsDomain && id.Kind == manifest.KindArtifactGenerator
 }
 
 // ReconcileNode returns the captured assessment of ArtifactGenerator evaluation.
@@ -161,7 +161,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
 		}
-		if err := publication.publish(ctx, req); err != nil {
+		if err := publication.publish(ctx, req, i); err != nil {
 			return err
 		}
 	}
@@ -298,7 +298,7 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 	return payload, nil
 }
 
-func (p *generatorPublication) generatedDeclaration(req *request) (store.Child, error) {
+func (p *generatorPublication) generatedDocument(req *request) (map[string]any, error) {
 	labels := maps.Clone(p.spec.CommonMetadata.Labels)
 	if labels == nil {
 		labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
@@ -313,30 +313,28 @@ func (p *generatorPublication) generatedDeclaration(req *request) (store.Child, 
 			Annotations: p.spec.CommonMetadata.Annotations,
 		},
 	)
-	generated, err := declaration.RenderDocument()
-	if err != nil {
-		return store.Child{}, err
-	}
-	return store.Child{Obj: declaration, Doc: generated}, nil
+	return declaration.RenderDocument()
 }
 
-func (p *generatorPublication) publish(ctx context.Context, req *request) error {
+func (p *generatorPublication) publish(ctx context.Context, req *request, ordinal int) error {
 	payload, err := p.generatedSource(ctx, req)
 	if err != nil {
 		return err
 	}
-	child, err := p.generatedDeclaration(req)
+	doc, err := p.generatedDocument(req)
 	if err != nil {
 		return err
 	}
-
-	children := []store.Child{child}
-	docs := []manifest.DocOccurrence{{Document: child.Doc, Ordinal: len(p.documents)}}
-	if visible, _ := (manifest.EmissionPolicy{}).SelectDocument(child.Doc, p.execution.SkipKinds); !visible {
-		docs = nil
+	parsed := p.execution.run.ParseChildren(
+		p.raw,
+		[]manifest.DocOccurrence{{Document: doc, Ordinal: ordinal}},
+		manifest.ParseDocOptions{DefaultNamespace: p.id.Namespace},
+	)
+	if err := manifest.DocumentFailure(parsed.Failures); err != nil {
+		return err
 	}
-	targetID := child.Obj.Named()
-	p.attempt.Children, p.attempt.Manifests, p.attempt.Complete = children, docs, false
+	targetID := parsed.Children[0].Obj.Named()
+	p.attempt.Children, p.attempt.Manifests, p.attempt.Complete = parsed.Children, parsed.Visible, false
 	if err := p.execution.run.Emit(
 		ctx,
 		p.id,
@@ -345,6 +343,7 @@ func (p *generatorPublication) publish(ctx context.Context, req *request) error 
 	); err != nil {
 		return err
 	}
-	p.desired, p.documents = append(p.desired, children...), append(p.documents, docs...)
+	p.desired = append(p.desired, parsed.Children...)
+	p.documents = append(p.documents, parsed.Visible...)
 	return nil
 }

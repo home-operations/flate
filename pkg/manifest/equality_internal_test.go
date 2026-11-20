@@ -78,7 +78,9 @@ func TestLabelsEqual_Representations(t *testing.T) {
 		forward, reverse bool
 	}{
 		{name: "typed labels ignore documents", a: typed, b: typed.Clone(), documents: [2]map[string]any{app, other}, forward: true, reverse: true},
-		{name: "typed labels ignore exclusions", a: &Kustomization{Labels: map[string]string{"owner": "a"}}, b: &Kustomization{Labels: map[string]string{"owner": "b"}}, excluded: excluded},
+		{name: "typed excluded label change", a: &Kustomization{Labels: map[string]string{"owner": "a"}}, b: &Kustomization{Labels: map[string]string{"owner": "b"}}, excluded: excluded, forward: true, reverse: true},
+		{name: "typed excluded extra label", a: &Kustomization{}, b: &Kustomization{Labels: map[string]string{"owner": "a"}}, excluded: excluded, forward: true, reverse: true},
+		{name: "typed ordinary extra label", a: &Kustomization{}, b: &Kustomization{Labels: map[string]string{"app": ""}}, excluded: excluded},
 		{name: "typed nil and empty labels", a: &Kustomization{}, b: &Kustomization{Labels: map[string]string{}}, forward: true, reverse: true},
 		{name: "typed difference despite equal documents", a: typed, b: &Kustomization{}, documents: [2]map[string]any{app, app}},
 		{name: "raw inputs", a: raw, b: &copied, forward: true, reverse: true},

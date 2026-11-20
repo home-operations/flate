@@ -45,13 +45,19 @@ func ValueEqual(a, b any) bool {
 }
 
 // LabelsEqual compares labels with documents[0] for a and documents[1] for b.
-// A typed left operand compares typed labels only, ignoring documents and excluded.
-// Otherwise only nil documents permit raw-spec label inputs; nil and empty label maps are equal.
+// A typed left operand requires typed labels on both operands and ignores documents.
+// Otherwise documents take precedence over raw-spec label inputs. Both paths skip
+// excluded keys and treat nil and empty label maps as equal.
 func LabelsEqual(a, b BaseManifest, documents [2]map[string]any, excluded func(string) bool) bool {
-	type labeled interface{ GetLabels() map[string]string }
-	if x, ok := a.(labeled); ok {
-		y, ok := b.(labeled)
-		return ok && maps.Equal(x.GetLabels(), y.GetLabels())
+	if KindOf(a).TypedLabels {
+		if !KindOf(b).TypedLabels {
+			return false
+		}
+		al, bl := a.GetLabels(), b.GetLabels()
+		if excluded == nil {
+			return maps.Equal(al, bl)
+		}
+		return mapEqualExcept(al, bl, excluded, func(a, b string) bool { return a == b })
 	}
 	al, bl := labels(a, documents[0]), labels(b, documents[1])
 	if excluded == nil {
@@ -72,12 +78,16 @@ func labels(obj BaseManifest, input map[string]any) map[string]any {
 // MapEqualExcept compares non-excluded keys and values, treating nil and empty maps equally.
 // The excluded predicate MUST be non-nil; values use ValueEqual.
 func MapEqualExcept[V any](a, b map[string]V, excluded func(string) bool) bool {
+	return mapEqualExcept(a, b, excluded, func(a, b V) bool { return ValueEqual(a, b) })
+}
+
+func mapEqualExcept[V any](a, b map[string]V, excluded func(string) bool, equal func(V, V) bool) bool {
 	for key, value := range a {
 		if excluded(key) {
 			continue
 		}
 		other, ok := b[key]
-		if !ok || !ValueEqual(value, other) {
+		if !ok || !equal(value, other) {
 			return false
 		}
 	}

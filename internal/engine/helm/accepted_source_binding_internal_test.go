@@ -90,13 +90,13 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			prepared, err := renderer.prepareTemplate(t.Context(), changed, nil, &current)
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
-			binding := frame.binding
+			binding := frame.Inputs
 			binding.Policy = prepared.binding.Policy
-			header := frame.header
+			header := frame.Header
 			frame.Key = prepared.key
 			frame.Stored = nil
 			frame.Rebind(binding.Fingerprint())
-			header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
+			header.Analysis = (&chartDescription{chart: frame.Header.chart, analysis: frame.Header.Analysis}).analyze()
 			stored, err := frame.Encode(frameDomain, header)
 			assert.NoError(t, err)
 			accepted, err := stored.PreparePublication(t.Context(), cache.FramePublicationInput{
@@ -185,8 +185,8 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			assert.Equal(t, bytes.Equal(encoded, output), true)
 			frame := rebound.Value().(renderFrame)
 			assert.Equal(t, bytes.Equal(frame.Output, priorOutput), true)
-			assert.Equal(t, frame.binding.Artifact.Revision, replacement.Revision)
-			assert.Equal(t, frame.binding.Artifact.URL, replacement.URL)
+			assert.Equal(t, frame.Inputs.Artifact.Revision, replacement.Revision)
+			assert.Equal(t, frame.Inputs.Artifact.URL, replacement.URL)
 			assert.Equal(t, current.Preparation.key, key)
 			assert.Equal(t, current.Preparation.source, &replacement)
 			assert.NoError(t, renderer.cache.RecordRender(t.Context(), cache.RenderAcceptance{
@@ -199,7 +199,7 @@ func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease
 			assert.Equal(t, complete, persistent)
 			assert.Equal(t, history == nil, !persistent)
 			unchanged := receipt.Value().(renderFrame)
-			assert.Equal(t, unchanged.binding.Equal(&binding, equalTemplatePolicy), true)
+			assert.Equal(t, unchanged.Inputs.Equal(&binding, equalTemplatePolicy), true)
 			assert.Equal(t, bytes.Equal(unchanged.Output, priorOutput), true)
 			assert.Equal(t, source.Revision, "before")
 			assert.Equal(t, source.URL, binding.Artifact.URL)

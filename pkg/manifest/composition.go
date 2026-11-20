@@ -16,10 +16,6 @@ type ArtifactInclude struct {
 	ToPath    string
 }
 
-type artifactComposer interface {
-	Composition() ArtifactComposition
-}
-
 // Composition MUST keep include references separate from acquisition credentials.
 func (g *GitRepository) Composition() ArtifactComposition {
 	result := ArtifactComposition{Policy: "source"}
@@ -66,3 +62,24 @@ func (*HelmRepository) Composition() ArtifactComposition { return ArtifactCompos
 
 // Composition MUST remain empty because HelmChartSource declares no composition inputs.
 func (*HelmChartSource) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because Kustomization declares no composition inputs.
+func (*Kustomization) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because HelmRelease declares no composition inputs.
+func (*HelmRelease) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because ResourceSet declares no composition inputs.
+func (*ResourceSet) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because ResourceSetInputProvider declares no composition inputs.
+func (*ResourceSetInputProvider) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because ConfigMap declares no composition inputs.
+func (*ConfigMap) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because Secret declares no composition inputs.
+func (*Secret) Composition() ArtifactComposition { return ArtifactComposition{} }
+
+// Composition is empty because RawObject declares no composition inputs.
+func (*RawObject) Composition() ArtifactComposition { return ArtifactComposition{} }

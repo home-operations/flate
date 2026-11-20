@@ -62,7 +62,7 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		ctx := t.Context()
 		var recorder manifest.WorkRecorder
 		accounting := manifest.RenderWork{Scope: recorder.Scope()}
-		input.Work = &accounting
+		input.Work, input.PreparationTasks = &accounting, tasks
 		prepared, err := client.prepareTemplate(ctx, hr, nil, &input)
 		assert.NoError(t, err)
 		work := accounting.Decode(prepared.loaded.key)
@@ -70,11 +70,7 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 		var found *renderRecord
 		go func() {
 			var err error
-			found, err = client.lookupRender(
-				ctx,
-				&prepared.loaded,
-				prepared.key, &RenderOptions{PreparationTasks: tasks, Work: &accounting},
-			)
+			found, _, err = prepared.lookupRender(ctx, false)
 			joined <- err
 		}()
 		synctest.Wait()
@@ -103,11 +99,7 @@ func TestDecodeChart_PreparationBudget(t *testing.T) {
 			<-entered
 		}
 		go func() {
-			_, err := client.lookupRender(
-				ctx,
-				&prepared.loaded,
-				prepared.key, &RenderOptions{PreparationTasks: tasks, Work: &accounting},
-			)
+			_, _, err := prepared.lookupRender(ctx, false)
 			joined <- err
 		}()
 		synctest.Wait()

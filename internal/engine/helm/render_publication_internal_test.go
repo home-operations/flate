@@ -37,7 +37,7 @@ func TestRecordRender_ChartAnalysis(t *testing.T) {
 			documents, receipt, err := request.render(t.Context(), client, nil)
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
-			assert.Equal(t, frame.header.Analysis == nil, true)
+			assert.Equal(t, frame.Header.Analysis == nil, true)
 			validation, err := frame.RenderPublication(t.Context(), nil)
 			assert.NoError(t, err)
 			assert.Equal(t, validation.Metadata == nil && validation.Content == nil && validation.Sources == nil, true)
@@ -50,13 +50,13 @@ func TestRecordRender_ChartAnalysis(t *testing.T) {
 			projection, err := frame.RenderPublication(t.Context(), &acceptance)
 			assert.NoError(t, err)
 			assert.Equal(t, projection.Metadata != nil, owner.CanPersistRenders())
-			assert.Equal(t, frame.header.Analysis == nil, true)
+			assert.Equal(t, frame.Header.Analysis == nil, true)
 			assert.Equal(t, frame.Stored == nil, true)
 			if owner.CanPersistRenders() {
 				metadata := projection.Metadata.(renderHeader)
 				assert.Equal(t, metadata.Analysis != nil, true)
 				assert.Equal(t, metadata.Analysis.Version, "0.1.0")
-				assert.Equal(t, projection.Frame.Binding, frame.binding.Fingerprint())
+				assert.Equal(t, projection.Frame.Binding, frame.Inputs.Fingerprint())
 				assert.Equal(t, manifest.ValueEqual(projection.Content, request.content), true)
 			}
 			assert.NoError(t, owner.RecordRender(t.Context(), acceptance))
@@ -69,7 +69,7 @@ func TestRecordRender_ChartAnalysis(t *testing.T) {
 			assert.Diff(t, cached, documents)
 			cachedFrame := cachedReceipt.Value().(renderFrame)
 			assert.Equal(t, bytes.Equal(cachedFrame.Output, frame.Output), true)
-			assert.Equal(t, cachedFrame.header.Analysis != nil, true)
+			assert.Equal(t, cachedFrame.Header.Analysis != nil, true)
 			acceptance.Receipt = cachedReceipt
 			assert.NoError(t, owner.RecordRender(t.Context(), acceptance))
 			_, complete = client.PreviousRender(t.Context(), hr, nil, input)
@@ -88,13 +88,13 @@ func TestRecordRender_InvalidHelmReceipt(t *testing.T) {
 		name  string
 		frame renderFrame
 	}{
-		{name: "missing key", frame: renderFrame{header: renderHeader{Analysis: &chartAnalysis{Version: "0.1.0"}}}},
+		{name: "missing key", frame: renderFrame{Header: renderHeader{Analysis: &chartAnalysis{Version: "0.1.0"}}}},
 		{name: "missing chart and analysis", frame: renderFrame{RenderFrame: cache.RenderFrame{Key: "invalid"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := owner.RecordRender(t.Context(), cache.RenderAcceptance{
-				Receipt: manifest.NewRenderReceipt(tc.frame, equalRenderFrame),
+				Receipt: renderDomain.Receipt(tc.frame),
 				Records: emptyRenderInventory, Sources: []manifest.SourceEvidence{},
 			})
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)

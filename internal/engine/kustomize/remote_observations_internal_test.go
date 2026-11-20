@@ -102,11 +102,11 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 	}
 	frame, err := testEncodeFrame(
 		t,
-		&renderFrame{Output: nil, header: renderHeader{Reads: snap}},
+		&renderFrame{Output: nil, Header: renderHeader{Reads: snap}},
 	)
 	assert.NoError(t, err)
 	decodedFrame, err := testDecodeFrame(t, frame)
-	decoded := decodedFrame.header.Reads
+	decoded := decodedFrame.Header.Reads
 	assert.NoError(t, err)
 	for entryIndex := range decoded.Remotes {
 		entry := decoded.Remotes[entryIndex]
@@ -265,11 +265,11 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 	mu.Unlock()
 	frame, err := testEncodeFrame(
 		t,
-		&renderFrame{Output: nil, header: renderHeader{Reads: snap}},
+		&renderFrame{Output: nil, Header: renderHeader{Reads: snap}},
 	)
 	assert.NoError(t, err)
 	snapFrame, decodeErr := testDecodeFrame(t, frame)
-	snap, err = snapFrame.header.Reads, decodeErr
+	snap, err = snapFrame.Header.Reads, decodeErr
 	assert.NoError(t, err)
 	closeTestTreeCache(t, c)
 	mu.Lock()

@@ -3,6 +3,8 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 )
 
 // ArtifactGeneratorSpec must retain its JSON layout because it participates in content fingerprints.
@@ -51,56 +53,69 @@ type ArtifactGeneratorCopy struct {
 	Exclude  []string `json:"exclude"`
 }
 
-// Declaration reads must borrow containers and ignore unrelated execution fields.
-type artifactGeneratorView struct {
-	fields map[string]any
+type artifactGeneratorDecode struct {
+	spec ArtifactGeneratorSpec
+	err  error
+	// Only the canonical sources list supplies indexed declarations.
+	sources []ArtifactGeneratorSource
 }
 
-func (r *RawObject) artifactGeneratorView() artifactGeneratorView {
-	return artifactGeneratorView{fields: r.Spec}
-}
-
-func (v artifactGeneratorView) str(key string) string {
-	value, _ := v.fields[key].(string)
-	return value
-}
-
-func (v artifactGeneratorView) entries(key string) []any {
-	value, _ := v.fields[key].([]any)
-	return value
-}
-
-func (v artifactGeneratorView) child(value any) artifactGeneratorView {
-	fields, _ := value.(map[string]any)
-	return artifactGeneratorView{fields: fields}
-}
-
-func (v artifactGeneratorView) source(value any) ArtifactGeneratorSource {
-	child := v.child(value)
-	_, namespaceSet := child.fields[namespaceKey]
-	return ArtifactGeneratorSource{
-		Alias: child.str("alias"), Name: child.str(nameKey), Namespace: child.str(namespaceKey),
-		Kind: child.str(kindKey), NamespaceSet: namespaceSet,
-	}
-}
-
-// ArtifactGeneratorSpec must retain encoding/json field matching and type acceptance.
-func (r *RawObject) ArtifactGeneratorSpec() (ArtifactGeneratorSpec, error) {
-	v := r.artifactGeneratorView()
-	var spec ArtifactGeneratorSpec
-	data, err := json.Marshal(v.fields)
+func decodeArtifactGeneratorSpec(fields map[string]any) *artifactGeneratorDecode {
+	result := &artifactGeneratorDecode{}
+	data, err := json.Marshal(fields)
 	if err != nil {
-		return spec, fmt.Errorf("marshal spec: %w", err)
+		result.err = fmt.Errorf("marshal spec: %w", err)
+		return result
 	}
-	if err := json.Unmarshal(data, &spec); err != nil {
-		return spec, fmt.Errorf("decode spec: %w", err)
+	if err := json.Unmarshal(data, &result.spec); err != nil {
+		result.err = fmt.Errorf("decode spec: %w", err)
 	}
-	sources := v.entries("sources")
-	if len(sources) != len(spec.Sources) {
-		return spec, fmt.Errorf("sources must be a list")
+	sources, _ := fields["sources"].([]any)
+	if len(sources) != len(result.spec.Sources) {
+		if result.err == nil {
+			result.err = fmt.Errorf("sources must be a list")
+		}
+		return result
 	}
-	for i, raw := range sources {
-		spec.Sources[i].NamespaceSet = v.source(raw).NamespaceSet
+	for i, source := range sources {
+		fields, _ := source.(map[string]any)
+		_, result.spec.Sources[i].NamespaceSet = fields[namespaceKey]
 	}
-	return spec, nil
+	result.sources = result.spec.Sources
+	return result
+}
+
+func (r *RawObject) initArtifactGeneratorSpec() *RawObject {
+	if r.isArtifactGenerator() {
+		r.generator = decodeArtifactGeneratorSpec(r.Spec)
+	}
+	return r
+}
+
+func (r *RawObject) artifactGeneratorSpec() *artifactGeneratorDecode {
+	if r.generator != nil {
+		return r.generator
+	}
+	return decodeArtifactGeneratorSpec(r.Spec)
+}
+
+// ArtifactGeneratorSpec returns an independent snapshot, including partial data on decode errors.
+func (r *RawObject) ArtifactGeneratorSpec() (ArtifactGeneratorSpec, error) {
+	decoded := r.artifactGeneratorSpec()
+	if r.generator == nil {
+		return decoded.spec, decoded.err
+	}
+	spec := decoded.spec
+	spec.CommonMetadata.Labels = maps.Clone(spec.CommonMetadata.Labels)
+	spec.CommonMetadata.Annotations = maps.Clone(spec.CommonMetadata.Annotations)
+	spec.Sources = slices.Clone(spec.Sources)
+	spec.Artifacts = slices.Clone(spec.Artifacts)
+	for i := range spec.Artifacts {
+		artifact := &spec.Artifacts[i]
+		artifact.Copy = slices.Clone(artifact.Copy)
+		for j := range artifact.Copy {
+			artifact.Copy[j].Exclude = slices.Clone(artifact.Copy[j].Exclude)
+		}
+	}
+	return spec, decoded.err
 }

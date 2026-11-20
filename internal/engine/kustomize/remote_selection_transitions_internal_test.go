@@ -109,7 +109,7 @@ func testRenderRemoteSelectionTransitionCase(
 		assert.NoError(t, recordRenderErr)
 	}
 	frame := receipt.Value().(renderFrame)
-	snap := frame.header.Reads
+	snap := frame.Header.Reads
 	key := frame.Key
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	var persisted readSetSnapshot

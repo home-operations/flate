@@ -176,9 +176,7 @@ func (a *Admission) readApplication(
 	}
 	evidence.application = application
 	resolved := a.applicationSource(st, reads, &application)
-	if facts, ok := resolved.object.(interface {
-		Composition() manifest.ArtifactComposition
-	}); ok && len(facts.Composition().Includes) != 0 && resolved.artifact == nil {
+	if resolved.artifact == nil && resolved.object != nil && len(resolved.object.Composition().Includes) != 0 {
 		evidence.source = resolved
 		if a.applicationApplies(&application, &resolved, a.path) {
 			reads.RequireData(application.Source)

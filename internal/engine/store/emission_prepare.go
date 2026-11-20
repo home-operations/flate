@@ -194,19 +194,16 @@ func semanticObjectsEqual(a, b Child) bool {
 	if manifest.Equal(a.Obj, b.Obj) {
 		return true
 	}
-	type metadata interface {
-		GetLabels() map[string]string
-		GetAnnotations() map[string]string
-	}
-	am, aok := a.Obj.(metadata)
-	bm, bok := b.Obj.(metadata)
+	type annotated interface{ GetAnnotations() map[string]string }
+	am, aok := a.Obj.(annotated)
+	bm, bok := b.Obj.(annotated)
 	if !aok || !bok {
 		return false
 	}
 	if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
 		return false
 	}
-	if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), manifest.IsOwnershipLabel) {
+	if !manifest.LabelsEqual(a.Obj, b.Obj, [2]map[string]any{}, manifest.IsOwnershipLabel) {
 		return false
 	}
 	ad, aerr := json.Marshal(a.Obj)
@@ -246,10 +243,14 @@ func (e *Emission) retainPreviousEntries(
 				if !next.Complete && entry.child.Generated && old.child.Doc != nil && !old.child.Generated {
 					entry = old
 				}
-				entry.changed = entry.child.Generated != old.child.Generated ||
-					!manifest.Equal(entry.child.Obj, old.child.Obj) ||
-					!manifest.ValueEqual(entry.child.Doc, old.child.Doc)
 				entry.objectChanged = !reconcileEqual(entry.child, old.child)
+				entry.changed = entry.child.Generated != old.child.Generated
+				if !entry.changed &&
+					(!manifest.Equal(entry.child.Obj, old.child.Obj) ||
+						!manifest.ValueEqual(entry.child.Doc, old.child.Doc)) {
+					entry.changed = entry.objectChanged || (entry.child.Doc == nil) != (old.child.Doc == nil) ||
+						!semanticEqual(entry.child, old.child)
+				}
 				entry.objectHead = old.objectHead
 				entry.objectGeneration = old.objectGeneration
 				e.entries = append(e.entries, entry)

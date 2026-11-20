@@ -202,8 +202,8 @@ func (p *Preparation) bindSource(hr *manifest.HelmRelease, artifact *store.Sourc
 	switch {
 	case p.complete:
 		binding.Policy.Options.SkipKinds = p.binding.Policy.Options.SkipKinds
-	case p.loaded.record != nil && p.loaded.record.key == p.key && p.loaded.record.binding.Equal(&binding, equalTemplatePolicy):
-		binding = p.loaded.record.binding
+	case p.loaded.record != nil && p.loaded.record.frame.Inputs.Equal(&binding, equalTemplatePolicy):
+		binding = p.loaded.record.frame.Inputs
 	default:
 		binding.Policy.Options.SkipKinds = nil
 		if len(input.SkipKinds) > 0 {

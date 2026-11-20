@@ -184,6 +184,7 @@ func (c *execution) render(
 		return err
 	}
 	attempt.Render = receipt
+	base.PrepareDocuments(ks, docs)
 	shaping := kustomize.PrepareShape(&request, docs)
 	defer shaping.Retire()
 	content := shaping.Content()
@@ -286,6 +287,7 @@ func (c *Controller) PreviousRender(
 	if !found {
 		return history
 	}
+	base.PrepareDocuments(prepared, docs)
 	shaping := kustomize.PrepareShape(&request, docs)
 	content := shaping.Content()
 	history.Records, history.Complete = c.Trees.RenderHistory(ks.Named(), receipt, content)

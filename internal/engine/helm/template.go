@@ -489,14 +489,14 @@ func (r *templateRequest) render(
 			return nil, nil, encodeRenderErr
 		}
 		frame := renderFrame{
-			Key: r.key, Output: payload,
-			header:  renderHeader{Analysis: r.loaded.analysis},
-			persist: c.cache.CanPersistRenders(),
-			binding: r.binding,
-			chart:   r.loaded.chart,
-			content: r.release.Clone().Content(r.key, r.input.Omitted),
+			Key: r.key, Output: payload, Inputs: r.binding,
+			Header: renderHeader{
+				Analysis: r.loaded.analysis, chart: r.loaded.chart,
+				persist: c.cache.CanPersistRenders(),
+				content: r.release.Clone().Content(r.key, r.input.Omitted),
+			},
 		}
-		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+		receipt = renderDomain.Receipt(frame)
 	}
 	return normalizeLists(docs), receipt, nil
 }
@@ -518,7 +518,7 @@ func (r *templateRequest) validate(
 	} else {
 		record.identity = identity
 	}
-	current, documents, err := r.validateRecord(ctx, c, record)
+	current, documents, err := r.validateRecord(ctx, record, &r.binding, false)
 	if err != nil || current == nil {
 		return false, err
 	}
@@ -531,44 +531,50 @@ func (r *templateRequest) validate(
 
 func (r *templateRequest) validateRecord(
 	ctx context.Context,
-	c *Client,
 	record *renderRecord,
+	binding *cache.RenderBinding[templatePolicy],
+	history bool,
 ) (*renderRecord, []manifest.DocOccurrence, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, fmt.Errorf("validate rendered chart: %w", err)
+	frame := record.frame
+	bindingMatches := frame.Inputs.Equal(binding, equalTemplatePolicy)
+	if record.accepted != nil && (history || !bindingMatches) {
+		frame.RenderFrame = *record.accepted
+		frame.Inputs = cache.RenderBinding[templatePolicy]{}
 	}
-	if record.Analysis.RequiresLoader {
-		if err := c.decodeChart(ctx, &r.loaded, &r.input); err != nil {
-			return nil, nil, err
+	raw := frame.RenderFrame
+	check := func(header renderHeader) (bool, error) {
+		if header.Analysis.RequiresLoader {
+			if err := r.client.decodeChart(ctx, &r.loaded, &r.input); err != nil {
+				return false, err
+			}
 		}
+		if r.loaded.oci != nil {
+			if _, err := ociChartVersion(header.Analysis.Version, r.loaded.artifact.Revision); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
 	}
-	if r.loaded.oci != nil {
-		if _, err := ociChartVersion(record.Analysis.Version, r.loaded.artifact.Revision); err != nil {
-			return nil, nil, err
-		}
+	validated, err := renderDomain.Validate(ctx, &frame, binding, cache.RenderCheck[renderHeader]{
+		History: history,
+		Header:  check,
+	})
+	if err != nil || !validated.Valid {
+		return nil, nil, err
 	}
-	documents, err := manifest.DecodeRender(record.Output)
-	if err == nil {
-		if !record.binding.Equal(&r.binding, equalTemplatePolicy) || record.receipt == nil ||
-			!manifest.ValueEqual(record.frame.content, r.content) {
-			fresh := *record
-			fresh.binding = r.binding
-			frame := record.frame
-			frame.binding = r.binding
-			frame.content = r.release.Clone().Content(r.key, r.input.Omitted)
-			frame.persist = c.cache.CanPersistRenders()
-			binding := r.binding.Fingerprint()
-			frame.Rebind(binding)
-			fresh.frame = frame
-			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-			record = &fresh
+	if !bindingMatches || record.receipt == nil || !manifest.ValueEqual(frame.Header.content, r.content) {
+		fresh := *record
+		// A rebound receipt MUST NOT displace the durable generation for its original binding.
+		if validated.Rebound && raw.Stored != nil && raw.Binding != "" && fresh.accepted == nil {
+			fresh.accepted = new(raw)
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, nil, fmt.Errorf("validate rendered chart: %w", err)
-		}
-		return record, documents, nil
+		frame.Header.content = r.release.Clone().Content(r.key, r.input.Omitted)
+		frame.Header.persist = r.client.cache.CanPersistRenders()
+		fresh.frame = frame
+		fresh.receipt = renderDomain.Receipt(frame)
+		record = &fresh
 	}
-	return nil, nil, nil
+	return record, validated.Documents, nil
 }
 
 func (r *templateRequest) produce(
@@ -588,23 +594,12 @@ func (r *templateRequest) produce(
 	}
 	//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
 	frame := result.receipt.Value().(renderFrame)
-	if frame.header.Analysis == nil {
-		frame.header.Analysis = r.loaded.analyze()
-	}
-	frame.Stored, errResult2 = frame.Encode(frameDomain, frame.header)
-	if errResult2 != nil || frame.Stored == nil {
-		return cache.ProducerResult{}, errResult2
-	}
-	publication, errResult2 := frame.Stored.PreparePublication(ctx, cache.FramePublicationInput{})
-	if errResult2 == nil {
-		_, errResult2 = publication.WriteTo(w)
-	}
-	if errResult2 == nil {
-		frame.chart = nil
+	errResult2 = renderDomain.WritePending(ctx, w, &frame)
+	if errResult2 == nil && frame.Stored != nil {
+		frame.Header.chart = nil
 		result.produced = &renderRecord{
-			key:      r.key,
 			Output:   frame.Output,
-			Analysis: frame.header.Analysis,
+			Analysis: frame.Header.Analysis,
 			frame:    frame,
 		}
 	}
@@ -658,18 +653,13 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 
 func (r *templateRequest) cachedRecord(ctx context.Context, generation fs.FS, identity string) (*renderRecord, error) {
 	record := r.loaded.record
-	if record == nil || record.key != r.key || record.identity != identity {
-		var frame renderFrame
-		var err error
-		frame.RenderFrame, err = cache.OpenRenderFrame(ctx, frameDomain, generation, &frame.header)
-		if _, storage := errors.AsType[*cache.Error](err); storage {
+	if record == nil || identity == "" || record.identity != identity {
+		frame, decoded, err := renderDomain.Read(ctx, generation)
+		if err != nil || !decoded {
 			return nil, err
 		}
-		if err != nil || frame.Key != r.key || frame.header.Analysis == nil {
-			return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
-		}
 		record = &renderRecord{
-			key: r.key, identity: identity, Output: frame.Output, Analysis: frame.header.Analysis, frame: frame,
+			identity: identity, Output: frame.Output, Analysis: frame.Header.Analysis, frame: frame,
 		}
 	}
 	return record, nil

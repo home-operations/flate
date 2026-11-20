@@ -34,6 +34,9 @@ func (c *ConfigMap) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (c *ConfigMap) Suspended() bool { return false }
 
+// GetLabels returns nil because ConfigMap has no typed label storage.
+func (*ConfigMap) GetLabels() map[string]string { return nil }
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 	out := *c
@@ -158,6 +161,9 @@ func (s *Secret) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (s *Secret) Suspended() bool { return false }
+
+// GetLabels returns nil because Secret has no typed label storage.
+func (*Secret) GetLabels() map[string]string { return nil }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (s *Secret) WithNamespace(namespace string) BaseManifest {

@@ -55,9 +55,9 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	assert.FatalIf(t, receipt == nil, "%s", "successful raw template supplied no receipt")
 
 	frame := receipt.Value().(renderFrame)
-	frame.Rebind(frame.binding.Fingerprint())
-	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-	frame.Stored, err = frame.Encode(frameDomain, frame.header)
+	frame.Rebind(frame.Inputs.Fingerprint())
+	frame.Header.Analysis = (&chartDescription{chart: frame.Header.chart, analysis: frame.Header.Analysis}).analyze()
+	frame.Stored, err = frame.Encode(frameDomain, frame.Header)
 	assert.NoError(t, err)
 	original := bytes.Clone(frame.Output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
@@ -229,7 +229,8 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		mutate func(*renderFrame)
 	}{
 		{"request key", func(h *renderFrame) { h.Key = "foreign" }},
-		{"missing analysis", func(h *renderFrame) { h.header.Analysis = nil }},
+		{"missing analysis", func(h *renderFrame) { h.Header.Analysis = nil }},
+		{"malformed output", func(h *renderFrame) { h.Output = []byte("invalid output") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -527,11 +528,11 @@ func testTemplateAcceptedHistoryDurableName(
 	invalid := *(*testCaseInput).frame
 	invalid.Stored = nil
 	tc.mutate(&invalid)
-	invalidFrame, frameErr := invalid.Encode(frameDomain, invalid.header)
+	invalidFrame, frameErr := invalid.Encode(frameDomain, invalid.Header)
 	assert.NoError(t, frameErr)
 	accepted, frameErr := invalidFrame.PreparePublication(t.Context(), cache.FramePublicationInput{
 		Owner:    (*(*testCaseInput).hr).Named(),
-		Content:  (*testCaseInput).frame.content,
+		Content:  (*testCaseInput).frame.Header.content,
 		Records:  maps.All(records),
 		Complete: true,
 	})
@@ -565,7 +566,7 @@ func testTemplateAcceptedHistoryDurableName(
 			)
 		}
 	}()
-	found, frameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
+	found, _, frameErr := prepared.lookupRender(t.Context(), false)
 	assert.NoError(t, frameErr)
 
 	assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
@@ -579,6 +580,15 @@ func testTemplateAcceptedHistoryDurableName(
 		)
 		assert.FatalIf(t, previousRenderComplete, "%s", "invalid raw request metadata supplied history")
 	}
+	var work manifest.WorkRecorder
+	release := *(*testCaseInput).hr
+	work.Init(&manifest.WorkKey{Owner: release.Named()}, manifest.WorkScope{})
+	input := *(*testCaseInput).input
+	input.Admit, input.Work = nil, work.Scope().RenderWork()
+	_, receipt, err := isolated.Template(t.Context(), release, nil, input)
+	assert.NoError(t, err)
+	assert.Equal(t, receipt != nil, true)
+	assert.Equal(t, input.Work.Engine(manifest.WorkHelm, prepared.key).Counts.Attempts, uint64(1))
 }
 
 func testTemplateAcceptedHistoryDurableTypedRecordKey(
@@ -609,12 +619,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 		(*testCaseInput).input,
 	)
 	assert.NoError(t, prepareTemplateErr)
-	remembered, prepareTemplateErr := isolated.lookupRender(
-		t.Context(),
-		&prepared.loaded,
-		prepared.key,
-		&RenderOptions{},
-	)
+	remembered, _, prepareTemplateErr := prepared.lookupRender(t.Context(), false)
 	assert.NoError(t, prepareTemplateErr)
 
 	assert.Equal(t, remembered != nil, persistent)
@@ -653,7 +658,8 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 		assert.Equal(t, cache.AcquisitionIdentity(reader), "")
 	}
 
-	found, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign", &RenderOptions{})
+	prepared.key, prepared.binding.Key = "foreign", "foreign"
+	found, _, prepareTemplateErr := prepared.lookupRender(t.Context(), false)
 	assert.NoError(t, prepareTemplateErr)
 
 	assert.FatalIf(

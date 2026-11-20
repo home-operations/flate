@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/selection"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -260,6 +261,7 @@ func (f *literalSourceViewsFixture) publish(t *testing.T, index int) {
 		cache.RetryConfig{},
 	)
 	assert.NoError(t, err)
+	base.PrepareDocuments(spec, docs)
 	assert.NoError(
 		t,
 		kustomize.PrepareShape(&kustomize.RenderRequest{Spec: spec}, docs).Apply(t.Context(), kustomize.ShapeOptions{}),

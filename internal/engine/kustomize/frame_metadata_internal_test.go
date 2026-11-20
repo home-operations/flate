@@ -107,8 +107,8 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	}
 	assert.NoError(t, err)
 	frame.Stored = nil
-	frame.header.Reads.Files = []localEntry{{Path: strings.Repeat("x", 16<<20)}}
-	acceptance.Receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+	frame.Header.Reads.Files = []localEntry{{Path: strings.Repeat("x", 16<<20)}}
+	acceptance.Receipt = renderDomain.Receipt(frame)
 	assert.NoError(t, renderer.owner.RecordRender(t.Context(), acceptance))
 	current, next, _, err := renderer.owner.Blob(
 		t.Context(),

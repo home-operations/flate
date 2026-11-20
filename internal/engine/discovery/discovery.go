@@ -78,7 +78,9 @@ type Config struct {
 	// pick one per run.
 	KRMIgnoreFile string
 	// Trees is required when discovered packages need a bare Kustomize build.
-	Trees               *kustomize.TreeCache
+	Trees *kustomize.TreeCache
+	// PrepareDocuments applies producer metadata before fingerprints and substitutions.
+	PrepareDocuments    func(manifest.BaseManifest, []manifest.DocOccurrence)
 	Store               *store.Store
 	RemoteInputs        *source.HTTPInputs
 	RemoteRetry         cache.RetryConfig
@@ -744,6 +746,7 @@ func (d *Session) renderPreparation(
 			return err
 		}
 	}
+	d.cfg.PrepareDocuments(prepared, docs)
 	shaping := kustomize.PrepareShape(&request, docs)
 	content := shaping.Content()
 	if err := shaping.Apply(
@@ -794,14 +797,16 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 	}
 	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
+	root := filepath.Join(prepared.source.LocalPath, manifest.NormalizeClaimBase(prepared.owner.Path))
 	if err := d.loader.RegisterBuilt(
 		ctx,
 		loader.BuiltInput{
-			Root:    filepath.Join(prepared.source.LocalPath, manifest.NormalizeClaimBase(prepared.owner.Path)),
-			Owner:   owner,
-			Source:  sourceID,
-			Reads:   kustomize.RenderInputs(prepared.receipt),
-			Support: &prepared.support,
+			Root:             root,
+			Owner:            owner,
+			Source:           sourceID,
+			Reads:            kustomize.RenderInputs(prepared.receipt),
+			Support:          &prepared.support,
+			PrepareDocuments: d.cfg.PrepareDocuments,
 		},
 		prepared.children,
 	); err != nil {

@@ -73,3 +73,111 @@ func TestOpenRenderFrame_Metadata(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderDomain_Receipt(t *testing.T) {
+	t.Parallel()
+	equal := func(a, b int) bool { return a == b }
+	definition := RenderDomain[int, int]{EqualPolicy: equal, EqualHeader: equal}
+	domain := NewRenderDomain(definition)
+	otherDomain := NewRenderDomain(definition)
+	snapshot := func(policy int, output string, header int) RenderReceipt[int, int] {
+		return RenderReceipt[int, int]{
+			Key: "render", Output: []byte(output),
+			Inputs: RenderBinding[int]{Key: "render", Policy: policy},
+			Header: header,
+		}
+	}
+	original := domain.Receipt(snapshot(1, "output", 2))
+	otherKey := snapshot(1, "output", 2)
+	otherKey.Key = "other"
+	domainless := snapshot(1, "output", 2)
+	for _, test := range []struct {
+		name        string
+		left, right *manifest.RenderReceipt
+		equal       bool
+	}{
+		{name: "separate receipt", left: original, right: domain.Receipt(snapshot(1, "output", 2)), equal: true},
+		{name: "different binding", left: original, right: domain.Receipt(snapshot(2, "output", 2))},
+		{name: "different output", left: original, right: domain.Receipt(snapshot(1, "other", 2))},
+		{name: "different header", left: original, right: domain.Receipt(snapshot(1, "output", 3))},
+		{name: "different domain", left: original, right: otherDomain.Receipt(snapshot(1, "output", 2))},
+		{name: "different frame key", left: original, right: domain.Receipt(otherKey)},
+		{
+			name:  "missing domain",
+			left:  manifest.NewRenderReceipt(domainless, domain.equalReceipt),
+			right: manifest.NewRenderReceipt(domainless, domain.equalReceipt),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, test.left.Equal(test.right), test.equal)
+			assert.Equal(t, test.right.Equal(test.left), test.equal)
+		})
+	}
+}
+
+func TestRenderReceipt_RejectInvalidPublication(t *testing.T) {
+	t.Parallel()
+	domain := NewRenderDomain(RenderDomain[int, int]{
+		Name:        "domain",
+		ValidHeader: func(header int) bool { return header == 1 },
+	})
+	for _, test := range []struct {
+		name    string
+		receipt RenderReceipt[int, int]
+	}{
+		{name: "missing domain", receipt: RenderReceipt[int, int]{Key: "render", Header: 1}},
+		{name: "missing frame key", receipt: RenderReceipt[int, int]{domain: domain, Header: 1}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := test.receipt.RenderPublication(t.Context(), nil)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		})
+	}
+}
+
+func TestRenderDomain_RejectHistoryBinding(t *testing.T) {
+	t.Parallel()
+	domain := NewRenderDomain(RenderDomain[int, int]{
+		Name:        "domain",
+		EqualPolicy: func(a, b int) bool { return a == b },
+		ValidHeader: func(header int) bool { return header == 1 },
+	})
+	previous := RenderBinding[int]{Key: "render", Policy: 1}
+	inputs := RenderBinding[int]{Key: "render", Policy: 2}
+	snapshot := inputs
+	output, err := manifest.EncodeRender(nil)
+	assert.NoError(t, err)
+	frame := RenderReceipt[int, int]{
+		Key: previous.Key, Binding: previous.Fingerprint(), Output: output,
+		Inputs: previous,
+		Header: 1,
+	}
+	stored, err := frame.Encode(domain.Name, frame.Header)
+	assert.NoError(t, err)
+	frame.Stored = stored
+
+	var calls int
+	header := func(int) (bool, error) {
+		calls++
+		return true, nil
+	}
+	history, err := domain.Validate(t.Context(), &frame, &inputs, RenderCheck[int]{History: true, Header: header})
+	assert.NoError(t, err)
+	assert.Equal(t, history.Valid, false)
+	assert.Equal(t, calls, 0)
+	assert.Equal(t, frame.Inputs, previous)
+	assert.Equal(t, frame.Stored, stored)
+	assert.Equal(t, inputs, snapshot)
+
+	execution, err := domain.Validate(t.Context(), &frame, &inputs, RenderCheck[int]{Header: header})
+	assert.NoError(t, err)
+	assert.Equal(t, execution.Valid, true)
+	assert.Equal(t, execution.Rebound, true)
+	assert.Equal(t, calls, 1)
+	assert.Equal(t, frame.Inputs, snapshot)
+	assert.Equal(t, frame.Binding, snapshot.Fingerprint())
+	assert.Equal(t, frame.Stored == nil, true)
+	assert.Equal(t, inputs, snapshot)
+}

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -65,6 +66,7 @@ func TestRecordRender_CapturedEmission(t *testing.T) {
 				RenderPublication(context.Context, *sourcecache.RenderAcceptance) (sourcecache.RenderPublication, error)
 			})
 			assert.Equal(t, ok, true)
+			base.PrepareDocuments(owner, docs)
 			content := kustomize.PrepareShape(&request, docs).Content()
 			projection, err := publisher.RenderPublication(
 				t.Context(),

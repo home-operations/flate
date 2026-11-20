@@ -68,7 +68,7 @@ func TestRecordRender_EngineProjection(t *testing.T) {
 					invalid := frame
 					invalid.Key = ""
 					rejected := acceptance
-					rejected.Receipt = manifest.NewRenderReceipt(invalid, equalRenderFrame)
+					rejected.Receipt = renderDomain.Receipt(invalid)
 					recordErr := owner.RecordRender(t.Context(), rejected)
 					assert.Equal(t, errors.Is(recordErr, manifest.ErrFlux), true)
 					assert.NoError(t, owner.RecordRender(t.Context(), acceptance))

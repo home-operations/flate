@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func equalBindingPolicy(a, b *[]string) bool { return slices.Equal(*a, *b) }
+func equalBindingPolicy(a, b []string) bool { return slices.Equal(a, b) }
 
 func TestRenderBinding_Refresh(t *testing.T) {
 	t.Parallel()

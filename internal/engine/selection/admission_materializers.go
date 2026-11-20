@@ -543,16 +543,14 @@ func (c *admissionClosure) selectorInputMatches(
 	matched := false
 	if occurrence, authored := c.projectedOccurrence(id, object); authored {
 		matched = matcher.Matches(id, occurrence.Labels)
-	} else if object != nil {
-		if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
-			matched = matcher.Matches(id, labeled.GetLabels())
-		}
+	} else if manifest.KindOf(object).TypedLabels {
+		matched = matcher.Matches(id, object.GetLabels())
 	}
 	if !matched && reverse && c.context.SideKnown {
 		if _, _, paired := c.delta(source); paired {
 			opposite := c.proposal.Request.Changes.OppositeDeclaration(c.context.Side, source, id, object)
-			if labeled, ok := opposite.(interface{ GetLabels() map[string]string }); ok {
-				matched = matcher.Matches(id, labeled.GetLabels())
+			if manifest.KindOf(opposite).TypedLabels {
+				matched = matcher.Matches(id, opposite.GetLabels())
 			}
 		}
 	}

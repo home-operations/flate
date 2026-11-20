@@ -14,6 +14,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	basecontroller "github.com/home-operations/flate/internal/engine/controllers/base"
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/kustomize"
@@ -241,6 +242,7 @@ func TestDiscovery_ComposedSeedOwnership(t *testing.T) {
 				Trees:    trees,
 			}
 			if phase == "runtime" {
+				cfg.PrepareDocuments = basecontroller.PrepareDocuments
 				d, err := Begin(t.Context(), cfg)
 				assert.NoError(t, err)
 				defer d.Close()
@@ -644,7 +646,8 @@ spec:
 			d, err := Begin(t.Context(), Config{
 				Path: filepath.Join(root, "entry"), Input: bootstrap, Store: st,
 				SelfURLs: []string{"https://self.invalid/repo"}, Cache: cacheOwner, Trees: trees,
-				Selection: selection.Request{Changed: changed},
+				PrepareDocuments: basecontroller.PrepareDocuments,
+				Selection:        selection.Request{Changed: changed},
 			})
 			assert.NoError(t, err)
 			defer d.Close()

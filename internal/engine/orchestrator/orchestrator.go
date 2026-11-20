@@ -274,7 +274,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Selection:    o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input, Entry: o.cfg.entry,
 
-		Store: o.store,
+		Store: o.store, PrepareDocuments: base.PrepareDocuments,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipKinds,
 	}

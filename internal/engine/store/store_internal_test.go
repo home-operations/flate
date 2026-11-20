@@ -280,9 +280,11 @@ func TestObjectEqual_KustomizationContent(t *testing.T) {
 func TestObjectEqual_RawObjectFields(t *testing.T) {
 	t.Parallel()
 	rawType := reflect.TypeFor[manifest.RawObject]()
-	fields := make([]string, rawType.NumField())
-	for i := range fields {
-		fields[i] = rawType.Field(i).Name
+	fields := make([]string, 0, rawType.NumField())
+	for field := range rawType.Fields() {
+		if field.IsExported() {
+			fields = append(fields, field.Name)
+		}
 	}
 	assert.Diff(t, fields, []string{"Kind", "APIVersion", "Name", "Namespace", "Spec"})
 	base := &manifest.RawObject{

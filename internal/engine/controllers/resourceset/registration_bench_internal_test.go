@@ -142,7 +142,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 			!cmp.Equal(
 				accepted.Children,
 				initial.Children,
-				cmpopts.IgnoreUnexported(store.Child{}),
+				cmpopts.IgnoreUnexported(store.Child{}, manifest.RawObject{}),
 			), "%v", "same-inventory publication lost its rendered identity or bytes")
 	}
 	var objectEvents, statusEvents atomic.Int64

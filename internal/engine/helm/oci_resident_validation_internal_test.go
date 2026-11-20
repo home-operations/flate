@@ -56,7 +56,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 		"%s",
 		"fixture did not retain the validated resident generation",
 	)
-	header := resident.frame.header
+	header := resident.frame.Header
 	analysis := *header.Analysis
 	analysis.Version = "invalid"
 	header.Analysis = &analysis
@@ -72,7 +72,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	assert.NoError(t, err)
 	_, _, _, err = owner.Blob(
 		t.Context(),
-		cache.BlobKey{Content: resident.key, Render: cache.RenderAccepted},
+		cache.BlobKey{Content: resident.frame.Key, Render: cache.RenderAccepted},
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, writeErr := w.Write(payload)

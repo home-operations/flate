@@ -189,7 +189,7 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 		return err
 	}
 	if !handled {
-		rs.EmissionPolicy().Stamp(docs)
+		base.PrepareDocuments(rs, docs)
 		parseChildrenResult2 := c.run.ParseChildren(
 			rs,
 			docs,

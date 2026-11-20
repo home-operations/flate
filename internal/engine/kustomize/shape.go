@@ -41,9 +41,9 @@ type preparedShaping struct {
 }
 
 // PrepareShape MUST retain raw identity separately from sanitized application content.
+// The caller applies producer metadata before preparing the shape.
 func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shaping {
 	ks := request.Spec
-	ks.EmissionPolicy().Stamp(docs)
 	var vars map[string]string
 	if ks.PostBuild != nil {
 		vars = ks.PostBuild.Substitute

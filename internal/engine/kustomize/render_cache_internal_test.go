@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"iter"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,7 +31,7 @@ func testEncodeFrame(tb testing.TB, frame *renderFrame) ([]byte, error) {
 	tb.Helper()
 	shared := frame.RenderFrame
 	shared.Stored = nil
-	stored, err := shared.Encode(frameDomain, frame.header)
+	stored, err := shared.Encode(frameDomain, frame.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -53,25 +52,21 @@ func testDecodeFrame(tb testing.TB, wire []byte) (renderFrame, error) {
 	var frame renderFrame
 	var err error
 	frame.RenderFrame, err = sourcecache.OpenRenderFrame(tb.Context(), frameDomain,
-		fstest.MapFS{"content": &fstest.MapFile{Data: wire}}, &frame.header)
+		fstest.MapFS{"content": &fstest.MapFile{Data: wire}}, &frame.Header)
 	return frame, err
 }
 
-//nolint:gocritic // Fixture encoding must preserve the receipt frame snapshot.
-func (f renderFrame) testAcceptedFrame(
+func testAcceptedFrame(
 	tb testing.TB,
-	owner manifest.NamedResource,
-	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
-	content any,
+	f *renderFrame,
+	acceptance *sourcecache.FramePublicationInput,
 ) ([]byte, error) {
 	tb.Helper()
-	stored, err := f.Encode(frameDomain, f.header)
+	stored, err := f.Encode(frameDomain, f.Header)
 	if err != nil {
 		return nil, err
 	}
-	publication, err := stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{
-		Owner: owner, Content: content, Records: records, Complete: true,
-	})
+	publication, err := stored.PreparePublication(tb.Context(), *acceptance)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +101,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 		tb.Fatal(err)
 	}
 	snapFrame, err := testDecodeFrame(tb, raw)
-	snap := snapFrame.header.Reads
+	snap := snapFrame.Header.Reads
 	out := snapFrame.Output
 	if err != nil {
 		tb.Fatal(err)
@@ -148,7 +143,7 @@ func testRenderFrame(tb testing.TB, snap *readSetSnapshot, output []byte) []byte
 	tb.Helper()
 	frame, err := testEncodeFrame(
 		tb,
-		&renderFrame{Output: output, header: renderHeader{Reads: *snap}},
+		&renderFrame{Output: output, Header: renderHeader{Reads: *snap}},
 	)
 	if err != nil {
 		tb.Fatal(err)
@@ -655,12 +650,12 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 				t,
 				&renderFrame{
 					Output: []byte(output),
-					header: renderHeader{Reads: snap},
+					Header: renderHeader{Reads: snap},
 				},
 			)
 			assert.FatalIf(t, err != nil, "new frame: %v", err)
 			gotSnapFrame, err := testDecodeFrame(t, frame)
-			gotSnap := gotSnapFrame.header.Reads
+			gotSnap := gotSnapFrame.Header.Reads
 			gotOut := gotSnapFrame.Output
 			assert.FatalIf(t, err != nil, "open frame: %v", err)
 			assert.ErrorIf(t, string(gotOut) != output, "output mismatch: want %q, got %q", output, gotOut)

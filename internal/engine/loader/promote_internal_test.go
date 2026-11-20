@@ -797,6 +797,9 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 }
 
 func supportedBuiltInputForTest(l *Loader, input *BuiltInput) BuiltInput {
+	input.PrepareDocuments = func(parent manifest.BaseManifest, docs []manifest.DocOccurrence) {
+		parent.EmissionPolicy().Stamp(docs)
+	}
 	input.Support = new(store.ReadSet)
 	input.Support.Init(l.Store, input.Owner, nil)
 	input.Support.GetDeclaration(input.Owner)

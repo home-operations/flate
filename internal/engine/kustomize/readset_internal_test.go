@@ -626,11 +626,11 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 	}
 	frame, err := testEncodeFrame(
 		t,
-		&renderFrame{Output: []byte("output"), header: renderHeader{Reads: snap}},
+		&renderFrame{Output: []byte("output"), Header: renderHeader{Reads: snap}},
 	)
 	assert.NoError(t, err)
 	decodedFrame, err := testDecodeFrame(t, frame)
-	decoded := decodedFrame.header.Reads
+	decoded := decodedFrame.Header.Reads
 	assert.FatalIf(
 		t,
 		err != nil || !cmp.Equal(decoded.Remotes, snap.Remotes),

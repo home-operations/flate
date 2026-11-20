@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/kustomize"
@@ -123,7 +124,8 @@ func (r *Invocation) planTree(
 	defer trees.Close()
 	session, err := discovery.Begin(ctx, discovery.Config{
 		Store: st, Cache: cfg.Cache, Loader: declarations, Trees: trees,
-		Work: tree.work.Scope(), Projections: cfg.projections,
+		PrepareDocuments: base.PrepareDocuments,
+		Work:             tree.work.Scope(), Projections: cfg.projections,
 		Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
 		Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
 		RemoteInputs: inputs, RemoteRetry: cfg.SourceRetry,

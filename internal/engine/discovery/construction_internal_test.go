@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -36,6 +37,7 @@ func constructTestSources(ctx context.Context, session *Session) error {
 
 //nolint:gocritic // Test admission MUST preserve the caller configuration snapshot.
 func beginTest(ctx context.Context, cfg Config) (*Session, error) {
+	cfg.PrepareDocuments = base.PrepareDocuments
 	session, err := Begin(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -56,6 +58,7 @@ func beginTest(ctx context.Context, cfg Config) (*Session, error) {
 
 //nolint:gocritic // Test admission MUST preserve the caller configuration snapshot.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
+	cfg.PrepareDocuments = base.PrepareDocuments
 	session, err := Begin(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -78,6 +81,7 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	}
 	cfg.Store = store.New()
 	cfg.Store.SetWorkTree(cfg.Work.Identity().Tree, cfg.Work)
+	cfg.PrepareDocuments = base.PrepareDocuments
 	session, err := Begin(ctx, cfg)
 	if err != nil {
 		return nil, err

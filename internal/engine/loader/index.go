@@ -300,7 +300,7 @@ func (l *Loader) publishFrozenRecords() {
 		if _, located := l.locations[id]; located {
 			continue
 		}
-		if _, labeled := child.Obj.(interface{ GetLabels() map[string]string }); !labeled {
+		if !manifest.KindOf(child.Obj).TypedLabels {
 			continue
 		}
 		key := id

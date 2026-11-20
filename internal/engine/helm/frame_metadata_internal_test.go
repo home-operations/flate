@@ -98,8 +98,8 @@ func TestRecordRender_OversizedFrameMetadata(t *testing.T) {
 	}
 	assert.NoError(t, err)
 	frame.Stored = nil
-	frame.header.Analysis = &chartAnalysis{Version: "0.1.0", Templates: strings.Repeat("x", 16<<20)}
-	acceptance.Receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+	frame.Header.Analysis = &chartAnalysis{Version: "0.1.0", Templates: strings.Repeat("x", 16<<20)}
+	acceptance.Receipt = renderDomain.Receipt(frame)
 	assert.NoError(t, client.cache.RecordRender(t.Context(), acceptance))
 	current, next, _, err := client.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 	if persistent {

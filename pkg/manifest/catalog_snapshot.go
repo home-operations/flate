@@ -29,10 +29,7 @@ func EncodeCatalog(object BaseManifest) ([]byte, error) {
 	if object == nil {
 		return nil, nil
 	}
-	snapshot := catalogSnapshot{Identity: object.Named(), Suspended: object.Suspended()}
-	if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
-		snapshot.Labels = labeled.GetLabels()
-	}
+	snapshot := catalogSnapshot{Identity: object.Named(), Suspended: object.Suspended(), Labels: object.GetLabels()}
 	if annotated, ok := object.(interface{ GetAnnotations() map[string]string }); ok {
 		snapshot.Annotations = annotated.GetAnnotations()
 	}
@@ -83,13 +80,13 @@ func DecodeCatalog(data []byte) (BaseManifest, error) {
 			return nil, NewError(ErrFlux, nil, "decode catalog: expected one raw specification")
 		}
 		spec, _ := docs[0].Document["spec"].(map[string]any)
-		return &RawObject{
+		return (&RawObject{
 			Kind:       s.Identity.Kind,
 			APIVersion: s.Version,
 			Name:       s.Identity.Name,
 			Namespace:  s.Identity.Namespace,
 			Spec:       spec,
-		}, nil
+		}).initArtifactGeneratorSpec(), nil
 	}
 	var object BaseManifest
 	index, known := kindIndex[s.Identity.Kind]

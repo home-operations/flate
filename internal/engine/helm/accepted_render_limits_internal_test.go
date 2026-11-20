@@ -23,12 +23,15 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
 	frame := renderFrame{
-		Key: "oversized-accepted", Output: payload,
-		header:  renderHeader{Analysis: &chartAnalysis{Version: "0.1.0"}},
-		content: newHR().Content("oversized-accepted", nil),
-		persist: renderer.cache.CanPersistRenders(),
+		Key:    "oversized-accepted",
+		Output: payload,
+		Header: renderHeader{
+			Analysis: &chartAnalysis{Version: "0.1.0"},
+			content:  newHR().Content("oversized-accepted", nil),
+			persist:  renderer.cache.CanPersistRenders(),
+		},
 	}
-	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
+	receipt := renderDomain.Receipt(frame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
 		owner: {File: string(bytes.Repeat([]byte{'x'}, (16<<20)+1))},
 	}

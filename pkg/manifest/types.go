@@ -96,6 +96,10 @@ type BaseManifest interface {
 	// source-state and projected-identity lifecycle; metadata namespaces may differ.
 	ProjectionCompatible(previous BaseManifest) bool
 	Named() NamedResource
+	// GetLabels returns borrowed typed labels. KindOf identifies objects with typed label storage.
+	GetLabels() map[string]string
+	// Composition returns source include policy and inputs in authored order.
+	Composition() ArtifactComposition
 	// SourcePath returns the source identity and authored path, or zero values when absent.
 	SourcePath() (NamedResource, string, bool)
 	// ChartDisplaySource returns the source for chart version inference, or zero values when inapplicable.
@@ -229,10 +233,10 @@ func (r Reference) AffectedInput() bool {
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
 func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
-		var includes []ArtifactInclude
-		if source, ok := obj.(artifactComposer); ok {
-			includes = source.Composition().Includes
+		if obj == nil {
+			return
 		}
+		includes := obj.Composition().Includes
 		active := true
 		ordinary := yield
 		if len(includes) != 0 {
@@ -309,6 +313,8 @@ type RawObject struct {
 	Name       string         `json:"name"                yaml:"name"`
 	Namespace  string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Spec       map[string]any `json:"spec,omitempty"      yaml:"spec,omitempty"`
+
+	generator *artifactGeneratorDecode
 }
 
 func (r *RawObject) equal(other *RawObject) bool {
@@ -325,6 +331,9 @@ func (r *RawObject) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (r *RawObject) Suspended() bool { return false }
+
+// GetLabels returns nil because RawObject has no typed label storage.
+func (*RawObject) GetLabels() map[string]string { return nil }
 
 // ReconcileMetadata retains document inputs that affect artifact generation.
 type ReconcileMetadata struct {
@@ -370,18 +379,18 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	}
 	spec, _ := doc[specKey].(map[string]any)
 	spec = DeepCopyMap(spec)
-	return &RawObject{
+	return (&RawObject{
 		Kind:       kind,
 		APIVersion: apiVersion,
 		Name:       metadata.Name,
 		Namespace:  metadata.Namespace,
 		Spec:       spec,
-	}, nil
+	}).initArtifactGeneratorSpec(), nil
 }
 
 func (r *RawObject) kind() KindInfo {
 	info := KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
-	if r.Kind == kindTable[kindArtifactGenerator].Kind && info.Group == kindTable[kindArtifactGenerator].Group {
+	if r.Kind == KindArtifactGenerator && info.Group == SourceExtensionsDomain {
 		info = kindTable[kindArtifactGenerator].KindInfo
 		info.apiVersion = r.APIVersion
 	}
@@ -389,8 +398,7 @@ func (r *RawObject) kind() KindInfo {
 }
 
 func (r *RawObject) isArtifactGenerator() bool {
-	return r.Kind == kindTable[kindArtifactGenerator].Kind &&
-		apiGroup(r.APIVersion) == kindTable[kindArtifactGenerator].Group
+	return r.Kind == KindArtifactGenerator && apiGroup(r.APIVersion) == SourceExtensionsDomain
 }
 
 func referenceExpression(expr *string) *string {

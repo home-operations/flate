@@ -256,6 +256,31 @@ func TestAdmission_SelectorMembership(t *testing.T) {
 	}
 }
 
+func TestAdmission_SelectorLabelEligibility(t *testing.T) {
+	t.Parallel()
+	typed := &manifest.ResourceSetInputProvider{Namespace: "apps", Name: "typed"}
+	documentOnly := &manifest.RawObject{
+		APIVersion: manifest.FluxOperatorDomain + "/v1",
+		Kind:       manifest.KindResourceSetInputProvider,
+		Namespace:  "apps",
+		Name:       "document-only",
+	}
+	st := store.New()
+	st.AddObject(typed)
+	st.AddObject(documentOnly, map[string]any{
+		"metadata": map[string]any{"labels": map[string]any{"role": "selected"}},
+	})
+	closure := solverClosure(t, st, &solverFacts{})
+	scope := typed.Named()
+	scope.Name = ""
+	assert.Equal(t, len(st.ListObjects(scope.Group, scope.Kind)), 2)
+	ref := manifest.Reference{NamedResource: scope, Selector: &metav1.LabelSelector{}}
+	inputs, known, err := closure.matchingInputs(&ref, false)
+	assert.NoError(t, err)
+	assert.Equal(t, known, true)
+	assert.Diff(t, inputs, []manifest.NamedResource{typed.Named()})
+}
+
 func TestAdmission_SelectorCompleteness(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

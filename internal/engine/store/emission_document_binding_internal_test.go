@@ -408,3 +408,85 @@ func TestGetEmission_AuthoritativeDocument(t *testing.T) {
 		"changed document retained completed work for the same object pointer",
 	)
 }
+
+func TestRecordEmitted_TypedChildLabelChange(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, key string
+		changed   bool
+		docOnly   bool
+	}{
+		{name: "ownership", key: manifest.FluxKustomizeDomain + "/name"},
+		{name: "ordinary", key: "app", changed: true},
+		{name: "ownership document label", key: manifest.FluxKustomizeDomain + "/name", docOnly: true},
+		{name: "ordinary document label", key: "app", changed: true, docOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
+			id := child.Named()
+			apiVersion := manifest.FluxKustomizeDomain + "/v1"
+			var generator *manifest.RawObject
+			if tc.docOnly {
+				apiVersion = manifest.SourceExtensionsDomain + "/v1beta1"
+				generator = &manifest.RawObject{
+					APIVersion: apiVersion, Kind: manifest.KindArtifactGenerator,
+					Name: child.Name, Namespace: child.Namespace,
+				}
+				id = generator.Named()
+			}
+			s.AddObject(owner)
+			publish := func(value string) *Emission {
+				metadata := map[string]any{
+					"name": id.Name, "namespace": id.Namespace,
+					"labels": map[string]any{tc.key: value},
+				}
+				var object manifest.BaseManifest
+				if generator != nil {
+					object = generator
+					metadata["uid"] = "generator-uid"
+					metadata["annotations"] = map[string]any{manifest.SourceExtensionsDomain + "/reconcile": "enabled"}
+				} else {
+					typed := child.Clone()
+					typed.Labels = map[string]string{tc.key: value}
+					object = typed
+				}
+				doc := map[string]any{
+					"apiVersion": apiVersion,
+					"kind":       id.Kind,
+					"metadata":   metadata,
+				}
+				accept(t, s, owner.Named(), &Emission{Children: []Child{{Obj: object, Doc: doc}}, Complete: true})
+				_, accepted, _ := snapshotEmission(s.shardFor(owner.Named()), owner.Named())
+				assert.FatalIf(t, accepted == nil, "%s", "missing accepted emission")
+				return accepted
+			}
+			initial := publish("first")
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			assert.FatalIf(t, reads.GetObject(id) == nil, "%s", "missing initial child")
+			events := 0
+			defer s.AddListener(EventObjectAdded, func(added manifest.NamedResource, _ any) {
+				if added == id {
+					events++
+				}
+			}, false)()
+
+			replacement := publish("second")
+			if tc.docOnly {
+				assert.Equal(t, replacement.entries[0].objectChanged, false)
+				assert.Equal(t, replacement.entries[0].changed, tc.changed)
+			}
+			assert.Equal(t, sameMembership(initial, replacement), !tc.changed)
+			assert.Equal(t, reads.Valid(), !tc.changed)
+			wantEvents := 0
+			if tc.changed {
+				wantEvents = 1
+			}
+			assert.Equal(t, events, wantEvents)
+		})
+	}
+}

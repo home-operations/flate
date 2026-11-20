@@ -63,9 +63,7 @@ func TestReferenceMatcher_Matches(t *testing.T) {
 			var values map[string]string
 			if tc.obj != nil {
 				id = tc.obj.Named()
-				if labeled, ok := tc.obj.(interface{ GetLabels() map[string]string }); ok {
-					values = labeled.GetLabels()
-				}
+				values = tc.obj.GetLabels()
 			}
 			assert.Equal(t, matcher.Matches(id, values), tc.want)
 		})

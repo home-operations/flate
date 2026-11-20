@@ -1,0 +1,352 @@
+package discovery
+
+import (
+	"context"
+	"errors"
+	"maps"
+	"path/filepath"
+	"slices"
+	"testing"
+	"testing/fstest"
+
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/task"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func TestPlan_EnclosingPackageOperands(t *testing.T) {
+	t.Parallel()
+	const brokenRecipe = `patches:
+- target: {kind: FluxInstance}
+  patch: |-
+    - op: add
+      path: /spec/kustomize
+      value:
+        patches:
+        - target: {kind: Kustomization, name: flux-system}
+          patch: |
+            - op: add
+              path: /missing/path
+              value: invalid
+`
+	for _, tc := range []enclosingPackageOperandsCase{
+		{name: "reaching application", builder: "resources: [entry/plain.yaml, application.yaml]\n", want: true},
+		{
+			name: "reaching application with decode failure",
+			builder: `resources: [entry/plain.yaml, application.yaml, release.yaml]
+patches:
+- target: {kind: HelmRelease, name: bad}
+  patch: |-
+    - op: replace
+      path: /spec
+      value: invalid
+`,
+			extra: map[string]string{"apps/release.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: bad, namespace: apps}
+spec: {}
+`},
+			want: true,
+		},
+		{
+			name:    "same application from nested builders",
+			builder: "resources: [entry/plain.yaml, application.yaml]\n",
+			extra:   map[string]string{"kustomization.yaml": "resources: [apps]\n"},
+			want:    true,
+		},
+		{
+			name:    "bad outer recipe leaves nested occurrence eligible",
+			builder: "resources: [entry/plain.yaml, application.yaml]\n",
+			extra:   map[string]string{"kustomization.yaml": "resources: [apps]\n" + brokenRecipe},
+			want:    true, broken: true,
+		},
+		{
+			name:    "bad private recipe leaves no match",
+			builder: "resources: [entry/plain.yaml, application.yaml]\n" + brokenRecipe,
+			want:    true, broken: true,
+		},
+		{
+			name: "rejected private recipe shares an ordinary generated identity",
+			builder: `resources: [entry/plain.yaml, application.yaml]
+patches:
+- target: {kind: FluxInstance}
+  patch: |-
+    - op: replace
+      path: /spec/sync/path
+      value: apps/disjoint
+`,
+			extra: map[string]string{
+				"apps/disjoint/kustomization.yaml": "resources: []\nnamePrefix: unrelated-\n",
+			},
+			want: true, rejected: true,
+		},
+		{
+			name:    "runnable application stays out of private evidence",
+			builder: "resources: [entry/plain.yaml, application.yaml, runnable.yaml]\n",
+			extra: map[string]string{"apps/runnable.yaml": `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ordinary, namespace: flux-system}
+spec:
+  interval: 1m
+  path: elsewhere
+  sourceRef: {kind: GitRepository, name: elsewhere}
+`},
+			want: true,
+		},
+		{name: "unlinked application", builder: "resources: [application.yaml]\n"},
+		{name: "ordinary resources", builder: "resources: [entry/plain.yaml]\n"},
+		{
+			name:    "transform without an instance",
+			builder: "resources: [entry/plain.yaml]\nnamePrefix: private-\n",
+		},
+		{name: "no authored builder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testEnclosingPackageOperands(t, tc)
+		})
+	}
+	t.Run("source includes", testEnclosingPackageSourceIncludes)
+}
+
+type enclosingPackageOperandsCase struct {
+	name, builder string
+	extra         map[string]string
+	want, broken  bool
+	rejected      bool
+}
+
+func testEnclosingPackageOperands(t *testing.T, tc enclosingPackageOperandsCase) {
+	t.Helper()
+	const application = "application.yaml"
+	const declaration = `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance, namespace: flux-system}
+spec:
+  distribution: {version: "2.x", registry: ghcr.io/fluxcd}
+  sync:
+    kind: GitRepository
+    url: https://github.com/example/fleet.git
+    ref: refs/heads/main
+    path: apps
+`
+	const direct = "entry/plain.yaml"
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"apps/" + direct:      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: plain}\n")},
+		"apps/" + application: {Data: []byte(declaration)},
+	}
+	if tc.builder != "" {
+		files["apps/kustomization.yaml"] = &fstest.MapFile{Data: []byte(tc.builder)}
+	}
+	for path, data := range tc.extra {
+		files[path] = &fstest.MapFile{Data: []byte(data)}
+	}
+	for path, file := range files {
+		testutil.WriteFile(t, root, path, string(file.Data))
+	}
+	cacheOwner := cachetest.New(t, "", cache.New)
+	trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
+	t.Cleanup(trees.Close)
+	input := &store.SourceArtifact{LocalPath: root, FS: files}
+	var recorder manifest.WorkRecorder
+	cfg := Config{
+		Store: store.New(), PrepareDocuments: base.PrepareDocuments,
+		Input: input, Path: filepath.Join(root, "apps", "entry"), RepoRoot: root,
+		Cache: cacheOwner, Trees: trees, Work: recorder.Scope(),
+		SelfURLs: []string{"https://github.com/example/fleet.git"},
+	}
+	session, err := Begin(t.Context(), cfg)
+	assert.NoError(t, err)
+	t.Cleanup(session.Close)
+	assert.NoError(t, constructTestSources(t.Context(), session))
+	entries, err := session.Plan(t.Context())
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected one synthetic entry: %v", entries)
+	planned := entries[0].prepared.enclosing
+	assert.Equal(t, len(planned) != 0, tc.want)
+	admission := session.admission()
+	admission.enclosingPackages = planned
+	inventories := assertEnclosingInventoryReuse(t, admission, recorder.Scope(), planned)
+
+	generated := testutil.KustomizationID("flux-system", "flux-system")
+	var current *manifest.Kustomization
+	if tc.rejected {
+		current = &manifest.Kustomization{
+			Name:      generated.Name,
+			Namespace: generated.Namespace,
+			Path:      "apps/entry",
+		}
+		cfg.Store.AddObject(current)
+	}
+	var reads store.ReadSet
+	reads.Init(cfg.Store, manifest.BootstrapSourceID, nil)
+	t.Cleanup(reads.Close)
+	q := &entryQualification{loader: session.loader}
+	admission.qualification = q
+	walk := qualificationWalk{q: q, admission: admission, store: cfg.Store, reads: &reads}
+	for _, inventory := range inventories {
+		batch := qualificationBatch{children: inventory.children, private: true}
+		_, err := walk.follow(t.Context(), &batch, manifest.NamedResource{})
+		assert.NoError(t, err)
+	}
+	var want []manifest.NamedResource
+	id := manifest.NamedResource{
+		Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "instance",
+	}
+	if tc.want {
+		want = []manifest.NamedResource{id}
+	}
+	if tc.broken && len(inventories) > 1 {
+		want = append(want, id)
+	}
+	got := slices.Grow([]manifest.NamedResource(nil), len(walk.probed))
+	for _, obj := range walk.probed {
+		got = append(got, obj.Named())
+	}
+	assert.Diff(t, got, want)
+	assert.Equal(t, len(q.matches) == 1, tc.want && !tc.rejected && (!tc.broken || len(inventories) > 1))
+	if tc.rejected {
+		assertRejectedPrivateOccurrence(t, &walk, current)
+	}
+	if tc.broken {
+		assertPrivatePreparationError(t, &walk, inventories[0])
+	}
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "apps", manifest.NamedResource{}).
+		Named()
+	assert.Equal(t, session.prepared[owner] == nil, true)
+}
+
+func assertEnclosingInventoryReuse(
+	t *testing.T, admission *Admission, work manifest.WorkScope, planned []string,
+) []*declarationRender {
+	t.Helper()
+	inventories, err := admission.enclosingInventories(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, len(inventories), len(planned))
+	preparation := work.Source(manifest.BootstrapSourceID).RenderWork().Preparation()
+	assert.Equal(t, preparation.Counts.OwnerPrepares, uint64(len(planned)))
+	retained, err := admission.enclosingInventories(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, preparation.Counts.OwnerPrepares, uint64(len(planned)))
+	recorded := work.Snapshot(0)
+	var builds int
+	for i := range recorded {
+		record := &recorded[i]
+		if record.Key.Phase == manifest.WorkKustomize && record.Key.Owner == manifest.BootstrapSourceID {
+			assert.Equal(t, record.Counts.Attempts, uint64(1))
+			builds++
+		}
+	}
+	assert.Equal(t, builds, len(planned))
+	for i, dir := range slices.Backward(planned) {
+		inventory := inventories[len(planned)-1-i]
+		assert.Equal(t, inventory.owner.Path, dir)
+		assert.Equal(t, retained[len(planned)-1-i], inventory)
+	}
+	return inventories
+}
+
+func assertRejectedPrivateOccurrence(t *testing.T, walk *qualificationWalk, current *manifest.Kustomization) {
+	t.Helper()
+	generated := current.Named()
+	assert.Equal(t, walk.q.pending, false)
+	for required := range walk.reads.Required() {
+		t.Errorf("rejected recipe required %s", required)
+	}
+	assert.Diff(t, walk.store.Warnings(), []manifest.Warning(nil))
+	assert.Equal(t, walk.store.GetDeclaration(generated), manifest.BaseManifest(current))
+	assert.Equal(t, walk.store.GetArtifact(generated, store.ArtifactContent), store.Artifact(nil))
+
+	matched, err := walk.visit(t.Context(), &applicationEvidence{object: current})
+	assert.NoError(t, err)
+	assert.Equal(t, matched, true)
+	assert.Equal(t, walk.q.matches[0].object, manifest.BaseManifest(current))
+}
+
+func assertPrivatePreparationError(t *testing.T, walk *qualificationWalk, inventory *declarationRender) {
+	t.Helper()
+	invalid := walk.probed[0]
+	_, found, preparationErr := walk.admission.PreparedGeneration(invalid)
+	assert.Equal(t, found, true)
+	assert.Equal(t, errors.Is(preparationErr, manifest.ErrInput), true)
+	_, ordinaryErr := walk.visitGeneration(t.Context(), &applicationEvidence{object: invalid})
+	assert.Equal(t, ordinaryErr, preparationErr)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	walk.probed = nil
+	_, err := walk.follow(ctx, &qualificationBatch{
+		children: inventory.children, private: true,
+	}, manifest.NamedResource{})
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+	matched, err := walk.visitGeneration(ctx, &applicationEvidence{object: invalid, private: true})
+	assert.Equal(t, matched, false)
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+}
+
+func testEnclosingPackageSourceIncludes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	source := &manifest.GitRepository{
+		Name: "self", Namespace: "apps", URL: "https://github.com/example/fleet.git",
+		Include: []sourcev1.GitRepositoryInclude{{GitRepositoryRef: manifest.LocalObjectReference{Name: "included"}}},
+	}
+	st := store.New()
+	st.AddObject(source)
+	q := &entryQualification{}
+	a := &Admission{
+		store: st, input: input, path: filepath.Join(root, "apps"),
+		qualification: q, resolvedSources: &entrySourcePublisher{mutable: map[manifest.NamedResource]entryResolution{}},
+	}
+	id := source.Named()
+	a.resolvedSources.record(id, &entryResolution{input: input, artifact: input, object: source})
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent), store.Artifact(nil))
+
+	instance := &manifest.RawObject{
+		APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: "FluxInstance",
+		Name: "instance", Namespace: source.Namespace,
+		Spec: map[string]any{"sync": map[string]any{
+			"kind": manifest.KindGitRepository, "name": source.Name, "path": "apps",
+			"url": source.URL, "ref": "refs/heads/main",
+		}},
+	}
+	var reads store.ReadSet
+	reads.Init(st, instance.Named(), nil)
+	defer reads.Close()
+	walk := qualificationWalk{q: q, admission: a, store: st, reads: &reads}
+	matched, err := walk.visitGeneration(t.Context(), &applicationEvidence{object: instance, private: true})
+	assert.NoError(t, err)
+	assert.Equal(t, matched, false)
+	assert.Equal(t, q.pending, false)
+	assert.Equal(t, len(q.candidates), 0)
+	assert.Equal(t, len(q.matches), 0)
+	assert.Equal(t, len(maps.Collect(reads.Required())), 0)
+
+	prepared, found, err := a.PreparedGeneration(instance)
+	assert.NoError(t, err)
+	assert.FatalIf(t, !found, "missing private generation")
+	for i := range prepared.Children {
+		child := &prepared.Children[i]
+		if _, applies := runnableApplication(child.Obj); !applies {
+			continue
+		}
+		matched, err = a.readApplication(t.Context(), st, &reads, &applicationEvidence{object: child.Obj})
+		assert.NoError(t, err)
+		assert.Equal(t, matched, false)
+		assert.Equal(t, q.pending, true)
+		assert.Diff(t, q.candidates, []manifest.NamedResource{id})
+		assert.Diff(t, maps.Collect(reads.Required()), map[manifest.NamedResource]bool{id: false})
+		return
+	}
+	t.Fatal("missing generated application")
+}

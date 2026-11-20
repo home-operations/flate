@@ -1,0 +1,112 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "cluster": "main"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "child",
+        "kustomize.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "workload",
+      "namespace": "apps"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "child",
+      "namespace": "apps"
+    },
+    "spec": {
+      "interval": "1h",
+      "path": "./workload/main",
+      "postBuild": {
+        "substitute": {
+          "CLUSTER": "main"
+        }
+      },
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "sync",
+        "namespace": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "CLUSTER": "main"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "sync",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "cluster-info",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "sync",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "cluster-apps",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "1h",
+      "patches": [
+        {
+          "patch": "- op: add\n  path: /spec/postBuild\n  value:\n    substitute:\n      CLUSTER: ${CLUSTER}",
+          "target": {
+            "kind": "Kustomization",
+            "name": "child"
+          }
+        }
+      ],
+      "path": "./apps/main",
+      "postBuild": {
+        "substituteFrom": [
+          {
+            "kind": "ConfigMap",
+            "name": "cluster-info"
+          }
+        ]
+      },
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "sync"
+      }
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "name": "sync",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "10m0s",
+      "path": "./clusters/main",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "sync"
+      }
+    }
+  }
+]

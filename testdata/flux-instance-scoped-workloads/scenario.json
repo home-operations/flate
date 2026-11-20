@@ -1,0 +1,391 @@
+{
+  "source": {
+    "repository": "fixture-descendant",
+    "revision": "e30bd75829afc801d5245b6bb2e5b93b94b63278",
+    "paths": ["kubernetes/apps/kustomization.yaml"],
+    "reductions": "Use the local descendant reproduction and its working tree edits."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "change",
+      "directory": "overlays/change",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/media/removed.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "workloads",
+      "description": "Build the sync path and its descendants, then compare file and generator changes.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "sync",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/sync.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "cold",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/scoped.stdout",
+              "stderr": "expect/persistence.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "descendant",
+              "reset": true
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/scoped.stdout",
+              "stderr": "expect/persistence.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "descendant"
+            }
+          }
+        },
+        {
+          "id": "generator",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media/generator-only",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/reached-generator.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "disconnected-generator",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media/disconnected-generator",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/generator.stdout",
+              "stderr": "expect/generator.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change",
+          "edit": {
+            "overlay": "change"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "kubernetes/apps/media",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the two Deployment edits, ConfigMap edit, addition, and removal."
+    },
+    {
+      "path": "expect/generator.stderr",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the standalone diagnostic for the disconnected package."
+    },
+    {
+      "path": "expect/generator.stdout",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the standalone ConfigMap for the disconnected package."
+    },
+    {
+      "path": "expect/persistence.stderr",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the render persistence diagnostic when applicable."
+    },
+    {
+      "path": "expect/quiet.stderr",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Require a clean diagnostic stream."
+    },
+    {
+      "path": "expect/reached-generator.stdout",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the ConfigMap emitted by the enclosing sync root."
+    },
+    {
+      "path": "expect/scoped.stdout",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record the media documents and output from its accepted child."
+    },
+    {
+      "path": "expect/sync.stdout",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Record all documents from the accepted sync root."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/media/added.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/media/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/media/plain/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/media/transformed/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/sibling/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "overlays/change/repo/kubernetes/apps/sibling/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Change an input for the descendant diff."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Render both packages and patch the sibling with an annotation that names a media file."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/disconnected-generator/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Generate the same ConfigMap without an enclosing resource edge."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/flux-instance.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Make the generated sync root reachable from the media package."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/generator-only/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Generate a ConfigMap without a resource file."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Render the media workloads and generate the final identities used for scope."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/plain/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Keep an ordinary Deployment in the requested scope."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/removed.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Supply the Deployment removed from the comparison."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/transformed/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Provide the workload whose final name differs from its file record."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/transformed/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Rename the workload before the sync root applies its transform."
+    },
+    {
+      "path": "repo/kubernetes/apps/sibling/deploy.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Provide a workload outside the requested path."
+    },
+    {
+      "path": "repo/kubernetes/apps/sibling/kustomization.yaml",
+      "cases": [
+        "workloads"
+      ],
+      "purpose": "Generate a ConfigMap outside the requested path."
+    }
+  ]
+}

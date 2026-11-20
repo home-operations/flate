@@ -84,3 +84,5 @@ const (
 	tagKey            = "tag"
 	valuesFromKey     = "valuesFrom"
 )
+
+const intervalKey = "interval"

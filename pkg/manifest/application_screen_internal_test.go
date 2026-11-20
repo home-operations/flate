@@ -126,7 +126,7 @@ kind: FluxInstance
 metadata: {name: flux, namespace: apps}
 spec:
   sync: {kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./clusters/test}
-  distribution: {version: !!int invalid}
+  distribution: {version: 2.x, registry: !!int invalid}
 `},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -31,7 +31,8 @@ type execution struct {
 
 	base.Preparation[helm.Preparation]
 
-	run base.Execution
+	run    base.Execution
+	replay *helm.RenderAdmission
 }
 
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
@@ -99,10 +100,14 @@ func (c *execution) render(
 	)
 	defer attempt.Finish()
 	input.Admit = func(admission helm.RenderAdmission) (bool, error) {
-		if c.run.AdmitQualification(admission.Possible) {
+		if c.admitQualification(admission) {
 			return true, nil
 		}
 		attempt.Render = admission.Receipt
+		replay = admission
+		if feedbackErr := c.run.CheckRenderFeedback(admission.Key); feedbackErr != nil {
+			return false, feedbackErr
+		}
 		var content any
 		if admission.Key != "" {
 			content = hr.Content(admission.Key, omitted)
@@ -114,7 +119,6 @@ func (c *execution) render(
 		}
 		attempt.Finish()
 		_, _, attempt = c.run.Reads.GetEmission(hr.Named())
-		replay = admission
 		return admission.Accepted, nil
 	}
 	fetch, err := c.Helm.PrepareChart(ctx, hr, &input)
@@ -127,7 +131,7 @@ func (c *execution) render(
 			Complete: c.chartDependencyCompletion(hr, inputs, input.Preparation),
 		}, level)
 	}
-	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
+	docs, receipt, err := c.template(ctx, hr, &input)
 	if _, rendering := errors.AsType[*helm.RenderError](err); rendering {
 		return c.run.RenderFailure(ctx, err, nil, unreadable)
 	}
@@ -148,27 +152,52 @@ func (c *execution) render(
 			Detail:   stale,
 		})
 	}
-	if handled {
-		return c.recordRender(ctx, hr.Named(), &attempt)
+	if !handled {
+		c.parseRendered(hr, docs, &attempt)
+		attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
+		if emitErr := c.emitRendered(ctx, hr.Named(), &attempt, unreadable); emitErr != nil {
+			return emitErr
+		}
 	}
+	c.run.AcceptRenderFeedback(replay.Key, &attempt)
+	return c.recordRender(ctx, hr.Named(), &attempt)
+}
 
+func (c *execution) parseRendered(hr *manifest.HelmRelease, docs []manifest.DocOccurrence, attempt *store.Emission) {
 	base.PrepareDocuments(hr, docs)
+	children := c.run.ParseChildren(hr, docs, manifest.ParseDocOptions{})
+	attempt.Children, attempt.Manifests, attempt.Failures = children.Children, children.Visible, children.Failures
+}
 
-	parseChildrenResult2 := c.run.ParseChildren(
-		hr,
-		docs,
-		manifest.ParseDocOptions{},
-	)
-	attempt.Children, attempt.Manifests, attempt.Failures =
-		parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
+func (c *execution) emitRendered(
+	ctx context.Context,
+	id manifest.NamedResource,
+	attempt *store.Emission,
+	unreadable []manifest.Reference,
+) error {
 	if err := c.run.RenderFailure(ctx, nil, attempt.Failures, unreadable); errors.Is(err, manifest.ErrSourceSkipped) {
 		return err
 	}
-	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
-	if err := c.run.Emit(ctx, hr.Named(), &attempt, nil); err != nil {
-		return err
+	return c.run.Emit(ctx, id, attempt, nil)
+}
+
+func (c *execution) admitQualification(admission helm.RenderAdmission) bool {
+	if c.run.EntryReplay && admission.Accepted {
+		c.run.Disposition = store.AssessmentReused
 	}
-	return c.recordRender(ctx, hr.Named(), &attempt)
+	return c.run.AdmitQualification(admission.Possible)
+}
+
+func (c *execution) template(
+	ctx context.Context, hr *manifest.HelmRelease, input *helm.RenderOptions,
+) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
+	if c.replay == nil || !c.replay.Accepted {
+		return c.Helm.Template(ctx, hr, hr.Values, *input)
+	}
+	admission := *c.replay
+	c.replay = nil
+	_, err := input.Admit(admission)
+	return admission.Documents, admission.Receipt, err
 }
 
 func (c *execution) renderRequest(
@@ -248,6 +277,15 @@ func (c *Controller) PreviousRender(
 	}
 	ex := execution{Controller: c}
 	history, results, err := ex.run.Probe(ctx, c.Controller, obj, previous)
+	if ex.run.EntryReplay {
+		ex.replay = new(helm.RenderAdmission)
+		history.Replay = func(ctx context.Context, level manifest.DrainLevel) *base.Execution {
+			ex.Controller = c
+			ex.run.PromoteProbe()
+			ex.run.Dispatch(ctx, level, &ex, (*execution).reconcile)
+			return &ex.run
+		}
+	}
 	if err != nil {
 		return history
 	}
@@ -255,6 +293,7 @@ func (c *Controller) PreviousRender(
 	if err != nil {
 		return history
 	}
+	request.Previous = ex.replay
 	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)
 	if !found {
 		return history

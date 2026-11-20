@@ -1,0 +1,18 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plain
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: plain
+  template:
+    metadata:
+      labels:
+        app: plain
+    spec:
+      containers:
+      - image: busybox
+        name: c

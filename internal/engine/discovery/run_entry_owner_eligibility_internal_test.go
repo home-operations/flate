@@ -89,7 +89,7 @@ func TestEntryCandidateReady_SourcePublication(t *testing.T) {
 	st.UpdateStatus(sourceID, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSucceeded})
 	assert.Equal(t, reads.Valid(), false)
 	assert.Equal(t, assessment.Valid(), false)
-	prepared, err := d.prepareStandaloneEntry(t.Context(), root, d.loader)
+	prepared, err := d.prepareStandaloneEntry(t.Context(), root, d.loader, false)
 	assert.NoError(t, err)
 	assert.Equal(t, prepared, true)
 	assert.Equal(t, d.binding.Producer, owner.Named())

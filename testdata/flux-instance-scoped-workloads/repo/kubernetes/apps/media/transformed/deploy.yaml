@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload
+  namespace: default
+spec:
+  selector:
+    matchLabels: {app: workload}
+  template:
+    metadata:
+      labels: {app: workload}
+    spec:
+      containers:
+        - name: c
+          image: busybox:1.36

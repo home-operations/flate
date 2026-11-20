@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: plex, namespace: media}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/plex
+      sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}

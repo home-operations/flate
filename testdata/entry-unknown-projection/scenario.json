@@ -1,0 +1,287 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "b4d392d4e8b64be41ae5d1dd93e045d620188ba0",
+    "paths": [
+      "kubernetes/apps/one/kustomization.yaml",
+      "kubernetes/apps/one/app/ks.yaml"
+    ],
+    "reductions": "Reduce the issue #1557 replacement overlay to one workload, add a name prefix, and run with and without an explicit Flux Kustomization."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/fixture"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "rootless",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "real-parent",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "rootless"
+      ],
+      "overlay": "real-parent"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "edit",
+      "directory": "overlays/edit"
+    },
+    {
+      "name": "real-parent",
+      "directory": "overlays/real-parent"
+    }
+  ],
+  "cases": [
+    {
+      "name": "rootless",
+      "description": "Read the names and target namespace from the rootless package, then compare its workload.",
+      "setup": [
+        {
+          "commit": "rootless"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/rootless.stdout",
+              "stderr": "expect/no-warnings.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/no-warnings.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "real-parent",
+      "description": "Read the names and target namespace from the real-parent package, then compare its workload.",
+      "setup": [
+        {
+          "commit": "real-parent"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/real-parent.stdout",
+              "stderr": "expect/no-warnings.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/no-warnings.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Complete workload diff after target namespace replacement."
+    },
+    {
+      "path": "expect/no-warnings.stderr",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Both layouts complete without warnings."
+    },
+    {
+      "path": "expect/real-parent.stdout",
+      "cases": [
+        "real-parent"
+      ],
+      "purpose": "Complete resource listing with the explicit parent."
+    },
+    {
+      "path": "expect/rootless.stdout",
+      "cases": [
+        "rootless"
+      ],
+      "purpose": "Complete resource listing for the aggregate."
+    },
+    {
+      "path": "overlays/edit/repo/kubernetes/apps/one/app/workload/cm.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Change one value in the reconciled workload."
+    },
+    {
+      "path": "overlays/real-parent/repo/kubernetes/parent.yaml",
+      "cases": [
+        "real-parent"
+      ],
+      "purpose": "Apply the same package through an explicit Flux parent."
+    },
+    {
+      "path": "repo/kubernetes/apps/one/app/ks.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Declare the child with an untransformed name and omit the target namespace."
+    },
+    {
+      "path": "repo/kubernetes/apps/one/app/workload/cm.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Declare the workload before the edit."
+    },
+    {
+      "path": "repo/kubernetes/apps/one/app/workload/kustomization.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Build the child workload."
+    },
+    {
+      "path": "repo/kubernetes/apps/one/kustomization.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Apply the name prefix and set the target namespace by replacement."
+    },
+    {
+      "path": "repo/kubernetes/apps/one/namespace.yaml",
+      "cases": [
+        "rootless",
+        "real-parent"
+      ],
+      "purpose": "Supply the Namespace used by the replacement."
+    }
+  ]
+}

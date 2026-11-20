@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -34,11 +35,8 @@ func (a *Admission) captureApplication(
 	if q.accepted != nil {
 		return q.accepted, nil
 	}
-	if owner.owner == (manifest.NamedResource{}) || owner.builtRoot != "" {
-		return nil, nil //nolint:nilnil // Construction support is not accepted render evidence.
-	}
-	document := owner.document
-	if document == nil {
+	support := cmp.Or(owner.owner, owner.declaration)
+	if support == (manifest.NamedResource{}) || owner.builtRoot != "" || owner.document == nil {
 		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
 	}
 	c := entryCapture{
@@ -49,25 +47,34 @@ func (a *Admission) captureApplication(
 		qualification: q,
 		seen:          map[manifest.NamedResource]bool{},
 	}
-	c.queue = []manifest.NamedResource{owner.owner}
+	c.queue = []manifest.NamedResource{support}
+	if owner.owner == (manifest.NamedResource{}) {
+		source := owner.application.Source
+		if artifact := owner.source.artifact; artifact != nil && artifact.InputAlias {
+			// An input alias already reads the captured repository content.
+			c.seen[source] = true
+		} else {
+			c.queue = append(c.queue, source)
+		}
+	}
 	if !c.collect() || !c.mapFiles() {
 		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
 	}
 	slices.Sort(c.files)
-	output, ok := reads.GetArtifact(owner.owner, store.ArtifactContent).(*store.Emission)
-	if !ok {
-		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
+	var children []store.Child
+	if output, ok := reads.GetArtifact(support, store.ArtifactContent).(*store.Emission); ok {
+		children = output.Children
 	}
 	request := a.entryRequest
 	request.Source, request.SubPath = a.input, a.entryPath()
 	evidence, err := q.trees.ApplicationReceipt(ctx, request, kustomize.EntryEvidence{
 		Producer:    producer,
-		Application: document,
-		Owner:       owner.owner,
+		Application: owner.document,
+		Owner:       support,
 		Root:        owner.root,
 		Inputs:      c.inputs,
 		Renders:     c.renders,
-		Records:     st.ChildFootprint(owner.owner, output.Children, q.loader.Index),
+		Records:     st.ChildFootprint(support, children, q.loader.Index),
 	}, slices.Compact(c.files))
 	if err != nil || evidence.Receipt == nil {
 		return nil, err
@@ -256,6 +263,9 @@ func (a *Admission) publishEntry(reads *store.ReadSet, producer manifest.NamedRe
 	}
 	if q := a.qualification; q != nil {
 		route.Previous = q.previous.Producer
+		if q.replay && len(q.candidates) != 0 {
+			route.Replay = q.candidates[0]
+		}
 		if q.accepted != nil {
 			route.Root = q.accepted.Root
 		} else if len(q.matches) != 0 {
@@ -321,13 +331,18 @@ func (a *Admission) qualifyEntry(
 	return out, nil
 }
 
+func (a *Admission) cancelQualification() {
+	a.retireQualification()
+	a.publishEntry(nil, manifest.NamedResource{})
+}
+
 // BindEntry proposals MUST pass loader admission before AcceptEntry.
 func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.Kustomization, Binding, error) {
 	if a == nil {
 		return nil, Binding{}, nil
 	}
 	if err := ctx.Err(); err != nil {
-		a.publishEntry(nil, manifest.NamedResource{})
+		a.cancelQualification()
 		return nil, Binding{}, fmt.Errorf("context: %w", err)
 	}
 	a.store = st
@@ -339,7 +354,13 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	reads.GetObject(manifest.BootstrapSourceID)
 	reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	root, binding, err := a.proposeEntry(ctx, reads)
+	if err == nil && binding.Descendant != "" {
+		binding.documents, err = a.requestedDocuments(ctx, binding.Descendant, reads.WorkScope())
+	}
 	if err != nil || binding.Reads == nil || !reads.Valid() {
+		if ctx.Err() != nil {
+			a.retireQualification()
+		}
 		a.publishEntry(nil, manifest.NamedResource{})
 		reads.ReleaseCapture()
 		st.Retire(reads)
@@ -388,6 +409,12 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 		}
 	}
 	binding := Binding{Source: manifest.BootstrapSourceID, Key: key, Path: relative, Reads: reads, Entry: receipt}
+	if len(q.matches) != 0 {
+		binding.SupportOwner = q.matches[0].owner
+		if q.matches[0].descendant {
+			binding.Descendant = relative
+		}
+	}
 	if root != nil {
 		binding.Producer, binding.Source, binding.Path = root.Named(), root.EffectiveSourceID(), manifest.NormalizeClaimBase(
 			root.Path,
@@ -444,8 +471,10 @@ func (a *Admission) applicationEntry(
 		filepath.ToSlash(relative),
 		selected.object.Named(),
 	)
-	if candidate, ok := selected.object.(*manifest.Kustomization); ok && a.reuseEntry(ctx, reads, selected, candidate) {
-		root = candidate
+	if candidate, ok := selected.object.(*manifest.Kustomization); ok {
+		if selected.visibleGeneration || a.reuseEntry(ctx, reads, selected, candidate) {
+			root = candidate
+		}
 	}
 
 	return root
@@ -502,6 +531,7 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 		}
 	}()
 	if err := ctx.Err(); err != nil {
+		a.retireQualification()
 		return Binding{}, err
 	}
 	if binding.Reads == nil || !binding.Reads.Valid() {
@@ -531,7 +561,8 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 		reads.Retire()
 		return Binding{}, nil
 	}
-	if q := a.qualification; q != nil && q.accepted != nil {
+	if q := a.qualification; q != nil && q.accepted != nil &&
+		(a.entryEvidence == nil || a.entryEvidence.Receipt != q.accepted.Receipt) {
 		slog.Debug("discovery: entry application reused", "resource", q.accepted.Owner)
 	}
 	a.acceptProducerKeys(binding.Producer, binding.Key)
@@ -616,9 +647,17 @@ func (q *entryQualification) reusePrevious(
 		object:   parsed.Object,
 		document: q.previous.Application,
 		owner:    q.previous.Owner,
+		root:     q.previous.Root,
 		history:  true,
 	}
-	if a.entryBound.Load() {
+	if evidence.owner.KindInfo().Render && !evidence.owner.ReportHidden() {
+		if accepted, pending := evidence.ownerAccepts(reads); !accepted {
+			q.replay = pending
+			return false, false
+		}
+		walk := qualificationWalk{q: q, admission: a, store: st, reads: reads}
+		walk.captureOwner(&evidence)
+	} else if a.entryBound.Load() {
 		if accepted, _ := evidence.ownerAccepts(reads); !accepted {
 			q.previous = kustomize.EntryEvidence{}
 			return false, false
@@ -680,8 +719,11 @@ func (a *Admission) captureEntrySupport(original *store.ReadSet) *store.ReadSet 
 		support.Init(a.store, manifest.BootstrapSourceID, nil)
 		q.captureReceiptInputs(support)
 		current = true
-		if a.entryBound.Load() {
+		if a.entryBound.Load() || selected.owner.KindInfo().Render && !selected.owner.ReportHidden() {
 			current, _ = selected.ownerAccepts(support)
+		}
+		if selected.declaration != (manifest.NamedResource{}) {
+			support.GetDeclaration(selected.declaration)
 		}
 	} else {
 		walk := qualificationWalk{q: q, admission: a, store: a.store}
@@ -716,4 +758,20 @@ func (a *Admission) acceptProducerKeys(producer, key manifest.NamedResource) {
 		}
 		l.Index = &index
 	}
+}
+
+// PrivateEntryOperands returns physical roots that must settle before ordinary full execution.
+func (a *Admission) PrivateEntryOperands() []manifest.NamedResource {
+	if a == nil || a.qualification == nil || a.qualification.operandsSettled || a.entryBound.Load() {
+		return nil
+	}
+	return a.qualification.active
+}
+
+func (q *entryQualification) orderMatches() {
+	slices.SortFunc(q.matches, func(a, b applicationEvidence) int { return a.object.Named().Compare(b.object.Named()) })
+	q.matches = slices.CompactFunc(
+		q.matches,
+		func(a, b applicationEvidence) bool { return a.object.Named() == b.object.Named() },
+	)
 }

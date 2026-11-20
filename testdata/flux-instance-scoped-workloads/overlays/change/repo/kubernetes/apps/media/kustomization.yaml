@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-instance.yaml
+  - plain/deploy.yaml
+  - transformed
+  - generator-only
+  - added.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: media-settings
+    literals:
+      - MODE=media-after
+patches:
+  - target:
+      kind: ConfigMap
+      name: media-settings
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: effective-media-settings
+  - target:
+      kind: Deployment
+      name: transformed-workload
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: effective-workload

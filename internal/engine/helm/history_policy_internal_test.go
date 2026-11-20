@@ -267,7 +267,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		}{
 			{name: "empty", active: true, complete: true},
 			{name: "default", policy: helmv2.Create, active: true, complete: true},
-			{name: "replace", policy: helmv2.CreateReplace, active: true},
+			{name: "replace", policy: helmv2.CreateReplace, active: true, complete: true},
 			{name: "skip", policy: helmv2.Skip, active: true},
 			{name: "openapi", openAPI: true, active: true},
 			{name: "inactive", policy: helmv2.Skip, openAPI: true, complete: true},
@@ -321,7 +321,7 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	assert.NoError(t, hr.ResolveChartSource(nil))
 	generated, err := manifest.GeneratedObjects(hr)
 	assert.NoError(t, err)
-	st.AddObject(generated[0])
+	st.AddObject(generated.Objects[0])
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st.SetArtifact(
 		hr.ChartSource(),
@@ -394,7 +394,7 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 				t,
 				&testPreviousRenderInlineOCITemplatePolicyCase2Inputs{
 					hr:        &hr,
-					generated: &generated,
+					generated: &generated.Objects,
 					renderer:  &renderer,
 					skipped:   &skipped,
 				},

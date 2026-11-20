@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/engine/kustomize/patch"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -112,7 +113,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	for _, p := range patches {
 		kus.Patches = append(kus.Patches, kustypes.Patch{
 			Patch:  p.Patch,
-			Target: AdaptSelector(p.Target),
+			Target: patch.AdaptSelector(p.Target),
 		})
 	}
 
@@ -338,23 +339,6 @@ func decodeTypedSlice[T any](obj map[string]any, fields ...string) ([]T, error) 
 	return res, resultErr
 }
 
-// AdaptSelector converts a Flux selector into a kustomize selector. Mirrors
-// flux's generator adaptSelector (nil in, nil out).
-func AdaptSelector(selector *fluxapis.Selector) *kustypes.Selector {
-	if selector == nil {
-		return nil
-	}
-	out := &kustypes.Selector{}
-	out.Group = selector.Group
-	out.Kind = selector.Kind
-	out.Version = selector.Version
-	out.Name = selector.Name
-	out.Namespace = selector.Namespace
-	out.LabelSelector = selector.LabelSelector
-	out.AnnotationSelector = selector.AnnotationSelector
-	return out
-}
-
 func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) error {
 	patchesSM, err := decodeTypedSlice[apiextensionsv1.JSON](obj, specField, patchesSMField)
 	if err != nil {
@@ -379,7 +363,7 @@ func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) err
 			}
 			kus.PatchesJson6902 = append(kus.PatchesJson6902, kustypes.Patch{
 				Patch:  string(raw),
-				Target: AdaptSelector(&p.Target),
+				Target: patch.AdaptSelector(&p.Target),
 			})
 		}
 	}

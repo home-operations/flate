@@ -436,7 +436,7 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 		)
 	}
 	snapshot.Emissions = []EmissionFacts{emission}
-	snapshot.CollectEmissions()
+	snapshot.CollectEmissions(nil)
 	assert.Equal(t, decision.Output(children[0].Obj.Named()), true)
 	output := make(map[manifest.NamedResource][]map[string]any)
 	for _, batch := range snapshot.Manifests {
@@ -448,33 +448,6 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 		output,
 		map[manifest.NamedResource][]map[string]any{owner.Named(): documents[:2]},
 	)
-}
-
-func TestCollectEmissions_EmitterMembership(t *testing.T) {
-	t.Parallel()
-	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	emitter := &manifest.HelmChartSource{Name: "driver", Namespace: "apps"}
-	documents := []map[string]any{
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "required", "namespace": "apps"}},
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "sibling", "namespace": "apps"}},
-	}
-	decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
-		Needed:   []manifest.NamedResource{manifest.DocIdentity(documents[0])},
-		Selected: []manifest.NamedResource{parent.Named()},
-	}, true)
-	snapshot := Snapshot{Decision: decision, Emissions: []EmissionFacts{{
-		Emitter: emitter,
-		Parent:  parent,
-		Documents: []DocumentFact{
-			{Document: documents[0], Identity: manifest.DocIdentity(documents[0])},
-			{Document: documents[1], Identity: manifest.DocIdentity(documents[1])},
-		},
-	}}}
-	snapshot.CollectEmissions()
-	assert.Equal(t, len(snapshot.Manifests), 1)
-	assert.Equal(t, snapshot.Manifests[0].Parent, manifest.BaseManifest(parent))
-	assert.Diff(t, snapshot.Manifests[0].Documents, documents[:1])
-	assert.Equal(t, len(snapshot.Emissions[0].Documents), 2)
 }
 
 func TestCollectEmissions_IdentityAlignment(t *testing.T) {
@@ -493,14 +466,19 @@ func TestCollectEmissions_IdentityAlignment(t *testing.T) {
 		{Kind: manifest.KindConfigMap, Namespace: "other", Name: "z"},
 	}
 	for _, tc := range []struct {
-		name     string
-		selected []manifest.NamedResource
-		needed   []manifest.NamedResource
-		want     []int
+		name        string
+		selected    []manifest.NamedResource
+		needed      []manifest.NamedResource
+		counterpart []manifest.NamedResource
+		want        []int
 	}{
 		{name: "unrestricted", want: []int{0, 1, 2}},
 		{name: "selected emitter", selected: []manifest.NamedResource{first.Named()}, want: []int{0, 1}},
 		{name: "required document", needed: identities[2:], want: []int{2}},
+		{
+			name: "counterpart selects reconciled emitter", needed: []manifest.NamedResource{first.Named()},
+			counterpart: []manifest.NamedResource{first.Named()}, want: []int{0, 1},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -519,7 +497,12 @@ func TestCollectEmissions_IdentityAlignment(t *testing.T) {
 					{Document: documents[2], Identity: identities[2]},
 				}},
 			}}
-			snapshot.CollectEmissions()
+			var other *Snapshot
+			if len(tc.counterpart) != 0 {
+				decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{Selected: tc.counterpart}, true)
+				other = &Snapshot{Decision: decision}
+			}
+			snapshot.CollectEmissions(other)
 			assert.Equal(t, len(snapshot.Manifests), 1)
 			batch := snapshot.Manifests[0]
 			assert.Equal(t, batch.Parent, manifest.BaseManifest(parent))
@@ -679,5 +662,148 @@ func TestProject_ScopedEmitterOutput(t *testing.T) {
 			}
 			assert.Equal(t, decision.Reconcile(child.Named()), true)
 		})
+	}
+}
+
+func TestCollectEmissions_GeneratedRootCoverageOnBothSides(t *testing.T) {
+	t.Parallel()
+	root := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+	inside := testutil.KustomizationID("apps", "inside")
+	sibling := testutil.KustomizationID("apps", "sibling")
+	external := testutil.KustomizationID("apps", "external")
+	generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
+	source := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "self"}
+	otherSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "other"}
+	entry := EntryIdentity{
+		Producer:   root.Named(),
+		Source:     source,
+		Descendant: "deploy/requested",
+		Key: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "deploy/requested", manifest.NamedResource{}).
+			Named(),
+	}
+	t.Run("follow accepted emitted children", func(t *testing.T) {
+		t.Parallel()
+		accepted := &manifest.Kustomization{Name: "accepted", Namespace: "apps"}
+		rejected := &manifest.Kustomization{Name: "rejected", Namespace: "apps"}
+		other := &manifest.Kustomization{Name: "other", Namespace: "apps"}
+		indexed := &manifest.Kustomization{Name: "indexed", Namespace: "apps"}
+		origin := manifest.Production{Source: source, File: "deploy/requested/package.yaml"}
+		st := store.New()
+		st.AddObject(root)
+		st.AddObject(other)
+		st.RecordEmitted(root.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}, {Obj: indexed}}}, nil)
+		st.RecordEmitted(other.Named(), &store.Emission{Children: []store.Child{{Obj: rejected}}}, nil)
+		assert.Equal(t, st.EmissionOwner(accepted.Named()), root.Named())
+		assert.Equal(t, st.EmissionOwner(rejected.Named()), other.Named())
+
+		acceptedOutput := map[string]any{"value": "accepted output"}
+		decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
+			Selected: []manifest.NamedResource{root.Named(), accepted.Named(), rejected.Named()},
+		}, true)
+		childEntry := entry
+		childEntry.Documents = map[manifest.NamedResource]struct{}{
+			accepted.Named(): {}, indexed.Named(): {}, rejected.Named(): {},
+		}
+		snapshot := Snapshot{
+			Store: st, Entry: childEntry, Decision: decision,
+			Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				indexed.Named(): {File: origin.File, Productions: []manifest.Production{origin}},
+			}},
+			Emissions: []EmissionFacts{
+				{Emitter: root, Parent: root, Documents: []DocumentFact{
+					{Identity: accepted.Named(), Child: accepted.Named()},
+					{Identity: indexed.Named(), Child: indexed.Named()},
+					{Identity: indexed.Named(), Child: indexed.Named()},
+					{Identity: rejected.Named(), Child: rejected.Named()},
+				}},
+				{Emitter: accepted, Parent: accepted, Documents: []DocumentFact{
+					{Identity: generated, Document: acceptedOutput},
+				}},
+				{Emitter: rejected, Parent: rejected, Documents: []DocumentFact{
+					{Identity: generated, Document: map[string]any{"value": "different owner's output"}},
+				}},
+			},
+		}
+		assert.Diff(t, snapshot.entryScope(), map[manifest.NamedResource]bool{
+			root.Named(): true, accepted.Named(): true, indexed.Named(): true,
+		})
+		snapshot.CollectEmissions(nil)
+		assert.FatalIf(t, len(snapshot.Manifests) != 2, "projected batches: %v", snapshot.Manifests)
+		assert.Equal(t, snapshot.Manifests[1].Parent.Named(), accepted.Named())
+		assert.Diff(t, snapshot.Manifests[1].Documents, []map[string]any{acceptedOutput})
+	})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		inside: {
+			File:        "deploy/requested/inside.yaml",
+			Productions: []manifest.Production{{Source: source, File: "deploy/requested/inside.yaml"}},
+		},
+		sibling: {
+			File:        "deploy/sibling/sibling.yaml",
+			Productions: []manifest.Production{{Source: source, File: "deploy/sibling/sibling.yaml"}},
+		},
+		external: {
+			File:        "deploy/requested/inside.yaml",
+			Productions: []manifest.Production{{Source: otherSource, File: "deploy/requested/inside.yaml"}},
+		},
+	}}
+	selectRoot, _ := (&Decision{seed: maphash.MakeSeed()}).include(
+		&Admission{Selected: []manifest.NamedResource{root.Named()}},
+		true,
+	)
+	reconcileRoot, _ := (&Decision{seed: maphash.MakeSeed()}).include(
+		&Admission{Needed: []manifest.NamedResource{root.Named()}},
+		true,
+	)
+	var runs [2]Snapshot
+	for side, value := range []string{"before", "after"} {
+		sideEntry := entry
+		sideEntry.Documents = map[manifest.NamedResource]struct{}{inside: {}}
+		runs[side] = Snapshot{
+			Store:    store.New(),
+			Index:    index,
+			Entry:    sideEntry,
+			Decision: reconcileRoot,
+			Emissions: []EmissionFacts{{
+				Emitter: root, Parent: root, Documents: []DocumentFact{
+					{
+						Identity: inside, Document: map[string]any{"value": value},
+					},
+					{
+						Identity: sibling, Document: map[string]any{"value": value},
+					},
+					{
+						Identity: external, Document: map[string]any{"value": value},
+					},
+					{
+						Identity: inside, Document: map[string]any{"value": "foreign"},
+					},
+				},
+			}},
+		}
+	}
+	second := &runs[1].Emissions[0].Documents
+	*second = append(*second, DocumentFact{
+		Identity: generated, Document: map[string]any{"value": "only on the second side"},
+	})
+	runs[1].Decision = selectRoot
+	runs[1].Entry.Documents[generated] = struct{}{}
+	for _, order := range [][2]int{{0, 1}, {1, 0}} {
+		for _, side := range order {
+			run := &runs[side]
+			run.CollectEmissions(&runs[1-side])
+			assert.Equal(t, run.Entry.Key, entry.Key)
+			assert.FatalIf(t, len(run.Manifests) != 1, "side %d: %+v", side, run.Manifests)
+			wantIDs := []manifest.NamedResource{inside, inside}
+			wantDocs := []map[string]any{
+				run.Emissions[0].Documents[0].Document,
+				run.Emissions[0].Documents[3].Document,
+			}
+			if side == 1 {
+				wantIDs = append(wantIDs, generated)
+				wantDocs = append(wantDocs, (*second)[len(*second)-1].Document)
+			}
+			assert.Diff(t, run.Manifests[0].Identities, wantIDs)
+			assert.Diff(t, run.Manifests[0].Documents, wantDocs)
+		}
 	}
 }

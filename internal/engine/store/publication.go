@@ -37,12 +37,8 @@ func (s *Store) RecordEmitted(
 		candidate.origin = id
 		candidate.family = s.index.Load()
 		s.bindCandidatePayloads(&candidate, next, prev, payloads)
-		selectCandidateOutputReads(&candidate, next, prev, payloads)
+		selectCandidateOutput(&candidate, next, prev, payloads)
 		unchanged := candidateAdmissionsUnchanged(&candidate, next, prev)
-		if prev != nil {
-			candidate.shadowed = prev.shadowed
-			candidate.documentOwners = prev.documentOwners
-		}
 		proposal := prev
 		if !retainCandidateFingerprint(&candidate, prev, unchanged) {
 			byID := make(map[manifest.NamedResource]int, len(next.Children))
@@ -262,7 +258,14 @@ func (s *Store) bindCandidatePayloads(
 	}
 }
 
-func selectCandidateOutputReads(candidate, next, prev *Emission, payloads map[manifest.NamedResource]*SourceArtifact) {
+func selectCandidateOutput(candidate, next, prev *Emission, payloads map[manifest.NamedResource]*SourceArtifact) {
+	if prev != nil {
+		candidate.shadowed = prev.shadowed
+		candidate.documentOwners = prev.documentOwners
+		if !next.Complete && len(next.Failures) == 0 {
+			candidate.syncOwnerKeys = prev.syncOwnerKeys
+		}
+	}
 	candidate.OutputReads = nil
 	switch {
 	case next.Complete:
@@ -316,9 +319,10 @@ func generatedAdmissionsRetained(candidate, prev *Emission) bool {
 		oldValues := prev.entries
 		for oldIndex := range oldValues {
 			old := oldValues[oldIndex]
-			if old.child.Generated && !slices.ContainsFunc(candidate.Children, func(child Child) bool {
-				return child.Obj != nil && child.Generated && child.Obj.Named() == old.child.Obj.Named()
-			}) {
+			if old.child.Generated && !old.child.VisibleGeneration &&
+				!slices.ContainsFunc(candidate.Children, func(child Child) bool {
+					return child.Obj != nil && child.Generated && child.Obj.Named() == old.child.Obj.Named()
+				}) {
 				unchanged = false
 				break
 			}
@@ -389,14 +393,19 @@ func retainProposalFingerprint(proposal, prev *Emission, unchanged bool) {
 
 func rebindAcceptedEmission(next, prev, candidate *Emission) *Emission {
 	var proposal *Emission
-	retained := next.Complete && next.Fingerprint != "" && next.Fingerprint == prev.Fingerprint &&
-		prev.OutputReads.Valid() && prev.Reads.Valid() && candidate.inputHead == prev.inputHead && prev.Render.Equal(candidate.Render)
-	if !retained &&
-		(next.Reads != nil && (prev.Reads != next.Reads || prev.OutputReads != candidate.OutputReads) || !prev.Render.Equal(candidate.Render)) {
+	sameFingerprint := next.Fingerprint != "" && next.Fingerprint == prev.Fingerprint
+	sameInput := candidate.inputHead == prev.inputHead
+	renderChanged := !prev.Render.Equal(candidate.Render)
+	retainsOutput := next.Complete && sameFingerprint && sameInput && !renderChanged
+	retained := retainsOutput && prev.OutputReads.Valid() && prev.Reads.Valid()
+	provenanceChanged := prev.syncOwnerKeys != candidate.syncOwnerKeys
+	readsChanged := next.Reads != nil && (prev.Reads != next.Reads || prev.OutputReads != candidate.OutputReads)
+	if provenanceChanged || !retained && (readsChanged || renderChanged) {
 		rebound := *prev
 		rebound.Render = candidate.Render
 		rebound.Reads = next.Reads
 		rebound.input, rebound.inputDoc, rebound.inputHead = next.input, next.inputDoc, next.inputHead
+		rebound.syncOwnerKeys = candidate.syncOwnerKeys
 		rebound.OutputReads = candidate.OutputReads
 		proposal = &rebound
 	} else {

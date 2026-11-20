@@ -95,11 +95,14 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet, admis
 	head.generation.Store(generation)
 	for _, chain := range [2]*registration{first, head.watch} {
 		for cell := chain; cell != nil; cell = cell.next.Load() {
+			if cell.generation.Load() != 0 {
+				continue
+			}
 			matches := cell.absent.Ref.NamedResource == id && cell == cell.absent.cell(kind)
 			if kind == bucketFacet && cell.absent.Ref.NamedResource == (manifest.NamedResource{}) {
 				matches = true
 			}
-			if matches && cell.generation.Load() == 0 && (kind != bucketFacet || cell.owner != admission) {
+			if matches && (kind != bucketFacet || cell.owner != admission) {
 				cell.generation.Store(generation)
 				sh.queue(head)
 			}

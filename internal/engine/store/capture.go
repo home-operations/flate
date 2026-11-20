@@ -203,6 +203,12 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 	return new(input.view).declaration()
 }
 
+// GeneratedDocument reports whether the captured declaration came from visible generation.
+func (r *ReadSet) GeneratedDocument(id manifest.NamedResource) bool {
+	input := r.input(id)
+	return r.Capture(input) != nil && input.view.child.VisibleGeneration
+}
+
 // Capture records a caller-owned named input without reconstructing its identity index.
 func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	r.attachInput(input)
@@ -628,6 +634,16 @@ func (u *objectUpdate) consumeTarget() {
 //
 //nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
 func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
+	r.admit(child, source, owner, false)
+}
+
+// AdmitOperand retains physical support under the captured source while an emission supplies the value.
+func (r *ReadSet) AdmitOperand(obj manifest.BaseManifest, source manifest.NamedResource) {
+	r.admit(Child{Obj: obj}, source, manifest.NamedResource{}, true)
+}
+
+//nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
+func (r *ReadSet) admit(child Child, source, owner manifest.NamedResource, operand bool) {
 	if child.SourceSupport != (manifest.NamedResource{}) &&
 		(child.SourceSupport != source || !r.Valid() || !r.SourceAdmission(child.Obj.Named(), source)) {
 		return
@@ -650,7 +666,10 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 	update := objectUpdate{
 		obj: child.Obj, document: child.Doc, explicit: child.Doc != nil,
 		binding: r.bindAuthority(r.input(source), contentFacet, originFacet), support: support, reads: r,
-		classified: child.SourceSupport != (manifest.NamedResource{}), warnings: child.Warnings,
+		classified: child.SourceSupport != (manifest.NamedResource{}), warnings: child.Warnings, operand: operand,
+	}
+	if child.VisibleGeneration {
+		update.generated = new(child)
 	}
 	id := child.Obj.Named()
 	refresh := false
@@ -729,6 +748,7 @@ func (r *ReadSet) Bind(emission *Emission) {
 	if emission.Reads != r {
 		_, _, captured := r.GetEmission(r.id)
 		emission.input, emission.inputDoc, emission.inputHead = captured.input, captured.inputDoc, captured.inputHead
+		emission.syncOwnerKeys = captured.syncOwnerKeys
 		emission.binding, emission.coverage = captured.binding, captured.coverage
 		emission.renderCache = captured.renderCache
 		previous = captured.previous

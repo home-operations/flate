@@ -339,19 +339,32 @@ func AppliesToEntry(
 	input *store.SourceArtifact,
 	entry string,
 ) bool {
+	target := ApplicationEntryOrigin(s, application, input)
+	return target != "" && target == input.OriginPath(entry)
+}
+
+// ApplicationEntryOrigin resolves the target in the admitted source's origin coordinates.
+func ApplicationEntryOrigin(
+	s sourceStore,
+	application *manifest.EntryApplication,
+	input *store.SourceArtifact,
+) string {
 	if input == nil {
-		return false
+		return ""
 	}
 	source, _ := s.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	if source == nil {
-		return false
+		return ""
 	}
 	location2 := SourceView(s, application.Source, input.LocalPath)
 	if location2.Pinned || location2.External {
-		return false
+		return ""
 	}
 	target := filepath.Join(location2.Path, manifest.NormalizeClaimBase(application.Path))
-	return safepath.Contains(location2.Path, target) && sameOriginPath(input, source, entry, target)
+	if !safepath.Contains(location2.Path, target) {
+		return ""
+	}
+	return source.OriginPath(target)
 }
 
 func sameOriginPath(input, source *store.SourceArtifact, entry, target string) bool {

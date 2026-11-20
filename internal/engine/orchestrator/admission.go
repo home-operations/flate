@@ -223,9 +223,6 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	request.Preparation = &o.admissionPreparation
 	options := selection.AdmissionOptions{Request: request, Stage: selection.Execution}
-	if current.Entry != nil {
-		options.EntryHistory.Owner, options.EntryHistory.Records = current.Entry.Owner, current.Entry.Records
-	}
 	result, committed, err := o.prepareAdmission(ctx, options)
 	if err != nil {
 		return err

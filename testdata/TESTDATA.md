@@ -269,6 +269,16 @@ without selecting an unrelated consumer. Each case runs with
 two workers and compares two equal CLI runs. Consumed-input successor scheduling
 remains deferred to X2 and is not asserted by these fixtures.
 
+The `flux-instance-root/` fixture uses a local chart to emit a FluxInstance. It checks the generated root and its Plex patches in full and narrow builds. Its diff changes the Plex Kustomization timeout to two minutes.
+
+The descendant case requests `kubernetes/apps/media`. The FluxInstance sync root covers that directory. Two builds share one cache and show one sync root and the patched Plex HelmRelease. The sibling package stays outside the output.
+
+The `flux-instance-authored-parent/` fixture requests a cluster directory without a Kustomize builder. The generated sync root publishes `cluster-apps` and the `cluster-info` ConfigMap. The authored parent uses the ConfigMap to substitute the child path and add a post-build value. The child renders one ConfigMap with that value. Both builds share one cache. The aggregate-values fixture also applies two chart edits. One settles on its third input. The other returns to its first input and reports `DependencyCycle`.
+
+The `sync-overlap` case adds a nested cluster package that both the generated sync root and an authored Kustomization build. The HelmRelease and OCIRepository in that package are suspended so the case runs offline. Two builds require the generated root's full document and one conflict warning for each shared resource.
+
+The `flux-instance-aggregate-values/` fixture requests a directory with one physical package. Its chart emits a sync root that patches the values of its own HelmRelease. The chart’s ConfigMap must contain the patched value. Both builds share one cache.
+
 ## Structural cluster partitioning
 
 `cluster-partition/` retains three plain cluster packages from `joryirving/home-ops` at `7548eb35aed27a000d9c8bfc4a6f8a73b14661cd`.
@@ -1585,7 +1595,7 @@ Named symlink operations supply their synthetic paths to the catalog without req
 
 `multi-cluster/root-partition`: Repository-root discovery uses three explicit bootstrap roots and retains colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
 
-`multi-cluster/one-sided-diff`: The removed utility cluster has an unsuppressed removal, main has only its own change, and test stays unchanged; independent selected entries establish the corresponding payloads.
+`multi-cluster/one-sided-diff`: The diff removes the utility cluster and the reverse diff adds it. Both show only the main cluster change and leave the test cluster unchanged. Independent selected entries establish the payloads.
 
 Each fixture entry includes a FluxInstance that names its own path and repository URL.
 Both current and baseline trees retain this bootstrap evidence.
@@ -1960,3 +1970,18 @@ The case then points the link into the separate baseline repository. Build repor
 | `helm-dependencies/source-siblings-missing` | A missing sibling fails and names its path. |
 | `helm-dependencies/source-siblings-vendored` | Vendored children retain complete output bytes. |
 | `helm-dependencies/source-siblings-symlink-escape` | Both internal and escaping symlinks fail as missing dependencies. |
+
+The `entry-unknown-projection/` fixture covers the replacement overlay from issue #1557. It checks the projected Kustomization name, namespace, target namespace, and workload diff. It repeats the case with an explicit parent.
+
+| Case | Behavior |
+| --- | --- |
+| `flux-instance-root/patch-chain` | Apply the generated root patches in full and narrow builds, then compare the Plex timeout edit. |
+| `flux-instance-root/descendant` | Build a requested descendant twice through its generated sync root. Keep the sibling outside the output. |
+| `flux-instance-ancestor/ancestor` | Render the sync root at the repository root. Preserve standalone output at both narrow paths. |
+| `flux-instance-ancestor/separate` | Apply the patch from the separate instance package only when the request reaches it. |
+| `flux-instance-scoped-workloads/workloads` | Build the sync path, its media descendant, and two generator-only packages. Require root output for the reached package and standalone output for the disconnected package. Compare the media edits, addition, and removal. Exclude sibling changes from the descendant output. |
+| `flux-instance-authored-parent/authored-parent` | Use the generated root to supply an authored parent and its substitution inputs. |
+| `flux-instance-authored-parent/sync-overlap` | Print each shared resource once with the generated root's owner labels and one conflict warning. |
+| `flux-instance-aggregate-values/generator-values` | Exercise chart omission, convergence, and a repeated render key in the generated root feedback. |
+| `entry-unknown-projection/rootless` | List the transformed child and compare its workload when the requested path has no builder. |
+| `entry-unknown-projection/real-parent` | List the physical parent and make the same workload comparison. |

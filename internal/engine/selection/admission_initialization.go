@@ -193,16 +193,7 @@ func (c *admissionClosure) finishStart(
 			manifest.NamedResource{},
 		)
 	}
-	route := c.proposal.entry
-	if c.entryRequiresMaterialization() {
-		application := route.Application
-		root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
-		c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
-		materializers(materializerDemand{
-			target: application.Source, source: c.context.Root,
-			application: filepath.Join(c.context.Root, filepath.FromSlash(application.Path)), required: true,
-		}, manifest.NamedResource{})
-	}
+	c.prepareEntryStart(materializers)
 
 	for _, id := range slices.SortedFunc(maps.Keys(c.historyOwners), manifest.NamedResource.Compare) {
 		if c.historyOwnerRequired(id) {
@@ -219,6 +210,25 @@ func (c *admissionClosure) finishStart(
 		if c.states[id].role.needed {
 			c.queue = append(c.queue, id)
 		}
+	}
+}
+
+func (c *admissionClosure) prepareEntryStart(materializers func(materializerDemand, manifest.NamedResource) bool) {
+	route := c.proposal.entry
+	if route != nil && route.Producer != (manifest.NamedResource{}) &&
+		c.proposal.reads.GeneratedDocument(route.Producer) && c.proposal.entrySupported() {
+		if !c.session.request.Changed || c.literalEntryChanged() {
+			c.add(route.Producer, admissionRole{needed: true, ordinary: true, dirty: true})
+		}
+	}
+	if c.entryRequiresMaterialization() {
+		application := route.Application
+		root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
+		c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
+		materializers(materializerDemand{
+			target: application.Source, source: c.context.Root,
+			application: filepath.Join(c.context.Root, filepath.FromSlash(application.Path)), required: true,
+		}, manifest.NamedResource{})
 	}
 }
 

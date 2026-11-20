@@ -1,0 +1,84 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kubernetes/apps"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "media",
+      "name": "plex",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "plex",
+          "namespace": "media"
+        },
+        "spec": {
+          "interval": "1h",
+          "patches": [
+            {
+              "patch": "- op: add\n  path: /spec/install\n  value: {crds: CreateReplace}\n- op: add\n  path: /spec/rollback\n  value: {cleanupOnFail: true}\n- op: add\n  path: /spec/upgrade\n  value:\n    cleanupOnFail: true\n    crds: CreateReplace\n    strategy: {name: RemediateOnFailure}\n    remediation: {remediateLastFailure: true, retries: 2}",
+              "target": {
+                "kind": "HelmRelease",
+                "name": "plex",
+                "namespace": "media"
+              }
+            }
+          ],
+          "path": "./plex",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "bootstrap",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "plex",
+          "namespace": "media"
+        },
+        "spec": {
+          "interval": "1h",
+          "patches": [
+            {
+              "patch": "- op: add\n  path: /spec/install\n  value: {crds: CreateReplace}\n- op: add\n  path: /spec/rollback\n  value: {cleanupOnFail: true}\n- op: add\n  path: /spec/upgrade\n  value:\n    cleanupOnFail: true\n    crds: CreateReplace\n    strategy: {name: RemediateOnFailure}\n    remediation: {remediateLastFailure: true, retries: 2}",
+              "target": {
+                "kind": "HelmRelease",
+                "name": "plex",
+                "namespace": "media"
+              }
+            }
+          ],
+          "path": "./plex",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "bootstrap",
+            "namespace": "flux-system"
+          },
+          "timeout": "2m"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

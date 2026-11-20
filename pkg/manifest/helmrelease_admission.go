@@ -148,7 +148,7 @@ func validateChartDocumentFields(raw map[string]any) error {
 	for _, constraint := range []struct {
 		field   string
 		pattern *regexp.Regexp
-	}{{"interval", templateInterval}, {"timeout", templateTimeout}} {
+	}{{intervalKey, templateInterval}, {"timeout", templateTimeout}} {
 		if value, ok := raw[constraint.field].(string); ok && !constraint.pattern.MatchString(value) {
 			return inputf("invalid spec.chart.spec.%s duration", constraint.field)
 		}

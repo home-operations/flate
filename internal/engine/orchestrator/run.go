@@ -209,6 +209,9 @@ func (o *Orchestrator) configureControllers() {
 		Existence: existence,
 		Missing:   o.cfg.missing,
 	}
+	if o.admission != nil {
+		common.PreparedGeneration = o.admission.PreparedGeneration
+	}
 	o.ksc.Configure(kustomization.Options{
 		Discovery:           o.discoveryResult,
 		Options:             common,
@@ -220,22 +223,20 @@ func (o *Orchestrator) configureControllers() {
 }
 
 func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result, error) {
-	var warnings []manifest.Warning
+	assessment := o.store.AssessProducers()
 	if o.admission != nil {
-		warnings = o.admission.Warnings()
-	} else {
-		warnings = o.store.Warnings()
+		assessment.Warnings = o.admission.Warnings(assessment.Warnings)
 	}
 	res := &Result{
 		Work:     o.freezeWork(),
 		Failed:   map[manifest.NamedResource]store.StatusInfo{},
 		Orphans:  map[manifest.NamedResource]string{},
 		Blocked:  map[manifest.NamedResource][]manifest.NamedResource{},
-		Warnings: warnings,
+		Warnings: assessment.Warnings,
 	}
 	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()
-	res.Manifests, res.emissions = o.collectCompletedManifests()
+	res.Manifests, res.emissions = o.collectCompletedManifests(assessment.GeneratedOverlaps)
 	res.catalog = o.loader.DetachCatalog()
 	discovered := o.index
 	o.index = selection.ProjectIndex(o.index, o.selection.Snapshot())
@@ -247,7 +248,7 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 		Facts:    res.catalog,
 		Decision: o.selection.Snapshot(),
 		Failed:   failed,
-		Entry:    selection.EntryIdentity{Producer: o.entryBinding.Producer, Key: o.entryBinding.Key},
+		Entry:    o.entryBinding.Projection(),
 	}
 	for id, references := range snapshot.Predictions() {
 		var reads store.ReadSet
@@ -270,7 +271,9 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 }
 
 // Accepted completed output MUST remain available after a failed successor.
-func (o *Orchestrator) collectCompletedManifests() ([]manifest.DocumentBatch, []selection.EmissionFacts) {
+func (o *Orchestrator) collectCompletedManifests(
+	overlaps map[manifest.NamedResource]map[manifest.NamedResource]struct{},
+) ([]manifest.DocumentBatch, []selection.EmissionFacts) {
 	var emissions []selection.EmissionFacts
 	var objects []manifest.BaseManifest
 	for info := range manifest.Kinds() {
@@ -292,19 +295,19 @@ func (o *Orchestrator) collectCompletedManifests() ([]manifest.DocumentBatch, []
 			continue
 		}
 		emission := selection.EmissionFacts{Emitter: obj, Parent: o.store.GetObject(parent)}
-		policy := obj.EmissionPolicy()
-		documents := o.collectionDocuments(obj, parentAttributed, &attempt)
-		for doc := range documents {
-			emission.Documents = append(emission.Documents, selection.DocumentFact{
-				Document: doc, Identity: policy.EmittedIdentity(doc),
-			})
-		}
+		emission.Documents = slices.Collect(o.collectionDocuments(obj, parentAttributed, &attempt, overlaps[id]))
 		if len(emission.Documents) != 0 {
 			emissions = append(emissions, emission)
 		}
 	}
-	snapshot := selection.Snapshot{Decision: o.selection.Snapshot(), Emissions: emissions}
-	snapshot.CollectEmissions()
+	snapshot := selection.Snapshot{
+		Store:     o.store,
+		Index:     o.index,
+		Decision:  o.selection.Snapshot(),
+		Emissions: emissions,
+		Entry:     o.entryBinding.Projection(),
+	}
+	snapshot.CollectEmissions(nil)
 	return snapshot.Manifests, emissions
 }
 
@@ -312,21 +315,29 @@ func (o *Orchestrator) collectionDocuments(
 	obj manifest.BaseManifest,
 	parentAttributed bool,
 	attempt *store.Emission,
-) iter.Seq[map[string]any] {
-	return func(yield func(map[string]any) bool) {
+	overlaps map[manifest.NamedResource]struct{},
+) iter.Seq[selection.DocumentFact] {
+	return func(yield func(selection.DocumentFact) bool) {
 		id := obj.Named()
+		policy := obj.EmissionPolicy()
 		filterOwnership := emissionOwnership(obj, parentAttributed)
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		o.collectionChildren(id, parentAttributed, attempt.Children, selected)
-		for _, occurrence := range attempt.Manifests {
+		for i, occurrence := range attempt.Manifests {
 			doc := occurrence.Document
+			child := attempt.DocumentChild(i)
+			_, shared := overlaps[child]
+			eligibleOverlap := shared && (!parentAttributed || !child.KindInfo().Render)
 			target := resourceset.DedupKey(doc)
 			target, identifiable := collectionDocumentTarget(doc, target, id.Namespace, parentAttributed)
-			if filterOwnership && identifiable && !selected[target] &&
-				!o.collectionOwnershipAllows(target, parentAttributed) {
+			checkOwnership := filterOwnership && identifiable && !eligibleOverlap && !selected[target]
+			if checkOwnership && !o.collectionOwnershipAllows(target, parentAttributed) {
 				continue
 			}
-			if !yield(doc) {
+			fact := selection.DocumentFact{
+				Document: doc, Identity: policy.EmittedIdentity(doc), Child: child, GeneratedOverlap: shared,
+			}
+			if !yield(fact) {
 				return
 			}
 		}

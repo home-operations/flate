@@ -1,0 +1,62 @@
+
+spec.template.spec.containers.c.image  (apps/v1/Deployment/default/plain)
+  ± value change
+    - busybox
+    + busybox:1.37
+
+spec.template.spec.containers.c.image  (apps/v1/Deployment/default/effective-workload)
+  ± value change
+    - busybox:1.36
+    + busybox:1.37
+
+data.MODE  (v1/ConfigMap/effective-media-settings)
+  ± value change
+    - media-before
+    + media-after
+
+(root level)  (apps/v1/Deployment/default/media-removed)
+- one document removed:
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: media-removed
+    namespace: default
+    labels:
+      kustomize.toolkit.fluxcd.io/name: flux-system
+      kustomize.toolkit.fluxcd.io/namespace: flux-system
+  spec:
+    selector:
+      matchLabels:
+        app: media-removed
+    template:
+      metadata:
+        labels:
+          app: media-removed
+      spec:
+        containers:
+        - name: c
+          image: "busybox:1.36"
+
+(root level)  (apps/v1/Deployment/default/media-added)
++ one document added:
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: media-added
+    namespace: default
+    labels:
+      kustomize.toolkit.fluxcd.io/name: flux-system
+      kustomize.toolkit.fluxcd.io/namespace: flux-system
+  spec:
+    selector:
+      matchLabels:
+        app: media-added
+    template:
+      metadata:
+        labels:
+          app: media-added
+      spec:
+        containers:
+        - name: c
+          image: "busybox:1.36"
+

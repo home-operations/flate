@@ -23,10 +23,12 @@ type cachedGraphContext struct {
 	NameSuffix           string              `json:"NameSuffix,omitempty"`
 	PluginRoot           string              `json:"PluginRoot,omitempty"`
 	Role                 kustomizeinput.Role `json:"Role,omitempty"`
+	Edge                 kustomizeinput.Role `json:"Edge,omitempty"`
 	DeferMaterialization bool                `json:"DeferMaterialization,omitempty"`
 	CheckMetadata        bool                `json:"CheckMetadata,omitempty"`
 	DeferDecode          bool                `json:"DeferDecode,omitempty"`
 	EntryResources       bool                `json:"EntryResources,omitempty"`
+	ThroughComponent     bool                `json:"ThroughComponent,omitempty"`
 	RequiresBuild        bool                `json:"RequiresBuild,omitempty"`
 }
 
@@ -58,9 +60,10 @@ func cacheGraphContext(root string, context *graphContext) (cachedGraphContext, 
 	return cachedGraphContext{
 		Root: base, Dir: context.dir, Namespace: context.namespace, Fallback: context.fallback,
 		NamePrefix: context.namePrefix, NameSuffix: context.nameSuffix, PluginRoot: context.pluginRoot,
-		Role: context.role, DeferMaterialization: context.deferMaterialization,
+		Role: context.role, Edge: context.edge, DeferMaterialization: context.deferMaterialization,
 		CheckMetadata: context.checkMetadata, DeferDecode: context.deferDecode,
-		EntryResources: context.entryResources, RequiresBuild: context.requiresBuild,
+		EntryResources: context.entryResources, ThroughComponent: context.throughComponent,
+		RequiresBuild: context.requiresBuild,
 	}, valid
 }
 
@@ -68,8 +71,9 @@ func (c *cachedGraphContext) restore(root string) graphContext {
 	return graphContext{
 		root: filepath.Join(root, filepath.FromSlash(c.Root)), dir: c.Dir, namespace: c.Namespace, fallback: c.Fallback,
 		namePrefix: c.NamePrefix, nameSuffix: c.NameSuffix, pluginRoot: c.PluginRoot,
-		role: c.Role, deferMaterialization: c.DeferMaterialization, checkMetadata: c.CheckMetadata,
-		deferDecode: c.DeferDecode, entryResources: c.EntryResources, requiresBuild: c.RequiresBuild,
+		role: c.Role, edge: c.Edge, deferMaterialization: c.DeferMaterialization, checkMetadata: c.CheckMetadata,
+		deferDecode: c.DeferDecode, entryResources: c.EntryResources, throughComponent: c.ThroughComponent,
+		requiresBuild: c.RequiresBuild,
 	}
 }
 
@@ -303,11 +307,15 @@ func compareCachedWalks(a, b cachedWalk) int {
 	if order := cmp.Compare(a.Context.Role, b.Context.Role); order != 0 {
 		return order
 	}
+	if order := cmp.Compare(a.Context.Edge, b.Context.Edge); order != 0 {
+		return order
+	}
 	leftFlags := [...]bool{
 		a.Context.DeferMaterialization,
 		a.Context.CheckMetadata,
 		a.Context.DeferDecode,
 		a.Context.EntryResources,
+		a.Context.ThroughComponent,
 		a.Context.RequiresBuild,
 	}
 	rightFlags := [...]bool{
@@ -315,6 +323,7 @@ func compareCachedWalks(a, b cachedWalk) int {
 		b.Context.CheckMetadata,
 		b.Context.DeferDecode,
 		b.Context.EntryResources,
+		b.Context.ThroughComponent,
 		b.Context.RequiresBuild,
 	}
 	for i, value := range leftFlags {

@@ -107,8 +107,14 @@ func (r *RawObject) catalog(id NamedResource) BaseManifest {
 			}
 		}
 		out.initArtifactGeneratorSpec()
-	} else if _, valid := r.EntryApplication(); valid {
-		out.Spec = map[string]any{"sync": r.Spec["sync"]}
+	} else if r.isFluxInstance() {
+		keys := [...]string{"sync", "distribution", "cluster", "kustomize"}
+		out.Spec = make(map[string]any, len(keys))
+		for _, key := range keys {
+			if value, present := r.Spec[key]; present {
+				out.Spec[key] = value
+			}
+		}
 	}
 	return out
 }

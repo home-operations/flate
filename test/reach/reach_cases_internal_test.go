@@ -42,7 +42,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/reloader",
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/snapshot-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/spegel",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/agregarr",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/autobrr",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/bazarr",
@@ -116,7 +116,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/home-assistant",
 				"Kustomization.kustomize.toolkit.fluxcd.io/external-secrets/external-secrets",
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/plex",
 			},
 
@@ -134,6 +134,7 @@ func reachFixtureCases() []reachCase {
 			},
 
 			outputOwners: []string{
+				"HelmRelease.helm.toolkit.fluxcd.io/flux-system/flux-instance",
 				"HelmRelease.helm.toolkit.fluxcd.io/media/plex",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller-runners",
@@ -143,7 +144,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/home-assistant",
 				"Kustomization.kustomize.toolkit.fluxcd.io/external-secrets/external-secrets",
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/plex",
 			},
 		},
@@ -337,7 +338,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/reloader",
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/snapshot-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/kube-system/spegel",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/agregarr",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/autobrr",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/bazarr",
@@ -411,7 +412,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/home-assistant",
 				"Kustomization.kustomize.toolkit.fluxcd.io/external-secrets/external-secrets",
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/plex",
 			},
 
@@ -429,6 +430,7 @@ func reachFixtureCases() []reachCase {
 			},
 
 			outputOwners: []string{
+				"HelmRelease.helm.toolkit.fluxcd.io/flux-system/flux-instance",
 				"HelmRelease.helm.toolkit.fluxcd.io/media/plex",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller-runners",
@@ -438,7 +440,7 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/home-assistant",
 				"Kustomization.kustomize.toolkit.fluxcd.io/external-secrets/external-secrets",
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
-				"Kustomization.kustomize.toolkit.fluxcd.io/kubernetes/apps",
+				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/plex",
 			},
 		},

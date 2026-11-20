@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/tree"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -226,10 +228,14 @@ func TestPlan_BootstrapRootClustersLatePreparation(t *testing.T) {
 	assert.Equal(
 		t,
 		manifest.DiagnosticFor(result.Binding.Producer, cfg.Store.GetObject(result.Binding.Producer)).Resource,
-		manifest.NamedResource{
-			Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "late",
-		},
+		testutil.KustomizationID("apps", "cluster"),
 	)
+	instance := manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "late",
+	}
+	assert.Equal(t, slices.ContainsFunc(cfg.Store.Productions(result.Binding.Producer, result.Index),
+		func(production manifest.Production) bool { return production.Declaration == instance },
+	), true)
 	assert.Equal(t, result.Binding.Path, "")
 }
 

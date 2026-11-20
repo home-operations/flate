@@ -264,6 +264,7 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 				d.resolvedSources.mutable[id] = resolution
 			}
 		}
+		d.publicOperands = d.cfg.Entry.prepared.publicOperands
 		d.cfg.Entry = nil
 	}
 	if previous, ok := d.resolvedSources.snapshot()[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
@@ -362,11 +363,11 @@ func (d *Session) resolveEntrySource(
 		d.resolvedSources.record(id, &candidate)
 		return false, nil
 	}
-	published := d.publishResolvedSource(&candidate)
+	published := d.publishResolvedSource(&candidate, group.projectedFromParent)
 	return published, d.requireSource(id)
 }
 
-func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
+func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFromParent bool) bool {
 	id := candidate.object.Named()
 	current, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	sameMaterial := current.SameMaterial(
@@ -374,15 +375,14 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 		store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
 	) &&
 		current.Reads.Valid()
-	if len(candidate.object.Composition().Includes) != 0 {
-		sameMaterial = d.sourceMaterial(id, candidate.artifact) != nil
-	}
+	sameMaterial = sameMaterial || d.sourceMaterial(id, candidate.artifact) != nil
 	previous := d.resolvedSources.snapshot()[id]
 	refresh := previous.artifact != nil && previous.input != candidate.input
 	object := d.cfg.Store.GetObject(id)
 	restricted := d.loader != nil && !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
 	replacing := restricted && object != nil && object != candidate.object
-	projecting := d.finalized && candidate.projected && d.cfg.Store.GetDeclaration(id) == nil
+	// Parent-owned projections MUST wait for the parent emission.
+	projecting := d.finalized && candidate.projected && !projectedFromParent && d.cfg.Store.GetDeclaration(id) == nil
 	d.resolvedSources.publish(candidate, candidate.synthetic || replacing || projecting)
 	if candidate.viewKey != "" {
 		if d.entryAdmission.aliasViews == nil {
@@ -411,16 +411,21 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	entryPreparation kustomize.Preparation
-	entryRequest     kustomize.RenderRequest
-	requestedEntry   manifest.EntryApplication
-	entryEvidence    *kustomize.EntryEvidence
-	applications     atomic.Pointer[applicationEvidence]
-	entryBound       atomic.Bool
-	resolvedSources  *entrySourcePublisher
-	input            *store.SourceArtifact
-	path             string
-	remotes          map[string]struct{}
+	enclosingPackages  []string
+	privateInventories []*declarationRender
+	entryPreparation   kustomize.Preparation
+	packageRender      packagePreparation
+	entryRequest       kustomize.RenderRequest
+	requestedEntry     manifest.EntryApplication
+	entryEvidence      *kustomize.EntryEvidence
+	documents          *entryDocuments
+	generation         map[manifest.NamedResource][]retainedGeneration
+	applications       atomic.Pointer[applicationEvidence]
+	entryBound         atomic.Bool
+	resolvedSources    *entrySourcePublisher
+	input              *store.SourceArtifact
+	path               string
+	remotes            map[string]struct{}
 	// Construction MUST finish all view writes before runtime admission.
 	aliasViews    map[string]*store.SourceArtifact
 	entryDemand   bool
@@ -452,20 +457,27 @@ func (d *Session) admission() *Admission {
 		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	admission := &Admission{
-		input:           input,
-		path:            d.cfg.Path,
-		remotes:         maps.Clone(d.remotes),
-		aliasViews:      maps.Clone(d.aliasViews),
-		resolvedSources: d.resolvedSources,
-		store:           d.cfg.Store,
-		loader:          d.loader,
-		trees:           d.cfg.Trees,
-		session:         d,
+		packageRender:     d.cfg.packagePreparation(),
+		enclosingPackages: d.enclosingPackages,
+		input:             input,
+		path:              d.cfg.Path,
+		remotes:           maps.Clone(d.remotes),
+		aliasViews:        maps.Clone(d.aliasViews),
+		resolvedSources:   d.resolvedSources,
+		store:             d.cfg.Store,
+		loader:            d.loader,
+		trees:             d.cfg.Trees,
+		session:           d,
 	}
 	admission.requestedEntry = manifest.EntryApplication{
 		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),
 	}
-	d.entryState = entryQualification{loader: d.loader, trees: d.cfg.Trees, session: d}
+	d.entryState = entryQualification{
+		packages: d.entryPackagesToQualify,
+		loader:   d.loader,
+		trees:    d.cfg.Trees,
+		session:  d,
+	}
 	admission.entryDemand = d.requiresEntry()
 	d.entryState.closed = !admission.entryDemand
 	admission.qualification = &d.entryState
@@ -715,8 +727,8 @@ func (p *entrySourcePublisher) aliasWarning() *manifest.Warning {
 }
 
 // Warnings MUST replace construction alias diagnostics after runtime publication drains.
-func (a *Admission) Warnings() []manifest.Warning {
-	warnings := slices.DeleteFunc(a.store.Warnings(), func(warning manifest.Warning) bool {
+func (a *Admission) Warnings(warnings []manifest.Warning) []manifest.Warning {
+	warnings = slices.DeleteFunc(warnings, func(warning manifest.Warning) bool {
 		return warning.Category == manifest.WarnBootstrapAliases
 	})
 	if warning := a.resolvedSources.aliasWarning(); warning != nil {

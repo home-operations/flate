@@ -42,6 +42,10 @@ func ProducerNeedsCandidates(obj BaseManifest) bool {
 }
 
 func (r *RawObject) producerNeedsCandidates() bool {
+	if r.isFluxInstance() {
+		patches, _ := (specView{r.Spec}).child("kustomize").m["patches"].([]any)
+		return len(patches) != 0
+	}
 	if !r.isArtifactGenerator() {
 		return false
 	}
@@ -57,6 +61,15 @@ func (r *RawObject) producerNeedsCandidates() bool {
 func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget {
 	spec := specView{r.Spec}
 	switch {
+	case r.isFluxInstance() && r.producerNeedsCandidates():
+		var result []ProducerTarget
+		for _, id := range candidates {
+			kind := id.KindInfo()
+			if kind.SourceArtifact || kind.Structural {
+				result = append(result, ProducerTarget{NamedResource: id})
+			}
+		}
+		return result
 	case r.isArtifactGenerator():
 		return r.artifactTargets(candidates)
 	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":

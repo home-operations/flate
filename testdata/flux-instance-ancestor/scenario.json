@@ -1,0 +1,279 @@
+{
+  "source": {
+    "repository": "fixture-path-dot",
+    "revision": "a9229f820141d6d4316dcf666d6a0f237e2747ef",
+    "paths": [
+      "clusters/main/flux-instance.yaml"
+    ],
+    "reductions": "Use the supplied two-file reproduction."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "separate",
+      "directory": "overlays/separate"
+    }
+  ],
+  "cases": [
+    {
+      "name": "ancestor",
+      "description": "Build the sync root from the repository root.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "ancestor",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              ".",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/ancestor.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "equal",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/standalone.stdout",
+              "stderr": "expect/standalone.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "descendant",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/standalone.stdout",
+              "stderr": "expect/standalone.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "separate",
+      "description": "Use the transformed instance only when the request reaches its declaring package.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "separate"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "ancestor",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              ".",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "Deployment"
+            ],
+            "expect": {
+              "stdout": "expect/patched.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "equal",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/standalone.stdout",
+              "stderr": "expect/standalone.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "descendant",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/apps/media",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/standalone.stdout",
+              "stderr": "expect/standalone.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/ancestor.stdout",
+      "cases": [
+        "ancestor"
+      ],
+      "purpose": "Record the Deployment and the labels from the sync root."
+    },
+    {
+      "path": "expect/quiet.stderr",
+      "cases": [
+        "ancestor",
+        "separate"
+      ],
+      "purpose": "Require a clean diagnostic stream."
+    },
+    {
+      "path": "repo/clusters/main/flux-instance.yaml",
+      "cases": [
+        "ancestor",
+        "separate"
+      ],
+      "purpose": "Declare the generated sync root under a separate cluster path."
+    },
+    {
+      "path": "repo/kubernetes/apps/media/plain/deploy.yaml",
+      "cases": [
+        "ancestor",
+        "separate"
+      ],
+      "purpose": "Provide the Deployment under the generated sync path."
+    },
+    {
+      "path": "expect/standalone.stdout",
+      "cases": [
+        "ancestor",
+        "separate"
+      ],
+      "purpose": "Keep the standalone Deployment for narrow requests."
+    },
+    {
+      "path": "expect/standalone.stderr",
+      "cases": [
+        "ancestor",
+        "separate"
+      ],
+      "purpose": "Keep the standalone EmptyScan warning."
+    },
+    {
+      "path": "expect/patched.stdout",
+      "cases": [
+        "separate"
+      ],
+      "purpose": "Show the annotation from the separate package at the cluster root."
+    },
+    {
+      "path": "overlays/separate/repo/clusters/main/kustomization.yaml",
+      "cases": [
+        "separate"
+      ],
+      "purpose": "Patch the instance outside the requested workload directories."
+    }
+  ]
+}

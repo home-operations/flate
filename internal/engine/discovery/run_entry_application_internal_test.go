@@ -481,19 +481,29 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 	}
 	assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 	assert.Equal(t, d.binding != (Binding{}), testCaseInput.qualified)
-	if testCaseInput.qualified {
+	publicSync := testCaseInput.instance && testCaseInput.qualified && !testCaseInput.supplied
+	switch {
+	case publicSync:
+		assert.Equal(t, d.entryApplier, testutil.KustomizationID("apps", "self"))
+		assert.Equal(t, d.binding.Producer, d.entryApplier)
+	case testCaseInput.qualified:
 		assert.Equal(t, d.entryApplier.Name, testCaseInput.owner)
 		if testCaseInput.dependent || testCaseInput.supplied {
 			assert.Equal(t, d.binding.Producer.ReportHidden(), true)
 		}
-		if testCaseInput.instance {
-			assert.Equal(t, d.entryApplier.Kind, "FluxInstance")
-		}
-	} else {
+	default:
 		assert.Equal(t, len(d.prepared), 0)
 	}
 	if testCaseInput.instance {
-		assert.Equal(t, st.GetObject(source), manifest.BaseManifest(nil))
+		if publicSync {
+			docs, err := loader.LoadDocuments(t.Context(), bytes.NewReader(input["owner.yaml"].Data), "owner.yaml")
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(docs) != 1, "expected one instance declaration")
+			generation := testGeneratedSync(t, docs[0].Obj)
+			assert.Equal(t, manifest.Equal(st.GetObject(source), generation.Objects[0]), true)
+		} else {
+			assert.Equal(t, st.GetObject(source), manifest.BaseManifest(nil))
+		}
 		instance := manifest.NamedResource{
 			Group:     manifest.FluxOperatorDomain,
 			Kind:      "FluxInstance",
@@ -708,5 +718,60 @@ func addEntryApplicationFixture(input fstest.MapFS, testCaseInput *entryApplicat
 		input["owner.yaml"] = &fstest.MapFile{
 			Data: []byte(testutil.KustomizationYAML(testCaseInput.owner, "apps", "  path: "+path+"\n"+extra)),
 		}
+	}
+}
+
+func TestRun_EntryApplicationVersionedSourcePatch(t *testing.T) {
+	t.Parallel()
+	for _, version := range []struct{ flux, source, kind, field, prefix string }{
+		{"2.5.x", "v1beta2", manifest.KindOCIRepository, "url", "oci://"},
+		{"2.6.x", "v1", manifest.KindOCIRepository, "url", "oci://"},
+		{"2.5.x", "v1beta2", manifest.KindBucket, "endpoint", ""},
+		{"2.6.x", "v1", manifest.KindBucket, "endpoint", ""},
+	} {
+		t.Run(version.kind+"/"+version.flux, func(t *testing.T) {
+			t.Parallel()
+			const root = "/virtual/entry-version"
+			files := fstest.MapFS{
+				"workload.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload}\n")},
+				"instance.yaml": {Data: fmt.Appendf(nil, `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance, namespace: apps}
+spec:
+  distribution: {version: %s}
+  sync: {name: self, kind: %s, url: '%sbefore.fixture.invalid', ref: main, path: ./}
+  kustomize:
+    patches:
+      - patch: |-
+          apiVersion: source.toolkit.fluxcd.io/%s
+          kind: %s
+          metadata: {name: self, namespace: apps}
+          spec: {%s: '%safter.fixture.invalid'}
+`, version.flux, version.kind, version.prefix, version.source, version.kind, version.field, version.prefix)},
+			}
+			st := store.New()
+			source := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: version.kind, Namespace: "apps", Name: "self",
+			}
+			st.SetArtifact(source, &store.SourceArtifact{
+				LocalPath: "/virtual/entry-version-alias", LocalRoot: root, InputAlias: true, FS: files,
+			})
+			cfg := testConfig(t, Config{
+				Input: &store.SourceArtifact{LocalPath: root, FS: files}, Path: root, Store: st,
+			})
+			d := newDiscoverer(&cfg)
+			_, err := d.resolveTestSources(t.Context(), false)
+			assert.NoError(t, err)
+			assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
+			assert.Equal(t, d.binding.Producer, testutil.KustomizationID("apps", "self"))
+			object, doc, output := st.GetEmission(source)
+			defer output.Finish()
+			assert.FatalIf(t, object == nil, "generated source %s missing", source)
+			assert.Equal(t, object.Named(), source)
+			spec, ok := doc["spec"].(map[string]any)
+			assert.FatalIf(t, !ok, "generated source document = %v", doc)
+			assert.Equal(t, spec[version.field], any(version.prefix+"after.fixture.invalid"))
+			assert.Equal(t, manifest.DocAPIVersion(doc), manifest.SourceDomain+"/"+version.source)
+		})
 	}
 }

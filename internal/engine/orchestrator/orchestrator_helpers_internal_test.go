@@ -240,6 +240,6 @@ type newTestOrchestratorTailInputs struct {
 }
 
 func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
-	manifests, _ := o.collectCompletedManifests()
+	manifests, _ := o.collectCompletedManifests(nil)
 	return manifests
 }

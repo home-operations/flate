@@ -1,0 +1,282 @@
+{
+  "source": {
+    "repository": "joryirving/home-ops",
+    "revision": "7548eb35aed27a000d9c8bfc4a6f8a73b14661cd",
+    "paths": [
+      "kubernetes/clusters/main/apps.yaml"
+    ],
+    "reductions": "Use a single local bootstrap chart, a parent with one patch, and one child."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/fixture"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "sync-overlap",
+      "directory": "overlays/sync-overlap"
+    }
+  ],
+  "cases": [
+    {
+      "name": "authored-parent",
+      "description": "Preserve the authored parent patch and post-build substitution across two builds.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "cold",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap,Kustomization",
+              "--path",
+              "@@repo@@/clusters/main",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap,Kustomization",
+              "--path",
+              "@@repo@@/clusters/main",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-overlap",
+      "description": "Resolve shared documents from a generated sync root and an authored Kustomization.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "overlap",
+          "edit": {
+            "overlay": "sync-overlap"
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=HelmRelease,OCIRepository,PrometheusRule",
+              "--path",
+              "@@repo@@/clusters/main",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/sync-overlap.stdout",
+              "stderr": "expect/sync-overlap.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Record the warning-free build."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Record the patched child and its rendered resource."
+    },
+    {
+      "path": "expect/sync-overlap.stderr",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Require one warning per shared resource with both producers and the winner."
+    },
+    {
+      "path": "expect/sync-overlap.stdout",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Require the full generated root documents and their owner labels."
+    },
+    {
+      "path": "overlays/sync-overlap/repo/clusters/main/instance-release.yaml",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Give the local bootstrap release a distinct name."
+    },
+    {
+      "path": "overlays/sync-overlap/repo/clusters/main/flux-instance.yaml",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Declare the authored producer of the nested package."
+    },
+    {
+      "path": "overlays/sync-overlap/repo/clusters/main/flux-instance/kustomization.yaml",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Let each Kustomization build the same nested package."
+    },
+    {
+      "path": "overlays/sync-overlap/repo/clusters/main/flux-instance/resources.yaml",
+      "cases": [
+        "sync-overlap"
+      ],
+      "purpose": "Supply the three shared identities with offline specifications."
+    },
+    {
+      "path": "repo/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Declare the local bootstrap chart."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Publish the sync root through the bootstrap HelmRelease."
+    },
+    {
+      "path": "repo/clusters/main/apps.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Apply a post-build value to the child path and patch."
+    },
+    {
+      "path": "repo/clusters/main/cluster-info.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Supply the cluster value to the authored parent."
+    },
+    {
+      "path": "repo/clusters/main/instance-release.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Reconcile the chart that emits the FluxInstance."
+    },
+    {
+      "path": "repo/workload/main/kustomization.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Build the resolved child package."
+    },
+    {
+      "path": "repo/workload/main/value.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Require the child to substitute a value in its output."
+    },
+    {
+      "path": "repo/apps/main/workload/ks.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Build the authored child declaration."
+    },
+    {
+      "path": "repo/apps/main/workload/kustomization.yaml",
+      "cases": [
+        "authored-parent",
+        "sync-overlap"
+      ],
+      "purpose": "Include the child through an authored package under the parent."
+    }
+  ]
+}

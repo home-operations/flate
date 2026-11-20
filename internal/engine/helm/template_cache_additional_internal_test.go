@@ -85,7 +85,7 @@ func TestComputeTemplateKey_SelectedActionPolicy(t *testing.T) {
 		}{
 			{"empty", "", false, true, true},
 			{"default", helmv2.Create, false, true, true},
-			{"replace", helmv2.CreateReplace, false, true, false},
+			{"replace", helmv2.CreateReplace, false, true, true},
 			{"skip", helmv2.Skip, false, true, false},
 			{"openapi", "", true, true, false},
 			{"inactive", helmv2.Skip, true, false, true},
@@ -192,6 +192,8 @@ func computeTemplateKeyDifferingFieldsDivergeCase(
 	switch {
 	case isBool:
 		v.SetBool(true)
+	case v.Type() == reflect.TypeFor[helmv2.CRDsPolicy]():
+		v.SetString(string(helmv2.Skip))
 	case isString:
 		v.SetString("different")
 	case isSlice:
@@ -239,6 +241,8 @@ func computeTemplateKeyDifferingFieldsDivergeCase2(
 	switch {
 	case isBool:
 		v.SetBool(true)
+	case v.Type() == reflect.TypeFor[helmv2.CRDsPolicy]():
+		v.SetString(string(helmv2.Skip))
 	case isString:
 		v.SetString("different")
 	case isSlice:

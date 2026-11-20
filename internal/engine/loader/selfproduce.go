@@ -142,11 +142,12 @@ type graphContext struct {
 	root, dir, namespace, fallback string
 	namePrefix, nameSuffix         string
 	pluginRoot                     string
-	role                           kustomizeinput.Role
+	role, edge                     kustomizeinput.Role
 	deferMaterialization           bool
 	checkMetadata                  bool
 	deferDecode                    bool
 	entryResources                 bool
+	throughComponent               bool
 	requiresBuild                  bool
 }
 

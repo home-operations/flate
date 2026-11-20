@@ -1,0 +1,29 @@
+[
+  {
+    "kind": "Kustomization",
+    "name": "cluster-apps",
+    "namespace": "flux-system",
+    "path": "./kubernetes/apps",
+    "prune": true,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  },
+  {
+    "kind": "Kustomization",
+    "name": "prefixed-app",
+    "namespace": "one",
+    "path": "./kubernetes/apps/one/app/workload",
+    "prune": true,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "one",
+    "wait": false
+  }
+]

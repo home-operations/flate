@@ -138,7 +138,7 @@ spec:
 			declaration := resolution.object
 			assert.FatalIf(t, declaration == nil, "produced source lost its projected declaration")
 			assert.Equal(t, st.GetDeclaration(id) == nil, true)
-			for _, warning := range result.Admission.Warnings() {
+			for _, warning := range result.Admission.Warnings(st.Warnings()) {
 				assert.Equal(t, warning.Category == manifest.WarnBootstrapAliases, false)
 			}
 			for range 2 {
@@ -205,11 +205,12 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 					mutable: map[manifest.NamedResource]entryResolution{},
 				},
 			}
+			generatedSource := testGeneratedSync(t, parsed.Object).Objects[0]
 			id := application.Source
 			resolved, err := a.resolve(
 				t.Context(),
 				id,
-				&sourceRequest{object: application.Declaration, entry: true, projected: true},
+				&sourceRequest{object: generatedSource, entry: true, projected: true},
 			)
 			assert.NoError(t, err)
 			assert.Equal(t, resolved.artifact == nil, true)
@@ -238,7 +239,7 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 				}
 				for range 2 {
 					current, resolveErr := replacement.resolve(t.Context(), id, &sourceRequest{
-						object: application.Declaration, entry: true, projected: true, scoped: true,
+						object: generatedSource, entry: true, projected: true, scoped: true,
 					})
 					assert.NoError(t, resolveErr)
 					assert.Equal(t, current.entry, false)
@@ -269,7 +270,7 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 				replacement := &Admission{input: input, store: replacementStore, resolvedSources: a.resolvedSources}
 				current := replacement.classifySource(
 					id,
-					&sourceRequest{object: application.Declaration, projected: true},
+					&sourceRequest{object: generatedSource, projected: true},
 				)
 				assert.Equal(t, current.object == actual.Object, true)
 				assert.Equal(t, current.projected, false)
@@ -293,7 +294,7 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 				before, _ := staleStore.GetStatus(id)
 				assert.Equal(t, before.Status, store.StatusReady)
 				_, resolveErr = session.resolveEntrySource(t.Context(), admission, id, &entrySourceGroup{
-					object:    application.Declaration,
+					object:    generatedSource,
 					projected: true, scoped: true, required: true,
 					producers: []occurrenceKey{{identity: parsed.Object.Named(), object: parsed.Object}},
 				})
@@ -307,10 +308,10 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 				t.Parallel()
 				stale := &Admission{input: input, store: store.New(), resolvedSources: &entrySourcePublisher{
 					mutable: map[manifest.NamedResource]entryResolution{id: {
-						input: input, object: application.Declaration, entry: true, projected: true, artifact: input,
+						input: input, object: generatedSource, entry: true, projected: true, artifact: input,
 					}},
 				}}
-				current, resolveErr := stale.resolve(t.Context(), id, &sourceRequest{object: application.Declaration})
+				current, resolveErr := stale.resolve(t.Context(), id, &sourceRequest{object: generatedSource})
 				assert.NoError(t, resolveErr)
 				assert.Equal(t, current.entry, false)
 				assert.Equal(t, current.artifact == nil, true)
@@ -610,7 +611,7 @@ spec: {url: oci://registry.invalid/%s}
 		facts := d.loader.ProducerFacts(child.Obj).Occurrence
 		scope := rootScope{occurrences: []selection.OccurrenceFacts{facts}}
 		for _, name := range []string{"initial", "replacement"} {
-			_, _, producers := scope.source(manifest.NamedResource{
+			_, producers := scope.source(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: name,
 			})
 			assert.Equal(t, len(producers) == 1, name == content)
@@ -634,13 +635,20 @@ func TestPlan_ProjectionMaterialReplacement(t *testing.T) {
 	assert.NoError(t, err)
 	application, valid := manifest.ApplicationFor(parsed.Object)
 	assert.Equal(t, valid, true)
+	generation := testGeneratedSync(t, parsed.Object)
+	generatedSource := generation.Objects[0]
 	d.cfg.Store.AddObject(parsed.Object)
-	d.cfg.Store.AddObject(application.Declaration)
+	d.cfg.Store.AddObject(generatedSource)
 	d.loader.SourceRoot = root
-	occurrence := selection.OccurrenceFacts{Object: parsed.Object, Identity: parsed.Object.Named()}
-	scope := rootScope{occurrences: []selection.OccurrenceFacts{occurrence}}
+	occurrence := selection.OccurrenceFacts{Object: generation.Objects[1], Identity: generation.Objects[1].Named()}
+	scope := rootScope{occurrences: []selection.OccurrenceFacts{
+		occurrence, {Object: generatedSource, Identity: generatedSource.Named()},
+	}}
 	visit := rootVisit{occurrence: &occurrence, scope: &scope}
-	planner := entryPlanner{session: d, inputs: map[string]*store.SourceArtifact{root: input}}
+	planner := entryPlanner{
+		session: d, inputs: map[string]*store.SourceArtifact{root: input},
+		objects: map[occurrenceKey]store.Child{occurrenceIdentity(&scope.occurrences[1]): {Obj: generatedSource}},
+	}
 	for _, content := range []string{"initial", "replacement"} {
 		material := &store.SourceArtifact{LocalPath: sourceRoot, Content: content, FS: fstest.MapFS{
 			"payload/producer.yaml": {Data: fmt.Appendf(nil, `apiVersion: fluxcd.controlplane.io/v1
@@ -655,6 +663,7 @@ spec:
 `, content, content, content)},
 		}}
 		d.cfg.Store.SetArtifact(application.Source, material)
+		d.cfg.Store.UpdateStatus(application.Source, store.StatusInfo{Status: store.StatusReady})
 		children, followErr := planner.follow(t.Context(), &clusterRoot{}, &visit, false)
 		assert.NoError(t, followErr)
 		assert.FatalIf(t, len(children) != 1, "projected children: %+v", children)
@@ -663,7 +672,7 @@ spec:
 		assert.Equal(t, children[0].occurrence.Declaration.Source, material.LocalPath)
 		assert.Equal(t, children[0].occurrence.Declaration.File, "payload/producer.yaml")
 		for _, name := range []string{"initial", "replacement"} {
-			_, _, producers := children[0].scope.source(manifest.NamedResource{
+			_, producers := children[0].scope.source(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: name,
 			})
 			assert.Equal(t, len(producers) == 1, name == content)
@@ -700,8 +709,9 @@ func TestAdmission_ConstructionViewReuse(t *testing.T) {
 			assert.NoError(t, parseErr)
 			application, valid := manifest.ApplicationFor(parsed.Object)
 			assert.Equal(t, valid, true)
+			generatedSource := testGeneratedSync(t, parsed.Object).Objects[0]
 			_, resolveErr := d.resolveEntrySource(t.Context(), d.admission(), application.Source, &entrySourceGroup{
-				object: application.Declaration, entry: true, projected: true,
+				object: generatedSource, entry: true, projected: true,
 			})
 			assert.Equal(t, resolveErr == nil || errors.Is(resolveErr, errPendingSources), true)
 			assert.NoError(t, constructTestSources(t.Context(), d))
@@ -718,4 +728,12 @@ func TestAdmission_ConstructionViewReuse(t *testing.T) {
 		assert.Equal(t, first == previous, false)
 		previous = first
 	}
+}
+
+func testGeneratedSync(t *testing.T, object manifest.BaseManifest) manifest.Generation {
+	t.Helper()
+	generation, err := manifest.GeneratedObjects(object)
+	assert.NoError(t, err)
+	assert.Equal(t, len(generation.Objects), 2)
+	return generation
 }

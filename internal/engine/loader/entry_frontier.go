@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -84,6 +86,89 @@ func packageMayApply(visit *graphVisit) bool {
 		}
 		if _, local := kustomizeinput.Local(visit.root, visit.dir, ref.Path); !local {
 			return true
+		}
+	}
+	return false
+}
+
+// EntryPackageReached uses the source's resource graph to establish a descendant entry.
+func (l *Loader) EntryPackageReached(
+	input *store.SourceArtifact,
+	root string,
+	ks *manifest.Kustomization,
+	entry string,
+) bool {
+	return packageReached(input, l.packageResources(input, root, ks), entry)
+}
+
+func (l *Loader) packageResources(
+	input *store.SourceArtifact, root string, ks *manifest.Kustomization,
+) []graphVisit {
+	l.refreshSources(input)
+	l.ensureScopes()
+	visit := graphVisit{root: input.LocalPath, dir: manifest.NormalizeClaimBase(root), role: kustomizeinput.Resource}
+	resources := l.scopeWalk(&visit)
+	if ks != nil && len(ks.Components) != 0 {
+		return l.scopeComponents(&visit, resources, ks)
+	}
+	return resources
+}
+
+func packageReached(input *store.SourceArtifact, resources []graphVisit, entry string) bool {
+	for i := range resources {
+		resource := &resources[i]
+		if resource.reaches(input, entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *graphVisit) reaches(input *store.SourceArtifact, entry string) bool {
+	return v.role == kustomizeinput.Resource && v.edge == kustomizeinput.Resource && v.readable &&
+		safepath.Contains(entry, input.OriginPath(v.file))
+}
+
+// EnclosingPackages requires both a resource edge into the request and a declaration in the package.
+func (l *Loader) EnclosingPackages(
+	ctx context.Context, input *store.SourceArtifact, relative string, kind schema.GroupKind,
+) ([]string, error) {
+	var dirs []string
+	entry := input.OriginPath(filepath.Join(input.LocalPath, relative))
+	l.refreshSources(input)
+	reader := l.documents
+	reader.intent = manifest.IncidentalDocuments
+	reader.declarationsOnly, reader.skipDeclarations = true, false
+	for dir := relative; dir != "."; {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		dir = filepath.Dir(dir)
+		if reader.read(filepath.Join(input.LocalPath, dir)).body == nil {
+			continue
+		}
+		resources := l.packageResources(input, dir, nil)
+		if !packageReached(input, resources, entry) {
+			continue
+		}
+		if reader.packageDeclares(ctx, resources, kind) {
+			dirs = append(dirs, filepath.ToSlash(dir))
+		}
+	}
+	return dirs, ctx.Err()
+}
+
+func (r *documentReader) packageDeclares(ctx context.Context, resources []graphVisit, kind schema.GroupKind) bool {
+	for i := range resources {
+		resource := &resources[i]
+		if resource.role != kustomizeinput.Resource || !resource.readable || resource.document != nil {
+			continue
+		}
+		declarations, _ := r.completeFile(ctx, resource.file)
+		for id := range declarations.Objects {
+			if id.Group == kind.Group && id.Kind == kind.Kind {
+				return true
+			}
 		}
 	}
 	return false

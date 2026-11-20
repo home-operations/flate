@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -22,9 +23,9 @@ type configGenerator struct {
 	err     error
 }
 
-func (g *configGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
+func (g *configGenerator) GeneratedObjects() (manifest.Generation, error) {
 	g.calls.Add(1)
-	return g.objects, g.err
+	return manifest.Generation{Objects: g.objects}, g.err
 }
 
 func (g *configGenerator) GeneratedTargets() ([]manifest.ProducerTarget, error) {
@@ -497,5 +498,75 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 			"accepted replay did not restore readiness: %+v",
 			info,
 		)
+	}
+}
+
+func TestGeneratedObjects_EffectiveChildWithdrawal(t *testing.T) {
+	t.Parallel()
+	for _, version := range []struct{ flux, api, kind, field, prefix string }{
+		{"2.5.x", "v1beta2", manifest.KindOCIRepository, "url", "oci://"},
+		{"2.6.x", "v1", manifest.KindOCIRepository, "url", "oci://"},
+		{"2.5.x", "v1beta2", manifest.KindBucket, "endpoint", ""},
+		{"2.6.x", "v1", manifest.KindBucket, "endpoint", ""},
+	} {
+		t.Run(version.kind+"/"+version.flux, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			c := New(st, task.NewBounded(2))
+			parent := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			st.AddObject(parent)
+			instance := &manifest.RawObject{
+				Kind: "FluxInstance", APIVersion: manifest.FluxOperatorDomain + "/v1",
+				Name: "instance", Namespace: "apps",
+				Spec: map[string]any{
+					"distribution": map[string]any{"version": version.flux},
+					"sync": map[string]any{
+						"kind": version.kind, "url": version.prefix + "before.example.invalid",
+						"ref": "latest", "path": "./entry",
+					},
+					"kustomize": map[string]any{"patches": []any{
+						map[string]any{
+							"patch": "apiVersion: source.toolkit.fluxcd.io/" + version.api + "\nkind: " + version.kind + "\n" +
+								"metadata: {name: apps, namespace: apps}\nspec: {" + version.field + ": '" +
+								version.prefix + "after.example.invalid'}\n",
+						},
+					}},
+				},
+			}
+			run := newExecution(c, parent.Named())
+			defer run.Close()
+			err := run.Emit(t.Context(), parent.Named(), &store.Emission{
+				Children: []store.Child{{Obj: instance}}, Complete: true,
+			}, nil)
+			assert.NoError(t, err)
+			id := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: version.kind,
+				Name: "apps", Namespace: "apps",
+			}
+			child, doc, sourceEmission := st.GetEmission(id)
+			sourceEmission.Finish()
+			assert.FatalIf(t, child == nil, "generated source %s missing", id)
+			assert.Equal(t, child.Named(), id)
+			spec, ok := doc["spec"].(map[string]any)
+			assert.FatalIf(t, !ok, "generated source document = %v", doc)
+			assert.Equal(t, spec[version.field], any(version.prefix+"after.example.invalid"))
+			assert.Equal(t, manifest.DocAPIVersion(doc), manifest.SourceDomain+"/"+version.api)
+			assert.Equal(t, st.EmissionOwner(id), parent.Named())
+			syncRoot := testutil.KustomizationID("apps", "apps")
+			_, rootDocument, rootEmission := st.GetEmission(syncRoot)
+			rootEmission.Finish()
+			assert.Equal(t, rootDocument["kind"], any(manifest.KindKustomization))
+			assert.Equal(t, st.EmissionOwner(syncRoot), parent.Named())
+
+			err = run.Emit(t.Context(), parent.Named(), &store.Emission{}, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, st.GetDeclaration(id) != nil, true)
+			assert.Equal(t, st.GetDeclaration(syncRoot) != nil, true)
+
+			err = run.Emit(t.Context(), parent.Named(), &store.Emission{Complete: true}, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, st.GetDeclaration(id), nil)
+			assert.Equal(t, st.GetDeclaration(syncRoot), nil)
+		})
 	}
 }

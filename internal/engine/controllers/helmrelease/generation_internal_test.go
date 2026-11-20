@@ -81,12 +81,17 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	admissiontest.Commit(t, filterLoader.Options.Session, nil)
 	filter := filterLoader.Options.Session
 	c, st := newTestController(t, filterLoader)
+	var recording manifest.WorkRecorder
+	recording.Init(&manifest.WorkKey{Source: manifest.BootstrapSourceID}, manifest.WorkScope{})
+	st.SetWorkTree(recording.Key.Tree, recording.Scope())
+	var previous schedule.Result
 	reconcile := func(level manifest.DrainLevel) *base.Execution {
 		var run *base.Execution
 		c.Tasks.Go(t.Context(), "release", func(ctx context.Context) {
-			run = c.ReconcileNode(ctx, hr.Named(), level, schedule.Result{})
+			run = c.ReconcileNode(ctx, hr.Named(), level, previous)
 		})
 		c.Tasks.BlockTillDone()
+		previous.Assessment = run
 		return run
 	}
 	st.AddObject(hr)
@@ -148,6 +153,16 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady})
 	second := reconcile(manifest.DrainNone)
 	defer second.Close()
+	var preparations uint64
+	work := st.WorkSnapshot()
+	for i := range work {
+		record := &work[i]
+		if record.Key.Owner == hr.Named() && record.Key.Phase == manifest.WorkPreparation &&
+			record.Key.Input == "generation" {
+			preparations += record.Counts.OwnerPrepares
+		}
+	}
+	assert.Equal(t, preparations, uint64(1))
 	{
 		info, _ := st.GetStatus(hr.Named())
 		assert.FatalIf(t, info.Status != store.StatusReady, "render after source arrival: %+v", info)

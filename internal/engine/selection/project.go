@@ -51,16 +51,7 @@ func Project(
 	if !complete {
 		runErr = incompleteSelectionError(runs, runErr)
 	}
-	sides := make([]selectionSide, len(runs))
-	for i := range runs {
-		run := &runs[i]
-		sides[i].run, sides[i].request = *run, request
-		if run.Facts != nil && run.Store != nil {
-			sides[i].reads.Init(run.Store, manifest.BootstrapSourceID, nil)
-		}
-		sides[i].run.CollectEmissions()
-		sides[i].prepareNamespaces(roots[0].Namespace, run)
-	}
+	sides := prepareProjectionSides(runs, request)
 	defer func() {
 		for i := range sides {
 			if sides[i].run.Facts != nil && sides[i].run.Store != nil {
@@ -195,7 +186,13 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	if s.run.Index != nil {
 		s.result.ProducerKeys = s.run.Index.ProducerKeys
 	}
-	c := selectionCollection{side: s, intent: Request{Roots: roots}, labels: labels, other: other}
+	c := selectionCollection{
+		side:   s,
+		intent: Request{Roots: roots},
+		labels: labels,
+		other:  other,
+		scope:  s.run.entryScope(),
+	}
 	c.collectObjects()
 	return c.collectBatches()
 }
@@ -206,6 +203,7 @@ type selectionCollection struct {
 	labels   map[string]string
 	other    *selectionSide
 	emitters []manifest.BaseManifest
+	scope    map[manifest.NamedResource]bool
 }
 
 func (c *selectionCollection) collectObjects() {
@@ -236,7 +234,7 @@ func (c *selectionCollection) rootObjects(root manifest.NamedResource) []manifes
 func (c *selectionCollection) collectObject(root manifest.NamedResource, obj manifest.BaseManifest) {
 	s := c.side
 	id := obj.Named()
-	if !s.run.Store.Policy(id).Report && !id.ReportHidden() {
+	if c.scope != nil && !c.scope[id] || !s.run.Store.Policy(id).Report && !id.ReportHidden() {
 		return
 	}
 	if c.other != nil {
@@ -255,7 +253,7 @@ func (c *selectionCollection) collectObject(root manifest.NamedResource, obj man
 		}
 		return
 	}
-	if !s.selectedObject(obj) {
+	if !s.selectedObject(obj, c.counterpart()) {
 		return
 	}
 	s.result.Counts[root.Kind]++
@@ -272,13 +270,19 @@ func (c *selectionCollection) collectObject(root manifest.NamedResource, obj man
 	}
 }
 
-func (s *selectionSide) selectedObject(obj manifest.BaseManifest) bool {
+func (c *selectionCollection) counterpart() *Snapshot {
+	if c.other == nil {
+		return nil
+	}
+	return &c.other.run
+}
+
+func (s *selectionSide) selectedObject(obj manifest.BaseManifest, other *Snapshot) bool {
 	id := obj.Named()
 	if !s.run.Decision.restricted() || manifest.KindOf(obj).Discovery {
 		return true
 	}
-	selected := s.run.Decision.Output(id)
-	if selected || s.run.Store.GetObject(id) == nil {
+	if s.run.outputsProducer(id, other) || s.run.Store.GetObject(id) == nil {
 		return true
 	}
 	parent, owned := s.run.Store.Parent(id, s.run.Index)
@@ -301,21 +305,26 @@ func (c *selectionCollection) collectBatches() error {
 	if len(s.run.Manifests) != 0 {
 		s.result.Manifests = make([]manifest.DocumentBatch, 0, len(s.result.Objects)+1)
 	}
+	var selectedOwners batchOwners
 	for _, objects := range [2][]manifest.BaseManifest{s.result.Objects, c.emitters} {
 		for _, obj := range objects {
 			i, ok := positions[obj.Named()]
 			if !ok {
 				continue
 			}
-			batch := batchSelection{collection: c, object: obj, batch: s.run.Manifests[i]}
+			batch := batchSelection{
+				collection: c, object: obj, batch: s.run.Manifests[i], owners: s.run.owners[obj.Named()],
+			}
 			if err := batch.selectDocuments(scoped); err != nil {
 				return err
 			}
 			if len(batch.batch.Documents) != 0 {
 				s.result.Manifests = append(s.result.Manifests, batch.batch)
+				selectedOwners.set(obj.Named(), batch.owners)
 			}
 		}
 	}
+	s.result.Manifests = collapseOverlaps(s.result.Manifests, selectedOwners)
 	return nil
 }
 
@@ -323,6 +332,7 @@ type batchSelection struct {
 	collection       *selectionCollection
 	object           manifest.BaseManifest
 	batch            manifest.DocumentBatch
+	owners           documentOwners
 	counterpart      *manifest.DocumentBatch
 	counterpartKnown bool
 }
@@ -374,24 +384,22 @@ func (b *batchSelection) selectDocuments(scoped bool) error {
 		return b.selectScopedDocuments(scoped, identity)
 	}
 	s := b.collection.side
-	if !s.run.Decision.restricted() || s.run.Decision.Output(b.object.Named()) {
+	if !s.run.Decision.restricted() || s.run.outputsProducer(b.object.Named(), b.collection.counterpart()) {
 		return nil
 	}
-	documents := []map[string]any{}
-	identities := []manifest.NamedResource{}
-	for i, doc := range b.batch.Documents {
+	documents, owners := b.batch.Documents, b.owners
+	b.batch.Documents, b.batch.Identities, b.owners = nil, nil, nil
+	for i, doc := range documents {
 		id := identity(i)
 		selected, selectionErr := b.selectedOutput(id)
 		if selectionErr != nil {
 			return selectionErr
 		}
 		if selected {
-			documents = append(documents, doc)
-			identities = append(identities, id)
+			owner := owners[i]
+			b.keepDocument(doc, id, &owner)
 		}
 	}
-	b.batch.Documents = documents
-	b.batch.Identities = identities
 	return nil
 }
 
@@ -399,9 +407,8 @@ func (b *batchSelection) selectScopedDocuments(scoped bool, identity func(int) m
 	s, other := b.collection.side, b.collection.other
 	compared := other == nil || other.run.Absent ||
 		other.run.Decision.Reconcile(other.actualProducer(s.comparisonKey(b.object.Named())))
-	documents := b.batch.Documents
-	b.batch.Documents = nil
-	b.batch.Identities = nil
+	documents, owners := b.batch.Documents, b.owners
+	b.batch.Documents, b.batch.Identities, b.owners = nil, nil, nil
 	for i, doc := range documents {
 		id := identity(i)
 		included, err := b.scopeIncludes(id)
@@ -425,11 +432,17 @@ func (b *batchSelection) selectScopedDocuments(scoped bool, identity func(int) m
 			selected = selectOutput(doc, b.collection.intent.Roots, other.namespaces, b.collection.labels)
 		}
 		if selected {
-			b.batch.Documents = append(b.batch.Documents, doc)
-			b.batch.Identities = append(b.batch.Identities, id)
+			owner := owners[i]
+			b.keepDocument(doc, id, &owner)
 		}
 	}
 	return nil
+}
+
+func (b *batchSelection) keepDocument(doc map[string]any, id manifest.NamedResource, owner *documentOwner) {
+	b.owners.record(len(b.batch.Documents), owner)
+	b.batch.Documents = append(b.batch.Documents, doc)
+	b.batch.Identities = append(b.batch.Identities, id)
 }
 
 func (b *batchSelection) declarationSelected(id manifest.NamedResource, compared bool) (bool, error) {

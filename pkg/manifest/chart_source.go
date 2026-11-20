@@ -156,10 +156,10 @@ func (h *HelmRelease) ResolveChartSource(lookup func(NamedResource) BaseManifest
 }
 
 // GeneratedObjects MUST leave the release immutable.
-func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
+func (h *HelmRelease) GeneratedObjects() (Generation, error) {
 	template, id, err := h.generatedTemplate()
 	if err != nil || template == nil {
-		return nil, err
+		return Generation{}, err
 	}
 	template = template.DeepCopy()
 	metadata := metav1.ObjectMeta{Name: id.Name, Namespace: id.Namespace}
@@ -212,7 +212,7 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
 		object = generated
 	}
-	return []BaseManifest{object}, nil
+	return Generation{Objects: []BaseManifest{object}}, nil
 }
 
 // GeneratedTargets MUST NOT construct full auxiliary objects.

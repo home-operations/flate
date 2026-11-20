@@ -120,7 +120,7 @@ func (sh *shard) policyLocked(id manifest.NamedResource) manifest.DeclarationPol
 //nolint:gocritic // The value receiver supports literal declarations before store admission.
 func (c Child) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
 	policy := c.Origin.Policy(id, c.Obj)
-	policy.Report = policy.Report && !c.Generated
+	policy.Report = policy.Report && (!c.Generated || c.VisibleGeneration)
 	return policy
 }
 

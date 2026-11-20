@@ -278,9 +278,22 @@ func (e *getFormatExpectation) assertDocuments(t *testing.T, out string, kinds [
 
 	groups := decodeGetDocuments(t, out, e.format, e.clusters)
 	for i, group := range groups {
-		assert.Equal(t, len(group.Documents), len(kinds))
+		documents := group.Documents
+		if kinds[0] == "Kustomization" {
+			assert.FatalIf(t, len(documents) == 0, "cluster %s has no sync root", group.Cluster)
+			root := documents[0]
+			assert.Equal(t, root["kind"], any("Kustomization"))
+			assert.Equal(t, root["name"], any("cluster"))
+			assert.Equal(t, root["path"], any("./"+e.clusters[i]))
+			assert.Equal(t, root["prune"], any(true))
+			assert.Diff(t, root["sourceRef"], map[string]any{
+				"kind": "GitRepository", "name": "cluster", "namespace": "flux-system",
+			})
+			documents = documents[1:]
+		}
+		assert.FatalIf(t, len(documents) != len(kinds), "cluster %s documents = %v", group.Cluster, documents)
 		for j, kind := range kinds {
-			doc := group.Documents[j]
+			doc := documents[j]
 			assert.Equal(t, doc["kind"], any(kind))
 			assert.Equal(t, doc["name"], any("shared"))
 			assert.Diff(
@@ -330,9 +343,9 @@ func (e *getFormatExpectation) header(kind string, j int) string {
 	}
 	if kind == "Kustomization" {
 		if all {
-			expected.WriteString("NAMESPACE      NAME                    PATH\n")
+			expected.WriteString("NAMESPACE      NAME                     PATH\n")
 		} else {
-			expected.WriteString("NAMESPACE      NAME      PATH\n")
+			expected.WriteString("NAMESPACE      NAME       PATH\n")
 		}
 		return expected.String()
 	}
@@ -351,6 +364,11 @@ func (e *getFormatExpectation) rows(kind string) string {
 	all := e.command == "get" || e.command == "get all"
 
 	for _, cluster := range e.clusters {
+		if kind == "Kustomization" {
+			expected.WriteString(e.kustomizationRow(cluster, "cluster", "./"+cluster, all))
+			expected.WriteString(e.kustomizationRow(cluster, "shared", "./"+cluster+"/app", all))
+			continue
+		}
 		name := "shared"
 		if all {
 			name = kind + "/" + name
@@ -365,19 +383,30 @@ func (e *getFormatExpectation) rows(kind string) string {
 		if len(e.clusters) == 2 {
 			fmt.Fprintf(&expected, "%-11s", cluster)
 		}
-		if kind == "Kustomization" {
-			fmt.Fprintf(&expected, "flux-system    %-*s./%s/app\n",
-				map[bool]int{false: 10, true: 24}[all],
-				name,
-				cluster)
-		} else {
-			fmt.Fprintf(
-				&expected,
-				"apps         %-*sflux-system-flux-system/./charts/app    0.1.0      flux-system\n",
-				map[bool]int{false: 10, true: 22}[all],
-				name,
-			)
-		}
+		fmt.Fprintf(
+			&expected,
+			"apps         %-*sflux-system-flux-system/./charts/app    0.1.0      flux-system\n",
+			map[bool]int{false: 10, true: 22}[all],
+			name,
+		)
 	}
 	return expected.String()
+}
+
+func (e *getFormatExpectation) kustomizationRow(cluster, name, path string, all bool) string {
+	if all {
+		name = "Kustomization/" + name
+	}
+	prefix := ""
+	if len(e.clusters) == 2 {
+		if e.format == "name" {
+			prefix = cluster + ":"
+		} else {
+			prefix = fmt.Sprintf("%-11s", cluster)
+		}
+	}
+	if e.format == "name" {
+		return prefix + name + "\n"
+	}
+	return fmt.Sprintf("%sflux-system    %-*s%s\n", prefix, map[bool]int{false: 11, true: 25}[all], name, path)
 }

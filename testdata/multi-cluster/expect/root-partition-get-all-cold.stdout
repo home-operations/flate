@@ -1,3 +1,6 @@
+main:Kustomization/cluster
 main:Kustomization/shared
+test:Kustomization/cluster
 test:Kustomization/shared
+utility:Kustomization/cluster
 utility:Kustomization/shared

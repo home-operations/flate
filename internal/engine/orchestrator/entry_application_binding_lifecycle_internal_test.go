@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	kustomizationctrl "github.com/home-operations/flate/internal/engine/controllers/kustomization"
+	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -55,6 +56,56 @@ func TestRender_EntryApplicationBindingLifecycle(t *testing.T) {
 			warnings[i].Category == manifest.WarnConflictingProducers,
 			"withdrawal retained a stale binding advisory",
 		)
+	}
+}
+
+//nolint:paralleltest // Orchestrator setup changes process-global source policy.
+func TestAcceptEntry_UsesSupportOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		retain bool
+	}{
+		{"current support descends from previous entry", true},
+		{"only the receipt owner descends from previous entry", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := newBindingLifecycleFixture(t).orchestrator
+			assert.NoError(t, o.bootstrap(t.Context()))
+			producer := o.entryBinding.Producer
+			previous := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "./former", manifest.NamedResource{})
+			o.store.AddObject(previous)
+			support := &manifest.ConfigMap{Name: "support", Namespace: "apps"}
+			receipt := &manifest.ConfigMap{Name: "receipt", Namespace: "apps"}
+			child := receipt
+			if tc.retain {
+				child = support
+			}
+			o.store.RecordEmitted(previous.Named(), &store.Emission{
+				Children: []store.Child{{Obj: child}}, Complete: true,
+			}, nil)
+			parent, found := o.store.Parent(child.Named(), o.index)
+			assert.FatalIf(
+				t,
+				!found || parent != previous.Named(),
+				"missing previous producer relation for %s",
+				child.Named(),
+			)
+
+			o.admission.AddApplication(o.store, o.store.GetDeclaration(producer))
+			_, binding, err := o.admission.BindEntry(t.Context(), o.store)
+			assert.NoError(t, err)
+			assert.FatalIf(t, binding.Reads == nil || binding.Producer != producer, "entry proposal = %v", binding)
+			defer binding.Reads.ReleaseCapture()
+			defer o.store.Retire(binding.Reads)
+			binding.Entry = &kustomize.EntryEvidence{Owner: receipt.Named()}
+			binding.SupportOwner = support.Named()
+			o.entryBinding.Producer = previous.Named()
+
+			accepted, err := o.acceptEntry(t.Context(), &binding)
+			assert.NoError(t, err)
+			assert.Equal(t, accepted, true)
+			assert.Equal(t, o.store.GetDeclaration(previous.Named()) != nil, tc.retain)
+		})
 	}
 }
 

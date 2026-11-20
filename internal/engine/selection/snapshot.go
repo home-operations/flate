@@ -2,6 +2,7 @@ package selection
 
 import (
 	"maps"
+	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -16,13 +17,17 @@ type projectionFacts interface {
 
 // EntryIdentity MUST retain both the physical producer and its comparison key.
 type EntryIdentity struct {
-	Producer, Key manifest.NamedResource
+	Producer, Key, Source manifest.NamedResource
+	Descendant            string
+	Documents             map[manifest.NamedResource]struct{}
 }
 
-// DocumentFact MUST preserve the emitter's identity before document projection.
+// DocumentFact MUST preserve the accepted child identity for producer conflicts.
 type DocumentFact struct {
-	Document map[string]any
-	Identity manifest.NamedResource
+	Document         map[string]any
+	Identity         manifest.NamedResource
+	Child            manifest.NamedResource
+	GeneratedOverlap bool
 }
 
 // EmissionFacts MUST retain actual emitter and reporting parent separately.
@@ -41,6 +46,7 @@ type Snapshot struct {
 	Entry            EntryIdentity
 	Emissions        []EmissionFacts
 	Manifests        []manifest.DocumentBatch
+	owners           batchOwners
 	Failed           map[manifest.NamedResource]store.StatusInfo
 	Blocked          map[manifest.NamedResource][]manifest.NamedResource
 	Warnings         []manifest.Warning
@@ -56,20 +62,32 @@ type Snapshot struct {
 func (d *Decision) restricted() bool { return d != nil && !d.unrestricted }
 
 // CollectEmissions applies committed membership without mutating the captured emission facts.
-func (s *Snapshot) CollectEmissions() {
+func (s *Snapshot) CollectEmissions(other *Snapshot) {
+	s.collectEmissions(other)
+	s.Manifests = collapseOverlaps(s.Manifests, s.owners)
+}
+
+func (s *Snapshot) collectEmissions(other *Snapshot) {
 	if s.Emissions == nil {
 		return
 	}
+	s.owners = nil
 	s.Manifests = make([]manifest.DocumentBatch, 0, len(s.Emissions))
 	positions := make(map[manifest.NamedResource]int, len(s.Emissions))
+	scope := s.entryScope()
 	for _, emission := range s.Emissions {
 		id := emission.Emitter.Named()
 		var documentScope bool
 		if manifest.KindOf(emission.Emitter).Parent {
 			documentScope = emission.Emitter.EmissionPolicy().DocumentScope
 		}
-		for _, document := range emission.Documents {
-			if !documentScope && !s.Decision.Output(id) && !s.Decision.Reconcile(document.Identity) {
+		output := s.outputsProducer(id, other)
+		for i := range emission.Documents {
+			document := &emission.Documents[i]
+			if scope != nil && !s.entryIncludesDocument(scope, id, document) {
+				continue
+			}
+			if !documentScope && !output && !s.Decision.Reconcile(document.Identity) {
 				continue
 			}
 			parent := emission.Parent.Named()
@@ -79,10 +97,98 @@ func (s *Snapshot) CollectEmissions() {
 				positions[parent] = position
 				s.Manifests = append(s.Manifests, manifest.DocumentBatch{Parent: emission.Parent})
 			}
+			s.owners.record(parent, id, len(s.Manifests[position].Documents), document)
 			s.Manifests[position].Documents = append(s.Manifests[position].Documents, document.Document)
 			s.Manifests[position].Identities = append(s.Manifests[position].Identities, document.Identity)
 		}
 	}
+}
+
+func (s *Snapshot) entryScope() map[manifest.NamedResource]bool {
+	if s.Entry.Descendant == "" {
+		return nil
+	}
+	scope := map[manifest.NamedResource]bool{s.Entry.Producer: true}
+	frontier := s.entryDocumentChildren(scope)
+	for id, record := range s.Index.Files() { //nolint:gocritic // The index yields immutable record snapshots.
+		inEntry := slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+			entrySource := p.Source == s.Entry.Source || p.Source == manifest.BootstrapSourceID
+			return entrySource && p.File != "" && containsPath(s.Entry.Descendant, filepath.FromSlash(p.File))
+		})
+		if inEntry && !scope[id] {
+			scope[id] = true
+			frontier = append(frontier, id)
+		}
+	}
+	children := s.childrenByParent()
+	for i := 0; i < len(frontier); i++ {
+		for _, id := range children[frontier[i]] {
+			if id != s.Entry.Producer && !scope[id] {
+				scope[id] = true
+				frontier = append(frontier, id)
+			}
+		}
+	}
+	return scope
+}
+
+func (s *Snapshot) entryIncludesDocument(
+	scope map[manifest.NamedResource]bool,
+	emitter manifest.NamedResource,
+	doc *DocumentFact,
+) bool {
+	if emitter == s.Entry.Producer {
+		_, inEntry := s.Entry.Documents[doc.Identity]
+		return inEntry
+	}
+	return scope[emitter] || scope[doc.Identity]
+}
+
+func (s *Snapshot) entryDocumentChildren(scope map[manifest.NamedResource]bool) []manifest.NamedResource {
+	i := slices.IndexFunc(s.Emissions, func(e EmissionFacts) bool { return e.Emitter.Named() == s.Entry.Producer })
+	if i < 0 {
+		return nil
+	}
+	var children []manifest.NamedResource
+	docs := s.Emissions[i].Documents
+	for j := range docs {
+		doc := &docs[j]
+		child := doc.Child
+		_, inEntry := s.Entry.Documents[doc.Identity]
+		if inEntry && child != (manifest.NamedResource{}) && !scope[child] &&
+			s.Store.EmissionOwner(child) == s.Entry.Producer {
+			scope[child] = true
+			children = append(children, child)
+		}
+	}
+	return children
+}
+
+// Both sides MUST project completed output when either side selects the same producer.
+func (s *Snapshot) outputsProducer(id manifest.NamedResource, other *Snapshot) bool {
+	if s.Decision.Output(id) {
+		return true
+	}
+	return other != nil && !other.Absent && s.Decision.Reconcile(id) && other.Decision.Output(id)
+}
+
+func prepareProjectionSides(runs []Snapshot, request Request) []selectionSide {
+	sides := make([]selectionSide, len(runs))
+	for i := range runs {
+		run := &runs[i]
+		sides[i].run, sides[i].request = *run, request
+		if run.Facts != nil && run.Store != nil {
+			sides[i].reads.Init(run.Store, manifest.BootstrapSourceID, nil)
+		}
+		sides[i].prepareNamespaces(request.Roots[0].Namespace, run)
+	}
+	if len(runs) == comparisonSides {
+		sides[0].run.collectEmissions(&runs[1])
+		sides[1].run.collectEmissions(&runs[0])
+	} else {
+		sides[0].run.collectEmissions(nil)
+	}
+	return sides
 }
 
 func (s *Snapshot) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {

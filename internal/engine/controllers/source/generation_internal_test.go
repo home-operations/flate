@@ -17,10 +17,10 @@ import (
 
 type sourceGenerator struct{ *manifest.GitRepository }
 
-func (g *sourceGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
-	return []manifest.BaseManifest{
+func (g *sourceGenerator) GeneratedObjects() (manifest.Generation, error) {
+	return manifest.Generation{Objects: []manifest.BaseManifest{
 		&manifest.ConfigMap{Name: "source-info", Namespace: g.Namespace, Data: map[string]any{"url": g.URL}},
-	}, nil
+	}}, nil
 }
 
 func (g *sourceGenerator) GeneratedTargets() ([]manifest.ProducerTarget, error) {

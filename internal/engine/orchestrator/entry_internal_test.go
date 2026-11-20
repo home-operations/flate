@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -221,6 +222,8 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 			incomplete: (*(*tailCaseInput.testCaseInput)) == "incomplete_inputs",
 		}
 		o.src.Fetchers[manifest.KindOCIRepository] = fetcher
+		warmNested := run == 1 && persistent && **tailCaseInput.testCaseInput == "nested_unchanged"
+		rebindNested := observeWarmNestedBindings(t, o, applier, warmNested)
 		assert.NoError(t, o.bootstrap(t.Context()))
 		id := testutil.HelmReleaseID("apps", "generator")
 		calls, admitted := map[manifest.NamedResource]*atomic.Int64{
@@ -228,12 +231,13 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		}, map[manifest.NamedResource]*atomic.Int64{
 			id: {},
 		}
+		nested := testutil.HelmReleaseID("apps", "nested")
 		if *tailCaseInput.nested {
-			nested := testutil.HelmReleaseID("apps", "nested")
 			calls[nested], admitted[nested] = new(atomic.Int64), new(atomic.Int64)
 		}
 		o.controllers.HelmRelease = countedNodeController{o.hrc, calls, admitted}
 		assert.NoError(t, o.run(t.Context()))
+		rebindNested()
 		entryApplicationWorkResult1 := entryApplicationWork(t, &logs)
 		renders, reused := entryApplicationWorkResult1.renders, entryApplicationWorkResult1.reused
 		slog.SetDefault(previous)
@@ -265,6 +269,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 			wantReuse = 1
 		}
 		assert.Equal(t, reused, wantReuse)
+		tailCaseInput.assertNestedAdmissions(t, admitted[nested], run, persistent)
 		t.Logf(
 			"run=%d declaration=%t renders=%d fetches=%d admissions=%d reused=%d persist=%t",
 			run, (*tailCaseInput.declaration), renders,
@@ -327,16 +332,21 @@ func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) assertE
 	t *testing.T, o *Orchestrator, applier string, logs *bytes.Buffer,
 ) {
 	t.Helper()
-	assert.Equal(
-		t,
-		o.diagnostic(o.entryBinding.Producer).Resource,
-		manifest.NamedResource{
-			Group:     manifest.FluxOperatorDomain,
-			Kind:      "FluxInstance",
-			Namespace: "apps",
-			Name:      applier,
-		},
-	)
+	instance := manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain, Kind: "FluxInstance",
+		Namespace: "apps", Name: applier,
+	}
+	assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "self"))
+	assert.Equal(t, slices.ContainsFunc(o.store.Productions(o.entryBinding.Producer, o.index),
+		func(production manifest.Production) bool { return production.Declaration == instance }), true)
+	owner := testutil.HelmReleaseID("apps", "generator")
+	if *i.nested {
+		owner = testutil.HelmReleaseID("apps", "nested")
+	}
+	assert.Equal(t, slices.ContainsFunc(o.store.Productions(o.entryBinding.Producer, nil),
+		func(production manifest.Production) bool {
+			return production.Declaration == instance && production.Owner == owner
+		}), true)
 	_, _, output := o.store.GetEmission(o.entryBinding.Producer)
 	found := false
 	for _, occurrence := range output.Manifests {
@@ -356,6 +366,77 @@ func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) assertE
 	assert.Equal(t, o.entryBinding.Entry == nil, (*(*i.testCaseInput)) == "incomplete_inputs")
 	if o.entryBinding.Entry == nil && (*(*i.testCaseInput)) != "incomplete_inputs" {
 		t.Log(logs.String())
+	}
+}
+
+type entryAcceptanceHandler struct {
+	slog.Handler
+
+	observe func()
+}
+
+//nolint:gocritic // slog.Handler takes a record by value.
+func (h entryAcceptanceHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == "orchestrator: entry accepted" {
+		h.observe()
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func observeWarmNestedBindings(t *testing.T, o *Orchestrator, applier string, enabled bool) func() {
+	t.Helper()
+	if !enabled {
+		return func() {}
+	}
+	acceptances := 0
+	slog.SetDefault(slog.New(entryAcceptanceHandler{
+		Handler: slog.Default().Handler(),
+		observe: func() {
+			acceptances++
+			assertWarmNestedBinding(t, o, applier)
+		},
+	}))
+	return func() {
+		assert.Equal(t, acceptances, 1)
+		producer := o.entryBinding.Producer
+		o.admission.AddApplication(o.store, o.store.GetDeclaration(producer))
+		accepted, err := o.admitEntry(t.Context())
+		assert.NoError(t, err)
+		assert.Equal(t, accepted, true)
+		assert.Equal(t, acceptances, 2)
+	}
+}
+
+func assertWarmNestedBinding(t *testing.T, o *Orchestrator, applier string) {
+	t.Helper()
+	binding := o.entryBinding
+	owner := testutil.HelmReleaseID("apps", "nested")
+	instance := manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: applier,
+	}
+	assert.Equal(t, binding.Producer, testutil.KustomizationID("apps", "self"))
+	assert.Equal(t, binding.SupportOwner, owner)
+	assert.ErrorIf(
+		t,
+		binding.Entry == nil || binding.Entry.Receipt == nil,
+		"warm binding to %s lost its receipt",
+		binding.Producer,
+	)
+	assert.Equal(t, slices.ContainsFunc(o.store.Productions(binding.Producer, nil), func(p manifest.Production) bool {
+		return p.Owner == owner && p.Declaration == instance
+	}), true)
+}
+
+func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) assertNestedAdmissions(
+	t *testing.T, admitted *atomic.Int64, run int, persistent bool,
+) {
+	t.Helper()
+	if admitted == nil {
+		return
+	}
+	t.Logf("run=%d nested admissions=%d", run, admitted.Load())
+	if run == 1 && *(*i.testCaseInput) == "nested_unchanged" && persistent {
+		assert.Equal(t, admitted.Load(), int64(0))
 	}
 }
 

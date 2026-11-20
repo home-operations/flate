@@ -244,6 +244,49 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	assert.ErrorIf(t, st.GetObject(child) != nil, "%v", "graph-owned sibling bypassed per-document admission")
 }
 
+func TestPromoteOrphans_IndexedParentReachesChild(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, builder string
+		owned         bool
+	}{
+		{"direct", "resources: [shared/child.yaml]\n", true},
+		{"component", "components: [shared]\n", false},
+		{"direct and component", "components: [shared]\nresources: [shared/child.yaml]\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", tc.builder)
+			testutil.WriteFile(t, root, "apps/shared/kustomization.yaml", "kind: Component\nresources: [child.yaml]\n")
+			testutil.WriteFile(t, root, "apps/shared/child.yaml", testutil.KustomizationYAML(
+				"child", "apps", "  path: ./workload/${CLUSTER}\n",
+			))
+			st := store.New()
+			admitForTest(st, root)
+			l := New(st)
+			defer l.Close()
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+			parent := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "./apps"}
+			st.AddObject(parent)
+			child := testutil.KustomizationID("apps", "child")
+			st.DeleteObject(child)
+			file := filepath.Join(root, "apps", "shared", "child.yaml")
+			doc := l.documents.cache[file]
+			doc.eligible = selection.RootIndependent
+			l.documents.cache[file] = doc
+			l.Index.Records[child] = manifest.DiscoveryRecord{
+				Authored: child, Path: file, File: "apps/shared/child.yaml", Parent: parent.Named(),
+			}
+			assert.NoError(t, l.PromoteOrphans(t.Context()))
+			assert.Equal(t, st.GetDeclaration(child) == nil, tc.owned)
+		})
+	}
+}
+
 type testPromoteOrphansIndexedEvidenceCaseInputs struct {
 	input     *fstest.MapFS
 	x         *manifest.NamedResource

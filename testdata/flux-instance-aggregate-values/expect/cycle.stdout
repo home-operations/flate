@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "marker": "middle"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "flux-instance",
+        "helm.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "witness",
+      "namespace": "flux-system"
+    }
+  }
+]

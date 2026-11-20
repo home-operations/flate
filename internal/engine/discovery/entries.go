@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
 
@@ -35,12 +37,16 @@ type Entry struct {
 }
 
 type entryInputs struct {
-	input       store.SourceArtifact
-	parsed      *loader.ParsedInputs
-	aliasViews  map[string]*store.SourceArtifact
-	sources     map[manifest.NamedResource]entryResolution
-	projections *manifest.ProducerProjections
-	packages    []*plannedPackage
+	input             store.SourceArtifact
+	parsed            *loader.ParsedInputs
+	aliasViews        map[string]*store.SourceArtifact
+	sources           map[manifest.NamedResource]entryResolution
+	projections       *manifest.ProducerProjections
+	publicOperands    []manifest.NamedResource
+	packagesToQualify [][]selection.OccurrenceFacts
+	enclosing         []string
+	packages          []*plannedPackage
+	unknown           bool
 }
 
 func (e *Entry) matches(input *store.SourceArtifact, scan string) bool {
@@ -121,15 +127,24 @@ func (p *entryInputs) merge(root *clusterRoot) {
 func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []clusterRoot) error {
 	input := d.cfg.Input
 	prepared := &entryInputs{input: *input, projections: d.cfg.Projections}
-	var scope *rootScope
-	for _, j := range entry.roots {
-		root := &roots[j]
-		scope = &rootScope{occurrences: root.Occurrences, parent: scope}
-		prepared.merge(root)
+	if entry.aggregate {
+		prepared.unknown = aggregateRequiresBuild(entry, d.packages)
+	}
+	relative, err := filepath.Rel(input.LocalPath, entry.Path)
+	if err != nil {
+		return fmt.Errorf("entry path: %w", err)
+	}
+	scope := prepared.collectEntryOperands(entry, roots, filepath.ToSlash(relative))
+	if relative != "." && d.cfg.Trees != nil {
+		generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
+		prepared.enclosing, err = d.loader.EnclosingPackages(ctx, input, relative, generator)
+		if err != nil {
+			return err
+		}
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(prepared.sources), manifest.NamedResource.Compare) {
 		resolution := prepared.sources[id]
-		_, projected, producers := scope.source(id)
+		_, producers := scope.source(id)
 		if len(producers) == 0 {
 			continue
 		}
@@ -137,13 +152,9 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 		if resolution.synthetic {
 			object = nil
 		}
-		projection := object == nil && projected != nil
-		if projection {
-			object = projected
-		}
 		resolved, resolveErr := d.admission().resolve(ctx, id, &sourceRequest{
 			object: object, producers: producers, scoped: true,
-			entry: resolution.entry, projected: resolution.projected || projection,
+			entry: resolution.entry, projected: resolution.projected,
 		})
 		if resolveErr != nil {
 			return resolveErr
@@ -155,6 +166,68 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 	}
 	entry.prepared = prepared
 	return nil
+}
+
+func (p *entryInputs) collectEntryOperands(entry *Entry, roots []clusterRoot, relative string) *rootScope {
+	var scope *rootScope
+	var preferred, remaining []selection.OccurrenceFacts
+	for _, j := range entry.roots {
+		root := &roots[j]
+		scope = &rootScope{occurrences: root.Occurrences, parent: scope}
+		p.merge(root)
+		if entry.aggregate {
+			switch root.qualificationPriority() {
+			case qualificationHint:
+				preferred = append(preferred, root.seeds...)
+			case qualificationOpaque:
+				remaining = append(remaining, root.seeds...)
+			case qualificationIneligible:
+			}
+			continue
+		}
+		if !safepath.Contains(relative, root.Path) {
+			continue
+		}
+		for i := range root.seeds {
+			seed := &root.seeds[i]
+			if !seed.RequiresBuild && seed.Identity.KindInfo().Parent {
+				p.publicOperands = append(p.publicOperands, seed.Identity)
+			}
+		}
+	}
+	for _, operands := range [][]selection.OccurrenceFacts{preferred, remaining} {
+		if len(operands) > 0 {
+			p.packagesToQualify = append(p.packagesToQualify, operands)
+		}
+	}
+	return scope
+}
+
+type qualificationPriority uint8
+
+const (
+	qualificationIneligible qualificationPriority = iota
+	qualificationOpaque
+	qualificationHint
+)
+
+// Producer hints change preparation order. Coverage requires accepted output.
+func (r *clusterRoot) qualificationPriority() qualificationPriority {
+	priority := qualificationIneligible
+	for i := range r.Occurrences {
+		occurrence := &r.Occurrences[i]
+		kind := occurrence.Identity.KindInfo()
+		if kind.Structural || !kind.Parent {
+			continue
+		}
+		priority = qualificationOpaque
+		if obj := occurrenceObject(occurrence); obj != nil {
+			if _, hint := manifest.ProjectProducer(obj, func(func([]byte) bool) {}); hint {
+				return qualificationHint
+			}
+		}
+	}
+	return priority
 }
 
 func (d *Session) loadPlan(ctx context.Context) error {
@@ -269,6 +342,14 @@ func aggregateInput(
 	if authored {
 		return input, nil
 	}
+	return syntheticAggregateInput(input, requested, packages)
+}
+
+func syntheticAggregateInput(
+	input *store.SourceArtifact,
+	requested string,
+	packages []loader.PackageEvidence,
+) (*store.SourceArtifact, error) {
 	resources, err := aggregateResources(input, requested, packages)
 	if err != nil {
 		return nil, err
@@ -285,6 +366,7 @@ func aggregateInput(
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("encode entry package: %w", err), "")
 	}
 	const fileMode = 0o644
+	relative, _ := filepath.Rel(input.LocalPath, requested)
 	overlay := tree.NewBuilder(input.FS)
 	if err = overlay.AddFile(
 		filepath.ToSlash(filepath.Join(relative, manifest.KustomizeBuilderFilenames[0])),
@@ -336,6 +418,21 @@ func producerGroups(roots []clusterRoot, root string) []int {
 	return parents
 }
 
+func aggregateRequiresBuild(entry *Entry, packages []loader.PackageEvidence) bool {
+	for i := range packages {
+		pkg := &packages[i]
+		if !pkg.Independent || !safepath.Contains(entry.Path, filepath.Join(entry.Input.LocalPath, pkg.Path)) {
+			continue
+		}
+		for j := range pkg.Occurrences {
+			if pkg.Occurrences[j].RequiresBuild {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func aggregateResources(
 	input *store.SourceArtifact,
 	requested string,
@@ -370,6 +467,80 @@ func aggregateResources(
 	slices.Sort(resources)
 	resources = slices.Compact(resources)
 	return resources, nil
+}
+
+type entryDocuments map[manifest.NamedResource]struct{}
+
+func (a *Admission) requestedDocuments(
+	ctx context.Context, relative string, work manifest.WorkScope,
+) (*entryDocuments, error) {
+	if a.documents != nil || a.trees == nil {
+		return a.documents, nil
+	}
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{})
+	documents, children, err := a.requestedInventory(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	for i := range children {
+		child := &children[i]
+		_, applies := manifest.ApplicationFor(child.Obj)
+		if !applies || manifest.KindOf(child.Obj).Runnable {
+			continue
+		}
+		generated, err := a.prepareGeneration(child.Obj, work)
+		if err != nil {
+			return nil, err
+		}
+		for j := range generated.Visible {
+			documents[manifest.DocIdentity(generated.Visible[j].Document)] = struct{}{}
+		}
+	}
+	a.documents = &documents
+	return a.documents, nil
+}
+
+func (a *Admission) requestedInventory(
+	ctx context.Context, owner *manifest.Kustomization,
+) (entryDocuments, []store.Child, error) {
+	input := a.input
+	if frame := a.preparedInventory(owner, input); frame != nil {
+		return inventoryDocuments(frame.children, frame.failedDocuments), frame.children, frame.inventoryError()
+	}
+	authored, err := nativeEntry(input.FS, owner.Path)
+	if err != nil {
+		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect requested package: %w", err), "")
+	}
+	if !authored {
+		packages, packageErr := a.loader.Packages(ctx)
+		if packageErr != nil {
+			return nil, nil, packageErr
+		}
+		input, err = syntheticAggregateInput(input, a.path, packages)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	frame, err := a.packageInventory(ctx, owner, input)
+	if err != nil {
+		return nil, nil, err
+	}
+	return inventoryDocuments(frame.children, frame.failedDocuments), frame.children, nil
+}
+
+func inventoryDocuments(children []store.Child, failed []manifest.DocOccurrence) entryDocuments {
+	documents := make(entryDocuments, len(children)+len(failed))
+	for i := range children {
+		documents[manifest.DocIdentity(children[i].Doc)] = struct{}{}
+	}
+	// The accepted producer can repair a document without changing its identity.
+	for i := range failed {
+		id := manifest.DocIdentity(failed[i].Document)
+		if id.Kind != "" && id.Name != "" {
+			documents[id] = struct{}{}
+		}
+	}
+	return documents
 }
 
 func nativeEntry(input fs.FS, dir string) (bool, error) {
@@ -420,4 +591,84 @@ func joinRootOccurrences(roots []clusterRoot, declarations map[selection.Occurre
 			}
 		}
 	}
+}
+
+func (d *Session) beginRootPlan(ctx context.Context) error {
+	packages, err := d.loader.Packages(ctx)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
+	if err != nil {
+		return fmt.Errorf("entry path: %w", err)
+	}
+	authored, err := nativeEntry(d.cfg.Input.FS, relative)
+	if err != nil {
+		return err
+	}
+	d.packages = slices.Clone(packages)
+	d.planner = &entryPlanner{
+		directoryInventory: !authored,
+		session:            d,
+		inputs:             map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
+		coordinates:        map[selection.OccurrenceID]bool{},
+		seen:               map[occurrenceKey]bool{},
+	}
+	for _, pkg := range packages {
+		for i := range pkg.Occurrences {
+			occurrence := pkg.Occurrences[i]
+			projected := occurrenceObject(&occurrence)
+			if occurrence.Object == nil {
+				occurrence.Catalog = projected
+			} else {
+				occurrence.Object = projected
+			}
+			d.planner.catalog.occurrences = append(d.planner.catalog.occurrences, occurrence)
+		}
+		if !pkg.Independent || !slices.ContainsFunc(pkg.Occurrences, func(o selection.OccurrenceFacts) bool {
+			_, _, applies := o.SourcePath()
+			return applies || o.Identity.KindInfo().Runnable
+		}) {
+			continue
+		}
+		d.planner.roots = append(
+			d.planner.roots,
+			clusterRoot{Path: pkg.Path, seeds: pkg.Occurrences},
+		)
+	}
+	return nil
+}
+
+func (d *Session) requiresEntry() bool {
+	if d.loader == nil || d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
+		return d.hasEntryOperands() || d.hasEntryBuilder()
+	}
+	if d.entryDemand || d.entryReceiptRequest != nil {
+		return true
+	}
+	return d.aggregateRequiresBuild && d.hasEntryBuilder()
+}
+
+func (d *Session) hasEntryBuilder() bool {
+	input, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	if input == nil {
+		input = d.cfg.Input
+	}
+	if input == nil {
+		return false
+	}
+	if input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
+		d.entryBuilderPath == d.cfg.Path {
+		return d.entryBuilder
+	}
+	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, false
+	relative, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
+	for _, filename := range manifest.KustomizeBuilderFilenames {
+		_, err := fs.Stat(input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
+		if !errors.Is(err, fs.ErrNotExist) {
+			d.entryBuilder = true
+			return true
+		}
+	}
+	return false
 }

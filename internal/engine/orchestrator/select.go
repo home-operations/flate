@@ -129,7 +129,7 @@ func renderSnapshot(run Rendered) selection.Snapshot {
 	snapshot.Store, snapshot.Index = o.store, o.index
 	snapshot.Complete = run.Result != nil
 	snapshot.Decision = o.selection.Snapshot()
-	snapshot.Entry = selection.EntryIdentity{Producer: o.entryBinding.Producer, Key: o.entryBinding.Key}
+	snapshot.Entry = o.entryBinding.Projection()
 	snapshot.ChangeNamespaces = o.changeNamespaces
 	return snapshot
 }

@@ -27,15 +27,16 @@ type sourceRequest struct {
 }
 
 type entrySourceGroup struct {
-	reference manifest.Reference
-	producers []occurrenceKey
-	object    manifest.BaseManifest
-	document  map[string]any
-	refs      []manifest.NamedResource
-	scoped    bool
-	required  bool
-	entry     bool
-	projected bool
+	reference           manifest.Reference
+	producers           []occurrenceKey
+	object              manifest.BaseManifest
+	document            map[string]any
+	refs                []manifest.NamedResource
+	scoped              bool
+	required            bool
+	entry               bool
+	projected           bool
+	projectedFromParent bool
 }
 
 func entrySourceGroupFor(
@@ -67,13 +68,6 @@ func addEntrySource(
 	}
 }
 
-func (g *entrySourceGroup) project(declaration manifest.BaseManifest) {
-	if g.object != nil || declaration == nil {
-		return
-	}
-	g.object, g.projected = declaration, true
-}
-
 func sourceReference(object manifest.BaseManifest, id manifest.NamedResource) manifest.Reference {
 	if object != nil {
 		for ref := range manifest.References(object, manifest.ReferenceRelations) {
@@ -83,6 +77,10 @@ func sourceReference(object manifest.BaseManifest, id manifest.NamedResource) ma
 		}
 	}
 	return manifest.Reference{}
+}
+
+func (r *sourceRequest) generatedDocument(id manifest.NamedResource, candidate, observed manifest.BaseManifest) bool {
+	return r.reads != nil && candidate == observed && r.reads.GeneratedDocument(id)
 }
 
 func (a *Admission) classifySource(id manifest.NamedResource, request *sourceRequest) entryResolution {
@@ -118,8 +116,9 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	if candidate.object == nil && !request.scoped && previous.projected {
 		candidate.object = previous.object
 	}
-	candidate.projected = request.projected && candidate.object == request.object ||
-		previous.projected && candidate.object == previous.object
+	matchesRequest := request.projected && candidate.object == request.object
+	matchesPrevious := previous.projected && candidate.object == previous.object
+	candidate.projected = matchesRequest || matchesPrevious || request.generatedDocument(id, candidate.object, object)
 	behavior, ok := candidate.object.(entrySource)
 	switch {
 	case candidate.projected && !ok:
@@ -165,11 +164,16 @@ func (a *Admission) applicationApplies(
 	resolved *entryResolution,
 	path string,
 ) bool {
+	target := a.applicationEntryOrigin(application, resolved)
+	return target != "" && target == a.input.OriginPath(path)
+}
+
+func (a *Admission) applicationEntryOrigin(application *manifest.EntryApplication, resolved *entryResolution) string {
 	selected := a.resolvedSources.snapshot()[application.Source]
 	if selected.input == a.input && selected.artifact != nil {
 		resolved = &selected
 	}
-	return loader.AppliesToEntry(resolved, application, a.input, path)
+	return loader.ApplicationEntryOrigin(resolved, application, a.input)
 }
 
 // A source MUST NOT replace its construction input with its own rendered declaration.
@@ -329,6 +333,7 @@ func (d *Session) addLoadedSources(
 		}
 		group := entrySourceGroupFor(groups, id)
 		group.object, group.document = child.Obj, child.Doc
+		group.projectedFromParent = false
 		root := selection.Root(evidence)
 		group.projected = !root.Admitted && evidence.Occurrence.Declaration == (selection.OccurrenceID{}) &&
 			evidence.Record.Builder == "" && d.cfg.Store.GetDeclaration(id) == nil
@@ -339,8 +344,7 @@ func (d *Session) addLoadedSources(
 		}
 		group.required = group.required || restricted && root.Admitted
 	}
-	d.addPathSources(groups, allowMissing)
-	return nil
+	return d.addPathSources(groups, allowMissing)
 }
 
 func (d *Session) addMissingSources(groups map[manifest.NamedResource]*entrySourceGroup) {
@@ -385,33 +389,67 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]*en
 	}
 }
 
-func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceGroup, allowMissing bool) {
+func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceGroup, allowMissing bool) error {
 	childValues := d.loader.PathObjects()
 	for childIndex := range childValues {
-		child := childValues[childIndex]
+		child := &childValues[childIndex]
 		if child.RequiresBuild {
 			continue
 		}
+		object := occurrenceObject(child)
+		if !child.Identity.KindInfo().Runnable {
+			if _, applies := manifest.ApplicationFor(object); applies {
+				if err := d.addGenerationSources(groups, object); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 
-		application, valid := manifest.ApplicationFor(occurrenceObject(&child))
+		application, valid := manifest.ApplicationFor(object)
 		if valid {
 			group := entrySourceGroupFor(groups, application.Source)
 			group.entry = group.entry || d.admission().appliesEntry(&application)
-		}
-		if application.Declaration != nil {
-			group := entrySourceGroupFor(groups, application.Source)
-			group.project(application.Declaration)
-			group.required = group.required || group.entry
-			continue
 		}
 		ref, _, _ := child.SourcePath()
 		group := groups[ref]
 		declared := group != nil && group.object != nil
 		if allowMissing || declared || d.cfg.Store.GetObject(ref) != nil {
-			reference := sourceReference(occurrenceObject(&child), ref)
+			reference := sourceReference(object, ref)
 			addEntrySource(groups, ref, child.Identity, &reference)
 		}
 	}
+	return nil
+}
+
+func (d *Session) addGenerationSources(
+	groups map[manifest.NamedResource]*entrySourceGroup, object manifest.BaseManifest,
+) error {
+	output, err := d.admission().prepareGeneration(object, d.cfg.Work.Source(object.Named()))
+	if err != nil {
+		return err
+	}
+	evidence := selection.CaptureRoot(d.loader.RootEvidence(object.Named(), nil), d.loader.Store, d.loader.Index)
+	owner := selection.Root(evidence).Owner
+	for i := range output.Children {
+		child := &output.Children[i]
+		if !manifest.KindOf(child.Obj).IsSource() {
+			continue
+		}
+		id := child.Obj.Named()
+		group := entrySourceGroupFor(groups, id)
+		if group.object == nil {
+			group.object, group.document, group.projected = child.Obj, child.Doc, true
+			group.projectedFromParent = owner != (manifest.NamedResource{}) && !owner.ReportHidden()
+		}
+		group.required = true
+		for j := range output.Children {
+			if application, valid := runnableApplication(output.Children[j].Obj); valid && application.Source == id {
+				group.entry = group.entry || d.admission().appliesEntry(&application)
+			}
+		}
+	}
+	return nil
 }
 
 func normalizeGitURL(raw string) string {

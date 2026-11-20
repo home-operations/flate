@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+data:
+  MODE: generator-only
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: generator-only-f4856c7cm8

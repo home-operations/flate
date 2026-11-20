@@ -98,12 +98,19 @@ func TestPlan_TracksDisjointWorkloadsForMultipleRoots(t *testing.T) {
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(roots) != 2, "roots = %+v", roots)
 	assert.Equal(t, reads.Load() > 0, true)
+	entries := clusterEntries(roots, session.cfg.Input, session.cfg.Path)
+	assert.FatalIf(t, len(entries) != 2, "entries = %+v", entries)
 	for i, name := range []string{"first", "second"} {
 		assert.Equal(t, roots[i].bootstrap, true)
 		assert.Diff(t, roots[i].Anchors, []string{"entry/" + name})
 		assert.Equal(t, slices.ContainsFunc(roots[i].Occurrences, func(o selection.OccurrenceFacts) bool {
 			return o.Declaration.File == "workload/object.yaml"
 		}), true)
+		entry := &entries[i]
+		assert.Equal(t, entry.Path, filepath.Join(root, "entry", name))
+		var inputs entryInputs
+		inputs.collectEntryOperands(entry, roots, "entry/"+name)
+		assert.Diff(t, inputs.publicOperands, []manifest.NamedResource{testutil.KustomizationID("apps", name)})
 	}
 }
 
@@ -173,10 +180,10 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 		}}}
 		assert.NoError(t, planner.start(t.Context(), &candidate))
 		id := planner.catalog.occurrences[0].Identity
-		selected, _, _ := planner.catalogSource(id)
+		selected, _ := planner.catalogSource(id)
 		assert.FatalIf(t, selected == nil, "missing source for %s", side)
 		assert.Equal(t, selected.Declaration.File, side+"/source.yaml")
-		repeated, _, _ := planner.catalogSource(id)
+		repeated, _ := planner.catalogSource(id)
 		assert.Equal(t, repeated == selected, true)
 	}
 }
@@ -284,9 +291,9 @@ spec:
 		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository,
 		Namespace: "other", Name: "added",
 	}
-	_, _, producers := scope.source(id)
+	_, producers := scope.source(id)
 	assert.Equal(t, len(producers), 1)
 	id.Namespace = "apps"
-	_, _, producers = scope.source(id)
+	_, producers = scope.source(id)
 	assert.Equal(t, len(producers), 0)
 }

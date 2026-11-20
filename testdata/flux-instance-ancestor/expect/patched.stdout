@@ -1,0 +1,23 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    witness.example/producer: cluster-package
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: plain
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: plain
+  template:
+    metadata:
+      labels:
+        app: plain
+    spec:
+      containers:
+      - image: busybox
+        name: c

@@ -113,6 +113,8 @@ func (e *Execution) Probe(
 	e.InitProbe(controller, object)
 	history := History{Assessment: e}
 	e.Take(previous)
+	prior, _ := previous.Assessment.(*Execution)
+	e.EntryReplay = controller.selection.EntryReplay(object.Named()) || prior != nil && prior.EntryReplay
 	inputs, err := e.DataInputs(ctx, object, e.Data())
 	if err != nil {
 		return history, nil, err

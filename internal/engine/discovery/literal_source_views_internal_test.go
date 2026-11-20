@@ -221,7 +221,9 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 	}
 	application, ok := manifest.ApplicationFor(f.raw[index])
 	assert.Equal(t, ok, true)
-	literal := manifest.NewEntryKustomization(application.Source, application.Path, f.raw[index].Named())
+	generation := testGeneratedSync(t, f.raw[index])
+	literal, ok := generation.Objects[1].(*manifest.Kustomization)
+	assert.FatalIf(t, !ok, "expected a generated Kustomization")
 	var reads store.ReadSet
 	reads.Init(f.store, literal.Named(), nil)
 	reads.RequireQualification(f.raw[index].Named())

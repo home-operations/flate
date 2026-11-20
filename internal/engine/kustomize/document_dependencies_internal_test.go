@@ -140,7 +140,7 @@ func testDocumentDependenciesCase(
 		before := manifest.Fingerprint(document)
 		data, err := values.SubstitutionDocument(
 			manifest.DocOccurrence{Document: document},
-			values.SubstitutionActive(parent),
+			values.RenderSubstitutionActive(parent, false),
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, data == nil, true)

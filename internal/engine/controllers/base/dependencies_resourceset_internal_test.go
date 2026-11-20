@@ -30,7 +30,7 @@ func BenchmarkCollectDeps_Scope(b *testing.B) {
 			}
 			manifest.KindOf(&manifest.RawObject{APIVersion: target.api, Kind: target.kind}).Namespaced()
 			for b.Loop() {
-				c.dependencies(rs, manifest.GateInputs)
+				collectGates(c, rs, manifest.GateInputs)
 			}
 		})
 	}
@@ -177,7 +177,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 					)
 				}
 			}
-			deps := c.dependencies(rs, manifest.GateInputs)
+			deps := collectGates(c, rs, manifest.GateInputs)
 			assert.Diff(t, deps, want)
 			var reads store.ReadSet
 			reads.Init(c.Store, rs.Named(), nil)

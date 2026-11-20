@@ -726,7 +726,7 @@ func (rf *readerFinalizer) observeRepositories(
 		record.Declaration = candidate
 		rf.loader.Index.Records[id] = record
 		ref := manifest.Reference{NamedResource: id, Content: true}
-		if !slices.ContainsFunc(facts.refs, func(r manifest.Reference) bool { return r.NamedResource == id }) {
+		if !slices.ContainsFunc(facts.relations(), func(r manifest.Reference) bool { return r.NamedResource == id }) {
 			facts.refs = append(facts.refs, ref)
 			facts.reverse = append(facts.reverse, id)
 			facts.derivedInputs++

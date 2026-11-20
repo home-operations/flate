@@ -66,6 +66,13 @@ func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq2[manifest.Nam
 	return reads.Required()
 }
 
+// AssessmentsWithToleratedCRDs MUST run after the scheduler drains.
+func (s *Store) AssessmentsWithToleratedCRDs() []*ReadSet {
+	return s.assessments(func(a *acceptedAssessment) bool {
+		return (a.kind == AssessmentReconciled || a.kind == AssessmentReused) && a.reads.hasToleratedCRDs
+	})
+}
+
 // OrdinaryDemand captures purpose so later promotion invalidates qualification settlement.
 func (r *ReadSet) OrdinaryDemand(id manifest.NamedResource) bool {
 	r.GetObject(id)

@@ -19,8 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-const substitutionReferenceUse = "substituteFrom"
-
 // ReferenceFacts resolves data against the current discovery index before publication.
 func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
@@ -284,7 +282,7 @@ func (l *Loader) projectionNames(
 	child, prepared *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
 ) (projectionNames, error) {
-	active := values.SubstitutionActive(prepared)
+	active := values.ProjectionSubstitutionActive(prepared)
 	declared, err := child.RenderDocument()
 	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)
@@ -480,12 +478,14 @@ func (p *substitutionResolution) resolveValue(
 		p.resolved[key] = resolved
 	}
 	if !known && parent.PostBuild != nil {
-		for _, ref := range parent.PostBuild.SubstituteFrom {
-			id := manifest.NamedResource{Kind: ref.Kind, Namespace: parent.Namespace, Name: ref.Name}
+		for ref := range manifest.References(parent, manifest.ReferenceRelations) {
+			if keyed, data := ref.DataInput(); !data || keyed {
+				continue
+			}
 			result := values.Resolve(
 				&values.ResolveRequest{
-					Reference:  manifest.Reference{NamedResource: id, Use: substitutionReferenceUse},
-					Facts:      p.provider.Lookup(id),
+					Reference:  ref,
+					Facts:      p.provider.Lookup(ref.NamedResource),
 					Permission: l.Options.Missing,
 				},
 			)
@@ -573,7 +573,7 @@ func (p *substitutionResolution) projectSubstitutions(
 	prepared.PostBuild = new(*child.PostBuild)
 	var inputs []values.Result
 	for ref := range manifest.References(prepared, manifest.ReferenceRelations) {
-		if ref.Use == substitutionReferenceUse {
+		if keyed, data := ref.DataInput(); data && !keyed {
 			inputs = append(
 				inputs,
 				values.Resolve(

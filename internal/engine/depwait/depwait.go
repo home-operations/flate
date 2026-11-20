@@ -17,7 +17,7 @@ import (
 )
 
 type stateReader interface {
-	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
+	ReadableSourceArtifact(manifest.NamedResource) (*store.SourceArtifact, bool)
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)
@@ -31,6 +31,10 @@ type Waiter struct {
 	Store     stateReader
 	Parent    manifest.NamedResource
 	Missing   *MissingPolicy
+	Decision  *selection.Decision
+	Indexed   interface {
+		IsFileIndexed(manifest.NamedResource) bool
+	}
 
 	// Materializer requires readiness even for existence-only dependency kinds.
 	Materializer bool

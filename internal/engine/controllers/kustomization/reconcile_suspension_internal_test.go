@@ -137,7 +137,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 	}()
 	ks, ok := execution.run.Reads.Get[*manifest.Kustomization](ks.Named())
 	assert.FatalIf(t, !ok, "%v", "Kustomization not captured")
-	source, _, err := kustomize.SourceInput(&execution.run.Reads, ks)
+	source, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	assert.FatalIf(t, !execution.run.Reads.Valid(), "%v", "initial capture is invalid")
 	before := guard.opened.Load()

@@ -15,18 +15,18 @@ func (w *Waiter) Assess(ctx context.Context, reads *store.ReadSet, level manifes
 	var failed *manifest.DependencyFailedError
 	var cause error
 	var causeID manifest.NamedResource
+	reads.ClearToleratedCRDs()
 	for dep := range reads.Gates() {
 		w.Materializer = dep.Materializer
 		cl := w.Classify(ctx, dep.DependencyRef, level)
-		if cl.Err != nil {
+		switch {
+		case cl.Err != nil:
 			if cause == nil || dep.Compare(causeID) < 0 {
 				cause, causeID = cl.Err, dep.NamedResource
 			}
-			continue
-		}
-		switch cl.Kind {
-		case schedule.Terminal:
-		case schedule.DependencyFailed:
+		case cl.ToleratedCRD && !dep.Materializer:
+			reads.RecordToleratedCRD(dep.NamedResource)
+		case cl.Kind == schedule.DependencyFailed:
 			if failed == nil {
 				failed = &manifest.DependencyFailedError{
 					Parent:  w.Parent,
@@ -39,10 +39,11 @@ func (w *Waiter) Assess(ctx context.Context, reads *store.ReadSet, level manifes
 			if prior, exists := failed.Reasons[dep.NamedResource]; !exists || reason.Compare(prior) < 0 {
 				failed.Reasons[dep.NamedResource] = reason
 			}
-		case schedule.Blocked:
+		case cl.Kind == schedule.Blocked:
 			blocked = append(blocked, dep.NamedResource)
 		}
 	}
+	w.Materializer = false
 	if len(blocked) > 0 {
 		slices.SortFunc(blocked, manifest.NamedResource.Compare)
 		return &BlockedError{Deps: slices.Compact(blocked)}

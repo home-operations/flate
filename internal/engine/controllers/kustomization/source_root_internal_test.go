@@ -95,7 +95,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 			// render's `patches:` block.
 		},
 	}
-	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
+	got, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
 	assert.ErrorIf(t, got.LocalPath != "/repo",
 		"resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got.LocalPath, "/repo")
@@ -135,7 +135,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 			Namespace: "flux-system",
 		},
 	}
-	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
+	got, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
 	assert.ErrorIf(t, got.LocalPath != "/external",
 		"resolveSourceRoot=%q, want %q (explicit ref)", got.LocalPath, "/external")
@@ -151,7 +151,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Name: "foo", Namespace: "flux-system",
 		Path: "./app",
 	}
-	_, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
+	_, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	assert.FatalIf(t, err == nil, "expected error when bootstrap source is absent")
 }
 

@@ -745,7 +745,7 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 	}
 	if (*(*tailCaseInput.testCaseInput)) == "stable_then_changed" {
 		previous := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt
-		input, _, err := kustomize.SourceInput((*tailCaseInput.st), selected)
+		input, err := kustomize.SourceInput((*tailCaseInput.st), selected)
 		assert.NoError(t, err)
 		assert.NoError(t, (*tailCaseInput.d).prepareProducer(t.Context(), selected, input, nil))
 		declaration := (*tailCaseInput.d).loader.Index.Records[(*tailCaseInput.owner).Named()].Declaration

@@ -90,7 +90,7 @@ func (s *Store) Warnings() []manifest.Warning {
 	return s.compactWarnings(out)
 }
 
-func (s *Store) assessments() []*ReadSet {
+func (s *Store) assessments(match func(*acceptedAssessment) bool) []*ReadSet {
 	var bundles []*ReadSet
 	for _, sh := range s.shards {
 		sh.mu.RLock()
@@ -98,7 +98,8 @@ func (s *Store) assessments() []*ReadSet {
 			cell := sh.cells[id]
 			if cell.links != nil {
 				for i := range cell.links.assessments {
-					if accepted := cell.links.assessments[i].Load(); accepted != nil && accepted.reads != nil {
+					accepted := cell.links.assessments[i].Load()
+					if accepted != nil && accepted.reads != nil && (match == nil || match(accepted)) {
 						bundles = append(bundles, accepted.reads)
 					}
 				}
@@ -173,7 +174,7 @@ func (s *Store) compactWarnings(out []manifest.Warning) []manifest.Warning {
 }
 
 func (s *Store) appendAssessmentWarnings(out []manifest.Warning) []manifest.Warning {
-	for _, reads := range s.assessments() {
+	for _, reads := range s.assessments(nil) {
 		start := len(out)
 		{
 			warningValues := reads.warnings

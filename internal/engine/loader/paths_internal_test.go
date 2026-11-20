@@ -97,24 +97,26 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		encrypted bool
+		name, inputName     string
+		encrypted, optional bool
 	}{
-		{name: "absent"},
-		{name: "encrypted", encrypted: true},
+		{name: "absent", inputName: "vars"},
+		{name: "optional absent", inputName: "vars", optional: true},
+		{name: "malformed unnamed"},
+		{name: "encrypted", inputName: "vars", encrypted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := New(store.New())
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
-				{Kind: manifest.KindSecret, Name: "vars"},
+				{Kind: manifest.KindSecret, Name: tc.inputName, Optional: tc.optional},
 			}}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
 			reader := &substitutionDataReader{
 				inputs: map[manifest.NamedResource]store.ReferenceFacts{}, lookups: map[manifest.NamedResource]int{},
 			}
-			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "vars"}
+			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.inputName}
 			if tc.encrypted {
 				data := &manifest.Secret{
 					Name:       id.Name,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -62,16 +63,17 @@ func TestClassify_MissingCRDs(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		name    string
-		level   manifest.DrainLevel
-		content bool
-		want    schedule.Kind
-		wantErr error
+		name          string
+		level         manifest.DrainLevel
+		content       bool
+		want          schedule.Kind
+		wantErr       error
+		wantTolerated bool
 	}{
 		{name: "missing artifact before cascade", want: schedule.Blocked},
 		{name: "missing artifact at cascade", level: manifest.DrainCascade, want: schedule.Terminal, wantErr: manifest.ErrObjectNotFound},
 		{name: "required declaration stale content before cascade", content: true, want: schedule.Blocked},
-		{name: "required declaration stale content at cascade", content: true, level: manifest.DrainCascade, want: schedule.Terminal},
+		{name: "required declaration stale content at cascade", content: true, level: manifest.DrainCascade, want: schedule.Terminal, wantTolerated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -91,6 +93,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 			}
 			got := w.Classify(t.Context(), ref, tc.level)
 			assert.Equal(t, got.Kind, tc.want)
+			assert.Equal(t, got.ToleratedCRD, tc.wantTolerated)
 			assert.Equal(t, got.Message, "")
 			if tc.wantErr != nil {
 				assert.Equal(t, errors.Is(got.Err, tc.wantErr), true)
@@ -107,6 +110,58 @@ func TestClassify_MissingCRDs(t *testing.T) {
 			_, status := s.GetStatus(ref.NamedResource)
 			assert.Equal(t, status, false)
 			assert.Equal(t, s.GetArtifact(ref.NamedResource, store.ArtifactContent) != nil, tc.content)
+		})
+	}
+}
+
+func TestAssess_ToleratedCRDs(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{
+		Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com",
+	}
+	for _, tc := range []struct {
+		name         string
+		materializer bool
+		want         []manifest.NamedResource
+	}{
+		{name: "different authored gates", want: []manifest.NamedResource{id}},
+		{name: "materializer gate", materializer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			parent := manifest.NamedResource{Kind: manifest.KindResourceSet, Name: "app"}
+			s.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{}})
+			var reads store.ReadSet
+			var reuse [1]store.Input
+			reads.Init(s, parent, reuse[:])
+			reads.GetObject(parent)
+			if tc.materializer {
+				reads.RequireMaterializer(id)
+			} else {
+				reads.Require(manifest.DependencyRef{NamedResource: id})
+				reads.Require(manifest.DependencyRef{NamedResource: id, Artifact: true})
+			}
+			waiter := Waiter{Store: &reads, Parent: parent, Missing: crdMissingPolicy(true)}
+			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade))
+			assert.Diff(t, slices.Collect(reads.ToleratedCRDs()), tc.want)
+
+			err := waiter.Assess(t.Context(), &reads, manifest.DrainNone)
+			_, blocked := errors.AsType[*BlockedError](err)
+			assert.Equal(t, blocked, true)
+			assert.Equal(t, len(slices.Collect(reads.ToleratedCRDs())), 0)
+
+			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade))
+			assert.Diff(t, slices.Collect(reads.ToleratedCRDs()), tc.want)
+			reads.Retire()
+			for range s.Sweep() {
+			}
+			reads.ReleaseCapture()
+			reads.Init(s, parent, reuse[:])
+			defer reads.Retire()
+			reads.GetObject(parent)
+			reads.Require(manifest.DependencyRef{NamedResource: id})
+			assert.Equal(t, len(slices.Collect(reads.ToleratedCRDs())), 0)
 		})
 	}
 }

@@ -82,4 +82,5 @@ const (
 	stringDataKey     = "stringData"
 	substituteFromKey = "substituteFrom"
 	tagKey            = "tag"
+	valuesFromKey     = "valuesFrom"
 )

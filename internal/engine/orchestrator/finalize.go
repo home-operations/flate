@@ -134,31 +134,17 @@ func (o *Orchestrator) warnMissingCRDs() {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})
-	var inputBuf, gatedBuf [16]manifest.NamedResource
-	inputs, gated := inputBuf[:0], gatedBuf[:0]
-	for _, obj := range o.store.ListObjects("", "") {
-		id := obj.Named()
+	for _, reads := range o.store.AssessmentsWithToleratedCRDs() {
+		id := reads.ID()
 		if !o.hasAcceptedCRDOutput(id) {
 			continue
 		}
-		inputs = inputs[:0]
-		for crd := range o.store.RequiredInputs(id) {
-			if !crd.IsCRD() {
-				continue
+		for crd := range reads.ToleratedCRDs() {
+			if missing[crd] == nil {
+				missing[crd] = make(map[manifest.NamedResource]struct{})
 			}
-			if o.store.GetObject(crd) != nil {
-				continue
-			}
-			if _, ok := o.store.GetStatus(crd); ok {
-				continue
-			}
-			inputs = append(inputs, crd)
+			missing[crd][id] = struct{}{}
 		}
-		if len(inputs) == 0 {
-			continue
-		}
-		gated = gatedCRDInputs(obj, gated)
-		addMissingCRDDependents(id, inputs, gated, missing)
 	}
 	o.emitMissingCRDWarnings(missing)
 }
@@ -175,32 +161,6 @@ func (o *Orchestrator) hasAcceptedCRDOutput(id manifest.NamedResource) bool {
 		return false
 	}
 	return true
-}
-
-func gatedCRDInputs(obj manifest.BaseManifest, gated []manifest.NamedResource) []manifest.NamedResource {
-	gated = gated[:0]
-	for ref := range manifest.References(obj, manifest.ReferenceAll) {
-		if ref.Gate != 0 && ref.IsCRD() {
-			gated = append(gated, ref.NamedResource)
-		}
-	}
-	return gated
-}
-
-func addMissingCRDDependents(
-	id manifest.NamedResource,
-	inputs, gated []manifest.NamedResource,
-	missing map[manifest.NamedResource]map[manifest.NamedResource]struct{},
-) {
-	for _, crd := range inputs {
-		if !slices.Contains(gated, crd) {
-			continue
-		}
-		if missing[crd] == nil {
-			missing[crd] = make(map[manifest.NamedResource]struct{})
-		}
-		missing[crd][id] = struct{}{}
-	}
 }
 
 func (o *Orchestrator) emitMissingCRDWarnings(missing map[manifest.NamedResource]map[manifest.NamedResource]struct{}) {

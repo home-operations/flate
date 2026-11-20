@@ -35,7 +35,7 @@ func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResourc
 func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.DependencyRef {
 	c := gateExecution(e.Controller, obj.Named())
 	defer c.Reads.Retire()
-	deps := c.dependencies(obj, manifest.GateInputs)
+	deps := collectGates(c, obj, manifest.GateInputs)
 	provider := values.NewStoreProvider(&c.Reads)
 	inputs, _ := c.DataInputs(context.TODO(), obj, provider)
 	inputs = slices.DeleteFunc(inputs, func(input depwait.DataDependency) bool { return input.Optional })
@@ -64,7 +64,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		}
 	}
 
-	artifacts := c.dependencies(obj, manifest.GateArtifacts)
+	artifacts := collectGates(c, obj, manifest.GateArtifacts)
 	for _, dep := range artifacts {
 		dep.Artifact, dep.ChartSource = false, false
 		if !slices.ContainsFunc(deps, func(existing manifest.DependencyRef) bool {
@@ -92,7 +92,7 @@ func gateExecution(c *Controller, id manifest.NamedResource) *Execution {
 }
 
 func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []manifest.DependencyRef {
-	deps := e.dependencies(obj, manifest.GateInputs)
+	deps := collectGates(e, obj, manifest.GateInputs)
 	for ref := range manifest.References(obj, manifest.ReferenceAll) {
 		if ref.Use == "" && ref.Artifact {
 			deps = slices.DeleteFunc(
@@ -114,4 +114,9 @@ func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []man
 		deps[i].Artifact, deps[i].ChartSource = false, false
 	}
 	return deps
+}
+
+func collectGates(e *Execution, obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {
+	w := e.dependencyWaiter()
+	return w.SelectGates(manifest.References(obj, manifest.ReferenceAll), stage, obj.ReferenceCapacity().References)
 }

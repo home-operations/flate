@@ -20,7 +20,9 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	st.SetArtifact(source.Named(), artifact)
 	var before, current ReadSet
 	before.Init(st, ownerID("consumer"), nil)
-	before.GetArtifact(source.Named(), ArtifactContent)
+	captured, readable := before.ReadableSourceArtifact(source.Named())
+	assert.Equal(t, captured, artifact)
+	assert.Equal(t, readable, true)
 	current.Init(st, ownerID("consumer"), nil)
 	assert.FatalIf(
 		t,
@@ -58,6 +60,7 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	changed := artifact.WithReads(&ReadSet{})
 	changed.Key = "different"
 	st.SetArtifact(source.Named(), changed)
+	assert.Equal(t, before.Valid(), false)
 	var contentChanged ReadSet
 	contentChanged.Init(st, ownerID("content-consumer"), nil)
 	t.Cleanup(contentChanged.Retire)

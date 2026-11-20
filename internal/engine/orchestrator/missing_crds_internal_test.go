@@ -231,7 +231,12 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	}
 }
 
-func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManifest) {
+type crdAssessmentOptions struct {
+	missing *depwait.MissingPolicy
+	kind    store.AssessmentKind
+}
+
+func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManifest, opts crdAssessmentOptions) {
 	t.Helper()
 	reads := new(store.ReadSet)
 	reads.Init(st, obj.Named(), nil)
@@ -240,10 +245,12 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 		if ref.Gate == 0 || !ref.IsCRD() {
 			continue
 		}
-		reads.GetObject(ref.NamedResource)
 		reads.Require(ref.DependencyRef)
 	}
-	reads.Accept(store.AssessmentReconciled)
+	waiter := depwait.Waiter{Store: reads, Parent: obj.Named(), Missing: opts.missing}
+	err := waiter.Assess(t.Context(), reads, manifest.DrainCascade)
+	assert.Equal(t, err != nil, !opts.missing.AllowsKind(manifest.KindCustomResourceDefinition))
+	reads.Accept(opts.kind)
 	assert.Equal(t, reads.Valid(), true)
 	reads.Retire()
 	for range st.Sweep() {
@@ -324,6 +331,8 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		{"source artifact", store.StatusReady, true, true},
 		{"no accepted inputs", store.StatusReady, true, true},
 		{"no CRD inputs", store.StatusReady, true, true},
+		{"qualification assessment", store.StatusReady, true, true},
+		{"entry binding assessment", store.StatusReady, true, true},
 	} {
 		rs := &manifest.ResourceSet{
 			Name:      tc.name,
@@ -369,7 +378,14 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			}
 			continue
 		}
-		acceptCRDGatesForTest(t, s, rs)
+		kind := store.AssessmentReconciled
+		switch tc.name {
+		case "qualification assessment":
+			kind = store.AssessmentQualificationSettled
+		case "entry binding assessment":
+			kind = store.AssessmentEntryBinding
+		}
+		acceptCRDGatesForTest(t, s, rs, crdAssessmentOptions{missing: o.cfg.missing, kind: kind})
 	}
 	testWarnMissingCRDsFinalEligibilityAndOrderingTail(
 		t,
@@ -615,17 +631,19 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 	st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
 	st.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
 	st.SetArtifact(owner.Named(), &store.SourceArtifact{Key: "coexisting-content"})
+	missing := depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})
 	if len(testCaseInput.gated)+len(testCaseInput.semantic) != 0 {
 		reads := new(store.ReadSet)
 		reads.Init(st, owner.Named(), nil)
 		reads.GetObject(owner.Named())
 		for _, id := range testCaseInput.gated {
-			reads.GetObject(id)
 			reads.Require(manifest.DependencyRef{NamedResource: id})
 		}
 		for _, id := range testCaseInput.semantic {
 			reads.RequireData(id)
 		}
+		waiter := depwait.Waiter{Store: reads, Parent: owner.Named(), Missing: missing}
+		assert.NoError(t, waiter.Assess(t.Context(), reads, manifest.DrainCascade))
 		reads.Accept(store.AssessmentReconciled)
 		assert.Equal(t, reads.Valid(), true)
 		reads.Retire()
@@ -640,7 +658,7 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 		),
 		testCaseInput.required,
 	)
-	(&Orchestrator{store: st, cfg: treeConfig{Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})}}}).warnMissingCRDs()
+	(&Orchestrator{store: st, cfg: treeConfig{Config: Config{missing: missing}}}).warnMissingCRDs()
 	var want []manifest.Warning
 	if len(testCaseInput.warned) > 0 {
 		want = make([]manifest.Warning, 0, len(testCaseInput.warned))
@@ -723,8 +741,8 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase2(
 		}
 		st.UpdateStatus((*testCaseInput.crdA), store.StatusInfo{Status: status, Reason: "", Message: ""})
 	}
-	acceptCRDGatesForTest(t, st, rs)
 	assert.NoError(t, snapshotSubstitutions(&cfg.Config))
+	acceptCRDGatesForTest(t, st, rs, crdAssessmentOptions{missing: cfg.missing, kind: store.AssessmentReconciled})
 	(&Orchestrator{store: st, cfg: cfg}).warnMissingCRDs()
 	want := 0
 	if strings.HasPrefix((*testCaseInput.state), "foreign") {

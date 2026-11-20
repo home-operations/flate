@@ -3,7 +3,6 @@ package base
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/schedule"
@@ -25,7 +24,13 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 	if err := e.Checkpoint(); err != nil {
 		return canonical, err
 	}
-	deps := e.dependencies(effective, stage)
+	var deps []manifest.DependencyRef
+	if stage != manifest.GateParents {
+		if capacity := effective.ReferenceCapacity().References; capacity != 0 {
+			w := e.dependencyWaiter()
+			deps = w.SelectGates(manifest.References(effective, manifest.ReferenceAll), stage, capacity)
+		}
+	}
 	for _, dep := range deps {
 		e.Reads.Require(dep)
 	}
@@ -37,7 +42,7 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 			return canonical, err
 		}
 	}
-	if stage != manifest.GateParents && len(deps) != 0 {
+	if len(deps) != 0 {
 		message := "resolving dependencies"
 		if stage == manifest.GateArtifacts {
 			message = "resolving source artifact"
@@ -48,31 +53,6 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 		return canonical, err
 	}
 	return canonical, e.Checkpoint()
-}
-
-func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {
-	if stage == manifest.GateParents {
-		return nil
-	}
-	limits := obj.ReferenceCapacity()
-	capacity := limits.References
-	if capacity == 0 {
-		return nil
-	}
-	var deps []manifest.DependencyRef
-	for ref := range manifest.References(obj, manifest.ReferenceAll) {
-		if ref.Gate&stage == 0 || ref.Optional || ref.Ordering && !e.keepOrderingDep(ref.NamedResource) {
-			continue
-		}
-		if deps == nil {
-			deps = make([]manifest.DependencyRef, 0, capacity)
-		}
-		deps = append(deps, ref.DependencyRef)
-		if ref.Artifact && ref.ArtifactStages&stage == 0 {
-			deps[len(deps)-1].Artifact = false
-		}
-	}
-	return deps
 }
 
 var (
@@ -102,6 +82,7 @@ type dataLookup interface {
 func (e *Execution) dependencyWaiter() depwait.Waiter {
 	w := depwait.Waiter{
 		Store: &e.Reads, Parent: e.Reads.ID(), Missing: e.Missing,
+		Decision: e.selection.Snapshot(), Indexed: e.existence,
 	}
 	if !e.probe {
 		w.Admission = selection.PrepareRequest{
@@ -163,10 +144,7 @@ func (e *Execution) DataInputs(
 		e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")
 	}
 	var inputs []depwait.DataDependency
-	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" {
-			continue
-		}
+	for ref := range depwait.DataReferences(manifest.References(obj, manifest.ReferenceRelations)) {
 		input, err := e.readDataInput(ctx, ref.NamedResource, provider)
 		if err != nil {
 			return nil, err
@@ -196,64 +174,46 @@ type DataWait struct {
 
 // AwaitData retains availability separately from required authored readiness gates.
 func (e *Execution) AwaitData(ctx context.Context, wait DataWait, level manifest.DrainLevel) error {
-	return (&pendingDataError{execution: e, wait: wait}).Settle(ctx, level)
+	return (&pendingDataError{
+		execution:  e,
+		resume:     wait.Resume,
+		assessment: depwait.DataAssessment{Inputs: wait.Inputs},
+	}).Settle(ctx, level)
 }
 
 type pendingDataError struct {
-	execution *Execution
-	wait      DataWait
-	blocked   []manifest.NamedResource
-	results   []values.Result
-	// failed merges diagnostics; causes preserves original error classifications.
-	// A sole non-absence cause MUST retain its error shape.
-	// The aggregate MUST precede causes so errors.AsType finds every failed input.
-	failed *manifest.DependencyFailedError
-	causes []error
+	execution  *Execution
+	resume     func(context.Context, manifest.DrainLevel, []values.Result) error
+	assessment depwait.DataAssessment
 }
 
 func (p *pendingDataError) Error() string { return "waiting for values inputs" }
-func (p *pendingDataError) Unwrap() error { return &depwait.BlockedError{Deps: p.blocked} }
-func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel) error {
-	e := p.execution
-	gateErr := e.classify(ctx, level)
 
-	w := e.dependencyWaiter()
-	p.results = p.results[:0]
-	p.causes = p.causes[:0]
-	e.Unreadable = e.Unreadable[:0]
-	p.failed, _ = errors.AsType[*manifest.DependencyFailedError](gateErr)
-	p.blocked = p.blocked[:0]
-	if blocked, ok := errors.AsType[*depwait.BlockedError](gateErr); ok {
-		p.blocked = append(p.blocked, blocked.Deps...)
-	}
-	for i := range p.wait.Inputs {
-		if err := p.settleInput(ctx, &w, &p.wait.Inputs[i], level); err != nil {
-			return err
-		}
-	}
-	if len(p.blocked) != 0 {
-		p.blocked = compactDataIDs(p.blocked)
-		return p
-	}
-	if len(p.causes) == 1 && !errors.Is(p.causes[0], manifest.ErrObjectNotFound) {
-		return p.causes[0]
-	}
-	if p.failed != nil {
-		p.failed.Failed = compactDataIDs(p.failed.Failed)
-		if len(p.causes) == 0 {
-			return p.failed
-		}
-		return manifest.NewError(manifest.ErrInput, errors.Join(p.failed, errors.Join(p.causes...)), p.failed.Error())
-	}
-	if gateErr != nil {
-		return gateErr
-	}
-	return p.wait.Resume(ctx, level, p.results)
+func (p *pendingDataError) Unwrap() error {
+	return &depwait.BlockedError{Deps: p.assessment.Blocked}
 }
 
-func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
-	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	return slices.Compact(ids)
+func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel) error {
+	e := p.execution
+	w := e.dependencyWaiter()
+	e.Unreadable = e.Unreadable[:0]
+	err := p.assessment.Settle(ctx, &w, &e.Reads, level)
+	for i := range p.assessment.Results {
+		result := &p.assessment.Results[i]
+		if result.UnreadableInput() {
+			e.Unreadable = append(e.Unreadable, result.ID())
+		}
+		if !e.probe {
+			result.ReportWarnings(&e.Reads)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if len(p.assessment.Blocked) != 0 {
+		return p
+	}
+	return p.resume(ctx, level, p.assessment.Results)
 }
 
 func (e *Execution) readDataInput(
@@ -298,82 +258,4 @@ func (e *Execution) readDataInput(
 		}
 	}
 	return input, nil
-}
-
-func (p *pendingDataError) addFailure(
-	causes []manifest.NamedResource,
-	reason *manifest.DiagnosticReason,
-	err error,
-) {
-	e := p.execution
-	if p.failed == nil {
-		p.failed = &manifest.DependencyFailedError{
-			Parent:  e.Reads.ID(),
-			Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
-			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
-		}
-	}
-	if len(causes) == 0 {
-		causes = []manifest.NamedResource{reason.Subject.ID}
-	}
-	for _, cause := range causes {
-		captured := *reason
-		if cause != reason.Subject.ID {
-			for i := range reason.Causes {
-				if reason.Causes[i].Subject.ID == cause {
-					captured = reason.Causes[i]
-					break
-				}
-			}
-		}
-		previous := p.failed.Reasons[cause]
-		captured.Causes = append(slices.Clone(previous.Causes), captured.Causes...)
-		slices.SortFunc(captured.Causes, manifest.DiagnosticReason.Compare)
-		captured.Causes = slices.CompactFunc(captured.Causes, func(a, b manifest.DiagnosticReason) bool {
-			return a.Compare(b) == 0
-		})
-		p.failed.Failed = append(p.failed.Failed, cause)
-		p.failed.Reasons[cause] = captured
-	}
-	p.causes = append(p.causes, err)
-}
-
-func (p *pendingDataError) settleInput(
-	ctx context.Context,
-	w *depwait.Waiter,
-	input *depwait.DataDependency,
-	level manifest.DrainLevel,
-) error {
-	e := p.execution
-	result := w.Available(ctx, *input, level)
-	if result.Err != nil {
-		return result.Err
-	}
-	if result.Result.RequiresData() {
-		if !result.Result.Materialized() {
-			for _, producer := range input.Input.Materializers {
-				e.Reads.RequireData(producer)
-			}
-		}
-		e.Reads.RequireData(input.NamedResource)
-	}
-	switch result.Kind {
-	case schedule.Blocked:
-		p.blocked = append(p.blocked, result.Blocked...)
-	case schedule.DependencyFailed:
-		if err := result.Result.MaterialError(); err != nil {
-			return err
-		}
-		p.addFailure(result.Failed, &result.Reason, result.Result.Err())
-	case schedule.Terminal:
-		if result.Result.UnreadableInput() {
-			e.Unreadable = append(e.Unreadable, result.Result.ID())
-		}
-		input.Result = result.Result
-		if !e.probe {
-			result.Result.ReportWarnings(&e.Reads)
-		}
-		p.results = append(p.results, result.Result)
-	}
-	return nil
 }

@@ -14,11 +14,12 @@ const dependencyNotFound = "dependency not found"
 // Classification retains one dependency's readiness decision.
 // Successful decisions MUST not carry an expanded DiagnosticReason.
 type Classification struct {
-	Kind    schedule.Kind
-	Subject *manifest.DiagnosticIdentity
-	Message string
-	Causes  []manifest.DiagnosticReason
-	Err     error
+	Kind         schedule.Kind
+	ToleratedCRD bool
+	Subject      *manifest.DiagnosticIdentity
+	Message      string
+	Causes       []manifest.DiagnosticReason
+	Err          error
 }
 
 // DiagnosticReason returns captured failure context for the raw dependency id.
@@ -77,7 +78,7 @@ func (w *Waiter) classify(
 ) (Classification, bool) {
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
-	if dep.ArtifactOnly && !dep.RequiresDeclaration && w.sourceAvailable(id) {
+	if w.artifactOnlyReady(dep, !dep.RequiresDeclaration) {
 		return Classification{Kind: schedule.Terminal}, false
 	}
 	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
@@ -85,7 +86,7 @@ func (w *Waiter) classify(
 	if dep.RequiresDeclaration {
 		present = obj != nil
 	}
-	if dep.RequiresDeclaration && present && dep.ArtifactOnly && w.sourceAvailable(id) {
+	if dep.RequiresDeclaration && w.artifactOnlyReady(dep, present) {
 		return Classification{Kind: schedule.Terminal}, false
 	}
 	if !w.Materializer && present && !info.Statusful {
@@ -116,15 +117,18 @@ func (w *Waiter) classify(
 	return w.classifyPresent(dep, obj, &info, level), false
 }
 
-func (w *Waiter) sourceAvailable(id manifest.NamedResource) bool {
-	art, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	return ok && art.FS != nil
+func (w *Waiter) artifactOnlyReady(dep *manifest.DependencyRef, declarationSatisfied bool) bool {
+	if !dep.ArtifactOnly || !declarationSatisfied {
+		return false
+	}
+	_, readable := w.Store.ReadableSourceArtifact(dep.NamedResource)
+	return readable
 }
 
 func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
 	id := dep.NamedResource
 	if dep.Artifact && !dep.RequiresDeclaration {
-		if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
+		if artifact, _ := w.Store.ReadableSourceArtifact(id); artifact != nil {
 			return w.artifactReady(dep, level)
 		}
 	}
@@ -132,7 +136,9 @@ func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.Drai
 		return Classification{Kind: schedule.Blocked}
 	}
 	if w.Missing.allowsMissingDeclaration(id) {
-		return w.artifactReady(dep, level)
+		result := w.artifactReady(dep, level)
+		result.ToleratedCRD = result.Kind == schedule.Terminal && result.Err == nil
+		return result
 	}
 	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}
 }
@@ -189,8 +195,8 @@ func (w *Waiter) artifactReady(dep *manifest.DependencyRef, level manifest.Drain
 	if descriptor, ok := obj.(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
 	}
-	art, _ := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	if art != nil && art.FS != nil {
+	artifact, readable := w.Store.ReadableSourceArtifact(id)
+	if readable {
 		return Classification{Kind: schedule.Terminal}
 	}
 	if dep.ArtifactOnly {
@@ -204,7 +210,7 @@ func (w *Waiter) artifactReady(dep *manifest.DependencyRef, level manifest.Drain
 	}
 	if level >= manifest.DrainCascade {
 		message := fmt.Sprintf("%s %s artifact content unavailable", label, manifest.DiagnosticFor(id, obj))
-		if !dep.ChartSource && art == nil {
+		if !dep.ChartSource && artifact == nil {
 			message = fmt.Sprintf("source %s artifact not found", manifest.DiagnosticFor(id, obj))
 		}
 		return Classification{Err: manifest.NewError(manifest.ErrObjectNotFound, nil, message)}

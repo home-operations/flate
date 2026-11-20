@@ -120,6 +120,24 @@ func TestExpandValueReferences_OrderedUnreadableOmissions(t *testing.T) {
 	}
 }
 
+func TestExpandValueReferences_DistinctKeysOnOneObject(t *testing.T) {
+	t.Parallel()
+	cm := &manifest.ConfigMap{
+		Name: "shared", Namespace: "apps",
+		Data: map[string]any{
+			"first.yaml":  "first: kept\nshared: first\n",
+			"second.yaml": "second: kept\nshared: second\n",
+		},
+	}
+	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{
+		{Kind: manifest.KindConfigMap, Name: cm.Name, ValuesKey: "first.yaml"},
+		{Kind: manifest.KindConfigMap, Name: cm.Name, ValuesKey: "second.yaml"},
+	}}
+	inputs := resolveInputsForTest(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+	assert.NoError(t, ExpandValueReferences(hr, inputs, nil))
+	assert.Diff(t, hr.Values, map[string]any{"first": "kept", "second": "kept", "shared": "second"})
+}
+
 func TestExpandValueReferences_RejectsUnsettledAssessment(t *testing.T) {
 	t.Parallel()
 	for _, deferred := range []bool{false, true} {

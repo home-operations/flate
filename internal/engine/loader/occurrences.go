@@ -59,6 +59,7 @@ type occurrenceFacts struct {
 	reverse                         []manifest.NamedResource
 	derivedInputs                   int
 	refs                            []manifest.Reference
+	implicitGate                    [1]manifest.Reference
 	templateInputs                  []manifest.TemplateInput
 	templateObjects                 []manifest.BaseManifest
 	roots                           []string
@@ -68,6 +69,14 @@ type occurrenceFacts struct {
 	policy                          *manifest.EmissionPolicy
 	labels                          map[string]string
 	labeled                         bool
+}
+
+// The implicit source precedes authored relations and MUST stay outside graph evidence.
+func (f *occurrenceFacts) relations() []manifest.Reference {
+	if len(f.refs) != 0 && f.refs[0].Use == "" && f.refs[0].Gate != 0 {
+		return f.refs[1:]
+	}
+	return f.refs
 }
 
 func (f *occurrenceFacts) indexed() bool {
@@ -131,9 +140,12 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	if manifest.KindOf(facts.catalog).TypedLabels {
 		facts.labels, facts.labeled = facts.catalog.GetLabels(), true
 	}
-	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+	for ref := range manifest.References(obj, manifest.ReferenceAll) {
+		if facts.refs == nil && ref.Use == "" && ref.Gate != 0 {
+			facts.refs = facts.implicitGate[:0]
+		}
 		facts.refs = append(facts.refs, ref.Clone())
-		if ref.AffectedInput() {
+		if ref.Use != "" && ref.AffectedInput() {
 			facts.reverse = append(facts.reverse, ref.NamedResource)
 		}
 	}
@@ -573,7 +585,7 @@ func (l *Loader) OccurrenceObject(
 
 //nolint:gocritic // The iterator retains its original occurrence value snapshot.
 func (o authoredOccurrence) references() iter.Seq[manifest.Reference] {
-	refs, namespace := o.facts.refs, o.Identity.Namespace
+	refs, namespace := o.facts.relations(), o.Identity.Namespace
 	return func(yield func(manifest.Reference) bool) {
 		for _, ref := range refs {
 			if ref.NamespaceDefault {

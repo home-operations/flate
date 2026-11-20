@@ -121,7 +121,10 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 		view.Namespaced, view.Uncertain = facts.namespaced, facts.uncertain
 		view.Retained, view.Structural, view.NeedsCandidates = facts.retained, facts.structural, facts.needsCandidates
 		view.Labels, view.Labeled, view.Witness = facts.labels, facts.labeled, facts
-		view.Refs, view.Reverse = facts.refs, facts.reverse
+		view.Refs, view.Reverse = facts.relations(), facts.reverse
+		if len(view.Refs) != len(facts.refs) {
+			view.ImplicitGate = &facts.refs[0]
+		}
 		view.TemplateInputs, view.TemplateObjects = facts.templateInputs, facts.templateObjects
 		view.Roots, view.Targets, view.AuthoredTargets = facts.roots, facts.targets, facts.authoredTargets
 		view.Policy = facts.policy

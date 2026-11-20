@@ -42,7 +42,7 @@ func TestResult_PreparationTransfer(t *testing.T) {
 	assert.FatalIf(t, slot == nil, "frozen owner has no preparation slot")
 	owner, ok := st.GetObject(id).(*manifest.Kustomization)
 	assert.Equal(t, ok, true)
-	source, _, err := kustomize.SourceInput(st, owner)
+	source, err := kustomize.SourceInput(st, owner)
 	assert.NoError(t, err)
 	request := kustomize.RenderRequest{
 		Source: source, Spec: owner, SubPath: owner.Path,
@@ -111,7 +111,7 @@ func TestResult_AggregatePreparationTransfer(t *testing.T) {
 	producer := result.Binding.Producer
 	owner, ok := cfg.Store.GetObject(producer).(*manifest.Kustomization)
 	assert.Equal(t, ok, true)
-	input, _, err := kustomize.SourceInput(cfg.Store, owner)
+	input, err := kustomize.SourceInput(cfg.Store, owner)
 	assert.NoError(t, err)
 	var destination base.Preparation[kustomize.Preparation]
 	var execution base.Execution

@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	cel.dev/cel-go v0.33.4
-	charm.land/bubbles/v2 v2.2.1
+	charm.land/bubbles/v2 v2.2.2
 	charm.land/bubbletea/v2 v2.1.2
 	charm.land/lipgloss/v2 v2.1.1
 	github.com/KimMachineGun/automemlimit v1.0.2
@@ -83,7 +83,7 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240828172851-9145d8ad07e1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
@@ -139,7 +139,7 @@ require (
 	github.com/mattn/go-ciede2000 v0.0.0-20170301095244-782e8c62fec3 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
-	github.com/mattn/go-runewidth v0.0.30 // indirect
+	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mattn/go-sqlite3 v1.14.24 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
@@ -163,7 +163,7 @@ require (
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/redis/go-redis/v9 v9.18.0 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/rivo/uniseg v0.4.8-0.20261110175422-3a370411ca06 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/rubenv/sql-migrate v1.8.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect

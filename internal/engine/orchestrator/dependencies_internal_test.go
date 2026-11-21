@@ -384,7 +384,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, pers
 	prepares := excludedOrderingPreparations(side, persistent)
 	if broken {
 		entryPreparation := manifest.WorkCounts{
-			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 15,
 		}
 		if !persistent {
 			entryPreparation.RawKeyPrepares = 3
@@ -413,12 +413,12 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, pers
 	} else {
 		chartPreparation := workCounts(side.Result.Work, chart, manifest.WorkPreparation)
 		assert.Equal(t, chartPreparation.Attempts, uint64(1))
-		assert.Equal(t, chartPreparation.FileEntries, uint64(2))
+		assert.Equal(t, chartPreparation.FileEntries, uint64(4))
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: chart, Source: chart, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
 			Attempts:      1,
 			Completed:     1,
 			OwnerPrepares: 1,
-			FileEntries:   2,
+			FileEntries:   4,
 		}
 		helmPreparation := manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
 		if !persistent {
@@ -534,7 +534,7 @@ func excludedOrderingPreparations(side Rendered, persistent bool) map[manifest.W
 			ReaderEdges:   7,
 		},
 		{Tree: side.ID, Owner: entry, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: entryKeys, FileEntries: 13,
+			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: entryKeys, FileEntries: 15,
 		},
 		{Tree: side.ID, Owner: selectedKS, Source: alias, Phase: manifest.WorkPreparation}: {
 			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: selectedKeys, ReaderEdges: 0,

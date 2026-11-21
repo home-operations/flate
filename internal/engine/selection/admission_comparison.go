@@ -2,10 +2,14 @@ package selection
 
 import (
 	"cmp"
+	"context"
+	"path"
 	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/helm/chartinput"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -380,9 +384,37 @@ func (c *admissionClosure) contentRoots(
 		c.populateContentRoots(id, obj, roots)
 	}
 
-	if c.incoming(id).Obj != nil && (record.ContentRoots == nil || !id.ReportHidden()) {
-		source := c.incomingContentSource(obj, record)
-		roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
+	if c.incoming(id).Obj == nil || record.ContentRoots != nil && id.ReportHidden() {
+		return roots
+	}
+	source := c.incomingContentSource(obj, record)
+	roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if ref.ChartPath == "" {
+			continue
+		}
+		chartSource := manifest.Resolve(ref.NamedResource, "", id.Namespace)
+		chartPath := path.Clean(ref.ChartPath)
+		roots[chartSource] = append(roots[chartSource], chartPath)
+		roots[chartSource] = append(roots[chartSource], ref.Files...)
+		_, input, _ := c.delta(chartSource)
+		if input == nil || input.FS == nil {
+			continue
+		}
+		// The closure MUST NOT retain a context (containedctx) and affected has no caller context;
+		// Describe uses it only to stop between file reads.
+		description, _, _ := chartinput.Describe(context.TODO(), input.FS, chartinput.Options{
+			Name: chartPath,
+			Validate: func(name string) error {
+				_, err := safepath.ArchiveName(name)
+				return err
+			},
+		}, nil)
+		for i := range description.Dependencies {
+			if dependency := &description.Dependencies[i]; !dependency.Remote() {
+				roots[chartSource] = append(roots[chartSource], dependency.Path)
+			}
+		}
 	}
 	return roots
 }

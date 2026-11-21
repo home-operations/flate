@@ -215,7 +215,7 @@ func (d *Session) load(ctx context.Context) error {
 		return err
 	}
 	root := d.cfg.Input.LocalPath
-	if err := d.loadManifests(ctx, root, false); err != nil {
+	if err := d.loadManifests(ctx, root, d.aggregateRequiresBuild); err != nil {
 		return err
 	}
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
@@ -409,6 +409,9 @@ func (d *Session) pendingProducer(
 	}
 	if filepath.Join(root, demand.Root) == d.cfg.Path {
 		d.entryDemand = true
+		if a := d.admission(); a.qualification != nil && !a.entryBound.Load() {
+			a.entryDemand, a.qualification.closed = true, false
+		}
 		return d.bindEntry(ctx, root)
 	}
 	return manifest.NewEntryKustomization(demand.Source, demand.Root, manifest.NamedResource{}), nil
@@ -430,7 +433,7 @@ func (d *Session) preparePendingProducer(
 	if err != nil || !guard.Valid() || d.cfg.Trees == nil || !d.canPrepare(ks) {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
-	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
+	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered && previous.err == nil &&
 		previous.matches(ks, input, nil) {
 		return false, nil
 	}

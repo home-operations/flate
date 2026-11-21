@@ -26,6 +26,20 @@ func TestCatalogCodec_RoundTrip(t *testing.T) {
 		&ConfigMap{Name: "cm", Namespace: "apps"},
 		&Secret{Name: "secret", Namespace: "apps"},
 		&RawObject{Kind: "Widget", APIVersion: "example.org/v1", Name: "widget", Namespace: "apps"},
+		&RawObject{
+			Kind: "FluxInstance", APIVersion: FluxOperatorDomain + "/v1", Name: "instance", Namespace: "apps",
+			Spec: map[string]any{
+				"sync": map[string]any{
+					"kind": KindOCIRepository, "url": "oci://example.invalid/instance",
+					"ref": "latest", "path": "./apps",
+				},
+				"distribution": map[string]any{"version": "2.5.x"},
+				"cluster":      map[string]any{"multitenant": true},
+				"kustomize": map[string]any{"patches": []any{
+					map[string]any{"patch": "first"}, map[string]any{"patch": "second"},
+				}},
+			},
+		},
 	} {
 		t.Run(object.Named().Kind, func(t *testing.T) {
 			t.Parallel()

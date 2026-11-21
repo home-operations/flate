@@ -1,4 +1,4 @@
-<PERSISTENCE:|
+
   ⚠ warnings (1)
-    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
->
+    [ConflictingProducers] GitRepository apps/self: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/apps/self
+      HelmRelease.helm.toolkit.fluxcd.io/apps/generator, Kustomization.kustomize.toolkit.fluxcd.io/apps/self

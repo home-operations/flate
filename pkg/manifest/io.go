@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	yaml "go.yaml.in/yaml/v4"
@@ -229,8 +228,8 @@ func applicationDocument(node *yaml.Node, option yaml.Option) (map[string]any, e
 		return nil, fmt.Errorf("decode application: %w", err)
 	}
 	doc := map[string]any{
-		"apiVersion": fields.APIVersion, "kind": fields.Kind,
-		"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace},
+		apiVersionKey: fields.APIVersion, kindKey: fields.Kind,
+		metadataKey: map[string]any{nameKey: fields.Metadata.Name, "namespace": fields.Metadata.Namespace},
 	}
 	if strings.HasSuffix(fields.Kind, "List") && fields.Items != nil {
 		items := make([]any, 0, len(fields.Items))
@@ -271,22 +270,20 @@ func applicationDocument(node *yaml.Node, option yaml.Option) (map[string]any, e
 }
 
 func applicationSyncDocument(doc map[string]any, node *yaml.Node, option yaml.Option) (map[string]any, error) {
-	var spec struct {
-		Sync *operatorv1.Sync `yaml:"sync"`
-	}
+	var spec fluxInstanceGenerationSpec
 	if err := node.Load(&spec, option); err != nil {
 		return nil, fmt.Errorf("decode application: %w", err)
 	}
-	if spec.Sync != nil {
-		data, err := json.Marshal(spec.Sync)
-		if err != nil {
-			return nil, fmt.Errorf("decode application: %w", err)
-		}
-		var syncDocument map[string]any
-		if err := json.Unmarshal(data, &syncDocument); err != nil {
-			return nil, fmt.Errorf("decode application: %w", err)
-		}
-		doc["spec"] = map[string]any{"sync": syncDocument}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, fmt.Errorf("decode application: %w", err)
+	}
+	var compact map[string]any
+	if err := json.Unmarshal(data, &compact); err != nil {
+		return nil, fmt.Errorf("decode application: %w", err)
+	}
+	if len(compact) != 0 {
+		doc["spec"] = compact
 	}
 	return doc, nil
 }

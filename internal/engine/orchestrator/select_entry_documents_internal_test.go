@@ -251,7 +251,7 @@ func testSelectEntryDocumentsCase2(t *testing.T, testCaseInput *struct {
 		)
 		run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 	projectedResults2, projectionErrors2 := Select([]Rendered{run}, nil, testCaseInput.roots, testCaseInput.labels)
 	selected, err, _ := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.NoError(t, err)
@@ -316,7 +316,7 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 			selected,
 		)
 		assert.Equal(t, retry, false)
-		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 		runs = append(runs, run)
 	}
 	projectedResults3, projectionErrors3 := Select(
@@ -381,7 +381,7 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 					},
 				},
 			)
-			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 			run.Result.Failed = run.store.FailedResources()
 			if outcome.Status == store.StatusFailed {
 				run.Err = &selection.FailuresError{Message: outcome.Message}
@@ -451,7 +451,7 @@ func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.
 	for _, obj := range []manifest.BaseManifest{ks, hr} {
 		run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 	projectedResults5, projectionErrors5 := Select(
 		[]Rendered{run},
 		nil,
@@ -496,7 +496,7 @@ func testSelectEntryDocumentsProofOnlyBatch(t *testing.T) {
 				"metadata":   map[string]any{"name": "unselected", "namespace": namespace},
 			}
 			publishEntryForTest(run, []map[string]any{doc})
-			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 			assert.Equal(t, len(run.Result.Manifests), 1)
 			projectedResults7, projectionErrors7 := Select(
 				[]Rendered{run},
@@ -554,7 +554,7 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 		)
 		admissiontest.Commit(t, run.selection, nil)
 
-		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests(nil)
 		runs = append(runs, run)
 	}
 	projectedResults8, projectionErrors8 := Select(

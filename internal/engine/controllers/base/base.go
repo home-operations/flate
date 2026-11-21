@@ -21,9 +21,10 @@ type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
 
-	started   atomic.Bool
-	selection *selection.Session
-	loader    *loader.Loader
+	started            atomic.Bool
+	selection          *selection.Session
+	loader             *loader.Loader
+	preparedGeneration func(manifest.BaseManifest) (store.ChildDocuments, bool, error)
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 
@@ -49,7 +50,8 @@ func (c *Controller) requireNotStarted(method string) {
 type Options struct {
 	Cache *cache.Cache
 	// Loader supplies the invocation's declaration admission boundary.
-	Loader *loader.Loader
+	Loader             *loader.Loader
+	PreparedGeneration func(manifest.BaseManifest) (store.ChildDocuments, bool, error)
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 	// Session owns restricted reconciliation membership.
@@ -71,6 +73,7 @@ func (c *Controller) Configure(opts Options) {
 	c.Cache = opts.Cache
 	c.selection = opts.Session
 	c.loader = opts.Loader
+	c.preparedGeneration = opts.PreparedGeneration
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.Store.SetDiscoveryIndex(opts.Index)

@@ -19,17 +19,18 @@ type ChildDocuments struct {
 
 // Child retains an admitted object and its authoritative sanitized document.
 type Child struct {
-	Entry         *manifest.EntryApplication
-	SourceSupport manifest.NamedResource
-	Obj           manifest.BaseManifest
-	Doc           map[string]any
-	Generated     bool
-	Origin        manifest.DeclarationOrigin
-	policy        manifest.DeclarationPolicy
-	Productions   []manifest.Production
-	Warnings      []manifest.Warning `json:"-"`
-	payload       *SourceArtifact
-	output        *ReadSet
+	Entry             *manifest.EntryApplication
+	SourceSupport     manifest.NamedResource
+	Obj               manifest.BaseManifest
+	Doc               map[string]any
+	Generated         bool
+	VisibleGeneration bool
+	Origin            manifest.DeclarationOrigin
+	policy            manifest.DeclarationPolicy
+	Productions       []manifest.Production
+	Warnings          []manifest.Warning `json:"-"`
+	payload           *SourceArtifact
+	output            *ReadSet
 }
 
 // Emission is an immutable assessed inventory. Maps and objects are borrowed read-only.
@@ -55,10 +56,11 @@ type Emission struct {
 	// Render retains immutable pre-admission renderer metadata and output.
 	Render *manifest.RenderReceipt
 
-	input     manifest.BaseManifest
-	inputDoc  map[string]any
-	inputHead inputStamp
-	revision  uint64
+	input         manifest.BaseManifest
+	inputDoc      map[string]any
+	inputHead     inputStamp
+	syncOwnerKeys [2]string
+	revision      uint64
 	// Copies share atomic storage; each prepared proposal owns a fresh memo.
 	validated      *atomic.Pointer[manifest.BaseManifest]
 	documentOwners []manifest.NamedResource
@@ -84,6 +86,11 @@ type RenderedOutput struct {
 }
 
 func (*Emission) artifact() {}
+
+// DocumentChild reads the accepted binding at the same position as Manifests.
+func (e *Emission) DocumentChild(i int) manifest.NamedResource {
+	return e.documentOwners[i]
+}
 
 // Retains reports whether an accepted assessment or borrowed descriptor still owns reads.
 func (e *Emission) Retains(reads *ReadSet) bool {

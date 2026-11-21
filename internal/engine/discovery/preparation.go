@@ -4,10 +4,134 @@ import (
 	"context"
 
 	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/kustomize/patch"
+	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type packagePreparation struct {
+	trees   *kustomize.TreeCache
+	request kustomize.RenderRequestOptions
+	retry   cache.RetryConfig
+	stamp   func(manifest.BaseManifest, []manifest.DocOccurrence)
+}
+
+func (c *Config) packagePreparation() packagePreparation {
+	return packagePreparation{
+		trees: c.Trees, retry: c.RemoteRetry, stamp: c.PrepareDocuments,
+		request: kustomize.RenderRequestOptions{
+			SkipKinds: c.SkipKinds, StrictSubstitutions: c.StrictSubstitutions,
+		},
+	}
+}
+
+// Keep each usable child and the identity of each failed document from a successful build.
+func (p *packagePreparation) inventory(
+	ctx context.Context, frame *declarationRender, inputs []values.Result, work *manifest.RenderWork,
+) error {
+	options := p.request
+	options.Source = frame.source
+	request, err := kustomize.NewRenderRequest(frame.owner, inputs, &options)
+	if err != nil {
+		return err
+	}
+	request.Work = work
+	request.Preparation = &frame.preparation
+	docs, receipt, found := p.trees.PreviousRender(ctx, request)
+	if !found {
+		docs, receipt, err = kustomize.Render(ctx, p.trees, request, p.retry)
+		if err != nil {
+			return err
+		}
+	}
+	p.stamp(request.Spec, docs)
+	shaping := kustomize.PrepareShape(&request, docs)
+	content := shaping.Content()
+	if err := shaping.Apply(ctx, kustomize.ShapeOptions{
+		Strict: request.StrictSubstitutions, Work: request.Work.Substitution(),
+	}); err != nil {
+		return err
+	}
+	frame.receipt, frame.content = receipt, content
+	parsed := loader.ParseChildren(request.Spec, docs, manifest.ParseDocOptions{}, p.request.SkipKinds)
+	frame.children, frame.failedDocuments = parsed.Children, parsed.Failures
+	for _, doc := range docs {
+		frame.warnings = append(frame.warnings, doc.Warnings...)
+	}
+	return nil
+}
+
+func (a *Admission) preparedInventory(
+	owner *manifest.Kustomization,
+	input *store.SourceArtifact,
+) *declarationPreparation {
+	var prepared map[manifest.NamedResource]*declarationPreparation
+	if a.session != nil {
+		prepared = a.session.prepared
+	} else if a.qualification != nil {
+		prepared = a.qualification.prepared
+	}
+	frame := prepared[owner.Named()]
+	if frame != nil && frame.matches(owner, input, nil) {
+		return frame
+	}
+	return nil
+}
+
+func (a *Admission) packageInventory(
+	ctx context.Context, owner *manifest.Kustomization, input *store.SourceArtifact,
+) (*declarationRender, error) {
+	if frame := a.preparedInventory(owner, input); frame != nil {
+		return &frame.declarationRender, frame.inventoryError()
+	}
+	frame := &declarationRender{owner: owner, source: input}
+	work := a.loader.Options.Work.Source(owner.EffectiveSourceID()).RenderWork()
+	return frame, a.packageRender.inventory(ctx, frame, nil, work)
+}
+
+func (p *declarationPreparation) inventoryError() error {
+	if len(p.failedDocuments) != 0 {
+		return nil
+	}
+	return p.err
+}
+
+type retainedGeneration struct {
+	object manifest.BaseManifest
+	output store.ChildDocuments
+	err    error
+}
+
+// PreparedGeneration returns immutable documents. Discovery only writes at serial construction or quiescent boundaries.
+func (a *Admission) PreparedGeneration(object manifest.BaseManifest) (store.ChildDocuments, bool, error) {
+	for _, current := range a.generation[object.Named()] {
+		if manifest.Equal(current.object, object) {
+			return current.output, true, current.err
+		}
+	}
+	return store.ChildDocuments{}, false, nil
+}
+
+func (a *Admission) prepareGeneration(
+	object manifest.BaseManifest, work manifest.WorkScope,
+) (store.ChildDocuments, error) {
+	if object == nil {
+		return store.ChildDocuments{}, nil
+	}
+	if output, ok, err := a.PreparedGeneration(object); ok {
+		return output, err
+	}
+	output, err := patch.PrepareGeneration(object, work)
+	if a.generation == nil {
+		a.generation = map[manifest.NamedResource][]retainedGeneration{}
+	}
+	id := object.Named()
+	a.generation[id] = append(a.generation[id], retainedGeneration{object: object, output: output, err: err})
+	return output, err
+}
 
 func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	if ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 {
@@ -44,7 +168,7 @@ func (d *Session) preparePlannedPackages(ctx context.Context) (bool, error) {
 		if !pkg.register {
 			continue
 		}
-		if err := d.prepareProducer(ctx, pkg.render.owner, d.cfg.Input, nil); err != nil {
+		if err := d.prepareEntryPackage(ctx, pkg.render.owner, d.cfg.Input, nil); err != nil {
 			return false, err
 		}
 		registered = true
@@ -67,6 +191,7 @@ func (d *Session) retainPackage(pkg *plannedPackage) {
 	}
 	frame := &declarationPreparation{
 		declarationRender: pkg.render,
+		err:               manifest.DocumentFailure(pkg.render.failedDocuments),
 		complete:          true,
 		work:              d.preparationWork(owner, owner.EffectiveSourceID()).RenderWork(),
 	}
@@ -80,6 +205,14 @@ func (d *Session) retainPackage(pkg *plannedPackage) {
 func (q *entryQualification) close() {
 	q.preparation.Retire()
 	*q = entryQualification{}
+}
+
+func (a *Admission) retireQualification() {
+	if q := a.qualification; q != nil {
+		q.close()
+		a.qualification = nil
+	}
+	a.applications.Store(nil)
 }
 
 // Preparation MUST be accessed only by the matching owner after construction freezes.
@@ -128,12 +261,11 @@ func (r *Result) Close() {
 		if r.loader != nil {
 			r.loader.Options.Session.PublishEntry(nil)
 		}
-		if q := r.Admission.qualification; q != nil {
-			q.close()
-		}
+		r.Admission.retireQualification()
 		r.Admission.entryPreparation = kustomize.Preparation{}
 		r.Admission.entryRequest = kustomize.RenderRequest{}
 		r.Admission.acceptedEntry = nil
+		r.Admission.generation = nil
 	}
 	if r.ownsLoader {
 		r.loader.Close()
@@ -149,6 +281,9 @@ func (d *Session) Close() {
 	d.planner = nil
 	d.packages = nil
 	d.entryPackages = nil
+	d.entryPackagesToQualify = nil
+	d.enclosingPackages = nil
+	d.publicOperands = nil
 	d.entryBuilderInput = nil
 	d.entryBuilderPath = ""
 	d.entryBuilder = false
@@ -165,15 +300,38 @@ func (d *Session) Close() {
 	}
 	if d.entryAdmission != nil {
 		d.loader.Options.Session.PublishEntry(nil)
-		if q := d.entryAdmission.qualification; q != nil {
-			q.close()
-		}
+		d.entryAdmission.retireQualification()
 		d.entryAdmission.entryPreparation = kustomize.Preparation{}
 		d.entryAdmission.entryRequest = kustomize.RenderRequest{}
 		d.entryAdmission.acceptedEntry = nil
+		d.entryAdmission.generation = nil
 	}
 	if d.ownsLoader {
 		d.loader.Close()
 	}
 	d.prepared = nil
+}
+
+func (d *Session) hasEntryOperands() bool {
+	return len(d.entryPackagesToQualify) != 0 || len(d.enclosingPackages) != 0
+}
+
+func (d *Session) finishEntryOperands(ctx context.Context, repoRoot string) error {
+	hasPrivate := len(d.entryPackagesToQualify) != 0
+	if d.hasEntryOperands() && d.requiresEntry() && !d.admission().entryBound.Load() {
+		if _, err := d.bindEntry(ctx, repoRoot); err != nil {
+			return err
+		}
+	}
+	l := d.loader
+	if l.Options.Session.Snapshot().Output(manifest.NamedResource{}) && (!hasPrivate || d.entryState.operandsSettled) {
+		if err := l.PromoteOrphans(ctx); err != nil {
+			return err
+		}
+	}
+	for _, id := range d.publicOperands {
+		d.cfg.Store.RetainOperand(id)
+	}
+	d.publicOperands = nil
+	return nil
 }

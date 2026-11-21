@@ -59,7 +59,7 @@ func testFetcherSyntheticCredentialContextCase1(t *testing.T, generated *bool, m
 		children, err := release.GeneratedObjects()
 		assert.FatalIf(t, err != nil, "%s", err)
 
-		chart = children[0].(*manifest.HelmChartSource)
+		chart = children.Objects[0].(*manifest.HelmChartSource)
 		expected = release.Named()
 	}
 	repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})

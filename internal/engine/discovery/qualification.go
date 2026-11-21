@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,44 +9,54 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/home-operations/flate/internal/engine/selection"
-
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type entryQualification struct {
-	preparation    *selection.Preparation
-	arrivals       *applicationEvidence
-	loader         *loader.Loader
-	trees          *kustomize.TreeCache
-	session        *Session
-	previous       kustomize.EntryEvidence
-	root           manifest.NamedResource
-	refresh        []manifest.NamedResource
-	candidates     []manifest.NamedResource
-	matches        []applicationEvidence
-	pending        bool
-	closed         bool
-	accepted       *kustomize.EntryEvidence
-	receiptRead    bool
-	receiptPending bool
-	changed        bool
+	operandsSettled bool
+	packages        [][]selection.OccurrenceFacts
+	active          []manifest.NamedResource
+	preparation     *selection.Preparation
+	arrivals        *applicationEvidence
+	loader          *loader.Loader
+	trees           *kustomize.TreeCache
+	session         *Session
+	prepared        map[manifest.NamedResource]*declarationPreparation
+	previous        kustomize.EntryEvidence
+	root            manifest.NamedResource
+	refresh         []manifest.NamedResource
+	candidates      []manifest.NamedResource
+	matches         []applicationEvidence
+	pending         bool
+	closed          bool
+	accepted        *kustomize.EntryEvidence
+	receiptRead     bool
+	receiptPending  bool
+	replay          bool
+	changed         bool
 }
 
 type applicationEvidence struct {
-	root        manifest.NamedResource
-	object      manifest.BaseManifest
-	document    map[string]any
-	application manifest.EntryApplication
-	source      entryResolution
-	owner       manifest.NamedResource
-	history     bool
-	builtRoot   string
-	child       *store.Child
-	next        *applicationEvidence
+	root              manifest.NamedResource
+	object            manifest.BaseManifest
+	document          map[string]any
+	application       manifest.EntryApplication
+	source            entryResolution
+	generatedSource   manifest.BaseManifest
+	owner             manifest.NamedResource
+	declaration       manifest.NamedResource
+	private           bool
+	history           bool
+	descendant        bool
+	visibleGeneration bool
+	builtRoot         string
+	child             *store.Child
+	next              *applicationEvidence
 }
 
 // AddApplication MUST only record arrivals because store listeners cannot perform qualification.
@@ -117,10 +128,10 @@ func (a *Admission) applicationSource(
 		resolved.artifact = nil
 	}
 	if resolved.object == nil {
-		resolved.object = a.resolvedSources.snapshot()[application.Source].object
-	}
-	if resolved.object == nil {
-		resolved.object = application.Declaration
+		previous := a.resolvedSources.snapshot()[application.Source]
+		if a.session != nil || !previous.projected {
+			resolved.object = previous.object
+		}
 	}
 	return resolved
 }
@@ -176,9 +187,12 @@ func (a *Admission) readApplication(
 	}
 	evidence.application = application
 	resolved := a.applicationSource(st, reads, &application)
+	if evidence.generatedSource != nil && resolved.object == nil {
+		resolved.object = evidence.generatedSource
+	}
 	if resolved.artifact == nil && resolved.object != nil && len(resolved.object.Composition().Includes) != 0 {
 		evidence.source = resolved
-		if a.applicationApplies(&application, &resolved, a.path) {
+		if !evidence.private && a.applicationApplies(&application, &resolved, a.path) {
 			reads.RequireData(application.Source)
 			if q := a.qualification; q != nil {
 				q.pending, q.candidates = true, []manifest.NamedResource{application.Source}
@@ -197,7 +211,7 @@ func (a *Admission) readApplication(
 				reads:     reads,
 				work:      reads.WorkScope(),
 				entry:     a.appliesEntry(&application),
-				projected: application.Declaration != nil && resolved.object == application.Declaration,
+				projected: resolved.object != nil && resolved.object == evidence.generatedSource,
 			},
 		)
 		if err != nil {
@@ -205,8 +219,25 @@ func (a *Admission) readApplication(
 		}
 	}
 	evidence.source = resolved
-	return !evidence.object.Named().ReportHidden() &&
-		a.applicationApplies(&application, &resolved, a.path), nil
+	if evidence.object.Named().ReportHidden() {
+		return false, nil
+	}
+	entry, target := a.input.OriginPath(a.path), a.applicationEntryOrigin(&application, &resolved)
+	switch {
+	case target == "":
+		return false, nil
+	case target == entry:
+		return true, nil
+	case !evidence.visibleGeneration:
+		return false, nil
+	case safepath.Contains(entry, target):
+		return true, nil
+	case !safepath.Contains(target, entry):
+		return false, nil
+	}
+	ks, _ := evidence.object.(*manifest.Kustomization)
+	evidence.descendant = a.qualification.loader.EntryPackageReached(resolved.artifact, application.Path, ks, entry)
+	return evidence.descendant, ctx.Err()
 }
 
 func (q *entryQualification) published(st *store.Store, a *Admission) iter.Seq[manifest.BaseManifest] {
@@ -253,10 +284,12 @@ type qualificationWalk struct {
 	store     *store.Store
 	reads     *store.ReadSet
 	visits    map[applicationRoute]qualificationVisit
+	probed    []manifest.BaseManifest
 }
 
 func (q *entryQualification) advance(ctx context.Context, a *Admission, st *store.Store, reads *store.ReadSet) error {
-	q.pending, q.candidates, q.matches, q.receiptPending, q.changed = false, nil, nil, false, false
+	previous := q.candidates
+	q.pending, q.candidates, q.matches, q.receiptPending, q.changed, q.replay = false, nil, nil, false, false, false
 	q.arrivals = a.applications.Load()
 	walk := qualificationWalk{
 		q:         q,
@@ -265,38 +298,29 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 		reads:     reads,
 		visits:    map[applicationRoute]qualificationVisit{},
 	}
-	roots := q.loader.EntryRoots(q.published(st, a), reads)
-	for i := range roots {
-		evidence, err := walk.root(ctx, &roots[i])
-		if err != nil {
+	if !q.closed && a.entryDemand && (len(q.packages) != 0 || len(q.active) != 0) {
+		if err := walk.advanceOperands(ctx); err != nil {
 			return err
 		}
-		if q.pending {
-			break
-		}
-		if evidence == nil {
-			continue
-		}
-		q.root = evidence.object.Named()
-		matched, err := walk.visit(ctx, evidence)
-		if err != nil {
-			return err
-		}
-		if matched || q.pending {
-			break
+		if q.pending || len(q.matches) != 0 {
+			if q.pending {
+				q.matches = nil
+			}
+			q.orderMatches()
+			return nil
 		}
 	}
-	if q.closed ||
-		len(q.matches) != 0 && q.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
+	if err := walk.visitPublishedRoots(ctx); err != nil {
+		return err
+	}
+	lostMatch := !q.pending && len(q.matches) == 0 && len(previous) != 0
+	fullMatch := len(q.matches) != 0 && q.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
+	if q.closed || lostMatch || fullMatch {
 		if err := walk.observe(ctx); err != nil {
 			return err
 		}
 	}
-	slices.SortFunc(q.matches, func(a, b applicationEvidence) int { return a.object.Named().Compare(b.object.Named()) })
-	q.matches = slices.CompactFunc(
-		q.matches,
-		func(a, b applicationEvidence) bool { return a.object.Named() == b.object.Named() },
-	)
+	q.orderMatches()
 	return nil
 }
 
@@ -312,7 +336,7 @@ func (w *qualificationWalk) root(ctx context.Context, root *selection.Occurrence
 	if object != nil {
 		evidence := &applicationEvidence{object: object, root: object.Named()}
 		w.captureOwner(evidence)
-		if evidence.owner != (manifest.NamedResource{}) {
+		if cmp.Or(evidence.owner, evidence.declaration) != (manifest.NamedResource{}) {
 			return evidence, nil
 		}
 	}
@@ -353,7 +377,7 @@ func (w *qualificationWalk) observe(ctx context.Context) error {
 		if seen[object.Named()] {
 			continue
 		}
-		if _, valid := manifest.ApplicationFor(object); !valid {
+		if _, valid := runnableApplication(object); !valid {
 			continue
 		}
 		evidence := &applicationEvidence{object: object, root: object.Named()}
@@ -377,25 +401,36 @@ func (w *qualificationWalk) observe(ctx context.Context) error {
 func (w *qualificationWalk) captureOwner(evidence *applicationEvidence) {
 	productions := w.reads.Productions(evidence.object.Named(), w.q.loader.Index)
 	for i := range productions {
-		owner := productions[i].Owner
+		production := &productions[i]
+		owner := production.Owner
+		if owner == (manifest.NamedResource{}) && production.Declaration != (manifest.NamedResource{}) &&
+			production.Declaration != evidence.object.Named() && w.reads.GeneratedDocument(evidence.object.Named()) {
+			current, document, emission := w.reads.GetEmission(evidence.object.Named())
+			emission.Finish()
+			if manifest.Equal(current, evidence.object) {
+				evidence.declaration, evidence.document = production.Declaration, document
+				evidence.visibleGeneration = true
+			}
+			continue
+		}
 		if owner == (manifest.NamedResource{}) || owner == evidence.object.Named() {
 			continue
 		}
-		if _, accepted := acceptedApplicationOutput(w.reads, owner); !accepted {
+		output, accepted := acceptedApplicationOutput(w.reads, owner)
+		if !accepted || !manifest.Equal(w.reads.GetDeclaration(evidence.object.Named()), evidence.object) {
 			continue
 		}
-		evidence.owner = owner
-		if accepted, _ := evidence.ownerAccepts(w.reads); !accepted {
-			evidence.owner = manifest.NamedResource{}
+		index := slices.IndexFunc(output.Children, func(child store.Child) bool {
+			return child.Obj != nil && manifest.Equal(child.Obj, evidence.object)
+		})
+		if index < 0 {
 			continue
 		}
-		output, _ := acceptedApplicationOutput(w.reads, owner)
-		for j := range output.Children {
-			child := &output.Children[j]
-			if child.Obj != nil && manifest.Equal(child.Obj, evidence.object) {
-				evidence.document = child.Doc
-				break
-			}
+		child := &output.Children[index]
+		evidence.owner, evidence.declaration = owner, production.Declaration
+		evidence.document, evidence.child, evidence.visibleGeneration = child.Doc, child, child.VisibleGeneration
+		if evidence.declaration != (manifest.NamedResource{}) {
+			w.reads.GetDeclaration(evidence.declaration)
 		}
 		return
 	}
@@ -408,6 +443,9 @@ func (w *qualificationWalk) visit(ctx context.Context, evidence *applicationEvid
 	object := evidence.object
 	if object == nil {
 		return false, nil
+	}
+	if !manifest.KindOf(object).Runnable {
+		return w.visitGeneration(ctx, evidence)
 	}
 	matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 	if err != nil {
@@ -450,7 +488,8 @@ func (w *qualificationWalk) continueRoute(ctx context.Context, evidence *applica
 	if err != nil || execution == nil {
 		return false, err
 	}
-	if !w.q.closed && w.q.previous.Receipt != nil && w.q.previous.Root == object.Named() {
+	if w.q.previous.Receipt != nil &&
+		(w.q.previous.Root == object.Named() || w.q.previous.Owner == execution.Named()) {
 		reused, pending := w.q.reusePrevious(ctx, w.admission, w.store, w.reads)
 		if reused || pending {
 			return reused, nil
@@ -459,6 +498,9 @@ func (w *qualificationWalk) continueRoute(ctx context.Context, evidence *applica
 	if w.q.session == nil && w.store.GetDeclaration(execution.Named()) != nil &&
 		w.reads.QualificationSettled(execution.Named()) {
 		return false, nil
+	}
+	if current, admitErr := w.captureConstructed(ctx, evidence, execution.Named()); admitErr != nil || !current {
+		return false, admitErr
 	}
 	batch, err := w.children(ctx, evidence, execution)
 	if err != nil || w.q.pending {
@@ -485,7 +527,7 @@ func (w *qualificationWalk) execution(
 	if !produces && !applies || manifest.KindOf(evidence.object).Structural && !renders {
 		return nil, nil
 	}
-	if !applies || application.Declaration == nil && w.reads.Policy(evidence.object.Named()).Root {
+	if !applies || w.reads.Policy(evidence.object.Named()).Root || evidence.visibleGeneration {
 		return evidence.object, nil
 	}
 	resolved := &evidence.source
@@ -558,12 +600,13 @@ func (w *qualificationWalk) admitConstructed(ctx context.Context, evidence *appl
 	if w.store.GetDeclaration(evidence.object.Named()) != nil {
 		return true, nil
 	}
-	application, applies := manifest.ApplicationFor(evidence.object)
-	if !applies {
-		return true, nil
+	if evidence.child == nil {
+		return false, nil
 	}
 	incoming := *evidence.child
-	incoming.Entry = &application
+	if application, applies := manifest.ApplicationFor(evidence.object); applies {
+		incoming.Entry = &application
+	}
 	committed, err := w.commit(
 		ctx,
 		&selection.PrepareRequest{Generation: []store.Child{incoming}, Reads: w.reads, Invocation: true},
@@ -585,6 +628,7 @@ type qualificationBatch struct {
 	children []store.Child
 	root     string
 	complete bool
+	private  bool
 }
 
 func (w *qualificationWalk) children(
@@ -592,6 +636,10 @@ func (w *qualificationWalk) children(
 	evidence *applicationEvidence,
 	execution manifest.BaseManifest,
 ) (qualificationBatch, error) {
+	if frame := w.q.prepared[execution.Named()]; frame.canSupply(execution, w.reads) {
+		root := filepath.Join(frame.source.LocalPath, manifest.NormalizeClaimBase(frame.owner.Path))
+		return qualificationBatch{root: root, children: frame.children, complete: true}, nil
+	}
 	if w.store.GetDeclaration(execution.Named()) == nil {
 		if w.q.session == nil {
 			return w.runtimeFrontier(ctx, evidence, execution)
@@ -703,7 +751,7 @@ func (w *qualificationWalk) prepare(
 	}
 	prepared, known := w.q.session.prepared[ks.Named()]
 	reused := known && prepared.registered && prepared.matches(ks, input, support)
-	if err := w.q.session.prepareProducer(ctx, ks, input, support); err != nil {
+	if err := w.q.session.prepareEntryPackage(ctx, ks, input, support); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("context: %w", ctx.Err())
 		}
@@ -725,6 +773,9 @@ func (w *qualificationWalk) preparationSupport(
 	support.Init(w.store, origin, nil)
 	support.GetArtifact(source, store.ArtifactContent)
 	support.GetDeclaration(source)
+	if evidence.declaration != (manifest.NamedResource{}) {
+		support.GetDeclaration(evidence.declaration)
+	}
 	switch {
 	case evidence.builtRoot != "":
 		batch, current := w.q.loader.BuiltChildren(evidence.builtRoot, evidence.owner, support)
@@ -747,7 +798,7 @@ func (w *qualificationWalk) preparationSupport(
 }
 
 func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.NamedResource) {
-	if w.q.closed {
+	if w.q.closed && !w.q.replay {
 		w.q.pending = w.admission.entryBound.Load()
 		decision := w.q.loader.Options.Session.Snapshot()
 		if w.q.pending || evidence.owner == (manifest.NamedResource{}) ||

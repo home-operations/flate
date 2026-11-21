@@ -23,7 +23,7 @@ func runClusterReportNativeAggregateInputsFormat(t *testing.T, current, base, fo
 	)
 	switch *format {
 	case "brief":
-		assert.Equal(t, out, "two changes detected between from, three documents and to, three documents\n\n")
+		assert.Equal(t, out, "two changes detected between from, five documents and to, five documents\n\n")
 	case "diff":
 		assert.FatalIf(
 			t,

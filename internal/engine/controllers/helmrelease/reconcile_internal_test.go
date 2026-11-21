@@ -299,7 +299,7 @@ metadata: {name: issuer}
 	if (*testCaseInput.entry) == "template" {
 		generated, err := manifest.GeneratedObjects(hr)
 		assert.NoError(t, err)
-		src = generated[0].(*manifest.OCIRepository)
+		src = generated.Objects[0].(*manifest.OCIRepository)
 	}
 	original := hr.Clone()
 	st.AddObject(src)

@@ -24,6 +24,7 @@ const (
 	frameHeaderLimit    = 16 << 20
 	frameIdentityBuffer = 4 << 10
 	inputFrameDomain    = "loader-inputs"
+	inputFrameVersion   = 2
 )
 
 type frameEnvelope struct {
@@ -304,7 +305,7 @@ func InputFrameIdentity(origin, url string, content *Frame) (BlobKey, string) {
 	lookup := manifest.Fingerprint(struct {
 		Version             int
 		Domain, Origin, URL string
-	}{Version: frameVersion, Domain: inputFrameDomain, Origin: origin, URL: url})
+	}{Version: inputFrameVersion, Domain: inputFrameDomain, Origin: origin, URL: url})
 	identity := ""
 	if content != nil {
 		identity = content.raw

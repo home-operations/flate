@@ -240,10 +240,10 @@ func (l *Loader) entryRootAvailable(
 	objects admissionReader,
 ) bool {
 	app, application := manifest.ApplicationFor(object)
-	if application {
+	if application && manifest.KindOf(object).Runnable {
 		location := SourceView(objects, app.Source, l.SourceRoot)
 		known := objects.GetObject(app.Source) != nil || objects.GetArtifact(app.Source, store.ArtifactContent) != nil
-		if location.Pinned || known && location.External && app.Declaration == nil {
+		if location.Pinned || known && location.External {
 			return false
 		}
 	}

@@ -100,36 +100,43 @@ func (l *Loader) visitScope(rootArg *graphVisit, membershipOnly bool) {
 	}
 	unshared := !membershipOnly && ks != nil && len(ks.Components) != 0
 	if unshared {
-		visits = slices.Clone(visits)
-		namespace := root.namespace
-		{
-			visitValues := visits
-			for visitIndex := range visitValues {
-				visit := visitValues[visitIndex]
-				if visit.document != nil && visit.dir == root.dir {
-					namespace = visit.namespace
-					break
-				}
-			}
-		}
-		for _, component := range ks.Components {
-			if !fluxkustomize.IsLocalRelativePath(component) {
-				continue
-			}
-			child := root
-			child.dir = path.Join(root.dir, filepath.ToSlash(component))
-			file := filepath.Join(root.root, child.dir)
-			inputFile := new(l.documents).input(file)
-			info, err := fs.Stat(inputFile.fs, inputFile.name)
-			new(l.documents).rememberStat(file, info, err)
-			if err != nil && ks.IgnoreMissingComponents {
-				continue
-			}
-			child.namespace = namespace
-			visits = append(visits, l.scopeWalk(new(child))...)
-		}
+		visits = l.scopeComponents(&root, visits, ks)
 	}
 	l.recordScopeVisits(&root, visits, membershipOnly, unshared)
+}
+
+func (l *Loader) scopeComponents(
+	root *graphVisit,
+	visits []graphVisit,
+	ks *manifest.Kustomization,
+) []graphVisit {
+	namespace := root.namespace
+	for i := range visits {
+		visit := &visits[i]
+		if visit.document != nil && visit.dir == root.dir {
+			namespace = visit.namespace
+			break
+		}
+	}
+	combined := slices.Clone(visits)
+	for _, component := range ks.Components {
+		if !fluxkustomize.IsLocalRelativePath(component) {
+			continue
+		}
+		child := *root
+		child.dir = path.Join(root.dir, filepath.ToSlash(component))
+		file := filepath.Join(root.root, child.dir)
+		inputFile := new(l.documents).input(file)
+		info, err := fs.Stat(inputFile.fs, inputFile.name)
+		new(l.documents).rememberStat(file, info, err)
+		if err != nil && ks.IgnoreMissingComponents {
+			continue
+		}
+		child.namespace = namespace
+		child.edge, child.throughComponent = kustomizeinput.Component, true
+		combined = append(combined, l.scopeWalk(new(child))...)
+	}
+	return combined
 }
 
 func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, membershipOnly, unshared bool) {

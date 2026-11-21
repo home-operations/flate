@@ -301,14 +301,9 @@ func TestRenderTrees_FluxInstanceSyncOnlyChange(t *testing.T) {
 		var templates manifest.WorkCounts
 		for side, run := range runs {
 			assert.NoError(t, run.Err)
-			assert.Equal(
-				t,
-				manifest.DiagnosticFor(
-					run.entryBinding.Producer,
-					run.store.GetObject(run.entryBinding.Producer),
-				).Resource,
-				instance,
-			)
+			assert.Equal(t, run.entryBinding.Producer, testutil.KustomizationID("apps", "self"))
+			assert.Equal(t, slices.ContainsFunc(run.store.Productions(run.entryBinding.Producer, run.index),
+				func(production manifest.Production) bool { return production.Declaration == instance }), true)
 			assert.Equal(t, run.store.EmissionOwner(instance), producer)
 			documents := outputByParent(run.Result.Manifests)[run.entryBinding.Producer]
 			found := false

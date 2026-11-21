@@ -24,6 +24,7 @@ type RenderOptions struct {
 	PreparationTasks *task.Service                       `json:"-"`
 	Omitted          []manifest.NamedResource            `json:"Omitted"`
 	Admit            func(RenderAdmission) (bool, error) `json:"Admit"`
+	Previous         *RenderAdmission                    `json:"-"`
 }
 
 // RenderAdmission carries accepted cache evidence bound to the current request.

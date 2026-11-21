@@ -107,6 +107,9 @@ func (s *Store) getEmission(
 			binding:    view.source,
 		},
 	}
+	if view.child.VisibleGeneration && obj != nil && manifest.KindOf(obj).Structural {
+		e.syncOwnerKeys = obj.EmissionPolicy().OwnerKeys
+	}
 	if head != nil {
 		e.renderCache = &head.rendered
 	}
@@ -115,6 +118,7 @@ func (s *Store) getEmission(
 		if prev.OutputReads.Valid() {
 			e.Children = prev.Children
 			e.Manifests = prev.Manifests
+			e.documentOwners = prev.documentOwners
 			e.Unreadable = prev.Unreadable
 			if reads == nil || prev.Reads == reads {
 				e.Failures = prev.Failures
@@ -631,11 +635,7 @@ func (sh *shard) addProductionMembers(
 	if cell.hidden && cell.reference == nil {
 		return
 	}
-	// A directly bound declaration can precede its discovery record.
-	if !result.retiredStatic && cell.static != nil && cell.binding != nil && cell.support == nil &&
-		len(result.out) == 0 && cell.bound() {
-		result.add(&manifest.Production{Source: cell.binding.Ref.NamedResource})
-	}
+	cell.addBoundProductions(result, sh.generatedDeclarations[id])
 	for _, m := range sh.members[id] {
 		e := m.slot.current.Load()
 		if reads != nil {
@@ -664,6 +664,22 @@ func (sh *shard) addProductionMembers(
 		for i := range entry.child.Productions {
 			result.add(&entry.child.Productions[i])
 		}
+	}
+}
+
+// A directly bound declaration can precede its discovery record.
+func (c *objectCell) addBoundProductions(result *productionResult, generated *Child) {
+	if result.retiredStatic || c.static == nil || c.binding == nil || !c.bound() {
+		return
+	}
+	if generated != nil {
+		for i := range generated.Productions {
+			result.add(&generated.Productions[i])
+		}
+		return
+	}
+	if len(result.out) == 0 && c.support == nil {
+		result.add(&manifest.Production{Source: c.binding.Ref.NamedResource})
 	}
 }
 

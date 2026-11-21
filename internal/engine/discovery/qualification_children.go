@@ -13,6 +13,7 @@ func (w *qualificationWalk) follow(
 	batch *qualificationBatch,
 	owner manifest.NamedResource,
 ) (bool, error) {
+	previousMatches := len(w.q.matches)
 	children := slices.Clone(batch.children)
 	slices.SortFunc(children, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	continuations := make([]applicationEvidence, 0, len(children))
@@ -32,17 +33,17 @@ func (w *qualificationWalk) follow(
 		if err != nil || w.q.pending {
 			return false, err
 		}
-		if !matched {
+		if !matched && !batch.private {
 			continuations = append(continuations, *evidence)
 		}
 	}
-	if len(w.q.matches) != 0 {
+	if len(w.q.matches) > previousMatches {
 		return true, nil
 	}
 	if batch.root != "" &&
 		owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
 			Named() {
-		return false, nil
+		continuations = w.nativeContinuations(continuations)
 	}
 	for i := range continuations {
 		found, err := w.visit(ctx, &continuations[i])
@@ -53,19 +54,40 @@ func (w *qualificationWalk) follow(
 	return false, nil
 }
 
+func (w *qualificationWalk) nativeContinuations(candidates []applicationEvidence) []applicationEvidence {
+	// A history request can need the native inventory without demanding its applications.
+	if w.q.session != nil && w.q.session.entryReceiptRequest != nil && !w.q.session.entryDemand {
+		return nil
+	}
+	projections := w.q.loader.SourceFacts(manifest.BootstrapSourceID, w.reads).Context.TemplateProjections
+	return slices.DeleteFunc(candidates, func(evidence applicationEvidence) bool {
+		kind := manifest.KindOf(evidence.object)
+		if !kind.Parent || kind.Structural {
+			return true
+		}
+		objects := projections[evidence.object.Named()].Objects
+		return !slices.ContainsFunc(objects, func(object manifest.BaseManifest) bool {
+			_, applies := manifest.ApplicationFor(object)
+			return applies
+		})
+	})
+}
+
 func (w *qualificationWalk) followedChild(
 	batch *qualificationBatch,
 	child *store.Child,
 	owner manifest.NamedResource,
 ) *applicationEvidence {
 	evidence := &applicationEvidence{
-		object:    child.Obj,
-		document:  child.Doc,
-		owner:     owner,
-		builtRoot: batch.root,
-		child:     child,
+		object:            child.Obj,
+		document:          child.Doc,
+		owner:             owner,
+		builtRoot:         batch.root,
+		child:             child,
+		visibleGeneration: child.VisibleGeneration,
+		private:           batch.private,
 	}
-	if batch.root != "" {
+	if batch.root != "" || batch.private {
 		if current := w.reads.GetDeclaration(child.Obj.Named()); current != nil {
 			accepted := &applicationEvidence{object: current}
 			w.captureOwner(accepted)
@@ -74,6 +96,14 @@ func (w *qualificationWalk) followedChild(
 			}
 		}
 		return evidence
+	}
+	for i := range child.Productions {
+		production := &child.Productions[i]
+		if production.Owner == owner && production.Declaration != (manifest.NamedResource{}) {
+			evidence.declaration = production.Declaration
+			w.reads.GetDeclaration(evidence.declaration)
+			break
+		}
 	}
 	accepted, pending := evidence.ownerAccepts(w.reads)
 	if !accepted {
@@ -88,6 +118,24 @@ func (w *qualificationWalk) matchChild(
 	batch *qualificationBatch,
 	evidence *applicationEvidence,
 ) (bool, error) {
+	if batch.private {
+		evidence.root = evidence.object.Named()
+		if evidence.private {
+			if slices.ContainsFunc(w.probed, func(known manifest.BaseManifest) bool {
+				return manifest.Equal(known, evidence.object)
+			}) {
+				return false, nil
+			}
+			w.probed = append(w.probed, evidence.object)
+		}
+		return w.visit(ctx, evidence)
+	}
+	if !manifest.KindOf(evidence.object).Runnable {
+		if batch.root != "" {
+			return w.visitGeneration(ctx, evidence)
+		}
+		return false, nil
+	}
 	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 	if err != nil || !eligible {
 		return false, err

@@ -1,0 +1,1 @@
+resources: [source.yaml, instance-release.yaml, plex.yaml]

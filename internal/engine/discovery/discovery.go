@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -90,38 +89,42 @@ type Config struct {
 
 // Session retains invocation-local declaration construction until Freeze.
 type Session struct {
-	entryBuilderInput   *store.SourceArtifact
-	entryBuilderPath    string
-	entryBuilder        bool
-	aggregate           bool
-	entryPackages       []*plannedPackage
-	planner             *entryPlanner
-	packages            []loader.PackageEvidence
-	planLoaded          bool
-	pendingSources      []manifest.NamedResource
-	sourceGroups        map[manifest.NamedResource]*entrySourceGroup
-	loaded              bool
-	built               bool
-	finalized           bool
-	loading             bool
-	request             selection.PrepareRequest
-	preparation         *selection.Preparation
-	constructionStarted bool
-	binding             Binding
-	entryState          entryQualification
-	entryAdmission      *Admission
-	entryDemand         bool
-	entryReceiptRequest *manifest.EntryApplication
-	entryApplier        manifest.NamedResource
-	prepared            map[manifest.NamedResource]*declarationPreparation
-	cfg                 Config
-	loader              *loader.Loader
-	resolvedSources     *entrySourcePublisher
-	remotes             map[string]struct{}
-	aliasViews          map[string]*store.SourceArtifact
-	hasPins             bool
-	result              *Result
-	ownsLoader          bool
+	entryBuilderInput      *store.SourceArtifact
+	entryBuilderPath       string
+	entryBuilder           bool
+	aggregate              bool
+	aggregateRequiresBuild bool
+	entryPackagesToQualify [][]selection.OccurrenceFacts
+	enclosingPackages      []string
+	publicOperands         []manifest.NamedResource
+	entryPackages          []*plannedPackage
+	planner                *entryPlanner
+	packages               []loader.PackageEvidence
+	planLoaded             bool
+	pendingSources         []manifest.NamedResource
+	sourceGroups           map[manifest.NamedResource]*entrySourceGroup
+	loaded                 bool
+	built                  bool
+	finalized              bool
+	loading                bool
+	request                selection.PrepareRequest
+	preparation            *selection.Preparation
+	constructionStarted    bool
+	binding                Binding
+	entryState             entryQualification
+	entryAdmission         *Admission
+	entryDemand            bool
+	entryReceiptRequest    *manifest.EntryApplication
+	entryApplier           manifest.NamedResource
+	prepared               map[manifest.NamedResource]*declarationPreparation
+	cfg                    Config
+	loader                 *loader.Loader
+	resolvedSources        *entrySourcePublisher
+	remotes                map[string]struct{}
+	aliasViews             map[string]*store.SourceArtifact
+	hasPins                bool
+	result                 *Result
+	ownsLoader             bool
 }
 
 // Run requires the caller to reconcile PendingSources whenever it returns no result.
@@ -210,10 +213,8 @@ func (d *Session) finishDiscovery(
 			return nil, err
 		}
 	}
-	if l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
-		if err := l.PromoteOrphans(ctx); err != nil {
-			return nil, err
-		}
+	if err := d.finishEntryOperands(ctx, repoRoot); err != nil {
+		return nil, err
 	}
 	if err := d.acceptPrepared(ctx); err != nil {
 		return nil, err
@@ -238,6 +239,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 	admission.session = nil
 	if admission.qualification != nil {
 		admission.qualification.session = nil
+		admission.qualification.prepared = d.prepared
 	}
 	if d.cfg.Trees == nil {
 		if admission.qualification != nil {
@@ -257,13 +259,14 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 }
 
 type declarationRender struct {
-	preparation kustomize.Preparation
-	owner       *manifest.Kustomization
-	source      *store.SourceArtifact
-	children    []store.Child
-	receipt     *manifest.RenderReceipt
-	content     any
-	warnings    []manifest.Warning
+	preparation     kustomize.Preparation
+	owner           *manifest.Kustomization
+	source          *store.SourceArtifact
+	children        []store.Child
+	failedDocuments []manifest.DocOccurrence
+	receipt         *manifest.RenderReceipt
+	content         any
+	warnings        []manifest.Warning
 }
 
 type declarationPreparation struct {
@@ -274,6 +277,13 @@ type declarationPreparation struct {
 	work       *manifest.RenderWork
 	registered bool
 	support    store.ReadSet
+}
+
+func (p *declarationPreparation) canSupply(execution manifest.BaseManifest, reads *store.ReadSet) bool {
+	if p == nil || !p.complete || !p.registered {
+		return false
+	}
+	return p.support.Valid() && reads.Matches(&p.support) && manifest.Equal(p.owner, execution)
 }
 
 type plannedPackage struct {
@@ -324,20 +334,24 @@ func newDiscoverer(config *Config) *Session {
 	}
 	if !cfg.Entry.matches(input, cfg.Path) {
 		if input == cfg.Entry.Input && cfg.Path == cfg.Entry.Path {
+			d.entryPackagesToQualify = prepared.packagesToQualify
+			d.enclosingPackages = prepared.enclosing
 			d.cfg.Entry = cfg.Entry
 			d.aliasViews = maps.Clone(prepared.aliasViews)
 			if cfg.Projections == nil {
 				l.Options.Projections = prepared.projections
 			}
-			d.aggregate = cfg.Entry.aggregate
+			d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 		}
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
 	d.entryPackages = prepared.packages
 	d.aliasViews = maps.Clone(prepared.aliasViews)
+	d.entryPackagesToQualify = prepared.packagesToQualify
+	d.enclosingPackages = prepared.enclosing
 	d.cfg.Entry = cfg.Entry
-	d.aggregate = cfg.Entry.aggregate
+	d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 	return d
 }
 
@@ -357,6 +371,7 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	// Projection can change a source reference, which MUST resolve before its path enters scope construction.
 	l.PreferExisting = true
 	var pending []sourceExpansion
+	indexedForQualification := false
 	for prepared := true; prepared; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -390,7 +405,8 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			prepared = false
 			continue
 		}
-		prepared, err = d.prepareStandaloneEntry(ctx, repoRoot, l)
+		prepared, err = d.prepareStandaloneEntry(ctx, repoRoot, l, !indexedForQualification)
+		indexedForQualification = true
 		if err != nil {
 			return err
 		}
@@ -433,7 +449,14 @@ func (d *Session) admitEntrySources(ctx context.Context, repoRoot string, regist
 	return nil
 }
 
-func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l *loader.Loader) (bool, error) {
+func (d *Session) prepareStandaloneEntry(
+	ctx context.Context, repoRoot string, l *loader.Loader, indexForQualification bool,
+) (bool, error) {
+	if indexForQualification && d.cfg.Trees != nil {
+		if err := l.FinalizeIndex(ctx, repoRoot, false); err != nil {
+			return false, err
+		}
+	}
 	ks, err := d.bindEntry(ctx, repoRoot)
 	if err != nil {
 		return false, err
@@ -451,7 +474,7 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	if d.cfg.Trees == nil || sourceID == nil || !d.canPrepare(ks) {
 		return false, nil
 	}
-	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
+	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered && previous.err == nil &&
 		previous.matches(ks, sourceID, nil) {
 		return d.entryState.changed, nil
 	}
@@ -473,57 +496,43 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	return true, nil
 }
 
-func (d *Session) requiresEntry() bool {
-	if d.loader == nil || d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
-		return d.hasEntryBuilder()
-	}
-	return d.entryDemand || d.entryReceiptRequest != nil
-}
-
-func (d *Session) hasEntryBuilder() bool {
-	input, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	if input == nil {
-		input = d.cfg.Input
-	}
-	if input == nil {
-		return false
-	}
-	if input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
-		d.entryBuilderPath == d.cfg.Path {
-		return d.entryBuilder
-	}
-	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, false
-	relative, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
-	for _, filename := range manifest.KustomizeBuilderFilenames {
-		_, err := fs.Stat(input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
-		if !errors.Is(err, fs.ErrNotExist) {
-			d.entryBuilder = true
-			return true
-		}
-	}
-	return false
-}
-
 // Binding keeps actual ownership separate from the paired entry comparison coordinate.
 type Binding struct {
 	Producer, Source, Key manifest.NamedResource
+	SupportOwner          manifest.NamedResource
 	Path                  string
+	Descendant            string
+	documents             *entryDocuments
 	Failure               error
 	Entry                 *kustomize.EntryEvidence
 	Reads                 *store.ReadSet
 	support               *store.ReadSet
 }
 
+// Projection borrows the immutable inventory for selection.
+func (b *Binding) Projection() selection.EntryIdentity {
+	entry := selection.EntryIdentity{
+		Producer: b.Producer, Key: b.Key, Source: b.Source, Descendant: b.Descendant,
+	}
+	if b.documents != nil {
+		entry.Documents = *b.documents
+	}
+	return entry
+}
+
 func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomization, error) {
 	progressed := false
 	defer func() { d.entryState.changed = progressed }()
 	admission := d.admission()
-	if q := admission.qualification; q != nil && q.previous.Receipt == nil && d.cfg.Trees != nil &&
-		(!d.hasEntryBuilder() || d.entryReceiptRequest != nil) {
-		d.entryReceipt(ctx, admission, admission.input)
+	if q := admission.qualification; q != nil && q.previous.Receipt == nil && d.cfg.Trees != nil {
+		needsHistory := d.hasEntryOperands() || d.entryReceiptRequest != nil || !d.hasEntryBuilder()
+		if needsHistory {
+			d.entryReceipt(ctx, admission, admission.input)
+		}
 	}
 	for {
 		if err := ctx.Err(); err != nil {
+			admission.cancelQualification()
 			return nil, err
 		}
 		root, binding, err := admission.BindEntry(ctx, d.cfg.Store)
@@ -610,9 +619,6 @@ func (d *Session) commitBinding(ctx context.Context, root *manifest.Kustomizatio
 		return d.admission().AcceptEntry(ctx, *binding)
 	}
 	options := selection.AdmissionOptions{Request: request, Stage: selection.Construction}
-	if entry := binding.Entry; entry != nil {
-		options.EntryHistory.Owner, options.EntryHistory.Records = entry.Owner, entry.Records
-	}
 	_, committed, err := d.loader.Options.Session.Admit(ctx, options)
 	if err != nil {
 		return Binding{}, err
@@ -691,7 +697,7 @@ func (d *Session) renderPreparation(
 	if previous != nil {
 		frame.preparation, previous.preparation = previous.preparation, kustomize.Preparation{}
 	}
-	ks, input := frame.owner, frame.source
+	ks := frame.owner
 	sourceID := ks.EffectiveSourceID()
 	provider := values.NewStoreProvider(&frame.support)
 	var inputs []values.Result
@@ -720,56 +726,15 @@ func (d *Session) renderPreparation(
 			return nil
 		}
 	}
-	request, err := kustomize.NewRenderRequest(ks, inputs, &kustomize.RenderRequestOptions{
-		Source:              input,
-		SkipKinds:           d.cfg.SkipKinds,
-		StrictSubstitutions: d.cfg.StrictSubstitutions,
-	})
-	if err != nil {
-		frame.err, frame.complete = err, ctx.Err() == nil
-		return err
+	policy := d.cfg.packagePreparation()
+	work := d.preparationWork(ks, sourceID).RenderWork()
+	err := policy.inventory(ctx, &frame.declarationRender, inputs, work)
+	if err == nil {
+		frame.work = work
+		err = manifest.DocumentFailure(frame.failedDocuments)
 	}
-	request.Work = d.preparationWork(ks, sourceID).RenderWork()
-	request.Preparation = &frame.preparation
-	docs, receipt, found := d.cfg.Trees.PreviousRender(ctx, request)
-	if !found {
-		var err error
-		docs, receipt, err = kustomize.Render(ctx, d.cfg.Trees, request, d.cfg.RemoteRetry)
-		if err != nil {
-			frame.err, frame.complete = err, ctx.Err() == nil
-			return err
-		}
-	}
-	d.cfg.PrepareDocuments(request.Spec, docs)
-	shaping := kustomize.PrepareShape(&request, docs)
-	content := shaping.Content()
-	if err := shaping.Apply(
-		ctx,
-		kustomize.ShapeOptions{
-			Strict: request.StrictSubstitutions,
-			Work:   request.Work.Substitution(),
-		},
-	); err != nil {
-		frame.err, frame.complete = err, ctx.Err() == nil
-		return err
-	}
-	parseChildrenResult2 := loader.ParseChildren(
-		request.Spec,
-		docs,
-		manifest.ParseDocOptions{},
-		request.SkipKinds,
-	)
-	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
-	if err := manifest.DocumentFailure(failures); err != nil {
-		frame.err, frame.complete = err, ctx.Err() == nil
-		return err
-	}
-	frame.work, frame.children, frame.receipt, frame.content = request.Work, built, receipt, content
-	frame.complete = true
-	for _, doc := range docs {
-		frame.warnings = append(frame.warnings, doc.Warnings...)
-	}
-	return nil
+	frame.err, frame.complete = err, ctx.Err() == nil
+	return err
 }
 
 func (d *Session) prepareProducer(
@@ -779,6 +744,29 @@ func (d *Session) prepareProducer(
 	guard *store.ReadSet,
 ) error {
 	prepared, err := d.prepareDocuments(ctx, ks, input, guard)
+	if err != nil {
+		return err
+	}
+	return d.registerProducer(ctx, prepared)
+}
+
+func (d *Session) preparePackageInventory(
+	ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact, guard *store.ReadSet,
+) (*declarationPreparation, error) {
+	prepared, err := d.prepareDocuments(ctx, ks, input, guard)
+	if prepared != nil && prepared.complete {
+		err = prepared.inventoryError()
+	}
+	return prepared, err
+}
+
+func (d *Session) prepareEntryPackage(
+	ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact, guard *store.ReadSet,
+) error {
+	if !ks.Named().ReportHidden() {
+		return d.prepareProducer(ctx, ks, input, guard)
+	}
+	prepared, err := d.preparePackageInventory(ctx, ks, input, guard)
 	if err != nil {
 		return err
 	}
@@ -808,7 +796,7 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 	}
 	prepared.registered = true
 	d.prepared[owner] = prepared
-	if d.binding.Producer == owner {
+	if prepared.err == nil && d.binding.Producer == owner {
 		d.binding.Failure = nil
 	}
 	return nil
@@ -817,7 +805,7 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 func (d *Session) acceptPrepared(ctx context.Context) error {
 	for _, prepared := range d.prepared {
 		ks := prepared.owner
-		if !prepared.registered {
+		if !prepared.registered || prepared.err != nil {
 			continue
 		}
 		sourceID := ks.EffectiveSourceID()

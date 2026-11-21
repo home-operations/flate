@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"weak"
 
 	"github.com/home-operations/flate/internal/engine/selection"
 
@@ -239,6 +241,65 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			assert.Equal(t, a.entryBound.Load(), true)
 			assert.Equal(t, a.qualification == nil, true)
 			assert.Equal(t, q.loader == nil, true)
+		})
+	}
+	t.Run("private package", testRunPrivateEntryQualificationLifetime)
+}
+
+func testRunPrivateEntryQualificationLifetime(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"cancellation", "invocation close"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			st := store.New()
+			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
+			st.AddObject(bootstrap)
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			l := loader.New(st)
+			l.SourceRoot = root
+			t.Cleanup(l.Close)
+			operand := &manifest.HelmRelease{Name: "private", Namespace: "apps"}
+			id := operand.Named()
+			q := &entryQualification{loader: l, packages: [][]selection.OccurrenceFacts{{{
+				Identity: id, Object: operand,
+			}}}}
+			a := &Admission{input: input, path: root, loader: l, entryDemand: true, qualification: q}
+			result := &Result{Admission: a, loader: l}
+			t.Cleanup(result.Close)
+			unsubscribe := st.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, payload any) {
+				if object, ok := payload.(manifest.BaseManifest); ok {
+					a.AddApplication(st, object)
+				}
+			}, false)
+			defer unsubscribe()
+			assert.Equal(t, st.GetDeclaration(id), manifest.BaseManifest(nil))
+			for range 2 {
+				selected, binding, err := a.BindEntry(t.Context(), st)
+				assert.NoError(t, err)
+				assert.Equal(t, selected, (*manifest.Kustomization)(nil))
+				assert.Equal(t, binding, Binding{})
+			}
+			assert.Equal(t, st.GetDeclaration(id), manifest.BaseManifest(operand))
+			assert.Diff(t, a.PrivateEntryOperands(), []manifest.NamedResource{id})
+			assert.Diff(t, a.EntryProducers(), []manifest.NamedResource{id})
+			assert.FatalIf(t, q.arrivals == nil, "missing private operand capture")
+			assert.Equal(t, q.arrivals.object, manifest.BaseManifest(operand))
+			captured := weak.Make(q.arrivals)
+
+			if phase == "cancellation" {
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, _, err := a.BindEntry(ctx, st)
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+			} else {
+				result.Close()
+			}
+			assert.Equal(t, len(a.EntryProducers()), 0)
+			assert.Equal(t, len(a.PrivateEntryOperands()), 0)
+			runtime.GC()
+			assert.Equal(t, captured.Value(), (*applicationEvidence)(nil))
 		})
 	}
 }

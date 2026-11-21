@@ -1,0 +1,125 @@
+---
+apiVersion: v1
+data:
+  MODE: media-before
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: effective-media-settings
+---
+apiVersion: v1
+data:
+  MODE: generator-only
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: generator-only-f4856c7cm8
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: effective-workload
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: workload
+  template:
+    metadata:
+      labels:
+        app: workload
+    spec:
+      containers:
+      - image: busybox:1.36
+        name: c
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: media-removed
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: media-removed
+  template:
+    metadata:
+      labels:
+        app: media-removed
+    spec:
+      containers:
+      - image: busybox:1.36
+        name: c
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: plain
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: plain
+  template:
+    metadata:
+      labels:
+        app: plain
+    spec:
+      containers:
+      - image: busybox
+        name: c
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: flux
+  namespace: flux-system
+spec:
+  distribution:
+    registry: ghcr.io/fluxcd
+    version: 2.x
+  sync:
+    kind: GitRepository
+    path: kubernetes/apps
+    ref: refs/heads/main
+    url: https://github.com/example/fleet.git
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1m0s
+  ref:
+    name: refs/heads/main
+  url: https://github.com/example/fleet.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m0s
+  path: kubernetes/apps
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

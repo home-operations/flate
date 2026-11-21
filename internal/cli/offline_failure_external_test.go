@@ -2,8 +2,11 @@ package cli_test
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	gitconfig "github.com/go-git/go-git/v6/config"
 
 	"github.com/home-operations/flate/internal/cli"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
@@ -37,6 +40,70 @@ func TestE2E_OfflineRenderFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.run(t)
+		})
+	}
+}
+
+//nolint:paralleltest // cli.Run changes process-global logging.
+func TestE2E_OfflineFluxInstanceGenerationFailure(t *testing.T) {
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	const origin = "https://github.com/example/fleet.git"
+	_, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{origin}})
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, "apps/instance.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: "2.x", registry: ghcr.io/fluxcd}
+  sync: {kind: GitRepository, url: https://github.com/example/fleet.git, ref: refs/heads/main, path: apps}
+`)
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", `resources: [instance.yaml, media]
+patches:
+- target: {kind: FluxInstance, name: flux}
+  patch: |-
+    - op: add
+      path: /spec/kustomize
+      value:
+        patches:
+        - target: {kind: Kustomization, name: flux-system}
+          patch: |
+            - op: add
+              path: /missing/path
+              value: invalid
+`)
+	testutil.WriteFile(t, root, "apps/media/kustomization.yaml", "resources: [configmap.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/media/configmap.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: media}\n",
+	)
+	for _, tc := range []struct {
+		name, path, stdout, stderr string
+		code                       int
+	}{
+		{
+			name: "private probe", path: "apps/media",
+			stdout: "---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: media\n",
+			stderr: "\n  ⚠ warnings (1)\n" +
+				"    [EmptyScan] no Flux Kustomization or HelmRelease objects found under the input path\n",
+		},
+		{
+			name: "requested producer", path: "apps",
+			stderr: `flate error: kustomize build: transform patch: add operation does not apply: doc is missing path: "/missing/path": missing value` + "\n",
+			code:   1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := cli.Run([]string{
+				"build", "all", "--path", filepath.Join(root, tc.path),
+				"--concurrency=2", "--cache-dir", "", "--no-progress",
+			}, &stdout, &stderr, cli.RunConfig{})
+			assert.Equal(t, code, tc.code)
+			assert.Diff(t, stdout.String(), tc.stdout)
+			assert.Diff(t, stderr.String(), tc.stderr)
 		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/helm"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/source/bucket"
@@ -119,6 +120,7 @@ type Config struct {
 
 // Orchestrator exposes a completed execution tree's store.
 type Orchestrator struct {
+	scheduler  *schedule.Scheduler
 	work       manifest.WorkSummary
 	workFrozen bool
 

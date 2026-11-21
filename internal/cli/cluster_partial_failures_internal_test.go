@@ -58,15 +58,20 @@ func runClusterGroupsPartialFailureCase(t *testing.T, command, root, format *str
 		assert.Equal(
 			t,
 			out,
-			"alpha:Kustomization/shared\nomega:Kustomization/shared\nomega:HelmRelease/shared\n",
+			"alpha:Kustomization/cluster\nalpha:Kustomization/shared\n"+
+				"omega:Kustomization/cluster\nomega:Kustomization/shared\nomega:HelmRelease/shared\n",
 		)
 	default:
 		groups := decodeGetDocuments(t, out, (*format), []string{"alpha", "omega"})
-		assert.Equal(t, len(groups[0].Documents), 1)
-		assert.Equal(t, groups[0].Documents[0]["kind"], any("Kustomization"))
-		assert.Equal(t, len(groups[1].Documents), 2)
-		assert.Equal(t, groups[1].Documents[0]["kind"], any("Kustomization"))
-		assert.Equal(t, groups[1].Documents[1]["kind"], any("HelmRelease"))
-		assert.Equal(t, groups[1].Documents[1]["name"], any("shared"))
+		assert.Equal(t, len(groups[0].Documents), 2)
+		assert.Equal(t, len(groups[1].Documents), 3)
+		for _, group := range groups {
+			assert.Equal(t, group.Documents[0]["kind"], any("Kustomization"))
+			assert.Equal(t, group.Documents[0]["name"], any("cluster"))
+			assert.Equal(t, group.Documents[1]["kind"], any("Kustomization"))
+			assert.Equal(t, group.Documents[1]["name"], any("shared"))
+		}
+		assert.Equal(t, groups[1].Documents[2]["kind"], any("HelmRelease"))
+		assert.Equal(t, groups[1].Documents[2]["name"], any("shared"))
 	}
 }

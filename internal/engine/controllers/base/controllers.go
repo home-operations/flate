@@ -28,6 +28,7 @@ type nodeController interface {
 type History struct {
 	Assessment *Execution
 	Records    iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+	Replay     func(context.Context, manifest.DrainLevel) *Execution
 	Complete   bool
 }
 

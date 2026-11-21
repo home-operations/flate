@@ -1,0 +1,429 @@
+{
+  "source": {
+    "repository": "buroa/home-ops",
+    "revision": "380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70",
+    "paths": [
+      "kubernetes/apps/media/plex/ks.yaml"
+    ],
+    "reductions": "Use two local charts. Keep the FluxInstance, generated sync Kustomization, and Plex patch chain."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/fixture"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "timeout",
+      "directory": "overlays/timeout"
+    },
+    {
+      "name": "descendant",
+      "directory": "overlays/descendant"
+    }
+  ],
+  "cases": [
+    {
+      "name": "patch-chain",
+      "description": "Apply the generated sync root in full and narrow builds and compare the Plex Kustomization.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=HelmRelease,Kustomization",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/full.stdout",
+              "stderr": "expect/full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/narrow.stdout",
+              "stderr": "expect/narrow.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "timeout",
+          "edit": {
+            "overlay": "timeout"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "descendant",
+      "description": "Apply the covering sync root to a descendant and exclude its sibling on cold and warm builds.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "scope",
+          "edit": {
+            "overlay": "descendant"
+          }
+        },
+        {
+          "id": "cold",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=HelmRelease,Kustomization",
+              "--path",
+              "@@repo@@/kubernetes/apps/media",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/descendant.stdout",
+              "stderr": "expect/descendant.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=HelmRelease,Kustomization",
+              "--path",
+              "@@repo@@/kubernetes/apps/media",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/descendant.stdout",
+              "stderr": "expect/descendant.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stderr",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Record the diagnostics from both diff snapshots."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Record the two-minute Plex edit and the effective comparison parent."
+    },
+    {
+      "path": "expect/full.stderr",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Require the full build to complete without warnings."
+    },
+    {
+      "path": "expect/full.stdout",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Record the generated root and the complete Plex patch chain."
+    },
+    {
+      "path": "expect/narrow.stderr",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Record the diagnostic for the selected Plex declaration."
+    },
+    {
+      "path": "expect/narrow.stdout",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Record the complete patched Plex HelmRelease."
+    },
+    {
+      "path": "overlays/timeout/repo/kubernetes/apps/plex.yaml",
+      "cases": [
+        "patch-chain"
+      ],
+      "purpose": "Add a two-minute timeout to the Plex Kustomization."
+    },
+    {
+      "path": "repo/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Declare the local bootstrap chart."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Emit the FluxInstance and define both layers of patches."
+    },
+    {
+      "path": "repo/charts/plex/Chart.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Declare the local workload chart."
+    },
+    {
+      "path": "repo/charts/plex/templates/config.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Render a workload when Helm reconciles Plex."
+    },
+    {
+      "path": "repo/kubernetes/apps/instance-release.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Reconcile the chart that emits the FluxInstance."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Build the physical package that backs the generated root."
+    },
+    {
+      "path": "repo/kubernetes/apps/plex.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Declare the Plex Kustomization before the timeout edit."
+    },
+    {
+      "path": "repo/kubernetes/apps/source.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Supply the local checkout to the bootstrap and workload charts."
+    },
+    {
+      "path": "repo/plex/kustomization.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Include the Plex HelmRelease in the child package."
+    },
+    {
+      "path": "repo/plex/release.yaml",
+      "cases": [
+        "patch-chain",
+        "descendant"
+      ],
+      "purpose": "Declare the HelmRelease before the patches set its rendering options."
+    },
+    {
+      "path": "expect/descendant.stdout",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Record the patched Plex chain and sync root inside the requested output."
+    },
+    {
+      "path": "expect/descendant.stderr",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Require both builds to complete without conflicts."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Give the sync root two child packages."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/media/kustomization.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Select only the media package as the requested entry."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/media/source.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Resolve the local source from the requested package."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/media/instance-release.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Provide an indexed chart that publishes the covering sync root."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/outside/kustomization.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Include a sibling beside the media package."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/outside/sibling.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Expose any output outside the requested path."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/media/plex.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Declare Plex inside the requested media package."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/outside/workload/kustomization.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Provide the out-of-scope workload."
+    },
+    {
+      "path": "overlays/descendant/repo/kubernetes/apps/outside/workload/value.yaml",
+      "cases": [
+        "descendant"
+      ],
+      "purpose": "Provide the out-of-scope workload."
+    }
+  ]
+}

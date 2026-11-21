@@ -1,16 +1,25 @@
 package manifest
 
+import fluxapis "github.com/fluxcd/pkg/apis/kustomize"
+
+// Generation carries immutable auxiliary objects, visible documents, and ordered patches.
+type Generation struct {
+	Objects   []BaseManifest
+	Documents []DocOccurrence
+	Patches   []fluxapis.Patch
+}
+
 type objectGenerator interface {
-	GeneratedObjects() ([]BaseManifest, error)
+	GeneratedObjects() (Generation, error)
 	GeneratedTargets() ([]ProducerTarget, error)
 }
 
 // GeneratedObjects derives immutable auxiliary declarations when the manifest owns a rule.
-func GeneratedObjects(obj BaseManifest) ([]BaseManifest, error) {
+func GeneratedObjects(obj BaseManifest) (Generation, error) {
 	if generator, ok := obj.(objectGenerator); ok {
 		return generator.GeneratedObjects()
 	}
-	return nil, nil
+	return Generation{}, nil
 }
 
 // GeneratedTargets MUST share validation and identity with full auxiliary generation.

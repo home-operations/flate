@@ -750,3 +750,62 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
 		"explicit external anchor could not restore covered identity",
 	)
 }
+
+func TestRecordEmitted_PackageOperandFollowsProducer(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"public", "private"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			seed := &manifest.Kustomization{Name: "generator", Namespace: "apps", Path: "before"}
+			applier := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+			source := manifest.BootstrapSourceID
+			s.SetArtifact(source, &SourceArtifact{Content: "before"})
+			var reads ReadSet
+			reads.Init(s, seed.Named(), nil)
+			if mode == "public" {
+				reads.Admit(Child{Obj: seed}, source, manifest.NamedResource{})
+				s.RetainOperand(seed.Named())
+			} else {
+				reads.AdmitOperand(seed, source)
+			}
+			reads.Close()
+			s.RecordEmitted(seed.Named(), &Emission{Children: []Child{{Obj: applier}}, Complete: true}, nil)
+			changed := seed.Clone()
+			changed.Path = "after"
+			s.RecordEmitted(applier.Named(), &Emission{Children: []Child{{Obj: changed}}, Complete: true}, nil)
+			assert.Equal(t, s.GetObject(seed.Named()), manifest.BaseManifest(changed))
+			s.RecordEmitted(applier.Named(), &Emission{Complete: true}, nil)
+			assert.Equal(t, s.GetObject(seed.Named()), nil)
+			assert.Equal(t, s.GetObject(applier.Named()), nil)
+		})
+	}
+}
+
+func TestRecordEmitted_PackageOperandSourceReplacement(t *testing.T) {
+	t.Parallel()
+	s := New()
+	source := manifest.BootstrapSourceID
+	s.SetArtifact(source, &SourceArtifact{Content: "old package"})
+	seed := &manifest.Kustomization{Name: "generator", Namespace: "apps", Path: "before"}
+	applier := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+	var reads ReadSet
+	reads.Init(s, seed.Named(), nil)
+	reads.AdmitOperand(seed, source)
+	reads.Close()
+
+	s.AddObject(applier)
+	changed := seed.Clone()
+	changed.Path = "after"
+	s.RecordEmitted(applier.Named(), &Emission{Children: []Child{{Obj: changed}}, Complete: true}, nil)
+	assert.Equal(t, s.GetObject(seed.Named()), manifest.BaseManifest(changed))
+
+	s.SetArtifact(source, &SourceArtifact{Content: "new package"})
+	cell := s.shardFor(seed.Named()).cells[seed.Named()]
+	assert.Equal(t, cell.bound(), false)
+	assert.Equal(t, s.EmissionOwner(seed.Named()), applier.Named())
+	assert.Equal(t, s.GetObject(seed.Named()), manifest.BaseManifest(changed))
+
+	s.RecordEmitted(applier.Named(), &Emission{Complete: true}, nil)
+	assert.Equal(t, s.GetObject(seed.Named()), nil)
+}

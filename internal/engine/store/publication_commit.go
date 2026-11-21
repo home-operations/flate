@@ -300,35 +300,44 @@ func (s *Store) retireMembersLocked(
 }
 
 func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectRegion) {
-	{
-		entryValues4 := proposal.entries
-		for entryIndex3 := range entryValues4 {
-			entry := entryValues4[entryIndex3]
-			target := entry.child.Obj.Named()
-			r, _ := s.index.Load().Lookup(target)
-			sh := s.shardFor(target)
-			cell := sh.cells[target]
-			supported := bootstrapSeed(r.Productions) ||
-				cell.classified && cell.binding != nil && cell.binding.Ref.NamedResource == proposal.binding.source
-			if supported && cell.static != nil && !cell.rooted && !cell.retired {
-				position, _ := region.position(target)
-				if region.states[position].supportsProducer && cell.bound() &&
-					reconcileEqual(Child{Obj: cell.static, Doc: cell.document, Warnings: cell.warnings}, entry.child) {
-					if cell.links == nil {
-						cell.links = sh.newHeadLocked(cell.generation)
-					}
-					cell.links.retained.Store(true)
-					sh.cells[target] = cell
-					continue
-				}
-				if cell.links != nil {
-					cell.links.retained.Store(false)
-				}
-				cell.retired = true
-				sh.cells[target] = cell
-				region.states[position].seed = true
-			}
+	for i := range proposal.entries {
+		entry := &proposal.entries[i]
+		target := entry.child.Obj.Named()
+		sh := s.shardFor(target)
+		cell := sh.cells[target]
+		if cell.static == nil || cell.retired {
+			continue
 		}
+		if cell.operand {
+			// Physical support stays live while the emission supplies the effective declaration.
+			cell.rooted, cell.retired = false, true
+			sh.cells[target] = cell
+			continue
+		}
+		record, _ := s.index.Load().Lookup(target)
+		sourceBound := cell.classified && cell.binding != nil &&
+			cell.binding.Ref.NamedResource == proposal.binding.source
+		if cell.rooted || !sourceBound && !bootstrapSeed(record.Productions) {
+			continue
+		}
+		position, _ := region.position(target)
+		physical := region.states[position].supportsProducer && cell.bound()
+		if physical &&
+			reconcileEqual(Child{Obj: cell.static, Doc: cell.document, Warnings: cell.warnings}, entry.child) {
+			if cell.links == nil {
+				cell.links = sh.newHeadLocked(cell.generation)
+			}
+			cell.links.retained.Store(true)
+			sh.cells[target] = cell
+			continue
+		}
+		cell.operand = physical
+		if cell.links != nil {
+			cell.links.retained.Store(false)
+		}
+		cell.retired = true
+		sh.cells[target] = cell
+		region.states[position].seed = true
 	}
 	s.retireSourceSupportLocked(proposal.origin, proposal, region)
 }

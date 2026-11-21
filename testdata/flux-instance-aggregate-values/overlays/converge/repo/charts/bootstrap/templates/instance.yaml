@@ -1,0 +1,22 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: 2.6.x}
+  cluster: {multitenant: true}
+  sync: {name: sync, kind: GitRepository, url: https://example.invalid/fixture, ref: refs/heads/main, path: {{ printf "./%s/%s" .Values.area .Values.directory | quote }}}
+  kustomize:
+    patches:
+      - target: {kind: Kustomization, name: sync, namespace: flux-system}
+        patch: |
+          - op: replace
+            path: /spec/serviceAccountName
+            value: sync-service-account
+          - op: add
+            path: /spec/patches
+            value:
+              - target: {kind: HelmRelease, name: flux-instance, namespace: flux-system}
+                patch: |
+                  - op: replace
+                    path: /spec/values/marker
+                    value: {{ if eq .Values.marker "before" }}middle{{ else }}after{{ end }}

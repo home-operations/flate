@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -58,7 +57,7 @@ func computeTemplateKey(
 	type keyHR struct {
 		ReleaseName              string                `json:"ReleaseName"`
 		ReleaseNamespace         string                `json:"ReleaseNamespace"`
-		CRDsPolicy               helmv2.CRDsPolicy     `json:"CRDsPolicy"`
+		SkipChartCRDs            bool                  `json:"SkipChartCRDs"`
 		DisableSchemaValidation  bool                  `json:"DisableSchemaValidation"`
 		DisableOpenAPIValidation bool                  `json:"DisableOpenAPIValidation"`
 		InstallDisableHooks      bool                  `json:"InstallDisableHooks"`
@@ -73,7 +72,7 @@ func computeTemplateKey(
 	khr := keyHR{
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
-		CRDsPolicy:               cmp.Or(policy.CRDs, helmv2.Create),
+		SkipChartCRDs:            policy.CRDs == helmv2.Skip,
 		DisableSchemaValidation:  hr.DisableSchemaValidation,
 		DisableOpenAPIValidation: policy.DisableOpenAPIValidation,
 		ChartVersion:             hr.Chart.Version,
@@ -179,13 +178,19 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	record, _, err := prepared.lookupRender(ctx, true)
+	record, documents, err := prepared.lookupRender(ctx, true)
 	if err != nil || record == nil {
 		return nil, false
 	}
 	records, complete := record.frame.History(hr.Named(), prepared.content)
 	if complete && record != prepared.loaded.record {
 		c.rememberDescription(&prepared.loaded, record)
+	}
+	if complete && input.Previous != nil {
+		*input.Previous = RenderAdmission{
+			Key: prepared.key, Receipt: record.receipt, Documents: normalizeLists(documents),
+			Accepted: true, Possible: true,
+		}
 	}
 	return records, complete
 }

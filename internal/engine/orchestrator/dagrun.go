@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/selection"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -41,6 +43,18 @@ func (d dagDispatcher) Dispatch(
 			defer probe.Retire()
 		}
 	}
+	prior, _ := previous.Assessment.(*base.Execution)
+	replaying := prior != nil && prior.EntryReplay
+	if d.o.selection.EntryReplay(id) || replaying {
+		history := d.o.controllers.PreviousRender(ctx, d.o.store.GetDeclaration(id), previous)
+		if history.Replay != nil && history.Assessment.Reads.Valid() && (history.Complete || replaying) {
+			return schedule.Result{Assessment: history.Replay(ctx, level)}
+		}
+		if history.Assessment != nil {
+			defer history.Assessment.Retire()
+			previous.Assessment = history.Assessment
+		}
+	}
 	execution := d.o.controllers.ReconcileNode(ctx, id, level, previous)
 	if execution == nil {
 		return schedule.Result{}
@@ -71,16 +85,43 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 			return changed
 		}
 	}
-	if admitted, err := d.o.admitEntry(ctx); err != nil {
+	admitted, err := d.o.advanceEntry(ctx)
+	if err != nil {
 		d.o.entryFailure = err
-	} else if admitted {
-		return slices.Collect(d.o.store.Sweep())
 	}
-	d.o.classifyCompleted()
+	if !admitted {
+		d.o.classifyCompleted()
+	}
 	return slices.Collect(d.o.store.Sweep())
 }
 
+func (o *Orchestrator) advanceEntry(ctx context.Context) (bool, error) {
+	before := len(o.admission.PrivateEntryOperands())
+	admitted, err := o.admitEntry(ctx)
+	if err != nil {
+		return false, err
+	}
+	next := len(o.admission.PrivateEntryOperands())
+	if next == before {
+		return admitted, nil
+	}
+	if next == 0 && o.selection.Snapshot().Output(manifest.NamedResource{}) {
+		if promoteErr := o.loader.PromoteOrphans(ctx); promoteErr != nil {
+			return false, promoteErr
+		}
+	}
+	nodes, err := o.seedNodes()
+	if err != nil {
+		return false, err
+	}
+	o.scheduler.Seed(nodes)
+	return true, nil
+}
+
 func (o *Orchestrator) seedNodes() ([]manifest.NamedResource, error) {
+	if inputs := o.admission.PrivateEntryOperands(); len(inputs) != 0 {
+		return o.seedPrivateOperands(inputs), nil
+	}
 	var ids []manifest.NamedResource
 	for info := range manifest.Kinds() {
 		if !info.Runnable {
@@ -100,10 +141,37 @@ func (o *Orchestrator) seedNodes() ([]manifest.NamedResource, error) {
 	return ids, nil
 }
 
+func (o *Orchestrator) seedPrivateOperands(inputs []manifest.NamedResource) []manifest.NamedResource {
+	var ids []manifest.NamedResource
+	seen := map[manifest.NamedResource]bool{}
+	queue := slices.Clone(inputs)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		obj := o.store.GetDeclaration(id)
+		if obj == nil {
+			continue
+		}
+		if o.schedulable(obj) && o.includeNode(id) {
+			ids = append(ids, id)
+		}
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+			queue = append(queue, ref.NamedResource)
+		}
+	}
+	return ids
+}
+
 func (o *Orchestrator) runDAG(ctx context.Context) error {
 	o.sweepProbes(false)
 	dispatcher := dagDispatcher{o}
 	sched := schedule.New(dispatcher, dispatcher)
+	o.scheduler = sched
+	defer func() { o.scheduler = nil }()
 
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
@@ -295,9 +363,6 @@ func (o *Orchestrator) publishEntry(
 		},
 		Stage: selection.Execution,
 	}
-	if binding.Entry != nil {
-		options.EntryHistory.Owner, options.EntryHistory.Records = binding.Entry.Owner, binding.Entry.Records
-	}
 	_, committed, err := o.prepareAdmission(ctx, options)
 	return committed && binding.Reads.Valid(), err
 }
@@ -330,10 +395,12 @@ func (o *Orchestrator) acceptEntry(ctx context.Context, binding *discovery.Bindi
 	previous := o.entryBinding
 	o.entryBinding = accepted
 	o.index = o.loader.Index
+	slog.DebugContext(ctx, "orchestrator: entry accepted", "producer", accepted.Producer,
+		"receipt", accepted.Entry != nil && accepted.Entry.Receipt != nil)
 	if previous.Producer.ReportHidden() && previous.Producer != accepted.Producer {
 		var seen []manifest.NamedResource
-		owner := manifest.NamedResource{}
-		if accepted.Entry != nil && accepted.Entry.Owner != previous.Producer {
+		owner := accepted.SupportOwner
+		if owner == (manifest.NamedResource{}) && accepted.Entry != nil && accepted.Entry.Owner != previous.Producer {
 			owner = accepted.Entry.Owner
 		}
 		for id := owner; id != (manifest.NamedResource{}); {

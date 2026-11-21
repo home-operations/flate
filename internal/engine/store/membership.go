@@ -119,7 +119,12 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	if obj == nil && cell.reference != nil {
 		return cell.reference.child()
 	}
-	return Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
+	child := Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
+	if generated := sh.generatedDeclarations[id]; obj != nil && generated != nil {
+		child.Generated, child.VisibleGeneration = true, true
+		child.Productions = generated.Productions
+	}
+	return child
 }
 
 type regionState struct {
@@ -214,7 +219,7 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if cell.rooted && cell.static != nil {
 		return true
 	}
-	if cell.static == nil {
+	if cell.static == nil || cell.operand && cell.retired {
 		return false
 	}
 	r, ok := s.index.Load().Lookup(id)
@@ -322,6 +327,11 @@ func (s *Store) HasGeneratedObjects(id manifest.NamedResource) bool {
 		slices.ContainsFunc(inventory.Children, func(child Child) bool { return child.Generated })
 }
 
+// PreferProducer keeps scoped representatives in the same order as store representatives.
+func PreferProducer(candidate, selected manifest.NamedResource) bool {
+	return candidate.Compare(selected) > 0
+}
+
 func (sh *shard) captureMembersLocked(id manifest.NamedResource, view *capture) *membership {
 	var chosen *membership
 	for i := range sh.members[id] {
@@ -329,7 +339,7 @@ func (sh *shard) captureMembersLocked(id manifest.NamedResource, view *capture) 
 		if m.declaration || !m.slot.visible.Load() {
 			continue
 		}
-		if chosen == nil || m.slot.id.Compare(chosen.slot.id) > 0 {
+		if chosen == nil || PreferProducer(m.slot.id, chosen.slot.id) {
 			chosen = m
 		}
 		if view != nil {
@@ -492,23 +502,21 @@ func (s *Store) captureRegionStateLocked(state *regionState, admissions *[shardC
 }
 
 func (s *Store) seedReachabilityLocked(region objectRegion, add func(manifest.NamedResource)) {
-	{
-		stateValues3 := region.states
-		for stateIndex3 := range stateValues3 {
-			state := stateValues3[stateIndex3]
-			id := state.id
-			reference := s.shardFor(id).cells[id].reference
-			live := s.staticAnchorLocked(id, region) || reference != nil && reference.policy.Reconcile
-			if !live {
-				for _, m := range s.shardFor(id).members[id] {
-					if _, inside := region.position(m.slot.id); !inside && m.slot.visible.Load() {
-						live = true
-						break
-					}
-				}
-			}
-			if live {
+	for i := range region.states {
+		id := region.states[i].id
+		sh := s.shardFor(id)
+		cell := sh.cells[id]
+		members := sh.members[id]
+		physical := cell.operand && len(members) != 0 && cell.bound()
+		supplied := cell.reference != nil && cell.reference.policy.Reconcile
+		if physical || supplied || s.staticAnchorLocked(id, region) {
+			add(id)
+			continue
+		}
+		for _, m := range members {
+			if _, inside := region.position(m.slot.id); !inside && m.slot.visible.Load() {
 				add(id)
+				break
 			}
 		}
 	}
@@ -678,25 +686,32 @@ func (u *objectUpdate) advanceCollection(generation uint64) {
 }
 
 type capturedChild struct {
-	Warnings    []manifest.Warning
-	Obj         manifest.BaseManifest
-	Doc         map[string]any
-	Productions []manifest.Production
-	Origin      manifest.DeclarationOrigin
-	Generated   bool
-	policy      manifest.DeclarationPolicy
+	Warnings          []manifest.Warning
+	Obj               manifest.BaseManifest
+	Doc               map[string]any
+	Productions       []manifest.Production
+	Origin            manifest.DeclarationOrigin
+	Generated         bool
+	VisibleGeneration bool
+	policy            manifest.DeclarationPolicy
 }
 
 func snapshotChild(child *Child) capturedChild {
 	return capturedChild{
-		Obj: child.Obj, Doc: child.Doc, Productions: child.Productions, Warnings: child.Warnings,
-		Origin: child.Origin, Generated: child.Generated, policy: child.policy,
+		Obj:               child.Obj,
+		Doc:               child.Doc,
+		Productions:       child.Productions,
+		Warnings:          child.Warnings,
+		Origin:            child.Origin,
+		Generated:         child.Generated,
+		VisibleGeneration: child.VisibleGeneration,
+		policy:            child.policy,
 	}
 }
 
 func (c *capturedChild) input() Child {
 	return Child{
 		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
-		Origin: c.Origin, Generated: c.Generated, policy: c.policy,
+		Origin: c.Origin, Generated: c.Generated, VisibleGeneration: c.VisibleGeneration, policy: c.policy,
 	}
 }

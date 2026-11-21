@@ -1,0 +1,13 @@
+---
+apiVersion: v1
+data:
+  MODE: generator-only
+kind: ConfigMap
+metadata:
+  annotations:
+    config.kubernetes.io/origin: |
+      configuredIn: kustomization.yaml
+      configuredBy:
+        apiVersion: builtin
+        kind: ConfigMapGenerator
+  name: generator-only-f4856c7cm8

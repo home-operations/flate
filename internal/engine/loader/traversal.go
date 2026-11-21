@@ -250,6 +250,7 @@ func (w *traversal) scopeReference(
 	visit *referenceVisit,
 	yield func(graphVisit) bool,
 ) traversalDecision {
+	visit.child.edge = visit.reference.Role
 	switch {
 	case visit.reference.Role == kustomizeinput.Configuration:
 		visit.child.role, visit.child.pluginRoot = kustomizeinput.Configuration, visit.parent.dir
@@ -281,6 +282,7 @@ func (w *traversal) scopeReference(
 	}
 	rel, _ := filepath.Rel(visit.parent.root, resolved)
 	visit.child.dir = filepath.ToSlash(rel)
+	visit.child.throughComponent = visit.parent.throughComponent || visit.reference.Role == kustomizeinput.Component
 	if visit.child.role == kustomizeinput.Resource {
 		_, admitted := kustpath.Resolve(
 			filepath.Join(visit.parent.root, visit.parent.dir),

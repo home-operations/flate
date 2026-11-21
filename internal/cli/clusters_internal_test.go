@@ -241,7 +241,9 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	assert.Equal(
 		t,
 		stdout,
-		"CLUSTER    NAMESPACE      NAME      PATH\nalpha      flux-system    shared    ./alpha/app\nomega      flux-system    shared    ./omega/app\n",
+		"CLUSTER    NAMESPACE      NAME       PATH\n"+
+			"alpha      flux-system    cluster    ./alpha\nalpha      flux-system    shared     ./alpha/app\n"+
+			"omega      flux-system    cluster    ./omega\nomega      flux-system    shared     ./omega/app\n",
 	)
 	cluster6 := runClusterInputs(t, "get", "images", "--path", root, "--concurrency", "2")
 	stdout, stderr, code = cluster6.stdout, cluster6.stderr, cluster6.code

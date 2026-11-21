@@ -48,10 +48,10 @@
     },
     {
       "parent": {
-        "group": "fluxcd.controlplane.io",
-        "kind": "FluxInstance",
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
         "namespace": "apps",
-        "name": "flux",
+        "name": "self",
         "path": "kubernetes/apps"
       },
       "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -63,6 +63,10 @@
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
         "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "self",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
           "name": "workload",
           "namespace": "apps"
         },
@@ -80,6 +84,10 @@
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
         "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "self",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
           "name": "workload",
           "namespace": "apps"
         },

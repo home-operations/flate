@@ -52,7 +52,7 @@ func TestGeneratedObjects_OCISelector(t *testing.T) {
 			}
 			objects, err := GeneratedObjects(hr)
 			assert.NoError(t, err)
-			got := objects[0].(*OCIRepository).LayerSelector
+			got := objects.Objects[0].(*OCIRepository).LayerSelector
 			if selector == nil {
 				assert.FatalIf(
 					t,
@@ -77,7 +77,7 @@ func TestGeneratedObjects_EmptyRule(t *testing.T) {
 	for _, obj := range []BaseManifest{&Kustomization{}, &HelmRelease{HelmReleaseSpec: helmv2.HelmReleaseSpec{Suspend: true, Chart: &helmv2.HelmChartTemplate{Kind: KindOCIRepository, Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/chart"}}}}}, &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}} {
 		assertGeneratedTargets(t, obj)
 		objects, err := GeneratedObjects(obj)
-		assert.FatalIf(t, err != nil || objects != nil, "%T generated %v: %v", obj, objects, err)
+		assert.FatalIf(t, err != nil || objects.Objects != nil, "%T generated %v: %v", obj, objects, err)
 	}
 }
 
@@ -367,7 +367,7 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 	projected := hr.WithNamespace("effective").(*HelmRelease)
 	assertGeneratedTargets(t, projected)
 	objects, err := GeneratedObjects(projected)
-	assert.FatalIf(t, err != nil || len(objects) != 1, "objects=%v error=%v", objects, err)
+	assert.FatalIf(t, err != nil || len(objects.Objects) != 1, "objects=%v error=%v", objects, err)
 	release := helmv2.HelmRelease{
 		Name:      projected.Name,
 		Namespace: projected.Namespace,
@@ -375,7 +375,7 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 	}
 	ref := release.GetHelmChartTemplateReference()
 	{
-		got := objects[0].Named()
+		got := objects.Objects[0].Named()
 		assert.FatalIf(
 			t,
 			got != (NamedResource{Group: SourceDomain, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}),
@@ -384,20 +384,20 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 			ref,
 		)
 	}
-	subject := DiagnosticFor(objects[0].Named(), objects[0])
+	subject := DiagnosticFor(objects.Objects[0].Named(), objects.Objects[0])
 	assert.FatalIf(
 		t,
-		subject.ID != objects[0].Named() || subject.Resource != projected.Named(),
+		subject.ID != objects.Objects[0].Named() || subject.Resource != projected.Named(),
 		"pre-emission diagnostic = %+v",
 		subject,
 	)
-	copied := objects[0].WithNamespace("another-source-namespace")
+	copied := objects.Objects[0].WithNamespace("another-source-namespace")
 	{
 		got := DiagnosticFor(copied.Named(), copied)
 		assert.FatalIf(t, got.Resource != projected.Named(), "namespace moved real owner: %+v", got)
 	}
 	var labels, annotations map[string]string
-	if chart, ok := objects[0].(*HelmChartSource); ok {
+	if chart, ok := objects.Objects[0].(*HelmChartSource); ok {
 		labels, annotations = chart.Labels, chart.Annotations
 		want := sourcev1.HelmChartSpec{
 			Chart:             template.Spec.Chart,
@@ -417,7 +417,7 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 		}
 		chart.ValuesFiles[0] = "mutated"
 	} else {
-		source := objects[0].(*OCIRepository)
+		source := objects.Objects[0].(*OCIRepository)
 		labels, annotations = source.Labels, source.Annotations
 		want := template.Spec.OCIRepositorySpec.DeepCopy()
 		interval := release.GetTemplateInterval()
@@ -492,8 +492,8 @@ func assertGeneratedTargets(t *testing.T, object BaseManifest) {
 	assert.Equal(t, targetErr == nil, objectErr == nil)
 	assert.Equal(t, errors.Is(targetErr, ErrInput), errors.Is(objectErr, ErrInput))
 	assert.Equal(t, errors.Is(targetErr, ErrFlux), errors.Is(objectErr, ErrFlux))
-	identities := make([]NamedResource, len(objects))
-	for i, child := range objects {
+	identities := make([]NamedResource, len(objects.Objects))
+	for i, child := range objects.Objects {
 		identities[i] = child.Named()
 	}
 	projected := make([]NamedResource, len(targets))

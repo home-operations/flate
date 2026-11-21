@@ -11,6 +11,7 @@ type EntryRoute struct {
 	Previous    manifest.NamedResource
 	Producer    manifest.NamedResource
 	Root        manifest.NamedResource
+	Replay      manifest.NamedResource
 	Reads       *store.ReadSet
 	Bound       bool
 }
@@ -25,6 +26,15 @@ func (s *Session) PublishEntry(route *EntryRoute) {
 		return
 	}
 	s.entry.Store(route)
+}
+
+// EntryReplay reports a producer needed to restore a validated entry route.
+func (s *Session) EntryReplay(id manifest.NamedResource) bool {
+	if s == nil {
+		return false
+	}
+	route := s.entry.Load()
+	return route != nil && route.Replay == id
 }
 
 func (a *Admission) entrySupported() bool {

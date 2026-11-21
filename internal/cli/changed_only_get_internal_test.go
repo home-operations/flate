@@ -71,10 +71,12 @@ func runGetAllChangedOnlyBody(t *testing.T, command *string, flags *[]string, se
 			identities = append(identities, doc["kind"].(string)+"/"+doc["name"].(string))
 		}
 		if i == 0 {
-			assert.Diff(t, identities, []string{"Kustomization/shared", "HelmRelease/shared"})
-			assert.Equal(t, group.Documents[1]["version"], any("0.1.0"))
+			assert.Diff(t, identities, []string{"Kustomization/cluster", "Kustomization/shared", "HelmRelease/shared"})
+			assert.Equal(t, group.Documents[0]["path"], any("./alpha"))
+			assert.Equal(t, group.Documents[2]["version"], any("0.1.0"))
 		} else {
-			assert.Diff(t, identities, []string{"Kustomization/shared"})
+			assert.Diff(t, identities, []string{"Kustomization/cluster", "Kustomization/shared"})
+			assert.Equal(t, group.Documents[0]["path"], any("./omega"))
 		}
 	}
 	cluster2 := runClusterInputs(t, append(strings.Fields((*command)), (*flags)...)...)

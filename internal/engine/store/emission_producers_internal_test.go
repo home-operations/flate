@@ -200,6 +200,105 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 	}
 }
 
+func TestRecordEmitted_ConflictingProducers_GeneratedSync(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			t.Parallel()
+			testGeneratedSyncConflict(t, reverse)
+		})
+	}
+}
+
+func testGeneratedSyncConflict(t *testing.T, reverse bool) {
+	t.Helper()
+	s := New()
+	generator := &manifest.RawObject{
+		APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: "FluxInstance", Name: "instance", Namespace: "apps",
+	}
+	authored := &manifest.Kustomization{Name: "authored", Namespace: "apps"}
+	syncRoot := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+	s.AddObject(generator)
+	s.AddObject(authored)
+	accept(t, s, generator.Named(), &Emission{
+		Children: []Child{{Obj: syncRoot, Generated: true, VisibleGeneration: true}},
+		Complete: true,
+	})
+	producers := []manifest.BaseManifest{authored, syncRoot}
+	if reverse {
+		slices.Reverse(producers)
+	}
+	children := make(map[manifest.NamedResource]Child)
+	for _, producer := range producers {
+		id := producer.Named()
+		docs := testutil.DocumentOccurrences([]map[string]any{{
+			"apiVersion": "monitoring.coreos.com/v1",
+			"kind":       "PrometheusRule",
+			"metadata":   map[string]any{"namespace": "apps", "name": "shared"},
+		}})
+		producer.EmissionPolicy().Stamp(docs)
+		parsed, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{})
+		assert.NoError(t, err)
+		child := Child{Obj: parsed.Object, Doc: parsed.Document}
+		children[id] = child
+		_, _, output := s.GetEmission(id)
+		output.Children, output.Manifests, output.Complete = []Child{child}, docs, true
+		output.Fingerprint = manifest.Fingerprint(docs)
+		accept(t, s, id, &output)
+		output.Finish()
+	}
+	winner := children[syncRoot.Named()]
+	id := winner.Obj.Named()
+	assert.Equal(t, semanticEqual(children[authored.Named()], winner), true)
+	checkEffectiveObject(t, s, id, &winner)
+	assert.Equal(t, s.EmissionOwner(id), syncRoot.Named())
+	assessment := s.AssessProducers()
+	assert.Diff(t, assessment.GeneratedOverlaps, map[manifest.NamedResource]map[manifest.NamedResource]struct{}{
+		authored.Named(): {id: {}},
+		syncRoot.Named(): {id: {}},
+	})
+	assert.Diff(t, assessment.Warnings, []manifest.Warning{{
+		Resource: id, Subject: manifest.DiagnosticFor(id, winner.Obj), Category: manifest.WarnConflictingProducers,
+		Message: "conflicting producers; using " + syncRoot.Named().String(), Count: 1,
+		Detail:  []string{authored.Named().String(), syncRoot.Named().String()},
+		Related: []manifest.NamedResource{authored.Named(), syncRoot.Named(), syncRoot.Named()},
+	}})
+
+	s.AddObject(&manifest.Kustomization{Name: syncRoot.Name, Namespace: syncRoot.Namespace})
+	_, _, successor := s.GetEmission(syncRoot.Named())
+	assert.Equal(t, successor.syncOwnerKeys, [2]string{})
+	assert.Equal(t, successor.previous.syncOwnerKeys, syncRoot.EmissionPolicy().OwnerKeys)
+	assert.Diff(t, successor.previous.documentOwners, []manifest.NamedResource{id})
+	assert.Diff(t, s.AssessProducers(), assessment)
+	accept(t, s, syncRoot.Named(), &successor)
+	successor.Finish()
+	s.UpdateFailure(syncRoot.Named(), manifest.NewError(manifest.ErrInput, nil, "successor failed"))
+	assert.Diff(t, s.AssessProducers(), assessment)
+	checkEffectiveObject(t, s, id, &winner)
+
+	_, _, completed := s.GetEmission(syncRoot.Named())
+	previous := completed.previous
+	completed.Fingerprint, completed.Complete = previous.Fingerprint, true
+	assert.FatalIf(t, completed.Fingerprint == "", "missing accepted fingerprint")
+	accept(t, s, syncRoot.Named(), &completed)
+	completed.Finish()
+
+	_, _, current := s.GetEmission(syncRoot.Named())
+	defer current.Finish()
+	assert.FatalIf(t, current.previous == nil, "completed successor has no accepted output")
+	assert.Equal(t, current.previous.syncOwnerKeys, [2]string{})
+	assert.Equal(t, current.previous.Fingerprint, previous.Fingerprint)
+	assert.Diff(t, current.Manifests, previous.Manifests)
+	assert.Diff(t, s.AssessProducers(), ProducerAssessment{})
+	checkEffectiveObject(t, s, id, &winner)
+
+	accept(t, s, syncRoot.Named(), &Emission{Complete: true})
+	survivor := children[authored.Named()]
+	checkEffectiveObject(t, s, id, &survivor)
+	assert.Equal(t, s.EmissionOwner(id), authored.Named())
+	assert.Diff(t, s.AssessProducers(), ProducerAssessment{})
+}
+
 func TestRecordEmitted_SharedChildArrival(t *testing.T) {
 	t.Parallel()
 

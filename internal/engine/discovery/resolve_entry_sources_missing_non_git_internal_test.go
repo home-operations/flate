@@ -301,12 +301,12 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 	t.Helper()
 
 	d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
-	first, key, _, err := d.entrySourceView(t.Context(), testCaseInput.candidate)
+	selected := *testCaseInput.candidate
+	first, key, _, err := d.entrySourceView(t.Context(), &selected)
 
 	assert.FatalIf(t, err != nil, "%v", err)
 
 	d.aliasViews[key] = first
-	selected := (*testCaseInput.candidate)
 	cloned := *(*testCaseInput.bootstrap)
 	selected.input = &cloned
 	switch *testCaseInput.phase {
@@ -585,7 +585,7 @@ func TestRun_ProducedBootstrapOCI(t *testing.T) {
 			if ok {
 				assert.Equal(t, declaration.URL, "oci://fixture.invalid/cluster")
 			}
-			for _, warning := range result.Admission.Warnings() {
+			for _, warning := range result.Admission.Warnings(st.Warnings()) {
 				assert.Equal(t, warning.Category == manifest.WarnBootstrapAliases, false)
 			}
 		})

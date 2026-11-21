@@ -440,7 +440,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 		names = append(names, ids[1].String())
 	}
 	slices.Sort(names)
-	assert.Diff(t, a.Warnings(), []manifest.Warning{
+	assert.Diff(t, a.Warnings(st.Warnings()), []manifest.Warning{
 		{
 			Category: manifest.WarnBootstrapAliases,
 			Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
@@ -484,7 +484,7 @@ func TestAdmission_SingleAliasWarning(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
 			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) != nil, true)
-			assert.Equal(t, len(result.Admission.Warnings()), 0)
+			assert.Equal(t, len(result.Admission.Warnings(st.Warnings())), 0)
 		})
 	}
 }
@@ -551,14 +551,14 @@ func TestAdmission_Warnings(t *testing.T) {
 	})
 	slices.SortFunc(want, manifest.CompareWarning)
 	stored := st.Warnings()
-	assert.Diff(t, a.Warnings(), want)
-	assert.Diff(t, a.Warnings(), want)
+	assert.Diff(t, a.Warnings(st.Warnings()), want)
+	assert.Diff(t, a.Warnings(st.Warnings()), want)
 	assert.Diff(t, st.Warnings(), stored)
 	assert.Equal(t, st.DeleteObject(late), true)
 	assert.Equal(t, st.DeleteObject(second.Named()), true)
-	assert.Diff(t, a.Warnings(), ordinary)
+	assert.Diff(t, a.Warnings(st.Warnings()), ordinary)
 	assert.Equal(t, st.DeleteObject(first.Named()), true)
-	assert.Diff(t, a.Warnings(), ordinary)
+	assert.Diff(t, a.Warnings(st.Warnings()), ordinary)
 }
 
 func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T) {
@@ -803,7 +803,7 @@ func addSourceAuthority(t *testing.T, st *store.Store, id manifest.NamedResource
 	assert.Equal(t, valid, true)
 	st.RecordEmitted(
 		owner.Named(),
-		&store.Emission{Children: []store.Child{{Obj: application.Declaration}}, Complete: true},
+		&store.Emission{Children: []store.Child{{Obj: testGeneratedSync(t, producer).Objects[0]}}, Complete: true},
 		nil,
 	)
 	if authority == "settled producer" {

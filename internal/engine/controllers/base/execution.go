@@ -25,17 +25,19 @@ func (e *offlineRenderError) Unwrap() error { return e.error }
 type Execution struct {
 	*Controller
 
+	feedback              *renderFeedback
+	independentRender     bool
 	preparation           preparation
 	data                  *values.StoreProvider
 	AdmissionPreparation  *selection.Preparation
 	ProbeLeft, ProbeRight *Execution
 	ProbeConsumed         bool
+	EntryReplay           bool
 	probeStored           bool
 	probe                 bool
 	declaration           manifest.BaseManifest
 	generationKnown       bool
 	generationErr         error
-	generationObject      manifest.BaseManifest
 	Reads                 store.ReadSet
 	Unreadable            []manifest.NamedResource
 	Blocked               []manifest.NamedResource
@@ -45,7 +47,8 @@ type Execution struct {
 	resume                func(context.Context, manifest.DrainLevel) error
 	initial               store.StatusInfo
 	recovering            bool
-	generated             []store.Child
+	generated             store.ChildDocuments
+	childGeneration       map[manifest.NamedResource]preparedGeneration
 	prepared              bool
 }
 
@@ -112,6 +115,12 @@ func (e *Execution) InitProbe(c *Controller, object manifest.BaseManifest) {
 	e.Reads.BeginExecution(object)
 }
 
+// PromoteProbe keeps the input capture alive through the original emission.
+func (e *Execution) PromoteProbe() {
+	e.probe = false
+	e.EntryReplay = true
+}
+
 func (e *Execution) matchesDeclaration(object manifest.BaseManifest) bool {
 	return object != nil && manifest.Equal(e.declaration, object)
 }
@@ -135,14 +144,15 @@ func (e *Execution) Take(previous schedule.Result) {
 		e.declaration = e.Reads.GetObject(e.Reads.ID())
 	}
 	e.AdmissionPreparation, prior.AdmissionPreparation = prior.AdmissionPreparation, nil
+	e.feedback, prior.feedback = prior.feedback, nil
+	e.childGeneration, prior.childGeneration = prior.childGeneration, nil
 	if !prior.matchesDeclaration(e.declaration) {
 		return
 	}
 	e.preparation, prior.preparation = prior.preparation, nil
-	e.generated, prior.generated = prior.generated, nil
+	e.generated, prior.generated = prior.generated, store.ChildDocuments{}
 	e.generationKnown, prior.generationKnown = prior.generationKnown, false
 	e.generationErr, prior.generationErr = prior.generationErr, nil
-	e.generationObject, prior.generationObject = prior.generationObject, nil
 }
 
 // Valid reports whether the assessment and its admitted output are current.
@@ -169,10 +179,12 @@ func (e *Execution) Retire() {
 		e.preparation.retire()
 		e.preparation = nil
 	}
+	e.feedback = nil
 	e.data = nil
 	e.AdmissionPreparation.Retire()
 	e.AdmissionPreparation = nil
-	e.generated, e.generationObject, e.generationErr, e.declaration = nil, nil, nil, nil
+	e.generated, e.childGeneration = store.ChildDocuments{}, nil
+	e.generationErr, e.declaration = nil, nil
 	e.generationKnown = false
 	e.Store.Retire(&e.Reads)
 }
@@ -192,7 +204,6 @@ func (e *Execution) Emit(
 
 func (e *Execution) bindEmission(next *store.Emission) {
 	borrowed := next.Reads
-	next.Children = e.generatedChildren(next.Children)
 	e.Reads.Bind(next)
 	if e.Disposition == store.AssessmentReused && borrowed.Valid() && next.Complete && len(next.Failures) == 0 {
 		next.Reads = borrowed
@@ -213,6 +224,9 @@ func (e *Execution) publish(
 	next *store.Emission,
 	payloads map[manifest.NamedResource]*store.SourceArtifact,
 ) error {
+	if err := e.generatedChildren(ctx, next); err != nil {
+		return err
+	}
 	e.bindEmission(next)
 	if err := e.emit(ctx, id, next, payloads); err != nil {
 		return err
@@ -316,7 +330,7 @@ func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource
 	_, _, next := e.Reads.GetEmission(id)
 	_, offline := errors.AsType[*offlineRenderError](err)
 	if offline {
-		e.generated, e.generationObject = nil, nil
+		e.generated, e.childGeneration = store.ChildDocuments{}, nil
 		e.generationKnown = false
 		next.Finish()
 		next = store.Emission{Complete: true}
@@ -455,56 +469,6 @@ func (e *Execution) reconcile[T manifest.BaseManifest](
 	return reconcile(ctx, obj, level)
 }
 
-func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) error {
-	e.prepared = true
-	if !e.generationKnown {
-		objects, err := manifest.GeneratedObjects(obj)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		e.generationKnown, e.generationObject, e.generationErr = true, obj, err
-		if err != nil || len(objects) != 0 {
-			work := e.Reads.Work().Scope().Record(manifest.WorkPreparation, "")
-			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-			work.Finish(err)
-		}
-		if err == nil {
-			for _, object := range objects {
-				e.generated = append(e.generated, store.Child{Obj: object, Generated: true})
-			}
-		}
-	}
-	if e.generationErr != nil {
-		return e.generationErr
-	}
-	if len(e.generated) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
-		return nil
-	}
-	_, _, inventory := e.Reads.GetEmission(e.Reads.ID())
-	defer inventory.Finish()
-	inventory.Children, inventory.Manifests, inventory.Complete = e.generated, nil, false
-	return e.Emit(ctx, e.Reads.ID(), &inventory, nil)
-}
-
-func (e *Execution) generatedChildren(children []store.Child) []store.Child {
-	if len(children) == 0 {
-		return e.generated
-	}
-	if len(e.generated) == 0 &&
-		!slices.ContainsFunc(children, func(child store.Child) bool { return child.Generated }) {
-		return children
-	}
-	current := make([]store.Child, 0, len(children)+len(e.generated))
-	childValues := children
-	for childIndex := range childValues {
-		child := childValues[childIndex]
-		if !child.Generated {
-			current = append(current, child)
-		}
-	}
-	return append(current, e.generated...)
-}
-
 func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {
 	id := e.Reads.ID()
 	if e.Reads.GetDeclaration(id) != nil {
@@ -592,7 +556,7 @@ func (e *Execution) FingerprintDedup(
 		decision := e.selection.Snapshot()
 		selected, dirty := decision.Output(id), decision.Changed(id)
 		// Unresolved inputs MUST reach content fingerprinting before reuse.
-		if selected && !dirty && len(e.Unreadable) == 0 {
+		if selected && !dirty && len(e.Unreadable) == 0 && e.Disposition != store.AssessmentReused {
 			e.Disposition = store.AssessmentReused
 			e.Store.UpdateStatus(
 				id,
@@ -618,6 +582,9 @@ func (e *Execution) FingerprintDedup(
 	defer attempt.Finish()
 	output, matched := attempt.Replay(fp)
 	if !matched {
+		if e.Disposition == store.AssessmentReused {
+			return Deduplication{Fingerprint: fp}, nil
+		}
 		return Deduplication{Fingerprint: fp, Reused: false}, e.admitRender()
 	}
 	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() &&

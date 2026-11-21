@@ -3,24 +3,13 @@
     "cluster": "main",
     "documents": [
       {
-        "apiVersion": "v1",
-        "data": {
-          "value": "main"
-        },
-        "kind": "ConfigMap",
-        "metadata": {
-          "labels": {
-            "kustomize.toolkit.fluxcd.io/name": "shared",
-            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
-          },
-          "name": "shared",
-          "namespace": "apps"
-        }
-      },
-      {
         "apiVersion": "fluxcd.controlplane.io/v1",
         "kind": "FluxInstance",
         "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "cluster",
           "namespace": "flux-system"
         },
@@ -35,9 +24,45 @@
         }
       },
       {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1m0s",
+          "ref": {
+            "name": "refs/heads/main"
+          },
+          "url": "https://example.invalid/cluster.git"
+        }
+      },
+      {
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
         "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "10m0s",
+          "path": "./main",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "shared",
           "namespace": "flux-system"
         },
@@ -48,16 +73,11 @@
             "name": "flux-system"
           }
         }
-      }
-    ]
-  },
-  {
-    "cluster": "test",
-    "documents": [
+      },
       {
         "apiVersion": "v1",
         "data": {
-          "value": "test"
+          "value": "main"
         },
         "kind": "ConfigMap",
         "metadata": {
@@ -68,11 +88,20 @@
           "name": "shared",
           "namespace": "apps"
         }
-      },
+      }
+    ]
+  },
+  {
+    "cluster": "test",
+    "documents": [
       {
         "apiVersion": "fluxcd.controlplane.io/v1",
         "kind": "FluxInstance",
         "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "cluster",
           "namespace": "flux-system"
         },
@@ -87,9 +116,45 @@
         }
       },
       {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1m0s",
+          "ref": {
+            "name": "refs/heads/main"
+          },
+          "url": "https://example.invalid/cluster.git"
+        }
+      },
+      {
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
         "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "10m0s",
+          "path": "./test",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "shared",
           "namespace": "flux-system"
         },
@@ -100,16 +165,11 @@
             "name": "flux-system"
           }
         }
-      }
-    ]
-  },
-  {
-    "cluster": "utility",
-    "documents": [
+      },
       {
         "apiVersion": "v1",
         "data": {
-          "value": "utility"
+          "value": "test"
         },
         "kind": "ConfigMap",
         "metadata": {
@@ -120,11 +180,20 @@
           "name": "shared",
           "namespace": "apps"
         }
-      },
+      }
+    ]
+  },
+  {
+    "cluster": "utility",
+    "documents": [
       {
         "apiVersion": "fluxcd.controlplane.io/v1",
         "kind": "FluxInstance",
         "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "cluster",
           "namespace": "flux-system"
         },
@@ -139,9 +208,45 @@
         }
       },
       {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1m0s",
+          "ref": {
+            "name": "refs/heads/main"
+          },
+          "url": "https://example.invalid/cluster.git"
+        }
+      },
+      {
         "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
         "kind": "Kustomization",
         "metadata": {
+          "name": "cluster",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "10m0s",
+          "path": "./utility",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
           "name": "shared",
           "namespace": "flux-system"
         },
@@ -151,6 +256,21 @@
             "kind": "GitRepository",
             "name": "flux-system"
           }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "data": {
+          "value": "utility"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "shared",
+          "namespace": "apps"
         }
       }
     ]

@@ -142,7 +142,7 @@ func (a Child) equal(b Child) bool {
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) sameDeclaration(b Child) bool {
-	if a.Origin != b.Origin || a.Generated != b.Generated {
+	if a.Origin != b.Origin || a.Generated != b.Generated || a.VisibleGeneration != b.VisibleGeneration {
 		return false
 	}
 	return manifest.Equal(a.Obj, b.Obj) && manifest.ValueEqual(a.Doc, b.Doc) && warningsEqual(a.Warnings, b.Warnings)
@@ -255,7 +255,7 @@ func (e *Emission) retainPreviousEntries(
 				entry.objectGeneration = old.objectGeneration
 				e.entries = append(e.entries, entry)
 				delete(byID, id)
-			} else if !next.Complete && len(next.Failures) == 0 && !old.child.Generated {
+			} else if !next.Complete && len(next.Failures) == 0 && (!old.child.Generated || old.child.VisibleGeneration) {
 				old.changed, old.objectChanged = false, false
 				e.entries = append(e.entries, old)
 			}

@@ -172,7 +172,7 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 			children, generateErr := release.GeneratedObjects()
 			assert.NoError(t, generateErr)
 
-			hc := children[0].(*manifest.HelmChartSource)
+			hc := children.Objects[0].(*manifest.HelmChartSource)
 			synthetic := hc.OCIRepository(repo)
 			missing, _ := errors.AsType[*source.MissingSecretError](
 				source.MissingSecretErr(manifest.DiagnosticFor(synthetic.Named(), synthetic), "auth", "not found"),

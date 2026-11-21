@@ -261,7 +261,7 @@
     },
     {
       "name": "one-sided-diff",
-      "description": "The removed utility cluster has an unsuppressed removal, main has only its own change, and test stays unchanged; independent selected entries establish the corresponding payloads.",
+      "description": "The diff removes the utility cluster and the reverse diff adds it. Both show only the main cluster change and leave the test cluster unchanged. Independent selected entries establish the payloads.",
       "setup": [
         {
           "overlay": "one-sided-diff"
@@ -322,6 +322,33 @@
             "expect": {
               "stdout": "expect/one-sided-diff-root-warm.stdout",
               "stderr": "expect/one-sided-diff-root-warm.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "shared",
+              "--path",
+              "@@baseline@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-root-reverse.stdout",
+              "stderr": "expect/one-sided-diff-root-cold.stderr",
               "code": 0
             }
           }
@@ -422,6 +449,13 @@
         "one-sided-diff"
       ],
       "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-root-reverse.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Independently derived complete reverse diff."
     },
     {
       "path": "expect/one-sided-diff-root-warm.stderr",

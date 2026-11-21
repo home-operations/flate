@@ -1,0 +1,316 @@
+{
+  "source": {
+    "repository": "buroa/home-ops",
+    "revision": "380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70",
+    "paths": [
+      "kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml"
+    ],
+    "reductions": "Use a local chart and one aggregate operand. The generated root changes a chart value that appears in a ConfigMap."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/fixture"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "generator-values",
+      "description": "Admit the generated sync and render the patched chart value.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "cold",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-converge",
+          "edit": {
+            "overlay": "converge"
+          }
+        },
+        {
+          "id": "converge",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-cycle",
+          "edit": {
+            "overlay": "cycle"
+          }
+        },
+        {
+          "id": "cycle",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/cycle.stdout",
+              "stderr": "expect/cycle.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "edit-omit",
+          "edit": {
+            "overlay": "omit"
+          }
+        },
+        {
+          "id": "omit",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/omit.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            },
+            "cache": {
+              "reset": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Require empty diagnostics."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Require the chart to emit its patched value."
+    },
+    {
+      "path": "repo/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Identify the local chart."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Generate the sync root and patch its own release."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/marker.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Expose the effective chart value."
+    },
+    {
+      "path": "repo/kubernetes/apps/ns/instance-release.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Supply the initial chart value."
+    },
+    {
+      "path": "repo/kubernetes/apps/ns/kustomization.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Provide the private physical package below the requested path."
+    },
+    {
+      "path": "repo/kubernetes/apps/ns/source.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Resolve the chart through the working tree."
+    },
+    {
+      "path": "overlays/converge/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Emit a new marker until the release settles."
+    },
+    {
+      "path": "overlays/cycle/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Alternate between two marker values."
+    },
+    {
+      "path": "expect/cycle.stdout",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Require the scoped cycle failure and the last completed render."
+    },
+    {
+      "path": "expect/cycle.stderr",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Require the scoped cycle failure and the last completed render."
+    },
+    {
+      "path": "overlays/omit/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Exercise a complete chart result without a sync root."
+    },
+    {
+      "path": "expect/omit.stdout",
+      "cases": [
+        "generator-values"
+      ],
+      "purpose": "Require the literal entry to retain the initial chart value."
+    }
+  ],
+  "overlays": [
+    {
+      "name": "converge",
+      "directory": "overlays/converge"
+    },
+    {
+      "name": "cycle",
+      "directory": "overlays/cycle"
+    },
+    {
+      "name": "omit",
+      "directory": "overlays/omit"
+    }
+  ]
+}

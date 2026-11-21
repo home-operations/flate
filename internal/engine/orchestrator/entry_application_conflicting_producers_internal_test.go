@@ -42,6 +42,7 @@ func TestRender_EntryApplicationConflictingProducers(t *testing.T) {
 			testutil.KustomizationYAML("workload", "apps", "  path: ./workload\n"),
 		)
 		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "elsewhere/kustomization.yaml", "resources: []\n")
 		for _, producer := range []struct{ name, path string }{
 			{name: "a", path: "./entry"},
 			{name: "z", path: "./elsewhere"},
@@ -164,11 +165,12 @@ func assertEntryApplicationConflicts(t *testing.T, result *Result, id, winner ma
 			)
 		}
 	}
-	if len(result.Warnings) != 1 {
-		t.Errorf("warnings: %+v", result.Warnings)
+	warnings := result.Warnings
+	if len(warnings) != 1 {
+		t.Errorf("warnings for %s: %+v", id, warnings)
 	}
-	if len(result.Warnings) == 1 {
-		warning := result.Warnings[0]
+	if len(warnings) == 1 {
+		warning := warnings[0]
 		assert.Equal(t, warning.Resource, id)
 		assert.Equal(t, warning.Category, manifest.WarnConflictingProducers)
 		assert.Equal(t, warning.Count, 1)

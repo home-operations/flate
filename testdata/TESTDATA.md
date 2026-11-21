@@ -321,7 +321,6 @@ second-source collisions with dirty-byte controls, local chart archives,
 generators, components, ancestor-injected patches, owner/source/root/group moves,
 ignore flips, empty output and unavailable data/CRDs. Shallow and missing-tree
 controls assert baseline admission failure without claiming a completed render.
-Future ResourceSet output semantics remain explicitly pending freeze.
 
 ## Upstream attribution
 
@@ -722,6 +721,10 @@ The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U
 
 ### ResourceSet and CRD scenarios
 
+Within the requested scope, flate prints every object that a producer applies, with the producer's owner labels.
+A ResourceSet can apply a Flux Kustomization or HelmRelease.
+The declaration and its rendered workload are separate objects in build and diff output.
+
 `resourceset` follows `angelnu/k8s-gitops` at `872f8a1baebedfdcce40c580b509e038d0242ec1`.
 The source paths are `apps/paperless/app/resourceSet.yaml`.
 Authored static tenant expansion and generated-data controls. Keep the static input/template topology; replace workloads with ConfigMaps.
@@ -740,6 +743,16 @@ Its declared commands are `build ks app`.
 Its declared commands are `build ks app`.
 `resourceset/resource-set-generated-data-encrypted` covers resource set generated data encrypted.
 Its declared commands are `build ks app`.
+
+`resourceset-tenants/tenant-declarations` uses the supplied `f8` source tree.
+`build all` prints both tenant Kustomizations with the labels from `flux-system/tenants`.
+It also prints both tenant Namespaces and their ConfigMaps with the substituted replica counts.
+
+`resourceset-helm/applied-release` uses a local chart that renders a ConfigMap.
+`build all` prints the HelmRelease applied by `flux-system/releases` and its chart workload.
+The named release build prints its chart workload.
+`diff all` reports the stamped HelmRelease as removed when the ResourceSet disappears and as added when the two trees switch sides.
+Both trees retain the enclosing Kustomization.
 
 `resourceset-documents` follows `billimek/k8s-gitops` at `127e039d8c739d748e20415dd3fdcaff91b4cb2d`.
 The source paths are `kubernetes/kube-system/nfs-scalers/resourceset-nfs-scalers.yaml`.

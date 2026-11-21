@@ -450,74 +450,6 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 	)
 }
 
-func TestCollectEmissions_IdentityAlignment(t *testing.T) {
-	t.Parallel()
-	parent := &manifest.Kustomization{Name: "report", Namespace: "reporting"}
-	first := &manifest.ResourceSet{Name: "first", Namespace: "apps"}
-	second := &manifest.ResourceSet{Name: "second", Namespace: "other"}
-	documents := []map[string]any{
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "z"}},
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "a"}},
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "z"}},
-	}
-	identities := []manifest.NamedResource{
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "z"},
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "a"},
-		{Kind: manifest.KindConfigMap, Namespace: "other", Name: "z"},
-	}
-	for _, tc := range []struct {
-		name        string
-		selected    []manifest.NamedResource
-		needed      []manifest.NamedResource
-		counterpart []manifest.NamedResource
-		want        []int
-	}{
-		{name: "unrestricted", want: []int{0, 1, 2}},
-		{name: "selected emitter", selected: []manifest.NamedResource{first.Named()}, want: []int{0, 1}},
-		{name: "required document", needed: identities[2:], want: []int{2}},
-		{
-			name: "counterpart selects reconciled emitter", needed: []manifest.NamedResource{first.Named()},
-			counterpart: []manifest.NamedResource{first.Named()}, want: []int{0, 1},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var decision *Decision
-			if tc.name != "unrestricted" {
-				decision, _ = (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
-					Selected: tc.selected, Needed: tc.needed,
-				}, true)
-			}
-			snapshot := Snapshot{Decision: decision, Emissions: []EmissionFacts{
-				{Emitter: first, Parent: parent, Documents: []DocumentFact{
-					{Document: documents[0], Identity: identities[0]},
-					{Document: documents[1], Identity: identities[1]},
-				}},
-				{Emitter: second, Parent: parent, Documents: []DocumentFact{
-					{Document: documents[2], Identity: identities[2]},
-				}},
-			}}
-			var other *Snapshot
-			if len(tc.counterpart) != 0 {
-				decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{Selected: tc.counterpart}, true)
-				other = &Snapshot{Decision: decision}
-			}
-			snapshot.CollectEmissions(other)
-			assert.Equal(t, len(snapshot.Manifests), 1)
-			batch := snapshot.Manifests[0]
-			assert.Equal(t, batch.Parent, manifest.BaseManifest(parent))
-			assert.Equal(t, len(batch.Documents), len(tc.want))
-			assert.Equal(t, len(batch.Identities), len(tc.want))
-			for i, position := range tc.want {
-				assert.Diff(t, batch.Documents[i], documents[position])
-				assert.Diff(t, batch.Identities[i], identities[position])
-			}
-			assert.Equal(t, len(snapshot.Emissions[0].Documents), 2)
-			assert.Equal(t, len(snapshot.Emissions[1].Documents), 1)
-		})
-	}
-}
-
 func TestProjectIndex_PreservesBorrowedReaders(t *testing.T) {
 	t.Parallel()
 	kept := testutil.KustomizationID("apps", "kept")
@@ -695,7 +627,9 @@ func TestCollectEmissions_GeneratedRootCoverageOnBothSides(t *testing.T) {
 		st.RecordEmitted(other.Named(), &store.Emission{Children: []store.Child{{Obj: rejected}}}, nil)
 		assert.Equal(t, st.EmissionOwner(accepted.Named()), root.Named())
 		assert.Equal(t, st.EmissionOwner(rejected.Named()), other.Named())
+		assert.Equal(t, root.EmissionPolicy().DocumentScope, false)
 
+		acceptedDoc, indexedDoc := testutil.ObjectDocument(accepted), testutil.ObjectDocument(indexed)
 		acceptedOutput := map[string]any{"value": "accepted output"}
 		decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
 			Selected: []manifest.NamedResource{root.Named(), accepted.Named(), rejected.Named()},
@@ -711,10 +645,10 @@ func TestCollectEmissions_GeneratedRootCoverageOnBothSides(t *testing.T) {
 			}},
 			Emissions: []EmissionFacts{
 				{Emitter: root, Parent: root, Documents: []DocumentFact{
-					{Identity: accepted.Named(), Child: accepted.Named()},
-					{Identity: indexed.Named(), Child: indexed.Named()},
-					{Identity: indexed.Named(), Child: indexed.Named()},
-					{Identity: rejected.Named(), Child: rejected.Named()},
+					{Identity: accepted.Named(), Child: accepted.Named(), Document: acceptedDoc},
+					{Identity: indexed.Named(), Child: indexed.Named(), Document: indexedDoc},
+					{Identity: indexed.Named(), Child: indexed.Named(), Document: indexedDoc},
+					{Identity: rejected.Named(), Child: rejected.Named(), Document: testutil.ObjectDocument(rejected)},
 				}},
 				{Emitter: accepted, Parent: accepted, Documents: []DocumentFact{
 					{Identity: generated, Document: acceptedOutput},
@@ -729,6 +663,8 @@ func TestCollectEmissions_GeneratedRootCoverageOnBothSides(t *testing.T) {
 		})
 		snapshot.CollectEmissions(nil)
 		assert.FatalIf(t, len(snapshot.Manifests) != 2, "projected batches: %v", snapshot.Manifests)
+		assert.Equal(t, snapshot.Manifests[0].Parent.Named(), root.Named())
+		assert.Diff(t, snapshot.Manifests[0].Documents, []map[string]any{acceptedDoc, indexedDoc, indexedDoc})
 		assert.Equal(t, snapshot.Manifests[1].Parent.Named(), accepted.Named())
 		assert.Diff(t, snapshot.Manifests[1].Documents, []map[string]any{acceptedOutput})
 	})

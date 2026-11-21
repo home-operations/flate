@@ -119,12 +119,8 @@ spec:
 				index: index,
 				cfg:   treeConfig{Config: Config{HelmOptions: helm.Options{SkipKinds: skip}}, Tree: Tree{}},
 			}
-			parentDocs := docs[:4]
-			if len(skip) > 0 {
-				parentDocs = docs[:2]
-			}
 			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{
-				parent: parentDocs,
+				parent: docs,
 				ks:     ksDocs,
 				hr:     hrDocs,
 			})

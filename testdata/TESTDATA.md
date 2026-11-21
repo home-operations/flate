@@ -1530,6 +1530,22 @@ Named symlink operations supply their synthetic paths to the catalog without req
 `scope-inputs-ignored-required-named-reverse/ignored-required-named-reverse`: ignored required named reverse.
 
 
+### readiness-parity
+
+These cases run through `cli.Run` with two tasks and disabled caches. Each
+case repeats from the same repository state and compares complete results.
+
+- `readiness-parity/source-republication` changes the values of a HelmRelease and the interval
+  of its producer. The fixture transport serves a fixed OCI chart for both
+  snapshots. The full build and each changed-only command include the Deployment.
+- `readiness-parity/kustomization-rename` renames the target of an authored `dependsOn` edge.
+  The full build, changed-only diff, and named diff report the old name.
+- `readiness-parity/helmrelease-rename` puts the target and dependent in separate Kustomizations.
+  Each command reports the absent HelmRelease.
+- `readiness-parity/transitive-failure` changes the annotation of a shared PVC template.
+  Both PVCs remain blocked by the same missing prerequisite.
+  The named build reports that prerequisite through the intermediate declaration.
+
 ### scope-selection
 
 `scope-selection-cache-implicit-unchanged-external/cache-implicit-unchanged-external`: cache implicit unchanged external.

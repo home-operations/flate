@@ -681,8 +681,9 @@ func (w *qualificationWalk) ordinaryApplication(
 ) bool {
 	id := evidence.object.Named()
 	policy := w.reads.Policy(id)
-	if w.q.session != nil || !policy.Root || policy.Origin == manifest.SuppliedDeclaration ||
-		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.OrdinaryDemand(id) {
+	rootApplication := policy.Root && policy.Origin != manifest.SuppliedDeclaration
+	if w.q.session != nil || !rootApplication ||
+		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.ControllerDemand(id) {
 		return false
 	}
 	if possible {

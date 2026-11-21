@@ -1,8 +1,8 @@
 
   ✓  Kustomization  downloads/lidarr
-  ‒  Kustomization  downloads/qbittorrent  unchanged
+  ✓  Kustomization  downloads/qbittorrent
   ✓  Kustomization  flux-system/cluster-apps
   ✓  HelmRelease    downloads/lidarr
   ✓  GitRepository  downloads/flux-system
 
-  ✓ 4 passed · 1 skipped   <DUR>
+  ✓ 5 passed   <DUR>

@@ -116,7 +116,11 @@ func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []man
 	return deps
 }
 
-func collectGates(e *Execution, obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {
-	w := e.dependencyWaiter()
-	return w.SelectGates(manifest.References(obj, manifest.ReferenceAll), stage, obj.ReferenceCapacity().References)
+func collectGates(_ *Execution, obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {
+	return depwait.SelectGates(
+		manifest.References(obj, manifest.ReferenceAll),
+		stage,
+		obj.ReferenceCapacity().References,
+		nil,
+	)
 }

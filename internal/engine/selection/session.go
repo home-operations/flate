@@ -67,11 +67,19 @@ func (s *Session) Include(id manifest.NamedResource) {
 	if decision.unrestricted {
 		return
 	}
-	s.store.SetIncluded(
-		id,
-		decision.execution && decision.Reconcile(id),
-		decision.execution && decision.OrdinaryDemand(id),
-	)
+	for {
+		s.store.SetIncluded(
+			id,
+			decision.execution && decision.Reconcile(id),
+			decision.execution && decision.OrdinaryDemand(id),
+			decision.execution && decision.ReadinessDemand(id),
+		)
+		current := s.Snapshot()
+		if current == decision {
+			break
+		}
+		decision = current
+	}
 }
 
 func (d *Decision) version() uint64 {
@@ -87,6 +95,8 @@ type Admission struct {
 	Selected     []manifest.NamedResource
 	Dirty        []manifest.NamedResource
 	Ordinary     []manifest.NamedResource
+	Readiness    []manifest.NamedResource
+	Fatal        []manifest.NamedResource
 	Objects      []store.Child
 	Blocked      []string
 	Revision     uint64
@@ -107,6 +117,7 @@ type Admission struct {
 	producers    []producerObligation
 
 	producerOwner *producerObligation
+	ordering      map[manifest.NamedResource][]manifest.NamedResource
 }
 
 // InputAdmission MUST expose only the effect that selection needs.
@@ -133,11 +144,12 @@ type PrepareRequest struct {
 	// Missing MUST retain one immutable policy pointer across proposal retries.
 	Missing missingPolicy
 	// Generation MUST remain immutable until its preparation retires.
-	Generation []store.Child
-	Owner      manifest.NamedResource
-	Reads      *store.ReadSet
-	Invocation bool
-	History    map[manifest.NamedResource]struct {
+	Generation         []store.Child
+	Owner              manifest.NamedResource
+	Reads              *store.ReadSet
+	Invocation         bool
+	CompleteGeneration bool
+	History            map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}

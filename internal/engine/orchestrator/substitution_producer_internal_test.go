@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/home-operations/flate/internal/engine/schedule"
 
@@ -71,7 +70,9 @@ func TestRender_ComponentSecretProducerSelection(t *testing.T) {
 					assert.NoError(t, err)
 					t.Cleanup(result.Close)
 					decision := o.selection.Snapshot()
-					assert.Equal(t, decision.Reconcile(producer), false)
+					ordered := strings.HasSuffix(name, "-ordered")
+					assert.Equal(t, decision.Reconcile(producer), ordered)
+					assert.Equal(t, decision.ReadinessDemand(producer), ordered)
 					assert.Equal(t, decision.Output(producer), false)
 					assert.Equal(t, decision.Output(consumer), true)
 					assert.Equal(t, decision.Reconcile(sibling), false)
@@ -83,9 +84,13 @@ func TestRender_ComponentSecretProducerSelection(t *testing.T) {
 					assert.Equal(t, workCounts(result.Work, otherNamespace, manifest.WorkKustomize).Attempts, uint64(0))
 					assert.Equal(t, workCounts(result.Work, other, manifest.WorkKustomize).Attempts, uint64(0))
 					assert.Equal(t, workCounts(result.Work, sibling, manifest.WorkKustomize).Attempts, uint64(0))
-					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Attempts, uint64(0))
-					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Completed, uint64(0))
-					assert.Equal(t, o.store.GetArtifact(producer, store.ArtifactContent), nil)
+					var requiredWork uint64
+					if ordered {
+						requiredWork = 1
+					}
+					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Attempts, requiredWork)
+					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Completed, requiredWork)
+					assert.Equal(t, o.store.GetArtifact(producer, store.ArtifactContent) != nil, ordered)
 					productions := o.store.Productions(target, o.loader.Index)
 					assert.FatalIf(t, !slices.ContainsFunc(productions, func(p manifest.Production) bool {
 						return p.Owner == producer
@@ -361,8 +366,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	t.Cleanup(func() {
 		o.stop()
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	{
 		err := o.bootstrap(ctx)
 		assert.FatalIf(t, err != nil, "%v", err)

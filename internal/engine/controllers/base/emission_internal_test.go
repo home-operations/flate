@@ -127,7 +127,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 			admissiontest.Commit(t, filterLoader.Options.Session, nil)
 			filter := filterLoader.Options.Session
 			c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
-			s.SetIncluded(parent.Named(), true, true)
+			s.SetIncluded(parent.Named(), true, true, false)
 			docs := []map[string]any{
 				{
 					"apiVersion": "v1",

@@ -195,6 +195,7 @@ func evaluateModel(w modelWorld) modelEvaluation {
 type modelSelection struct {
 	affected    modelSet
 	support     modelSet
+	readiness   modelSet
 	unavailable modelSet
 	deleted     modelSet
 	allowed     map[modelID]string
@@ -207,7 +208,7 @@ type modelComparison struct {
 
 func selectModel(w modelWorld, evaluation modelEvaluation, affected, deleted modelSet) modelSelection {
 	selection := modelSelection{
-		affected: make(modelSet), support: make(modelSet),
+		affected: make(modelSet), support: make(modelSet), readiness: make(modelSet),
 		unavailable: make(modelSet), deleted: maps.Clone(deleted), allowed: maps.Clone(w.uncertainty),
 	}
 	for id, state := range evaluation.status {
@@ -218,12 +219,18 @@ func selectModel(w modelWorld, evaluation modelEvaluation, affected, deleted mod
 			selection.affected[id] = true
 		}
 	}
+	for id := range modelOrderingReaders(w, affected) {
+		if _, available := evaluation.status[id]; available && !selection.affected[id] {
+			selection.readiness[id] = true
+		}
+	}
 	pending := modelIDs(selection.affected)
+	pending = append(pending, modelIDs(selection.readiness)...)
 	for len(pending) > 0 {
 		id := pending[0]
 		pending = pending[1:]
 		producer := w.producers[id]
-		providers := slices.Concat(producer.content, producer.sources)
+		providers := slices.Concat(producer.content, producer.ordering, producer.sources)
 		if producer.emitter != nil {
 			providers = append(providers, *producer.emitter)
 		}
@@ -280,8 +287,13 @@ func compareModelSelection(want modelSelection, got modelSet) error {
 			missing[id] = true
 		}
 	}
+	for id := range want.readiness {
+		if !got[id] {
+			missing[id] = true
+		}
+	}
 	for id := range got {
-		if !want.affected[id] && !want.support[id] && want.allowed[id] == "" {
+		if !want.affected[id] && !want.support[id] && !want.readiness[id] && want.allowed[id] == "" {
 			extra[id] = true
 		}
 	}

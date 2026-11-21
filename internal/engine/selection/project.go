@@ -254,6 +254,7 @@ func (c *selectionCollection) collectObject(root manifest.NamedResource, obj man
 		return
 	}
 	if !s.selectedObject(obj, c.counterpart()) {
+		s.countNamedAssessment(root, id)
 		return
 	}
 	s.result.Counts[root.Kind]++

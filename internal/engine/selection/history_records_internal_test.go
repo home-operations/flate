@@ -9,6 +9,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -125,13 +126,124 @@ func TestRefineHistory_OrderingReferences(t *testing.T) {
 			)
 			assert.Equal(t, f.closure.contentRecord(consumer.Named()).ContentRoots != nil, true)
 			assert.Diff(t, f.closure.record(consumer.Named()).Refs, []manifest.NamedResource{source, target.Named()})
-			want := map[manifest.NamedResource]uint8{}
+			want := map[manifest.NamedResource]uint8{source: needed, consumer.Named(): needed, target.Named(): needed}
 			if changed == "consumer.yaml" {
-				want[consumer.Named()], want[source] = needed|selected, needed
+				want[consumer.Named()] |= selected
+				assert.Diff(t, f.proposal.Readiness, []manifest.NamedResource{target.Named()})
 			} else {
-				want[target.Named()] = needed | selected
+				want[target.Named()] |= selected
+				assert.Diff(t, f.proposal.Fatal, []manifest.NamedResource{consumer.Named()})
 			}
 			assert.Diff(t, f.roles(), want)
+		})
+	}
+}
+
+func TestRefineHistory_RenamedOrderingTarget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		side     manifest.TreeSide
+		complete bool
+	}{
+		{name: "head confirmed", side: manifest.TreeHead, complete: true},
+		{name: "base confirmed", side: manifest.TreeBase, complete: true},
+		{name: "head incomplete", side: manifest.TreeHead},
+		{name: "base incomplete", side: manifest.TreeBase},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			source := manifest.BootstrapSourceID
+			targets := [2]manifest.NamedResource{
+				testutil.KustomizationID("apps", "before"),
+				testutil.KustomizationID("apps", "after"),
+			}
+			missing := targets[1-tc.side]
+			intermediate := &manifest.Kustomization{
+				Name: "intermediate", Namespace: "apps",
+				DependsOn: []kustomizev1.DependencyReference{{Name: missing.Name}},
+			}
+			root := &manifest.Kustomization{
+				Name: "root", Namespace: "apps",
+				DependsOn: []kustomizev1.DependencyReference{{Name: intermediate.Name}},
+			}
+			stores := [2]*store.Store{store.New(), store.New()}
+			indexes := [2]*manifest.DiscoveryIndex{}
+			artifacts := [2]*store.SourceArtifact{}
+			const file = "target.yaml"
+			for side, st := range stores {
+				target := targets[side]
+				artifacts[side] = &store.SourceArtifact{
+					LocalPath: t.TempDir(), FS: fstest.MapFS{file: {Data: []byte(target.Name)}},
+				}
+				st.SetArtifact(source, artifacts[side])
+				st.AddObject(root)
+				st.AddObject(intermediate)
+				// The file census can know a target before it has an indexed declaration.
+				indexes[side] = &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						root.Named():         {File: "root.yaml"},
+						intermediate.Named(): {File: "intermediate.yaml"},
+					},
+					CompleteSources: map[manifest.NamedResource]bool{
+						source: manifest.TreeSide(side) != tc.side || tc.complete,
+					},
+					Declarations: map[manifest.NamedResource]map[string]manifest.FileDeclarations{
+						source: {file: {Present: true, Complete: true, Objects: map[manifest.NamedResource]string{
+							target: manifest.Fingerprint(target.Name),
+						}}},
+					},
+				}
+			}
+
+			changes, err := change.Detect(t.Context(), artifacts[0], artifacts[1], change.DetectConfig{})
+			assert.NoError(t, err)
+			changes, err = change.Qualify(t.Context(), changes, stores, manifest.WorkScope{})
+			assert.NoError(t, err)
+			changes, err = changes.WithDeclarations(t.Context(), change.DeclarationInputs{Stores: stores})
+			assert.NoError(t, err)
+			changes, err = changes.WithReaders(
+				t.Context(),
+				indexes,
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+				manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			assert.Equal(t, changes.DeclarationChanged(tc.side, source, missing, nil), change.Comparison{
+				Known: tc.complete, Changed: tc.complete,
+			})
+
+			st := stores[tc.side]
+			facts := &solverFacts{
+				store: st, changes: changes, index: *indexes[tc.side],
+				context: SourceContext{
+					Root: artifacts[tc.side].LocalPath, SideKnown: true, Side: tc.side,
+					InputReaders: map[manifest.NamedResource][]manifest.NamedResource{
+						missing: {intermediate.Named()}, intermediate.Named(): {root.Named()},
+					},
+				},
+				sources: map[manifest.NamedResource]SourceFacts{source: {Paired: true}},
+			}
+			session, err := New(st, facts, Request{Changed: true, Roots: []manifest.NamedResource{root.Named()}})
+			assert.NoError(t, err)
+			proposal, err := prepareSolver(t.Context(), t, session, PrepareRequest{Invocation: true})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, len(proposal.Selected), 0)
+			assert.Equal(t, len(proposal.Ordinary), 0)
+			if tc.complete {
+				assert.Diff(t, proposal.Fatal, []manifest.NamedResource{root.Named()})
+				assert.Diff(
+					t,
+					proposal.Readiness,
+					[]manifest.NamedResource{missing, intermediate.Named(), root.Named()},
+				)
+				assert.Diff(t, proposal.ordering[root.Named()], []manifest.NamedResource{intermediate.Named()})
+				assert.Diff(t, proposal.ordering[intermediate.Named()], []manifest.NamedResource{missing})
+			} else {
+				assert.Equal(t, len(proposal.Fatal), 0)
+				assert.Equal(t, len(proposal.Readiness), 0)
+			}
 		})
 	}
 }

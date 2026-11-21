@@ -254,7 +254,7 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 		var reads store.ReadSet
 		reads.Init(o.store, id, nil)
 		waiter := depwait.Waiter{
-			Store: &reads, Parent: id, Missing: o.cfg.missing, Decision: snapshot.Decision, Indexed: o.loader,
+			Store: &reads, Parent: id, Missing: o.cfg.missing,
 		}
 		if err := waiter.Prediction(ctx, &reads, references, discovered); err != nil {
 			res.Failed[id] = store.FailureStatus(err)

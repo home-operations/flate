@@ -150,14 +150,12 @@ func testAdmissionInputVisibilityCaseCompletion(
 				slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "opaque")),
 				false,
 			)
-			for _, name := range []string{"stable", "ordering", "ready"} {
-				if slices.Contains(proposal.Needed, testutil.KustomizationID("apps", name)) {
-					t.Errorf(
-						"unrelated %s admitted: needed=%v selected=%v",
-						name,
-						proposal.Needed,
-						proposal.Selected,
-					)
+			stable := testutil.KustomizationID("apps", "stable")
+			assert.Equal(t, slices.Contains(proposal.Needed, stable), false)
+			for _, name := range []string{"ordering", "ready"} {
+				id := testutil.KustomizationID("apps", name)
+				if slices.Contains(proposal.Needed, id) {
+					assert.Equal(t, *hide && slices.Contains(proposal.Readiness, id), true)
 				}
 			}
 			assert.Equal(

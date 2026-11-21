@@ -327,7 +327,7 @@ func TestAdvance_EmptyRootHistory(t *testing.T) {
 			var execution store.ReadSet
 			execution.Init(st, manifest.NamedResource{}, nil)
 			defer execution.Retire()
-			assert.Equal(t, execution.OrdinaryDemand(owner.Named()), false)
+			assert.Equal(t, execution.ControllerDemand(owner.Named()), false)
 			assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(owner.Named()), true)
 			assert.Equal(t, d.request.ReadHistory == nil, !available)
 			assert.Equal(t, d.request.Preparation, request.Preparation)

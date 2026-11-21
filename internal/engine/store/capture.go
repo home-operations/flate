@@ -39,6 +39,7 @@ type ReadSet struct {
 	acquisition        AcquisitionState
 	hasAcquisition     bool
 	hasToleratedCRDs   bool
+	orderingAssessed   bool
 }
 
 // Input co-owns a captured dependency and its authority registrations.
@@ -62,7 +63,8 @@ type Input struct {
 	declaration     bool
 	required        bool
 	qualification   bool
-	ordinaryDemand  bool
+	ordering        bool
+	demandCaptured  bool
 	hasStatus       bool
 	derived         uint8
 	acquisitionRead bool
@@ -131,7 +133,7 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.originHead, r.expected = nil, [2]*acceptedAssessment{}
 	r.acceptedRecord = acceptedAssessment{}
 	r.acquisition, r.hasAcquisition = AcquisitionPending, false
-	r.hasToleratedCRDs = false
+	r.hasToleratedCRDs, r.orderingAssessed = false, false
 	for i := range inputs {
 		inputs[i].next, r.spare = r.spare, &inputs[i]
 	}
@@ -200,7 +202,7 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 	input := r.input(id)
 	r.Capture(input)
 	input.declaration = true
-	return new(input.view).declaration()
+	return input.view.declaration()
 }
 
 // GeneratedDocument reports whether the captured declaration came from visible generation.
@@ -243,7 +245,7 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		registration.head = &sh.absence
 		registration.link()
 	} else if cell.links != nil {
-		cell.links.ordinary.Store(view.ordinary)
+		cell.links.demand.Store(uint32(view.demand))
 		registration.head = cell.links
 		if cell.links.first.Load() == nil && !cell.links.detached.Load() {
 			cell.links.generation.Store(view.generation)
@@ -558,54 +560,6 @@ func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
 			}
 		}
 	}
-}
-
-// SetIncluded MUST never exclude an object after this Store invocation admits it.
-func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool) {
-	included = included || ordinary
-	sh := s.shardFor(id)
-	sh.mu.Lock()
-	cell := sh.cells[id]
-	if !included && (cell.included || cell.excluded) {
-		sh.mu.Unlock()
-		return
-	}
-	var condition authority
-	var reset bool
-	if included {
-		record := sh.conditions[id]
-		info, _ := record.statusInfo()
-		reset = info.Outcome() == OutcomeUnchanged
-		if reset {
-			condition = record.stamp()
-		}
-	}
-	promoted := ordinary && !cell.ordinaryDemand()
-	if cell.included && !reset && !promoted {
-		sh.mu.Unlock()
-		return
-	}
-	if cell.excluded == included || reset {
-		sh.requireCapacityLocked(cell.authority, condition)
-		cell.authority = sh.advanceLocked(cell.current())
-	}
-	cell.excluded, cell.included, cell.ordinary = !included, included, cell.ordinary || ordinary
-	if cell.links != nil {
-		cell.links.ordinary.Store(cell.ordinaryDemand())
-		sh.queue(cell.links)
-	}
-	sh.cells[id] = cell
-	var dispatch eventDispatch
-	if reset {
-		dispatch = sh.resetInclusion(s, id, &cell)
-	} else if included && !cell.hidden {
-		if obj := sh.objectLocked(id); obj != nil {
-			dispatch = fireUnderLock(s, EventObjectAdded, id)
-			dispatch.payload = obj
-		}
-	}
-	sh.mu.Unlock()
-	dispatch.run()
 }
 
 // SetPreflight publishes a changed structural admission decision.

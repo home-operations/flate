@@ -123,7 +123,7 @@ func TestPrepareAdmission_HistorySurvivesPublication(t *testing.T) {
 			assert.Equal(t, committed, true)
 			assert.Equal(t, probe.calls, 0)
 			assert.Equal(t, initial.Request.History[owner.Named()].Records == nil, true)
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			stop := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 				if published || id != owner.Named() {
 					return

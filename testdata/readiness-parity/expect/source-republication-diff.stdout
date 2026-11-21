@@ -1,0 +1,211 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "default",
+        "name": "demo",
+        "path": ""
+      },
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "default",
+      "name": "demo",
+      "status": "changed",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "demo",
+            "helm.toolkit.fluxcd.io/namespace": "default"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "app": "demo"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "demo"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "example.test/demo:1.0.0",
+                  "name": "demo"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "demo",
+            "helm.toolkit.fluxcd.io/namespace": "default"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "replicas": 2,
+          "selector": {
+            "matchLabels": {
+              "app": "demo"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "demo"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "example.test/demo:1.0.0",
+                  "name": "demo"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "default",
+        "name": "demo",
+        "path": "release"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "default",
+      "name": "demo",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "demo",
+            "kustomize.toolkit.fluxcd.io/namespace": "default"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "demo"
+          },
+          "interval": "1m",
+          "values": {
+            "replicas": 1
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "demo",
+            "kustomize.toolkit.fluxcd.io/namespace": "default"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "demo"
+          },
+          "interval": "1m",
+          "values": {
+            "replicas": 2
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "cluster-apps",
+        "path": "apps"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "default",
+      "name": "demo",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "interval": "1m",
+          "path": "./release",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "interval": "2m",
+          "path": "./release",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

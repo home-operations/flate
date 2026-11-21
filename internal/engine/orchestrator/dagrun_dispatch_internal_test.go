@@ -445,6 +445,11 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 			schedule.Result{},
 		)
 		defer result.Assessment.Close()
+		if name := (*tailCaseInput.testCaseInput.name); name == "vanished" {
+			run := result.Assessment.(*base.Execution)
+			assert.Equal(t, run.Outcome(), schedule.Blocked)
+			run.Settle(t.Context(), manifest.DrainCascade)
+		}
 	}
 	assert.FatalIf(
 		t,
@@ -573,7 +578,7 @@ func testDAGDispatchResourceSetClassificationCase2(
 	switch *testCaseInput {
 	case "pending_peer":
 		if run.Outcome() != schedule.Blocked ||
-			!slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) ||
+			!slices.Equal(run.Blocked, []manifest.NamedResource{child.Named(), peer.Named()}) ||
 			s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
 			t.Fatalf(
 				"pending materializer did not park exact peer: outcome=%v blocked=%v",

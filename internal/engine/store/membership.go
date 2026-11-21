@@ -6,8 +6,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (c *objectCell) ordinaryDemand() bool {
-	return c.ordinary || !c.included && !c.excluded
+func (c *objectCell) demand() uint8 {
+	purpose := c.purpose
+	if !c.included && !c.excluded {
+		purpose |= uint8(demandOrdinary)
+	}
+	return purpose
 }
 
 type capture struct {
@@ -18,7 +22,7 @@ type capture struct {
 	accepted    bool
 	independent bool
 	classified  bool
-	ordinary    bool
+	demand      uint8
 	bound       bool
 	binding     *Input
 	support     *Input
@@ -59,7 +63,7 @@ func (sh *shard) captureLocked(
 		*view = capture{
 			composed:    cell.composed,
 			classified:  cell.classified && !cell.retired && cell.bound(),
-			ordinary:    cell.ordinaryDemand(),
+			demand:      cell.demand(),
 			independent: cell.independent,
 			accepted:    cell.rooted,
 			generation:  cell.generation,
@@ -714,4 +718,62 @@ func (c *capturedChild) input() Child {
 		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
 		Origin: c.Origin, Generated: c.Generated, VisibleGeneration: c.VisibleGeneration, policy: c.policy,
 	}
+}
+
+// SetIncluded MUST never exclude an object after this Store invocation admits it.
+func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary, readiness bool) {
+	included = included || ordinary || readiness
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	cell := sh.cells[id]
+	if !included && (cell.included || cell.excluded) {
+		sh.mu.Unlock()
+		return
+	}
+	var condition authority
+	var reset bool
+	if included {
+		record := sh.conditions[id]
+		info, _ := record.statusInfo()
+		reset = info.Outcome() == OutcomeUnchanged
+		if reset {
+			condition = record.stamp()
+		}
+	}
+	purpose := inclusionPurpose(cell.purpose, ordinary, readiness)
+	if cell.included && !reset && purpose == cell.purpose {
+		sh.mu.Unlock()
+		return
+	}
+	if cell.excluded == included || reset {
+		sh.requireCapacityLocked(cell.authority, condition)
+		cell.authority = sh.advanceLocked(cell.current())
+	}
+	cell.excluded, cell.included, cell.purpose = !included, included, purpose
+	if cell.links != nil {
+		cell.links.demand.Store(uint32(cell.demand()))
+		sh.queue(cell.links)
+	}
+	sh.cells[id] = cell
+	var dispatch eventDispatch
+	if reset {
+		dispatch = sh.resetInclusion(s, id, &cell)
+	} else if included && !cell.hidden {
+		if obj := sh.objectLocked(id); obj != nil {
+			dispatch = fireUnderLock(s, EventObjectAdded, id)
+			dispatch.payload = obj
+		}
+	}
+	sh.mu.Unlock()
+	dispatch.run()
+}
+
+func inclusionPurpose(previous uint8, ordinary, readiness bool) uint8 {
+	if ordinary {
+		previous |= uint8(demandOrdinary)
+	}
+	if readiness {
+		return previous | uint8(demandReadiness)
+	}
+	return previous &^ uint8(demandReadiness)
 }

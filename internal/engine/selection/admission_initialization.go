@@ -22,11 +22,16 @@ func (c *admissionClosure) start(
 	c.indexStartObjects(objects)
 
 	edges := make([]admissionStartEdge, 0, len(c.identities))
-	link := func(from, to manifest.NamedResource) {
+	link := func(from, to manifest.NamedResource, ordering bool) {
 		state := c.states[from]
 		edges = append(
 			edges,
-			admissionStartEdge{consumer: to, next: state.consumer, generation: c.states[to].generation},
+			admissionStartEdge{
+				consumer:   to,
+				next:       state.consumer,
+				generation: c.states[to].generation,
+				ordering:   ordering,
+			},
 		)
 		state.consumer = len(edges)
 		c.states[from] = state
@@ -358,6 +363,7 @@ func (c *admissionClosure) retireIdentities() {
 type admissionStartEdge struct {
 	consumer         manifest.NamedResource
 	next, generation int
+	ordering         bool
 }
 
 type admissionStartRestoration struct {
@@ -383,7 +389,7 @@ func (s *admissionSeeds) scanReferences(
 	c *admissionClosure,
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) {
 	for ref := range c.references(id, obj) {
 		if !c.reverse(id, obj, new(ref)) {
@@ -394,13 +400,13 @@ func (s *admissionSeeds) scanReferences(
 			continue
 		}
 		for _, input := range inputs {
-			if c.changedInput(id, input) {
+			if c.changedInput(id, input) || ref.Ordering && c.declarationChanged(input, c.object(input)).Changed {
 				*s = append(
 					*s,
 					admissionStartSeed{target: input, origin: id, generation: c.states[id].generation},
 				)
 			}
-			link(input, id)
+			link(input, id, ref.Ordering)
 		}
 	}
 }
@@ -409,7 +415,7 @@ func (s *admissionSeeds) scanProductions(
 	c *admissionClosure,
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) []manifest.Production {
 	productions := c.productions(id)
 	if c.unavailableGeneratedData(id) {
@@ -442,7 +448,7 @@ func (s *admissionSeeds) scanProductions(
 			}
 			if owner != id && owner != (manifest.NamedResource{}) && !owner.ReportHidden() &&
 				!c.unchangedDeclaration(id, owner, obj) {
-				link(owner, id)
+				link(owner, id, false)
 			}
 		}
 	}
@@ -537,26 +543,42 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 	for next := c.states[id].consumer; next != 0; next = edges[next-1].next {
 		edge := edges[next-1]
 		consumer := edge.consumer
-		if edge.generation != c.states[consumer].generation || c.states[consumer].changed {
+		state := c.states[consumer]
+		if edge.generation != state.generation {
 			continue
 		}
-		obj := c.object(consumer)
-		unchanged := false
-		for ref := range c.references(consumer, obj) {
-			if ref.NamedResource != id {
-				continue
+		if edge.ordering {
+			if !state.readinessAffected && !state.changed {
+				state.readinessAffected = true
+				c.states[consumer] = state
+				c.queue = append(c.queue, consumer)
 			}
-			comparison := c.outputChanged(consumer, new(ref), obj)
-			unchanged = comparison.Known && !comparison.Changed
-			if !unchanged {
-				break
-			}
+			continue
 		}
-		if !unchanged {
+		if state.changed || !c.states[id].changed {
+			continue
+		}
+		if c.readerUsesChangedInput(consumer, id) {
 			c.markChanged(consumer)
 			c.queue = append(c.queue, consumer)
 		}
 	}
+}
+
+func (c *admissionClosure) readerUsesChangedInput(consumer, input manifest.NamedResource) bool {
+	object := c.object(consumer)
+	matched := false
+	for ref := range c.references(consumer, object) {
+		if ref.NamedResource != input || ref.Ordering {
+			continue
+		}
+		comparison := c.outputChanged(consumer, new(ref), object)
+		if !comparison.Known || comparison.Changed {
+			return true
+		}
+		matched = true
+	}
+	return !matched
 }
 
 func (c *admissionClosure) seedChangedReaders(file string) {
@@ -604,6 +626,9 @@ func (c *admissionClosure) selectInitialState(id manifest.NamedResource, state *
 	}
 	if !state.eligible {
 		return
+	}
+	if state.readinessAffected && c.session.request.Changed && !state.changed {
+		c.add(id, admissionRole{needed: true, readiness: true, fatal: !id.ReportHidden()})
 	}
 	if state.changed || !c.session.request.Changed || c.proposal.Request.Changes == nil {
 		c.add(id, admissionRole{needed: true, selected: !id.ReportHidden(), dirty: true})
@@ -687,7 +712,7 @@ func (c *admissionClosure) prepareInitialChanges(seeds admissionSeeds, edges []a
 	c.queue = c.queue[:0]
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
-		state.changed = state.seed || state.direct
+		state.changed, state.readinessAffected = state.seed || state.direct, false
 		c.states[id] = state
 	}
 	c.activateInitialSeeds(seeds, edges)
@@ -722,11 +747,11 @@ func (c *admissionClosure) linkInitialParent(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) {
 	if parent := record.Parent; parent != (manifest.NamedResource{}) && parent != id && !parent.ReportHidden() &&
 		!c.unchangedDeclaration(id, parent, obj) {
-		link(parent, id)
+		link(parent, id, false)
 	}
 }
 

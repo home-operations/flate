@@ -117,7 +117,7 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "before"}
 			st.AddObject(owner)
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			session := newSolverSession(t, st, nil, Request{Changed: true})
 			previous := AdmissionResult{
 				Needed:   []manifest.NamedResource{owner.Named()},

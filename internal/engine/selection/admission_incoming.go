@@ -80,24 +80,30 @@ func (c *admissionClosure) reverseInputRole(
 			continue
 		}
 		for _, input := range inputs {
-			if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
-				continue
-			}
-			if comparison := c.outputChanged(
-				id,
-				new(ref),
-				c.incoming(id).Obj,
-			); comparison.Known &&
-				!comparison.Changed {
-				continue
-			}
-			role.needed = true
-			if eligible {
-				role.selected, role.dirty = true, true
+			if c.reverseInputChanged(id, input, new(ref)) {
+				role.needed = true
+				if eligible {
+					role.selected, role.dirty = true, true
+				}
 			}
 		}
 	}
 	return role
+}
+
+func (c *admissionClosure) reverseInputChanged(id, input manifest.NamedResource, ref *manifest.Reference) bool {
+	changed := c.role(input).dirty || c.affected(input, c.object(input)) || c.changedInput(id, input)
+	if ref.Ordering {
+		if changed || c.states[input].readinessAffected || c.declarationChanged(input, c.object(input)).Changed {
+			c.reachReadinessReader(id)
+		}
+		return false
+	}
+	if !changed {
+		return false
+	}
+	comparison := c.outputChanged(id, ref, c.incoming(id).Obj)
+	return !comparison.Known || comparison.Changed
 }
 
 func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionRole) admissionRole {
@@ -146,9 +152,6 @@ func (c *admissionClosure) selectInputReaders(id manifest.NamedResource) error {
 	key.Name = ""
 	for _, readers := range [][]manifest.NamedResource{c.context.InputReaders[id], c.context.InputReaders[key]} {
 		for _, reader := range readers {
-			if !c.session.request.Matches(reader) {
-				continue
-			}
 			if err := c.selectInputReader(id, reader); err != nil {
 				return err
 			}
@@ -197,12 +200,32 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 		if !known || !slices.Contains(inputs, id) {
 			continue
 		}
+		if ref.Ordering {
+			c.reachReadinessReader(reader)
+			continue
+		}
+		if !c.session.request.Matches(reader) || !c.role(id).dirty && !c.affected(id, c.object(id)) {
+			continue
+		}
 		if comparison := c.outputChanged(reader, new(ref), object); comparison.Known && !comparison.Changed {
 			continue
 		}
 		c.add(reader, admissionRole{needed: true, selected: true, dirty: true})
 	}
 	return nil
+}
+
+func (c *admissionClosure) reachReadinessReader(id manifest.NamedResource) {
+	state := c.states[id]
+	if state.readinessAffected || !c.session.request.Changed {
+		return
+	}
+	state.readinessAffected, state.walkedOnce = true, false
+	c.states[id] = state
+	if c.session.request.Matches(id) && !id.ReportHidden() {
+		c.add(id, admissionRole{needed: true, readiness: true, fatal: true})
+	}
+	c.queue = append(c.queue, id)
 }
 
 func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) bool {

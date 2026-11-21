@@ -25,7 +25,7 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	for id, info := range s.run.Failed {
 		_, needed := required[id]
 		if required != nil && !needed {
-			if s.includes(id.Namespace) {
+			if s.includes(id.Namespace) && s.reportsUnrelated(id, &info) {
 				unrelated[id] = info
 			}
 			continue
@@ -39,6 +39,30 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 		s.result.Unrelated = s.unrelatedFailures(&s.run, unrelated, required)
 	}
 	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
+}
+
+func (s *selectionSide) countNamedAssessment(root, id manifest.NamedResource) {
+	if root.Name != "" && s.run.Decision.reportsFailure(id) && s.run.Store.GetDeclaration(id) != nil {
+		s.result.Counts[root.Kind]++
+	}
+}
+
+func (s *selectionSide) reportsUnrelated(id manifest.NamedResource, status *store.StatusInfo) bool {
+	decision := s.run.Decision
+	readinessOnly := func(id manifest.NamedResource) bool {
+		if !decision.ReadinessDemand(id) || decision.OrdinaryDemand(id) {
+			return false
+		}
+		owner := s.run.Store.EmissionOwner(id)
+		return owner == (manifest.NamedResource{}) || owner.ReportHidden()
+	}
+	if readinessOnly(id) {
+		return false
+	}
+	blocked := status.BlockedBy()
+	return len(blocked) == 0 || slices.ContainsFunc(blocked, func(dep manifest.NamedResource) bool {
+		return !readinessOnly(dep)
+	})
 }
 
 func (s *selectionSide) requiredClosure(
@@ -91,7 +115,7 @@ func (q *requiredSelection) add(id manifest.NamedResource) {
 func (q *requiredSelection) seed(id manifest.NamedResource) {
 	s := q.side
 	if q.intent.Roots[0].Name == "" && s.run.Decision.restricted() {
-		if selected := s.run.Decision.Output(id); !selected {
+		if !s.run.Decision.reportsFailure(id) {
 			return
 		}
 	}
@@ -141,7 +165,7 @@ func (q *requiredSelection) seedOther(other *selectionSide) {
 	s := q.side
 	for _, id := range other.roots {
 		if s.run.Decision.restricted() {
-			if selected := other.run.Decision.Output(id); selected {
+			if other.run.Decision.reportsFailure(id) {
 				q.add(id)
 			}
 		}

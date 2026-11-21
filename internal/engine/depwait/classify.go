@@ -84,6 +84,7 @@ func (w *Waiter) classify(
 	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
 	present := obj != nil || info.Status != ""
 	if dep.RequiresDeclaration {
+		obj = w.Store.GetDeclaration(id)
 		present = obj != nil
 	}
 	if dep.RequiresDeclaration && w.artifactOnlyReady(dep, present) {
@@ -132,7 +133,8 @@ func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.Drai
 			return w.artifactReady(dep, level)
 		}
 	}
-	if level < manifest.DrainCascade {
+	if level < manifest.DrainCascade ||
+		dep.RequiresDeclaration && level < manifest.DrainForce && len(w.Store.UnsettledProducers(id)) != 0 {
 		return Classification{Kind: schedule.Blocked}
 	}
 	if w.Missing.allowsMissingDeclaration(id) {

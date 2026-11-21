@@ -727,8 +727,9 @@ func testRenderTreesOptionalInputRoutesCaseTail(
 					info,
 				)
 			}
-			_, dispatched := rendered.store.GetStatus((*tailCaseInput.stable))
-			assert.Equal(t, dispatched, false)
+			ordering, dispatched := rendered.store.GetStatus((*tailCaseInput.stable))
+			assert.Equal(t, dispatched, true)
+			assert.Equal(t, ordering.Outcome(), store.OutcomePassed)
 			byParent := outputByParent(rendered.Result.Manifests)
 			assert.Equal(t, len(byParent[(*tailCaseInput.stable)]), 0)
 			assert.Diff(t, byParent[(*tailCaseInput.app)], (*tailCaseInput.fullApp)[side])

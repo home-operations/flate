@@ -393,7 +393,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 			var reads store.ReadSet
 			reads.Init(session.store, object.Named(), nil)
 			assert.Equal(t, reads.Admitted(), true)
-			assert.Equal(t, reads.OrdinaryDemand(object.Named()), true)
+			assert.Equal(t, reads.ControllerDemand(object.Named()), true)
 			session.store.Retire(&reads)
 			assert.Equal(t, session.Snapshot().Reconcile(object.Named()), true)
 			assert.Equal(t, session.Snapshot().Output(object.Named()), true)
@@ -512,29 +512,21 @@ func TestSession_DiscardConstructionPreservesExecution(t *testing.T) {
 	}
 }
 
-func TestDecision_OrderingRequiresSelectedOrMissingExternal(t *testing.T) {
+func TestDecision_ReadinessDemand(t *testing.T) {
 	t.Parallel()
 	session := newPublicationSession(t)
 	id := testutil.KustomizationID("apps", "candidate")
-	var universal *Decision
-	for _, tc := range []struct {
-		name                   string
-		present, indexed, want bool
-	}{
-		{"absent-external", false, false, true},
-		{"present-external", true, false, false},
-		{"absent-indexed", false, true, false},
-		{"present-indexed", true, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, universal.Ordering(id, tc.present, tc.indexed), true)
-			assert.Equal(t, session.Snapshot().Ordering(id, tc.present, tc.indexed), tc.want)
-		})
-	}
-	selectedSession := newPublicationSession(t)
-	publishDecision(t, selectedSession, new(Admission{Needed: []manifest.NamedResource{id}}), 0)
-	assert.Equal(t, selectedSession.Snapshot().Ordering(id, true, true), true)
+	decision, included := session.Snapshot().include(&Admission{Readiness: []manifest.NamedResource{id}}, true)
+	assert.Diff(t, included, []manifest.NamedResource{id})
+	assert.Equal(t, decision.Reconcile(id), true)
+	assert.Equal(t, decision.ReadinessDemand(id), true)
+	assert.Equal(t, decision.OrdinaryDemand(id), false)
+	assert.Equal(t, decision.Output(id), false)
+	assert.Equal(t, decision.reportsFailure(id), false)
+
+	next, _ := decision.include(&Admission{Fatal: []manifest.NamedResource{id}}, true)
+	assert.Equal(t, next.reportsFailure(id), true)
+	assert.Equal(t, next.Output(id), false)
 }
 
 func TestSession_ConstructionPublishesReadySupportWithPendingDemand(t *testing.T) {
@@ -552,4 +544,36 @@ func TestSession_ConstructionPublishesReadySupportWithPendingDemand(t *testing.T
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Reconcile(id), true)
 	assert.Equal(t, session.Snapshot().Output(id), false)
+}
+
+func TestDecision_OrderingDemandWithdrawal(t *testing.T) {
+	t.Parallel()
+	session := newPublicationSession(t)
+	first := testutil.KustomizationID("apps", "first")
+	second := testutil.KustomizationID("apps", "second")
+	middle := testutil.KustomizationID("infra", "middle")
+	leaf := testutil.KustomizationID("infra", "leaf")
+	decision, _ := session.Snapshot().include(&Admission{
+		Ordinary: []manifest.NamedResource{first, second},
+		Needed:   []manifest.NamedResource{middle, leaf},
+		ordering: map[manifest.NamedResource][]manifest.NamedResource{
+			first: {middle}, second: {middle}, middle: {leaf}, leaf: {middle},
+		},
+	}, true)
+	for _, id := range []manifest.NamedResource{middle, leaf} {
+		assert.Equal(t, decision.ReadinessDemand(id), true)
+		assert.Equal(t, decision.Output(id), false)
+	}
+	next, _ := decision.include(&Admission{
+		ordering: map[manifest.NamedResource][]manifest.NamedResource{first: nil},
+	}, true)
+	assert.Equal(t, next.ReadinessDemand(leaf), true)
+	final, retired := next.include(&Admission{
+		ordering: map[manifest.NamedResource][]manifest.NamedResource{second: nil},
+	}, true)
+	assert.Diff(t, retired, []manifest.NamedResource{leaf, middle})
+	for _, id := range retired {
+		assert.Equal(t, final.ReadinessDemand(id), false)
+		assert.Equal(t, next.ReadinessDemand(id), true)
+	}
 }

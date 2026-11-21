@@ -5,7 +5,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -73,14 +72,13 @@ func testPredictionCheckpointPrecedence(t *testing.T) {
 	cases := []struct {
 		name string
 
-		changed, optional bool
-		ordering          manifest.NamedResource
-		chartGate         manifest.GateStage
-		blocked           manifest.NamedResource
+		optional  bool
+		ordering  manifest.NamedResource
+		chartGate manifest.GateStage
+		blocked   manifest.NamedResource
 	}{
-		{name: "full keeps indexed target", ordering: known, blocked: known},
-		{name: "changed excludes indexed target", changed: true, ordering: known},
-		{name: "changed keeps unknown target", changed: true, ordering: unknown, blocked: unknown},
+		{name: "indexed target", ordering: known, blocked: known},
+		{name: "unknown target", ordering: unknown, blocked: unknown},
 		{
 			name:      "chart declaration precedes data",
 			chartGate: manifest.GateInputs | manifest.GateArtifacts,
@@ -101,14 +99,12 @@ func testPredictionCheckpointPrecedence(t *testing.T) {
 			st := store.New()
 			input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"other": "key: value"}}
 			st.AddObject(input)
-			session, err := selection.New(st, nil, selection.Request{Changed: tc.changed})
-			assert.NoError(t, err)
 			var reads store.ReadSet
 			reads.Init(st, child, nil)
 			defer reads.Retire()
 			waiter := Waiter{
 				Store: &reads, Parent: child, Missing: NewMissingPolicy(nil),
-				Decision: session.Snapshot(), Indexed: index, Existence: errorPromotion{},
+				Existence: errorPromotion{},
 			}
 			references := []manifest.Reference{{
 				NamedResource: input.Named(), Use: "valuesFrom", Key: "values.yaml", Optional: tc.optional,
@@ -124,7 +120,7 @@ func testPredictionCheckpointPrecedence(t *testing.T) {
 					Gate: tc.chartGate, ArtifactStages: manifest.GateArtifacts,
 				})
 			}
-			err = waiter.Prediction(t.Context(), &reads, slices.Values(references), index)
+			err := waiter.Prediction(t.Context(), &reads, slices.Values(references), index)
 			assert.FatalIf(t, err == nil, "expected a detached assessment failure")
 			status := store.FailureStatus(err)
 			if tc.blocked == (manifest.NamedResource{}) {

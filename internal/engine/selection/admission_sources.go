@@ -104,7 +104,7 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 		object := c.object(reader.Reader)
 		matched := false
 		for ref := range c.references(reader.Reader, object) {
-			if ref.NamedResource != reader.Declaration || !c.reverse(reader.Reader, object, new(ref)) {
+			if ref.Ordering || ref.NamedResource != reader.Declaration || !c.reverse(reader.Reader, object, new(ref)) {
 				continue
 			}
 			matched = true
@@ -190,18 +190,18 @@ func (c *admissionClosure) reverse(
 	if object != nil {
 		matched := false
 		c.references(id, object)(func(input manifest.Reference) bool {
-			matched = input.AffectedInput() && input.NamedResource == target
+			matched = (input.AffectedInput() || input.Ordering && !input.Optional) && input.NamedResource == target
 			return !matched
 		})
 		return matched
 	}
 	occurrence, ok := c.catalogOccurrence(id)
 	if !ok {
-		return refValue.ContentInput()
+		return refValue.ContentInput() || refValue.Ordering && !refValue.Optional
 	}
 	for i := range occurrence.Refs {
 		original := &occurrence.Refs[i]
-		if !slices.Contains(occurrence.Reverse, original.NamedResource) {
+		if (!original.Ordering || original.Optional) && !slices.Contains(occurrence.Reverse, original.NamedResource) {
 			continue
 		}
 		input := original.NamedResource

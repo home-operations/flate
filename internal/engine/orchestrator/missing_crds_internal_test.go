@@ -248,7 +248,7 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 		reads.Require(ref.DependencyRef)
 	}
 	waiter := depwait.Waiter{Store: reads, Parent: obj.Named(), Missing: opts.missing}
-	err := waiter.Assess(t.Context(), reads, manifest.DrainCascade)
+	err := waiter.Assess(t.Context(), reads, manifest.DrainCascade, depwait.AssessGates)
 	assert.Equal(t, err != nil, !opts.missing.AllowsKind(manifest.KindCustomResourceDefinition))
 	reads.Accept(opts.kind)
 	assert.Equal(t, reads.Valid(), true)
@@ -643,7 +643,7 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 			reads.RequireData(id)
 		}
 		waiter := depwait.Waiter{Store: reads, Parent: owner.Named(), Missing: missing}
-		assert.NoError(t, waiter.Assess(t.Context(), reads, manifest.DrainCascade))
+		assert.NoError(t, waiter.Assess(t.Context(), reads, manifest.DrainCascade, depwait.AssessGates))
 		reads.Accept(store.AssessmentReconciled)
 		assert.Equal(t, reads.Valid(), true)
 		reads.Retire()

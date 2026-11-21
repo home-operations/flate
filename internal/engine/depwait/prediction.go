@@ -32,14 +32,14 @@ func (w *Waiter) Prediction(
 				return &BlockedError{Deps: data.Blocked}
 			}
 		}
-		for _, dep := range assessment.SelectGates(references, stage, 0) {
+		for _, dep := range SelectGates(references, stage, 0, nil) {
 			if stage == manifest.GateParents {
 				reads.RequireMaterializer(dep.NamedResource)
 			} else {
 				reads.Require(dep)
 			}
 		}
-		if err := assessment.Assess(ctx, reads, manifest.DrainForce); err != nil {
+		if err := assessment.Assess(ctx, reads, manifest.DrainForce, AssessGates); err != nil {
 			return err
 		}
 	}

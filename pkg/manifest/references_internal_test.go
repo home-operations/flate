@@ -171,7 +171,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 4, Content: true},
 		}},
 		{"helmrelease", "effective", hr, []Reference{
-			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", RequiresDeclaration: true, Use: "chart", Content: true, bindsSource: true},
 			{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},

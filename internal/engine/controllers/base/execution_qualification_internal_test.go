@@ -34,7 +34,7 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 	st := store.New()
 	producer := &manifest.ResourceSet{Name: "candidate", Namespace: "apps"}
 	st.AddObject(producer)
-	st.SetIncluded(producer.Named(), true, false)
+	st.SetIncluded(producer.Named(), true, false, false)
 	tasks := task.NewBounded(2)
 	l, filter := admissiontest.New(
 		t,
@@ -105,7 +105,7 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 	} else {
 		admissiontest.Require(t, st, filter, members, false)
 	}
-	st.SetIncluded(producer.Named(), true, true)
+	st.SetIncluded(producer.Named(), true, true, false)
 	if beforeFinish {
 		close(release)
 	}
@@ -154,7 +154,7 @@ func TestExecution_QualificationFailurePrecedence(t *testing.T) {
 			for _, object := range []manifest.BaseManifest{producer, input} {
 				st.AddObject(object)
 			}
-			st.SetIncluded(producer.Named(), true, false)
+			st.SetIncluded(producer.Named(), true, false, false)
 			controller := New(st, task.NewBounded(2))
 			var run Execution
 			run.Init(controller, producer.Named())

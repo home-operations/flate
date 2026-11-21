@@ -533,8 +533,8 @@ func TestRequireRefresh_FailedParentRetainsInputFailures(t *testing.T) {
 					assert.FatalIf(t, !ok ||
 						!slices.Equal(
 							blocked.Deps,
-							[]manifest.NamedResource{missing},
-						), "gate=%v, want missing input blocked before terminal failure", err)
+							[]manifest.NamedResource{child.Named(), missing},
+						), "gate=%v, want missing declaration and input blocked before terminal failure", err)
 				}
 			} else {
 				{
@@ -601,9 +601,11 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				defer first.Close()
 				_, localErr := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
 				blocked, ok := errors.AsType[*depwait.BlockedError](localErr)
+				wantBlocked := []manifest.NamedResource{obj.Named(), parent.Named()}
+				slices.SortFunc(wantBlocked, manifest.NamedResource.Compare)
 				assert.FatalIf(
 					t,
-					!ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{parent.Named()}),
+					!ok || !slices.Equal(blocked.Deps, wantBlocked),
 					"parent gate=%v",
 					localErr,
 				)

@@ -241,7 +241,7 @@ func TestAdmission_SelectorMembership(t *testing.T) {
 
 			var seeds admissionSeeds
 			links := 0
-			seeds.scanReferences(&closure, reader.Named(), reader, func(from, to manifest.NamedResource) {
+			seeds.scanReferences(&closure, reader.Named(), reader, func(from, to manifest.NamedResource, _ bool) {
 				assert.Equal(t, from, provider.Named())
 				assert.Equal(t, to, reader.Named())
 				links++

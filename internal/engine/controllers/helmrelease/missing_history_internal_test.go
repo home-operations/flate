@@ -98,7 +98,7 @@ func TestPreviousRender_ChartDependencyHasNoRuntimeEffects(t *testing.T) {
 				},
 			}
 			st.AddObject(owner)
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			if state != "indexed_repository" {
 				st.AddObject(repository)
 			}
@@ -249,7 +249,7 @@ data:
 	assert.FatalIf(t, warmHistory.Assessment == nil, "missing warm assessment")
 	warmHistory.Assessment.Close()
 	st.AddObject(owner)
-	st.SetIncluded(owner.Named(), false, false)
+	st.SetIncluded(owner.Named(), false, false, false)
 	objects, warnings := st.Objects(), st.Warnings()
 	status, statusExists := st.GetStatus(owner.Named())
 	var events atomic.Int32
@@ -275,7 +275,7 @@ data:
 	assert.Equal(t, c.Tasks.Failures(), int64(0))
 
 	history.Assessment.Close()
-	st.SetIncluded(owner.Named(), true, true)
+	st.SetIncluded(owner.Named(), true, true, false)
 	info := reconcileFixture(t, c, owner.Named())
 	assert.Equal(t, info.Status, store.StatusReady)
 	assert.Equal(t, slices.Contains(promotion.promoted, input.Named()), true)
@@ -325,7 +325,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				input: {Productions: []manifest.Production{{Owner: producer, Declaration: producer}}},
 			}})
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			prior := c.newExecution(owner.Named())
 			defer prior.run.Close()
 			var previous schedule.Result

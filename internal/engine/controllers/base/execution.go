@@ -237,10 +237,11 @@ func (e *Execution) publish(
 
 // Require assesses and retains readiness gates from the captured inputs.
 func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, level manifest.DrainLevel) error {
-	admit := false
+	decision := e.selection.Snapshot()
+	admit := !decision.MatchesOrdering(&e.Reads)
 	for _, dep := range deps {
 		e.Reads.Require(dep)
-		admit = admit || e.selection != nil && !e.selection.Snapshot().Reconcile(dep.NamedResource)
+		admit = admit || !decision.Reconcile(dep.NamedResource)
 	}
 	if admit {
 		if _, err := e.KeepEmitted(
@@ -251,12 +252,12 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 			return err
 		}
 	}
-	return e.classify(ctx, level)
+	return e.assess(ctx, level, depwait.AssessGates)
 }
 
-func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) error {
+func (e *Execution) assess(ctx context.Context, level manifest.DrainLevel, stage depwait.AssessmentStage) error {
 	w := e.dependencyWaiter()
-	return w.Assess(ctx, &e.Reads, level)
+	return w.Assess(ctx, &e.Reads, level, stage)
 }
 
 // Settle classifies retained unresolved gates without rendering again.
@@ -272,7 +273,7 @@ func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
 	} else if e.resume != nil {
 		e.finish(ctx, e.resume(ctx, level))
 	} else {
-		e.finish(ctx, e.classify(ctx, level))
+		e.finish(ctx, e.assess(ctx, level, depwait.AssessGates))
 	}
 }
 
@@ -356,6 +357,11 @@ func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource
 		)
 	}
 	if errors.Is(err, manifest.ErrSourceSkipped) {
+		if errors.Is(err, depwait.ErrDeclarationAbsent) {
+			if prior, exists := e.Store.GetStatus(id); !exists || prior.Status == store.StatusReady {
+				return
+			}
+		}
 		e.Store.UpdateStatus(
 			id,
 			store.StatusInfo{
@@ -389,47 +395,42 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 			panic(recovered)
 		}
 	}()
-	obj, ok := e.Reads.Get[T](id)
-	e.declaration = obj
+	raw, typed := e.Reads.Get[T](id)
+	if e.selection.Snapshot().ReadinessDemand(id) {
+		e.Reads.ReadinessDemand(id)
+	}
 	policy := e.Reads.Policy(id)
-	if ok && !e.selection.Snapshot().Output(manifest.NamedResource{}) {
-		if _, err := e.KeepEmitted(
-			ctx,
-			manifest.NamedResource{},
-			selection.PrepareRequest{
-				Generation:  []store.Child{{Obj: obj, Origin: policy.Origin}},
-				Reads:       &e.Reads,
-				Preparation: &e.AdmissionPreparation,
-			},
-		); err != nil {
+	if typed {
+		if err := e.admitDispatchDeclaration(ctx, raw, policy.Origin); err != nil {
 			e.finish(ctx, err)
 			return
 		}
 	}
 
-	if ok && (!policy.Root && !policy.Reconcile || e.preGate(obj)) {
+	e.declaration = e.Reads.GetDeclaration(id)
+	obj, ok := e.declaration.(T)
+	if typed && (!policy.Root && !policy.Reconcile || e.preGate(raw)) {
 		e.acceptReads(ctx)
 		return
 	}
-	if err := e.Checkpoint(); err != nil {
-		e.finish(ctx, err)
-		return
+	if ok {
+		if err := e.Checkpoint(); err != nil {
+			e.finish(ctx, err)
+			return
+		}
 	}
 	if !e.Reads.Admitted() {
-		if ok {
-			for dep := range manifest.ContentInputs(obj, false) {
-				e.Reads.GetObject(dep)
-			}
-		}
-		e.Store.UpdateStatus(
-			id,
-			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
-		)
-		e.acceptReads(ctx)
+		e.acceptUnadmitted(ctx, ok)
 		return
 	}
 	if !ok {
-		e.dispatchMissing(ctx, level)
+		e.withdrawSource(false)
+		e.resume = func(ctx context.Context, level manifest.DrainLevel) error {
+			waiter := e.dependencyWaiter()
+			waiter.IncompatibleDeclaration = e.declaration != nil
+			return waiter.Assess(ctx, &e.Reads, level, depwait.AssessDispatch)
+		}
+		e.finish(ctx, e.resume(ctx, level))
 		return
 	}
 
@@ -447,6 +448,35 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		}
 	}
 	e.finish(ctx, err)
+}
+
+func (e *Execution) admitDispatchDeclaration(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	origin manifest.DeclarationOrigin,
+) error {
+	if e.selection.Snapshot().Output(manifest.NamedResource{}) {
+		return nil
+	}
+	_, err := e.KeepEmitted(ctx, manifest.NamedResource{}, selection.PrepareRequest{
+		Generation:  []store.Child{{Obj: obj, Origin: origin}},
+		Reads:       &e.Reads,
+		Preparation: &e.AdmissionPreparation,
+	})
+	return err
+}
+
+func (e *Execution) acceptUnadmitted(ctx context.Context, hasDeclaration bool) {
+	if hasDeclaration {
+		for dep := range manifest.ContentInputs(e.declaration, false) {
+			e.Reads.GetObject(dep)
+		}
+	}
+	e.Store.UpdateStatus(
+		e.Reads.ID(),
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+	)
+	e.acceptReads(ctx)
 }
 
 func (e *Execution) acceptReads(ctx context.Context) {
@@ -469,69 +499,15 @@ func (e *Execution) reconcile[T manifest.BaseManifest](
 	return reconcile(ctx, obj, level)
 }
 
-func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {
-	id := e.Reads.ID()
-	if e.Reads.GetDeclaration(id) != nil {
-		return nil
-	}
-	var owners []manifest.NamedResource
-	{
-		productionValues := e.Reads.Productions(id, nil)
-		for productionIndex := range productionValues {
-			production := productionValues[productionIndex]
-
-			if owner := e.Reads.Materializer(id, production); owner != (manifest.NamedResource{}) && owner != id {
-				owners = append(owners, owner)
-			}
-		}
-	}
-	slices.SortFunc(owners, manifest.NamedResource.Compare)
-	owners = slices.Compact(owners)
-	if len(owners) == 0 {
-		return manifest.NewError(manifest.ErrSourceSkipped, nil, "object not in store at reconcile time")
-	}
-	for _, owner := range owners {
-		e.Reads.RequireMaterializer(owner)
-	}
-	err := e.classify(ctx, level)
-	if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
-		e.SetPendingUnlessReady(id, "waiting for declaration")
-		return err
-	}
-	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	if !ok && err != nil {
-		return err
-	}
-	if !ok {
-		failed = &manifest.DependencyFailedError{
-			Parent:  id,
-			Subject: manifest.DiagnosticFor(id, e.Reads.GetObject(id)),
-			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
-		}
-	}
-	failed.Failed = append(failed.Failed, owners...)
-	slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
-	failed.Failed = slices.Compact(failed.Failed)
-	for _, owner := range owners {
-		if _, exists := failed.Reasons[owner]; !exists {
-			failed.Reasons[owner] = manifest.DiagnosticReason{
-				Subject: manifest.DiagnosticFor(owner, e.Reads.GetObject(owner)),
-				Message: "declaration not emitted",
-			}
-		}
-	}
-	return failed
-}
-
 // Deduplication omits its fingerprint when no stable content key exists.
 type Deduplication struct {
 	Fingerprint string
 	Reused      bool
 }
 
-// AdmitQualification settles a negative precondition only without ordinary demand.
+// AdmitQualification settles a negative precondition only without controller demand.
 func (e *Execution) AdmitQualification(possible bool) bool {
-	if !possible && !e.Reads.OrdinaryDemand(e.Reads.ID()) {
+	if !possible && !e.Reads.ControllerDemand(e.Reads.ID()) {
 		e.Disposition = store.AssessmentQualificationSettled
 		return true
 	}
@@ -552,18 +528,17 @@ func (e *Execution) FingerprintDedup(
 	if err := e.Checkpoint(); err != nil {
 		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
-	if e.selection != nil {
-		decision := e.selection.Snapshot()
-		selected, dirty := decision.Output(id), decision.Changed(id)
-		// Unresolved inputs MUST reach content fingerprinting before reuse.
-		if selected && !dirty && len(e.Unreadable) == 0 && e.Disposition != store.AssessmentReused {
-			e.Disposition = store.AssessmentReused
-			e.Store.UpdateStatus(
-				id,
-				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
-			)
-			return Deduplication{Fingerprint: "", Reused: true}, nil
-		}
+	decision := e.selection.Snapshot()
+	readiness := !decision.Output(manifest.NamedResource{}) && e.Reads.ReadinessDemand(id)
+	unchangedOutput := e.selection != nil && decision.Output(id) && !decision.Changed(id) && !readiness
+	// Unresolved inputs MUST reach content fingerprinting before reuse.
+	if unchangedOutput && len(e.Unreadable) == 0 && e.Disposition != store.AssessmentReused {
+		e.Disposition = store.AssessmentReused
+		e.Store.UpdateStatus(
+			id,
+			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+		)
+		return Deduplication{Fingerprint: "", Reused: true}, nil
 	}
 	if content == nil {
 		return Deduplication{Fingerprint: "", Reused: false}, e.admitRender()
@@ -581,7 +556,7 @@ func (e *Execution) FingerprintDedup(
 	attempt.Render = receipt
 	defer attempt.Finish()
 	output, matched := attempt.Replay(fp)
-	if !matched {
+	if !matched || readiness && (!attempt.OutputReads.Valid() || !e.Reads.Matches(attempt.OutputReads)) {
 		if e.Disposition == store.AssessmentReused {
 			return Deduplication{Fingerprint: fp}, nil
 		}
@@ -656,29 +631,4 @@ func (e *Execution) admitRender() error {
 		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Message: "rendering"})
 	}
 	return nil
-}
-
-func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLevel) {
-	id := e.Reads.ID()
-	e.resume = e.requireDeclaration
-	err := e.requireDeclaration(ctx, level)
-	if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
-		e.finish(ctx, err)
-	} else {
-		if err := e.withdrawInvalid(ctx); err != nil {
-			e.finish(ctx, err)
-			return
-		}
-		if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-			e.Store.UpdateStatus(
-				id,
-				store.StatusInfo{
-					Status:  store.StatusReady,
-					Reason:  store.ReasonSkipped,
-					Message: "object not in store at reconcile time",
-				},
-			)
-		}
-		e.Reads.Accept(e.Disposition)
-	}
 }

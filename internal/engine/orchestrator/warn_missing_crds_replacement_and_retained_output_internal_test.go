@@ -215,7 +215,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 		c.Configure(opts)
 		c.StartLifecycle()
 
-		s.SetIncluded(rs.Named(), false, false)
+		s.SetIncluded(rs.Named(), false, false, false)
 	}
 	publications := 0
 	u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)

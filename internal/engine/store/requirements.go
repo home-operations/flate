@@ -115,6 +115,35 @@ func (r *ReadSet) RequireData(id manifest.NamedResource) {
 	input.required, input.qualification = true, false
 }
 
+// RequireOrdering retains readiness demand from the effective declaration.
+func (r *ReadSet) RequireOrdering(id manifest.NamedResource) {
+	r.RequireData(id)
+	r.input(id).ordering = true
+}
+
+// AssessOrdering records that an empty ordering footprint is authoritative.
+func (r *ReadSet) AssessOrdering() { r.orderingAssessed = true }
+
+// OrderingAssessed distinguishes an empty assessment from one still in preparation.
+func (r *ReadSet) OrderingAssessed() bool { return r != nil && r.orderingAssessed }
+
+// RequiresOrdering identifies ordering among retained required inputs.
+func (r *ReadSet) RequiresOrdering(id manifest.NamedResource) bool {
+	input := r.findInput(id)
+	return input != nil && input.ordering
+}
+
+// Ordering yields the effective declaration dependencies.
+func (r *ReadSet) Ordering() iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		for input := r.inputs; input != nil; input = input.next {
+			if input.ordering && !yield(input.Ref.NamedResource) {
+				return
+			}
+		}
+	}
+}
+
 // RequireQualification retains demand without authorizing an ordinary producer body.
 func (r *ReadSet) RequireQualification(id manifest.NamedResource) {
 	input := r.input(id)
@@ -153,4 +182,18 @@ func (r *ReadSet) AddWarning(warning manifest.Warning) {
 	warning.Detail = slices.Clone(warning.Detail)
 	warning.Related = slices.Clone(warning.Related)
 	r.warnings = append(r.warnings, warning)
+}
+
+// DeclarationProducers retains observed omission without authorizing indexed bytes.
+func (r *ReadSet) DeclarationProducers(id manifest.NamedResource) []manifest.NamedResource {
+	result := productionResult{reads: r, captureTarget: true, retainOmitted: true, watch: true}
+	r.store.visitProductions(id, nil, &result)
+	var owners []manifest.NamedResource
+	for i := range result.out {
+		owner := r.Materializer(id, result.out[i])
+		if owner != (manifest.NamedResource{}) && owner != id && !slices.Contains(owners, owner) {
+			owners = append(owners, owner)
+		}
+	}
+	return owners
 }

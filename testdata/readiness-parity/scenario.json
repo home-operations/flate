@@ -1,0 +1,1199 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "min1",
+      "deprename",
+      "f4y-rename-db",
+      "JJGadgets/Biohazard@4e4bb618:kube/clusters/biohazard/flux"
+    ],
+    "reductions": "Keep only the readiness graph, source declarations, and rendered Deployment, ConfigMap, or PVC inputs."
+  },
+  "repositories": [
+    {
+      "name": "source-republication",
+      "directory": "source-republication",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/readiness.git"
+        }
+      ]
+    },
+    {
+      "name": "repo",
+      "directory": "kustomization-rename",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/readiness.git"
+        }
+      ]
+    },
+    {
+      "name": "helmrelease-rename",
+      "directory": "helmrelease-rename",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/readiness.git"
+        }
+      ]
+    },
+    {
+      "name": "transitive-failure",
+      "directory": "transitive-failure",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/readiness.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "source-republication",
+      "name": "source-republication-base",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "kustomization-rename-base",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "kustomization-rename-head",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": [
+        "kustomization-rename-base"
+      ],
+      "overlay": "kustomization-rename"
+    },
+    {
+      "repository": "helmrelease-rename",
+      "name": "helmrelease-rename-base",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "helmrelease-rename",
+      "name": "helmrelease-rename-head",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": [
+        "helmrelease-rename-base"
+      ],
+      "overlay": "helmrelease-rename"
+    },
+    {
+      "repository": "transitive-failure",
+      "name": "transitive-failure-base",
+      "author": "Fixture",
+      "email": "fixture@example.test",
+      "time": "2026-10-15T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "source-republication",
+      "directory": "overlays/source-republication"
+    },
+    {
+      "name": "kustomization-rename",
+      "directory": "overlays/kustomization-rename"
+    },
+    {
+      "name": "helmrelease-rename",
+      "directory": "overlays/helmrelease-rename"
+    },
+    {
+      "name": "transitive-failure",
+      "directory": "overlays/transitive-failure"
+    },
+    {
+      "name": "kustomization-rename-reverse",
+      "directory": "overlays/kustomization-rename-reverse"
+    },
+    {
+      "name": "helmrelease-rename-reverse",
+      "directory": "overlays/helmrelease-rename-reverse"
+    }
+  ],
+  "cases": [
+    {
+      "name": "source-republication",
+      "description": "A Kustomization republishes the chart source during changed-only rendering.",
+      "setup": [
+        {
+          "commit": "source-republication-base"
+        },
+        {
+          "overlay": "source-republication"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "Deployment",
+              "--path",
+              "@@repo@@/../source-republication/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/source-republication-full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "Deployment",
+              "--path",
+              "@@repo@@/../source-republication/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/source-republication-changed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret",
+              "--path",
+              "@@repo@@/../source-republication/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/source-republication-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "kustomization-rename",
+      "description": "An unchanged Kustomization still orders after the old declaration.",
+      "setup": [
+        {
+          "commit": "kustomization-rename-head"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty-json.stdout",
+              "stderr": "expect/kustomization-rename-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD~1",
+              "--skip-kinds",
+              "Kustomization,GitRepository,Namespace",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/kustomization-rename-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "named",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "-n",
+              "flux-system",
+              "app",
+              "--base",
+              "HEAD~1",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/kustomization-rename-named.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "restore-original-declaration",
+          "edit": {
+            "overlay": "kustomization-rename-reverse"
+          }
+        },
+        {
+          "id": "named-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "-n",
+              "flux-system",
+              "app",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/kustomization-rename-reverse.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helmrelease-rename",
+      "description": "A HelmRelease orders after a release from another Kustomization.",
+      "setup": [
+        {
+          "commit": "helmrelease-rename-head"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/../helmrelease-rename/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/helmrelease-rename-full.stdout",
+              "stderr": "expect/helmrelease-rename-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD~1",
+              "--skip-kinds",
+              "Kustomization,GitRepository,HelmRelease",
+              "--path",
+              "@@repo@@/../helmrelease-rename/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/helmrelease-rename-diff.stdout",
+              "stderr": "expect/helmrelease-rename-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "named",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "-n",
+              "web",
+              "web",
+              "--base",
+              "HEAD~1",
+              "--path",
+              "@@repo@@/../helmrelease-rename/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/helmrelease-rename-named.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "restore-original-declaration",
+          "edit": {
+            "overlay": "helmrelease-rename-reverse"
+          }
+        },
+        {
+          "id": "named-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "-n",
+              "web",
+              "web",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/../helmrelease-rename/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/helmrelease-rename-reverse.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transitive-failure",
+      "description": "Two PVC declarations depend on an intermediate Kustomization that cannot proceed.",
+      "setup": [
+        {
+          "commit": "transitive-failure-base"
+        },
+        {
+          "overlay": "transitive-failure"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "PersistentVolumeClaim",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/../transitive-failure/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty-json.stdout",
+              "stderr": "expect/transitive-failure-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--skip-kinds",
+              "Kustomization,GitRepository,Namespace",
+              "--path",
+              "@@repo@@/../transitive-failure/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/transitive-failure-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "named",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "-n",
+              "vm-jj",
+              "vm-jj-secureblue-pvc",
+              "--only-kinds",
+              "PersistentVolumeClaim",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/../transitive-failure/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty-json.stdout",
+              "stderr": "expect/transitive-failure-named.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty-json.stdout",
+      "cases": [
+        "kustomization-rename",
+        "helmrelease-rename",
+        "transitive-failure"
+      ],
+      "purpose": "Complete empty JSON array."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "source-republication",
+        "kustomization-rename",
+        "helmrelease-rename",
+        "transitive-failure"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/helmrelease-rename-diff.stderr",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/helmrelease-rename-diff.stdout",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Complete diff for the independent database ConfigMap."
+    },
+    {
+      "path": "expect/helmrelease-rename-full.stderr",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/helmrelease-rename-full.stdout",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Healthy database ConfigMap from the full build."
+    },
+    {
+      "path": "expect/helmrelease-rename-named.stderr",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/helmrelease-rename-reverse.stderr",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Complete named diff diagnostics from the opposite snapshot."
+    },
+    {
+      "path": "expect/kustomization-rename-diff.stderr",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/kustomization-rename-full.stderr",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/kustomization-rename-named.stderr",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/kustomization-rename-reverse.stderr",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Complete named diff diagnostics from the opposite snapshot."
+    },
+    {
+      "path": "expect/source-republication-changed.stdout",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/source-republication-diff.stdout",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Complete changes to the Deployment and its declarations."
+    },
+    {
+      "path": "expect/source-republication-full.stdout",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/transitive-failure-diff.stderr",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/transitive-failure-full.stderr",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "expect/transitive-failure-named.stderr",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Complete CLI stream."
+    },
+    {
+      "path": "helmrelease-rename/chart/Chart.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/chart/templates/app.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/database/db.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/database/kustomization.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/flux/database.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/flux/source.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/flux/web.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/web/kustomization.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "helmrelease-rename/web/web.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/app/cm.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/app/kustomization.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/flux/app.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/flux/infra.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/flux/source.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/infra/kustomization.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "kustomization-rename/infra/namespace.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "A complete local package for the prerequisite."
+    },
+    {
+      "path": "overlays/helmrelease-rename-reverse/helmrelease-rename/database/db.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Restore the earlier declaration in the working tree."
+    },
+    {
+      "path": "overlays/helmrelease-rename/helmrelease-rename/database/db.yaml",
+      "cases": [
+        "helmrelease-rename"
+      ],
+      "purpose": "Change to the cluster input."
+    },
+    {
+      "path": "overlays/kustomization-rename-reverse/repo/flux/infra.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Restore the earlier declaration in the working tree."
+    },
+    {
+      "path": "overlays/kustomization-rename/repo/flux/infra.yaml",
+      "cases": [
+        "kustomization-rename"
+      ],
+      "purpose": "Change to the cluster input."
+    },
+    {
+      "path": "overlays/source-republication/source-republication/apps/demo.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Change to the cluster input."
+    },
+    {
+      "path": "overlays/source-republication/source-republication/release/release.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Change to the cluster input."
+    },
+    {
+      "path": "overlays/transitive-failure/transitive-failure/pvc/pvc.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Change to the cluster input."
+    },
+    {
+      "path": "source-republication/apps/demo.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/apps/kustomization.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/chart/Chart.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/chart/templates/app.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/flux/apps.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/flux/source.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/release/kustomization.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/release/release.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "source-republication/release/source.yaml",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/crds/kustomization.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/crds/namespace.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "A complete local package for the prerequisite."
+    },
+    {
+      "path": "transitive-failure/deps/kustomization.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/deps/namespace.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "A complete local package for the prerequisite."
+    },
+    {
+      "path": "transitive-failure/flux/crds.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/flux/deps.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/flux/source.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/flux/vm-jj-other-pvc.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/flux/vm-jj-secureblue-pvc.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/pvc/kustomization.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transitive-failure/pvc/pvc.yaml",
+      "cases": [
+        "transitive-failure"
+      ],
+      "purpose": "Offline cluster input."
+    },
+    {
+      "path": "transport/chart.tar.gz",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Fixed response for the offline OCI transport."
+    },
+    {
+      "path": "transport/config.json",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Fixed response for the offline OCI transport."
+    },
+    {
+      "path": "transport/manifest.json",
+      "cases": [
+        "source-republication"
+      ],
+      "purpose": "Fixed response for the offline OCI transport."
+    }
+  ],
+  "transport": [
+    {
+      "host": "readiness.invalid",
+      "method": "GET",
+      "path": "/v2/",
+      "status": 200,
+      "body": "expect/empty.stdout"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "HEAD",
+      "path": "/v2/demo/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+        "Content-Length": "407"
+      },
+      "body": "transport/manifest.json"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "GET",
+      "path": "/v2/demo/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+        "Content-Length": "407"
+      },
+      "body": "transport/manifest.json"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "HEAD",
+      "path": "/v2/demo/manifests/sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+        "Content-Length": "407"
+      },
+      "body": "transport/manifest.json"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "GET",
+      "path": "/v2/demo/manifests/sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:c75f4f2181b4dd411d9ade52e23cbd2defba968c9e981972b89b47f01ee8b90f",
+        "Content-Length": "407"
+      },
+      "body": "transport/manifest.json"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "HEAD",
+      "path": "/v2/demo/blobs/sha256:575f6837844172b1e1daa53fb0744dbb539a6f87ee0dc25aad1a4031b8a642f4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:575f6837844172b1e1daa53fb0744dbb539a6f87ee0dc25aad1a4031b8a642f4",
+        "Content-Length": "313"
+      },
+      "body": "transport/chart.tar.gz"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "GET",
+      "path": "/v2/demo/blobs/sha256:575f6837844172b1e1daa53fb0744dbb539a6f87ee0dc25aad1a4031b8a642f4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:575f6837844172b1e1daa53fb0744dbb539a6f87ee0dc25aad1a4031b8a642f4",
+        "Content-Length": "313"
+      },
+      "body": "transport/chart.tar.gz"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "HEAD",
+      "path": "/v2/demo/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "Content-Length": "2"
+      },
+      "body": "transport/config.json"
+    },
+    {
+      "host": "readiness.invalid",
+      "method": "GET",
+      "path": "/v2/demo/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "Content-Length": "2"
+      },
+      "body": "transport/config.json"
+    }
+  ]
+}

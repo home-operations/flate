@@ -47,7 +47,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	} {
 		s.AddObject(object)
 	}
-	s.SetIncluded(source.Named(), false, false)
+	s.SetIncluded(source.Named(), false, false, false)
 	child := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
 		Name:      "consumer",
@@ -142,7 +142,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					},
 				)
 				admissiontest.Commit(t, l.Options.Session, nil)
-				st.SetIncluded(input.Named(), false, false)
+				st.SetIncluded(input.Named(), false, false, false)
 				c := New(st, task.NewBounded(2))
 				c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 				var execution Execution
@@ -219,7 +219,7 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	st.SetIncluded(input, true, true)
+	st.SetIncluded(input, true, true, false)
 	c := New(st, task.NewBounded(2))
 	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 	var reads store.ReadSet

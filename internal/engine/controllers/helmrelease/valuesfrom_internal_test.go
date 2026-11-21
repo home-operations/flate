@@ -778,10 +778,13 @@ func testControllerPrepareRequiresDeclarationCase(
 		st.GetArtifact(input.Named(), store.ArtifactContent) != nil ||
 		len(st.Warnings()) != 0,
 		"declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
-	assert.FatalIf(t, (*testCaseInput) != "suspended" &&
-		!slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) &&
-		!slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}),
-		"withdrawn declaration did not park: %+v", run.Blocked)
+	switch *testCaseInput {
+	case "withdrawn":
+		assert.Diff(t, run.Blocked, []manifest.NamedResource{input.Named(), parent.Named()})
+	case "failed":
+		assert.Equal(t, run.Outcome(), schedule.DependencyFailed)
+		assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{parent.Named()})
+	}
 
 	assert.FatalIf(
 		t, (*testCaseInput) ==

@@ -209,3 +209,37 @@ func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTrees_OrderingPrerequisiteControllerFailure(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"entry/dependency.yaml": testutil.KustomizationYAML("dependency", "apps",
+			"  path: ./dependency\n  postBuild: {substitute: {OTHER: present}}\n"),
+		"entry/app.yaml": testutil.KustomizationYAML("app", "apps",
+			"  path: ./app\n  dependsOn: [{name: dependency}]\n"),
+		"dependency/kustomization.yaml": "resources: [cm.yaml]\n",
+		"dependency/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dependency}\ndata: {value: '${ABSENT}'}\n",
+		"app/kustomization.yaml":        "resources: [cm.yaml]\n",
+		"app/cm.yaml":                   "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\n",
+	}
+	root := writeWitness(t, files)
+	app := testutil.KustomizationID("apps", "app")
+	dependency := testutil.KustomizationID("apps", "dependency")
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{{
+		ID:   manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		Path: filepath.Join(root, "entry"), RepoRoot: root, Input: testDirectoryInput(t, root),
+	}}, Config{
+		Concurrency:         2,
+		StrictSubstitutions: true,
+		Selection:           selection.Request{Roots: []manifest.NamedResource{app}},
+	})
+	assert.Equal(t, err != nil, true)
+	assert.FatalIf(t, len(runs) != 1 || runs[0].Result == nil, "missing result: %v", err)
+	result := runs[0].Result
+	assert.Equal(t, result.Failed[dependency].Outcome(), store.OutcomeFailed)
+	assert.Diff(t, result.Failed[app].BlockedBy(), []manifest.NamedResource{dependency})
+	assert.Equal(t, strings.Contains(result.Failed[app].String(), "ABSENT"), true)
+	for _, batch := range result.Manifests {
+		assert.Equal(t, batch.Parent.Named() == app, false)
+	}
+}

@@ -1,0 +1,13 @@
+
+  ✗  orig snapshot: Kustomization  vm-jj/vm-1-kubevirt-app  not found
+         orig snapshot: required by vm-jj/vm-jj-1-deps, vm-jj/vm-jj-other-pvc, vm-jj/vm-jj-secureblue-pvc
+
+  ✗  current snapshot: Kustomization  vm-jj/vm-1-kubevirt-app  not found
+         current snapshot: required by vm-jj/vm-jj-1-deps, vm-jj/vm-jj-other-pvc, vm-jj/vm-jj-secureblue-pvc
+
+  ⚠ warnings (3)
+    [DiffSuppressed] Kustomization vm-jj/vm-jj-1-deps: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found)
+    [DiffSuppressed] Kustomization vm-jj/vm-jj-other-pvc: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-jj-1-deps: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-jj-1-deps: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found)
+    [DiffSuppressed] Kustomization vm-jj/vm-jj-secureblue-pvc: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-jj-1-deps: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-jj-1-deps: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/vm-jj/vm-1-kubevirt-app: dependency not found)
+
+  ✗ 2 failed · 6 blocked

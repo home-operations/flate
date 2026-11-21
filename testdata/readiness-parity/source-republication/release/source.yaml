@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: demo, namespace: default}
+spec:
+  interval: 1m
+  url: oci://readiness.invalid/demo
+  ref: {tag: 1.0.0}

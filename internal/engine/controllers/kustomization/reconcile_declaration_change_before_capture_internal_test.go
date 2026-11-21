@@ -287,7 +287,9 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 
 	switch *(*tailCaseInput.testCaseInput) {
 	case "withdrawn":
-		if !slices.Equal((*tailCaseInput.run).Blocked, []manifest.NamedResource{(*tailCaseInput.parent).Named()}) ||
+		if !slices.Equal((*tailCaseInput.run).Blocked, []manifest.NamedResource{
+			(*tailCaseInput.input).Named(), (*tailCaseInput.parent).Named(),
+		}) ||
 			tailCaseInput.expansions.Load() != 0 || (*tailCaseInput.st).
 			GetArtifact((*tailCaseInput.input).Named(), store.ArtifactContent) != nil {
 			t.Fatalf(

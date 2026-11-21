@@ -102,9 +102,12 @@ data: {value: rendered}
 				tasks.YieldSlot(func() { <-withdrawn })
 				result := d.Dispatch(ctx, l.Named(), manifest.DrainNone, schedule.Result{})
 				defer result.Assessment.Close()
+				run := result.Assessment.(*base.Execution)
+				assert.Equal(t, run.Outcome(), schedule.Blocked)
+				run.Settle(ctx, manifest.DrainCascade)
 				assert.ErrorIf(
 					t,
-					result.Assessment.Outcome() == schedule.Blocked,
+					run.Outcome() == schedule.Blocked,
 					"withdrawn dispatch blocked: %+v",
 					result.Assessment,
 				)

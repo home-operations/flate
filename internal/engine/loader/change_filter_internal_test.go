@@ -622,7 +622,8 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	)
 
 	assert.Equal(t, f.Reconcile(gitID), true)
-	assert.Equal(t, f.Reconcile(depID), false)
+	assert.Equal(t, f.Reconcile(depID), true)
+	assert.Equal(t, f.Output(depID), false)
 }
 
 type testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCaseInputs struct {

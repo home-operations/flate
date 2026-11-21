@@ -1,0 +1,7 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: default}
+spec:
+  interval: 1m
+  chartRef: {kind: OCIRepository, name: demo}
+  values: {replicas: 2}

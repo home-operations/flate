@@ -281,7 +281,7 @@ func (s *Session) publishAdmission(ctx context.Context, proposal *Admission, sta
 		return nil, false
 	}
 	for _, id := range included {
-		s.store.SetIncluded(id, true, next.OrdinaryDemand(id))
+		s.Include(id)
 	}
 	return next, proposal.admitObjects(ctx, s)
 }
@@ -295,6 +295,12 @@ func (s *Session) admissionProof(authority *store.ReadSet) *store.ReadSet {
 			proof.RequireQualification(id)
 		} else {
 			proof.RequireData(id)
+		}
+	}
+	if authority.OrderingAssessed() {
+		proof.AssessOrdering()
+		for id := range authority.Ordering() {
+			proof.RequireOrdering(id)
 		}
 	}
 	return proof

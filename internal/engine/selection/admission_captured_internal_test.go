@@ -205,7 +205,7 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 		map[manifest.NamedResource][4]bool{
 			emitter:          {true, true, true, true},
 			child.Named():    {true, true, true, true},
-			target.Named():   {true, false, false, true},
+			target.Named():   {true, false, false, false},
 			producer.Named(): {true, false, false, true},
 		},
 	)
@@ -219,7 +219,11 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	assert.Diff(
 		t,
 		capturedRoles(&fresh),
-		map[manifest.NamedResource][4]bool{emitter: {true, true, true, true}, child.Named(): {true, true, true, true}},
+		map[manifest.NamedResource][4]bool{
+			emitter: {true, true, true, true}, child.Named(): {true, true, true, true},
+			target.Named(): {true, false, false, false}, producer.Named(): {true, false, false, true},
+		},
 	)
+	assert.Equal(t, fresh.role(target.Named()).readiness, true)
 	assert.Equal(t, current.Valid(), true)
 }

@@ -127,7 +127,7 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 	}
 }
 
-func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
+func TestAddEmitted_OrderingReachDoesNotSelectOutput(t *testing.T) {
 	t.Parallel()
 	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
 	consumer := &manifest.Kustomization{
@@ -149,6 +149,9 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 			root:      "/repo",
 		},
 	)
-	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), new(store.Child{Obj: consumer}), st)
-	assert.Diff(t, f.roles(), map[manifest.NamedResource]role{target.Named(): primary})
+	owner := testutil.KustomizationID("apps", "unchanged")
+	f.AddEmitted(owner, new(store.Child{Obj: consumer}), st)
+	assert.Diff(t, f.roles(), map[manifest.NamedResource]role{
+		target.Named(): primary, consumer.Named(): kept, owner: kept,
+	})
 }

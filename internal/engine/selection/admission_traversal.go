@@ -27,6 +27,14 @@ func (c *admissionClosure) walk(
 		if c.decision.unrestricted && (c.incoming(id).Obj != nil || c.objects.GetDeclaration(id) != nil) {
 			continue
 		}
+		if state := c.states[id]; state.readinessAffected && !state.walkedOnce {
+			if err := c.selectInputReaders(id); err != nil {
+				return err
+			}
+		}
+		if !c.role(id).needed {
+			continue
+		}
 		if err := c.walkObject(id, materializers); err != nil {
 			return err
 		}
@@ -266,7 +274,7 @@ func (c *admissionClosure) walkObject(
 	root := c.rootEvidence(id)
 	evidence := c.declarationEvidence(id)
 	evidence.independent = root.Independent || c.bootstrapPrerequisite(id)
-	evidence.qualification = !role.ordinary
+	evidence.qualification = !role.ordinary && !role.readiness
 	bootstrap := evidence.independent && Root(*c.capturedRoot(id)).InitialIndependent
 	parent := record.Parent
 	if !evidence.known() {
@@ -343,39 +351,66 @@ func (c *admissionClosure) walkReferences(
 			generatedTargets = occurrence.Targets[len(occurrence.AuthoredTargets):]
 		}
 	}
+	role := c.role(id)
+	orderingDemand := role.ordinary || role.readiness
+	var orderingInputs []manifest.NamedResource
 	for ref := range c.references(id, obj) {
-		if slices.ContainsFunc(generatedTargets, func(target manifest.ProducerTarget) bool {
-			return manifest.Resolve(target.NamedResource, "", id.Namespace) == ref.NamedResource
-		}) {
+		if ref.Ordering && !orderingDemand {
 			continue
 		}
-		inputRecord, _ := c.facts.SelectionIndex().Lookup(ref.NamedResource)
-		if slices.ContainsFunc(
-			inputRecord.Productions,
-			func(p manifest.Production) bool { return p.Owner == id && p.Declaration == id },
-		) {
+		if c.localGenerationReference(id, new(ref), generatedTargets) {
 			continue
 		}
 		if !c.prepareReferenceInput(id, new(ref), materializers) {
 			continue
 		}
-		if ref.Selector != nil && ref.Name == "" {
-			if err := c.selectReferenceInputs(id, new(ref), materializers); err != nil {
-				return err
-			}
-			continue
+		if err := c.walkReference(id, new(ref), materializers); err != nil {
+			return err
 		}
-		if ref.Name == "" {
-			continue
+		if ref.Ordering && ref.Name != "" {
+			orderingInputs = append(orderingInputs, ref.NamedResource)
 		}
-		wasNeeded := c.role(ref.NamedResource).needed
-		c.add(
-			ref.NamedResource,
-			admissionRole{needed: true, ordinary: true, dirty: c.states[ref.NamedResource].changed},
-		)
-		c.materializeReferenceInput(id, new(ref), wasNeeded, materializers)
+	}
+	if len(orderingInputs) != 0 || len(c.decision.ordering[id]) != 0 {
+		slices.SortFunc(orderingInputs, manifest.NamedResource.Compare)
+		c.setOrdering(id, slices.Compact(orderingInputs))
 	}
 	return nil
+}
+
+func (c *admissionClosure) walkReference(
+	id manifest.NamedResource, ref *manifest.Reference,
+	materializers func(materializerDemand, manifest.NamedResource) bool,
+) error {
+	if ref.Name == "" {
+		if ref.Selector != nil {
+			return c.selectReferenceInputs(id, ref, materializers)
+		}
+		return nil
+	}
+	target := ref.NamedResource
+	wasNeeded := c.role(target).needed
+	c.add(target, admissionRole{
+		needed: true, ordinary: !ref.Ordering, readiness: ref.Ordering,
+		dirty: !ref.Ordering && c.states[target].changed,
+	})
+	c.materializeReferenceInput(id, ref, wasNeeded, materializers)
+	return nil
+}
+
+func (c *admissionClosure) localGenerationReference(
+	id manifest.NamedResource, ref *manifest.Reference, targets []manifest.ProducerTarget,
+) bool {
+	target := ref.NamedResource
+	if slices.ContainsFunc(targets, func(candidate manifest.ProducerTarget) bool {
+		return manifest.Resolve(candidate.NamedResource, "", id.Namespace) == target
+	}) {
+		return true
+	}
+	record, _ := c.facts.SelectionIndex().Lookup(target)
+	return slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+		return p.Owner == id && p.Declaration == id
+	})
 }
 
 func (c *admissionClosure) prepareReferenceInput(
@@ -386,12 +421,11 @@ func (c *admissionClosure) prepareReferenceInput(
 	ref := *refValue
 	switch {
 	case ref.Ordering:
-		indexed := c.isFileIndexed(ref.NamedResource)
-		object := c.object(ref.NamedResource)
-		if !c.role(ref.NamedResource).needed && (indexed || object != nil) &&
-			!c.bootstrapPrerequisite(ref.NamedResource) {
+		if ref.Optional {
 			return false
 		}
+		indexed := c.isFileIndexed(ref.NamedResource)
+		object := c.object(ref.NamedResource)
 		if !indexed && object == nil {
 			materializers(
 				materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), ordering: true},
@@ -400,11 +434,10 @@ func (c *admissionClosure) prepareReferenceInput(
 		}
 	case !ref.ContentInput() && ref.Gate == 0 && ref.Use != "materializer":
 		return false
-	default:
-		state := c.states[ref.NamedResource]
-		state.requested = true
-		c.states[ref.NamedResource] = state
 	}
+	state := c.states[ref.NamedResource]
+	state.requested = true
+	c.states[ref.NamedResource] = state
 	return true
 }
 
@@ -515,19 +548,10 @@ func (c *admissionClosure) hydrateDeclaration(
 		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.rootEvidence(id).Admitted) {
 		return obj, nil
 	}
-	physical := *c.capturedRoot(id)
-	physical.Captured = false
-	// Prepared support MUST NOT replace physical membership before the entry producer publishes.
-	if !Root(physical).Independent && c.role(id).selected && c.context.NativeEntry {
-		path, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
-		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
-			Named()
-		status, _ := c.objects.GetStatus(owner)
-		if c.decision.Output(manifest.NamedResource{}) ||
-			status.Outcome() != store.OutcomeFailed && (c.role(owner).needed || !c.session.request.Changed) {
-			return obj, nil
-		}
+	if c.awaitsEntryPublication(id) {
+		return obj, nil
 	}
+
 	if evidence.built && c.hydrateBuilt(id, &evidence.child) {
 		return evidence.child.Obj, nil
 	}
@@ -537,7 +561,7 @@ func (c *admissionClosure) hydrateDeclaration(
 	record := c.record(id)
 	if !evidence.independent {
 		role := c.role(id)
-		if !role.needed || !role.ordinary || !evidence.authored {
+		if !role.needed || !role.ordinary && !role.readiness || !evidence.authored {
 			return obj, nil
 		}
 	}
@@ -547,9 +571,27 @@ func (c *admissionClosure) hydrateDeclaration(
 	)
 }
 
+func (c *admissionClosure) awaitsEntryPublication(id manifest.NamedResource) bool {
+	if !c.context.NativeEntry || !c.role(id).selected {
+		return false
+	}
+	physical := *c.capturedRoot(id)
+	physical.Captured = false
+	if Root(physical).Independent {
+		return false
+	}
+	path, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
+		Named()
+	status, _ := c.objects.GetStatus(owner)
+	return c.decision.Output(manifest.NamedResource{}) ||
+		status.Outcome() != store.OutcomeFailed && (c.role(owner).needed || !c.session.request.Changed)
+}
+
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
-	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Runnable
+	controllerDemand := role.ordinary || role.readiness
+	preparation := role.needed && controllerDemand && !role.selected && id.KindInfo().Runnable
 	if !Root(*c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
 		!preparation &&
 		(role.ordinary || !role.needed) {

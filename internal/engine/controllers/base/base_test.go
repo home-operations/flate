@@ -16,6 +16,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -240,19 +241,91 @@ func TestExecution_MissingObject(t *testing.T) {
 		assert.ErrorIf(t, ok, "%v", "missing object should not get a status entry")
 	}
 	s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "re-fetching"})
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+	run := controllertest.NewExecution(base.New(s, nil), id)
+	defer run.Close()
+	run.Dispatch(t.Context(), manifest.DrainNone, t,
 		func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			t.Helper()
 			t.Error("missing object reconciled")
 			return nil
 		})
 	got, _ := s.GetStatus(id)
+	assert.Equal(t, got.Outcome(), store.OutcomePending)
+	run.Settle(t.Context(), manifest.DrainCascade)
+	got, _ = s.GetStatus(id)
 	assert.FatalIf(
 		t,
 		got.Outcome() != store.OutcomeSkipped || got.Message != "object not in store at reconcile time",
 		"missing-object status = %+v",
 		got,
 	)
+}
+
+func TestExecution_AbsentDeclarationPreservesStatus(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		prior store.StatusInfo
+	}{
+		{name: "absent"},
+		{name: "ready", prior: store.StatusInfo{Status: store.StatusReady, Message: "previously rendered"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			id := testutil.HelmReleaseID("apps", "ghost")
+			if tc.prior.Status == store.StatusReady {
+				st.UpdateStatus(id, tc.prior)
+			}
+			prior, hasPrior := st.GetStatus(id)
+			execution := controllertest.NewExecution(base.New(st, nil), id)
+			defer execution.Close()
+			execution.Dispatch(t.Context(), manifest.DrainNone, t,
+				func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					t.Helper()
+					t.Error("missing declaration reconciled")
+					return nil
+				},
+			)
+			assert.Equal(t, execution.Outcome(), schedule.Blocked)
+			execution.Settle(t.Context(), manifest.DrainCascade)
+			assert.Equal(t, execution.Outcome(), schedule.Terminal)
+			status, exists := st.GetStatus(id)
+			assert.Equal(t, exists, hasPrior)
+			assert.Equal(t, status, prior)
+		})
+	}
+}
+
+func TestExecution_IncompatibleDeclaration(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	id := testutil.HelmReleaseID("apps", "ghost")
+	controller := base.New(st, nil)
+	reconcile := func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+		t.Helper()
+		t.Error("incompatible declaration reconciled")
+		return nil
+	}
+	waiting := controllertest.NewExecution(controller, id)
+	defer waiting.Close()
+	waiting.Dispatch(t.Context(), manifest.DrainNone, t, reconcile)
+	assert.Equal(t, waiting.Outcome(), schedule.Blocked)
+
+	raw := &manifest.RawObject{APIVersion: id.Group + "/v2", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+	st.AddObject(raw)
+	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
+	assert.Equal(t, st.GetDeclaration(id), manifest.BaseManifest(raw))
+	assert.Equal(t, waiting.Valid(), false)
+
+	resumed := controllertest.NewExecution(controller, id)
+	defer resumed.Close()
+	resumed.Dispatch(t.Context(), manifest.DrainNone, t, reconcile)
+	status, exists := st.GetStatus(id)
+	assert.Equal(t, exists, true)
+	assert.Equal(t, status.Outcome(), store.OutcomeSkipped)
+	assert.Equal(t, status.Message, depwait.ErrDeclarationAbsent.Error())
+	assert.Equal(t, resumed.Outcome(), schedule.Terminal)
 }
 
 func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {

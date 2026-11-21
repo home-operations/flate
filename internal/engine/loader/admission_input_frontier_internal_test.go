@@ -425,7 +425,8 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 		selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{incoming}, Reads: &reads},
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, slices.Contains(proposal.Needed, provider), (*testCaseInput) != "published")
+	assert.Equal(t, slices.Contains(proposal.Readiness, provider), *testCaseInput != "incoming")
+	assert.Equal(t, slices.Contains(proposal.Needed, provider), true)
 	if (*testCaseInput) == "incoming" {
 		settings.Name = "new-settings"
 		assert.Equal(t, slices.Contains(proposal.Needed, settings), true)

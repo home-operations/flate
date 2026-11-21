@@ -318,10 +318,30 @@ func checkRenderModelMembership(want, got modelObservation) error {
 	return compareModelObservation(want, got)
 }
 
+func modelOrderingReaders(w modelWorld, changed modelSet) modelSet {
+	readers := make(map[modelID][]modelID)
+	for id := range w.producers {
+		for _, target := range w.producers[id].ordering {
+			readers[target] = append(readers[target], id)
+		}
+	}
+	pending := modelIDs(changed)
+	reached := make(modelSet)
+	for i := 0; i < len(pending); i++ {
+		for _, reader := range readers[pending[i]] {
+			if !reached[reader] {
+				reached[reader] = true
+				pending = append(pending, reader)
+			}
+		}
+	}
+	return reached
+}
+
 func projectRenderModel(full modelObservation, selection modelSelection, w modelWorld) modelObservation {
 	out := modelObservation{producers: make(map[modelID]modelStatus)}
 	for id, state := range full.producers {
-		if selection.affected[id] || selection.support[id] {
+		if selection.affected[id] || selection.support[id] || selection.readiness[id] {
 			out.producers[id] = state
 			if state.failure != "" && state.failure != "suspended" {
 				out.errorClass = "flux"
@@ -334,6 +354,9 @@ func projectRenderModel(full modelObservation, selection modelSelection, w model
 			doc := docValues3[docIndex3]
 
 			for id := range out.producers {
+				if !selection.affected[id] && !selection.support[id] {
+					continue
+				}
 				if slices.ContainsFunc(
 					w.producers[id].documents,
 					func(d modelDocument) bool { return d.id == doc.id },

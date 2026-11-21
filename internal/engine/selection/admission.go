@@ -12,7 +12,7 @@ import (
 )
 
 type (
-	admissionRole  struct{ needed, selected, dirty, ordinary bool }
+	admissionRole  struct{ needed, selected, dirty, ordinary, readiness, fatal bool }
 	admissionState struct {
 		ordinal, incoming                         int
 		productions, incomingProductions          []manifest.Production
@@ -26,6 +26,7 @@ type (
 		captured                                  bool
 		publication                               uint64
 		affected, affectedKnown                   bool
+		readinessAffected                         bool
 	}
 )
 
@@ -65,7 +66,7 @@ type admissionClosure struct {
 	owner              manifest.NamedResource
 	proposal           *Admission
 	states             map[manifest.NamedResource]admissionState
-	counts             [4]int
+	counts             [6]int
 	collecting         bool
 	ownerCandidates    []RootCoveringOwner
 	ownersKnown        bool
@@ -192,7 +193,8 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		return false
 	case proposal.entry != p.entry, request.Missing != c.missing, len(request.HistoryOwners) != 0:
 		return false
-	case request.Invocation, p.invocation, len(request.History) != 0:
+	case request.Invocation, p.invocation, len(request.History) != 0,
+		request.CompleteGeneration != previous.Request.CompleteGeneration:
 		return false
 	case len(request.Generation) != len(c.generation),
 		len(c.generation) != 0 && &request.Generation[0] != &c.generation[0]:
@@ -204,6 +206,9 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		return false
 	}
 	decision := c.session.Snapshot()
+	if !decision.MatchesOrdering(request.Reads) {
+		return false
+	}
 	if previous.Revision != decision.version() {
 		for id := range c.states {
 			if p.decision.roles(id) != decision.roles(id) {
@@ -215,7 +220,7 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 	if request.Reads != nil {
 		owner = request.Reads.ID()
 		for id := range request.Reads.Required() {
-			if !slices.Contains(previous.Ordinary, id) {
+			if !slices.Contains(previous.Ordinary, id) && !slices.Contains(previous.Readiness, id) {
 				return false
 			}
 		}
@@ -225,6 +230,7 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 	}
 	proposal.Needed, proposal.Selected, proposal.Dirty = previous.Needed, previous.Selected, previous.Dirty
 	proposal.Ordinary, proposal.Blocked, proposal.Namespaces = previous.Ordinary, previous.Blocked, previous.Namespaces
+	proposal.Readiness, proposal.Fatal = previous.Readiness, previous.Fatal
 	proposal.EntryReceipt = previous.EntryReceipt
 	proposal.producers, proposal.producerOwner = previous.producers, previous.producerOwner
 	proposal.Revision, proposal.reads, proposal.reused = decision.version(), p.evidence, true
@@ -411,7 +417,7 @@ func (c *admissionClosure) finishPreparation(ctx context.Context, err error) err
 }
 
 func (c *admissionClosure) resetDemand() {
-	c.counts = [4]int{}
+	c.counts = [6]int{}
 	c.collecting = false
 	c.candidatesKnown = [2]bool{}
 	c.queue, c.roots = c.queue[:0], c.roots[:0]
@@ -423,7 +429,7 @@ func (c *admissionClosure) resetDemand() {
 	for id, state := range c.states {
 		state.role, state.walked = admissionRole{}, admissionRole{}
 		state.consumer, state.restoration, state.claim, state.incoming = 0, 0, 0, 0
-		state.incomingProductions = nil
+		state.incomingProductions, state.readinessAffected = nil, false
 		state.changed, state.rescan, state.requested, state.walkedOnce, state.listed = false, false, false, false, false
 		c.states[id] = state
 	}
@@ -529,6 +535,16 @@ func (c *admissionClosure) selectsChild(id manifest.NamedResource) bool {
 
 func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest) (*Admission, error) {
 	c.captureIncoming()
+	if request.CompleteGeneration && c.decision.HasOrdering() {
+		_, _, previous := c.objects.GetEmission(request.Owner)
+		for i := range previous.Children {
+			id := previous.Children[i].Obj.Named()
+			if c.incoming(id).Obj == nil && len(c.decision.ordering[id]) != 0 {
+				c.setOrdering(id, nil)
+			}
+		}
+		previous.Finish()
+	}
 	if len(c.history) != 0 {
 		c.readHistory()
 	}
@@ -537,6 +553,13 @@ func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest
 		return nil, err
 	}
 	return c.finishAdmission(ctx, c.materializers)
+}
+
+func (c *admissionClosure) setOrdering(id manifest.NamedResource, targets []manifest.NamedResource) {
+	if c.proposal.ordering == nil {
+		c.proposal.ordering = make(map[manifest.NamedResource][]manifest.NamedResource)
+	}
+	c.proposal.ordering[id] = targets
 }
 
 func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
@@ -558,6 +581,8 @@ func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
 	// Promotion requires reconciliation without proving that input content changed.
 	role.dirty = role.dirty || roles&dirty != 0 && roles&promoted == 0
 	role.ordinary = role.ordinary || roles&ordinary != 0
+	role.readiness = role.readiness || roles&readiness != 0
+	role.fatal = role.fatal || roles&fatal != 0
 	return role
 }
 
@@ -568,6 +593,8 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	previous := c.role(id)
 	role.needed, role.selected, role.dirty = true, role.selected || previous.selected, role.dirty || previous.dirty
 	role.ordinary = role.ordinary || previous.ordinary || role.selected
+	role.readiness = role.readiness || previous.readiness
+	role.fatal = role.fatal || previous.fatal
 	if c.decision.execution && previous == role &&
 		(!c.proposal.Request.Invocation || len(c.generation) != 0) &&
 		(c.incoming(id).Obj == nil) {
@@ -594,14 +621,21 @@ func (c *admissionClosure) assignRole(id manifest.NamedResource, role admissionR
 		policy.Root = policy.Root && c.objects.GetDeclaration(id) != nil
 	}
 	if !policy.Root {
-		role.selected = false
+		role.selected, role.fatal = false, false
 	}
 	state := c.states[id]
 	if c.states == nil {
 		c.states = map[manifest.NamedResource]admissionState{}
 	}
-	for axis, present := range [4]bool{role.needed, role.selected, role.dirty, role.ordinary} {
-		previous := [4]bool{state.role.needed, state.role.selected, state.role.dirty, state.role.ordinary}
+	for axis, present := range [6]bool{role.needed, role.selected, role.dirty, role.ordinary, role.readiness, role.fatal} {
+		previous := [6]bool{
+			state.role.needed,
+			state.role.selected,
+			state.role.dirty,
+			state.role.ordinary,
+			state.role.readiness,
+			state.role.fatal,
+		}
 		if present && !previous[axis] {
 			c.counts[axis]++
 		}
@@ -638,11 +672,14 @@ func (c *admissionClosure) seedAdmission(
 			state.requested = request.Reads.ID() == (manifest.NamedResource{})
 			c.states[id] = state
 			role := c.role(id)
+			ordering := request.Reads.RequiresOrdering(id)
 			role.needed = true
-			role.ordinary = role.ordinary || !qualification
+			role.ordinary = role.ordinary || !qualification && !ordering
+			role.readiness = role.readiness || ordering
 			c.add(id, role)
 		}
 	}
+
 	for i := range c.generation {
 		if child := &c.generation[i]; child.Obj != nil {
 			if err := c.selectIncoming(child.Obj.Named()); err != nil {
@@ -679,6 +716,13 @@ func (c *admissionClosure) finishAdmission(
 		child.Productions = c.currentProductions(child.Obj.Named())
 		c.children[child.Obj.Named()] = child
 	}
+	if reads := c.proposal.Request.Reads; reads.OrderingAssessed() {
+		targets := slices.Collect(reads.Ordering())
+		slices.SortFunc(targets, manifest.NamedResource.Compare)
+		if len(targets) != 0 || len(c.decision.ordering[reads.ID()]) != 0 {
+			c.setOrdering(reads.ID(), targets)
+		}
+	}
 	c.collectRoles()
 	c.proposal.Objects = slices.Grow(c.proposal.Objects, len(c.children))
 	c.proposal.Objects = slices.AppendSeq(c.proposal.Objects, maps.Values(c.children))
@@ -686,6 +730,8 @@ func (c *admissionClosure) finishAdmission(
 	slices.SortFunc(c.proposal.Selected, manifest.NamedResource.Compare)
 	slices.SortFunc(c.proposal.Dirty, manifest.NamedResource.Compare)
 	slices.SortFunc(c.proposal.Ordinary, manifest.NamedResource.Compare)
+	slices.SortFunc(c.proposal.Readiness, manifest.NamedResource.Compare)
+	slices.SortFunc(c.proposal.Fatal, manifest.NamedResource.Compare)
 	slices.SortFunc(c.proposal.Objects, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	sortProducerObligations(c.proposal.producers)
 	slices.Sort(c.proposal.Blocked)
@@ -698,23 +744,13 @@ func (c *admissionClosure) finishAdmission(
 }
 
 func (c *admissionClosure) collectRoles() {
-	if total := c.counts[0] + c.counts[1] + c.counts[2] + c.counts[3]; total != 0 {
-		roles := make([]manifest.NamedResource, total)
-		c.proposal.Needed, c.proposal.Selected, c.proposal.Dirty, c.proposal.Ordinary =
-			roles[:0:c.counts[0]],
-			roles[c.counts[0]:c.counts[0]:c.counts[0]+c.counts[1]],
-			roles[c.counts[0]+c.counts[1]:c.counts[0]+c.counts[1]:c.counts[0]+c.counts[1]+c.counts[2]],
-			roles[c.counts[0]+c.counts[1]+c.counts[2]:c.counts[0]+c.counts[1]+c.counts[2]]
-	}
-	roles := [4]*[]manifest.NamedResource{
-		&c.proposal.Needed, &c.proposal.Selected, &c.proposal.Dirty, &c.proposal.Ordinary,
-	}
+	roles := c.reserveAdmissionRoles()
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if state.role.needed && len(c.historyOwners[id]) != 0 {
 			c.requestHistory(id)
 		}
-		for axis, present := range [4]bool{state.role.needed, state.role.selected, state.role.dirty, state.role.ordinary} {
+		for axis, present := range [6]bool{state.role.needed, state.role.selected, state.role.dirty, state.role.ordinary, state.role.readiness, state.role.fatal} {
 			if present {
 				*roles[axis] = append(*roles[axis], id)
 			}
@@ -731,6 +767,22 @@ func (c *admissionClosure) collectRoles() {
 			c.requestProducer(id, &productions[i])
 		}
 	}
+}
+
+func (c *admissionClosure) reserveAdmissionRoles() [6]*[]manifest.NamedResource {
+	roles := [6]*[]manifest.NamedResource{
+		&c.proposal.Needed, &c.proposal.Selected, &c.proposal.Dirty,
+		&c.proposal.Ordinary, &c.proposal.Readiness, &c.proposal.Fatal,
+	}
+	total := c.counts[0] + c.counts[1] + c.counts[2] + c.counts[3] + c.counts[4] + c.counts[5]
+	if total != 0 {
+		storage := make([]manifest.NamedResource, total)
+		for axis, count := range c.counts {
+			*roles[axis] = storage[:0:count]
+			storage = storage[count:]
+		}
+	}
+	return roles
 }
 
 func (c *admissionClosure) captureGeneration(request *PrepareRequest) {

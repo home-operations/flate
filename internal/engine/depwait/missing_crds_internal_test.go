@@ -143,15 +143,15 @@ func TestAssess_ToleratedCRDs(t *testing.T) {
 				reads.Require(manifest.DependencyRef{NamedResource: id, Artifact: true})
 			}
 			waiter := Waiter{Store: &reads, Parent: parent, Missing: crdMissingPolicy(true)}
-			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade))
+			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade, AssessGates))
 			assert.Diff(t, slices.Collect(reads.ToleratedCRDs()), tc.want)
 
-			err := waiter.Assess(t.Context(), &reads, manifest.DrainNone)
+			err := waiter.Assess(t.Context(), &reads, manifest.DrainNone, AssessGates)
 			_, blocked := errors.AsType[*BlockedError](err)
 			assert.Equal(t, blocked, true)
 			assert.Equal(t, len(slices.Collect(reads.ToleratedCRDs())), 0)
 
-			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade))
+			assert.NoError(t, waiter.Assess(t.Context(), &reads, manifest.DrainCascade, AssessGates))
 			assert.Diff(t, slices.Collect(reads.ToleratedCRDs()), tc.want)
 			reads.Retire()
 			for range s.Sweep() {

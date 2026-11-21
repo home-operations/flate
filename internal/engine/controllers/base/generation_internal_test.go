@@ -182,7 +182,7 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 				next.Suspend = true
 				s.AddObject(&next)
 			case "excluded":
-				s.SetIncluded(object.Named(), false, false)
+				s.SetIncluded(object.Named(), false, false, false)
 			case "preflight":
 				s.SetPreflight(object.Named(), "cycle")
 			}
@@ -421,12 +421,12 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		},
 	)
 	if testCaseInput.readmitted {
-		s.SetIncluded(object.Named(), false, false)
+		s.SetIncluded(object.Named(), false, false, false)
 		s.UpdateStatus(
 			object.Named(),
 			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged},
 		)
-		s.SetIncluded(object.Named(), true, true)
+		s.SetIncluded(object.Named(), true, true, false)
 
 		{
 			info, _ := s.GetStatus(object.Named())

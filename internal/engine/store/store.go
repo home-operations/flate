@@ -93,13 +93,14 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 type objectCell struct {
 	authority
 
-	reference            *Declaration
-	policy               manifest.DeclarationPolicy
-	classified, ordinary bool
-	composed, operand    bool
-	static               manifest.BaseManifest
-	document             map[string]any
-	warnings             []manifest.Warning
+	reference         *Declaration
+	policy            manifest.DeclarationPolicy
+	classified        bool
+	purpose           uint8
+	composed, operand bool
+	static            manifest.BaseManifest
+	document          map[string]any
+	warnings          []manifest.Warning
 	// Direct writes use this revision; emitted values use the immutable producer record.
 	publication                                              uint64
 	binding                                                  *Input

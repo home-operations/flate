@@ -373,7 +373,7 @@
     },
     {
       "name": "changed-unselected-owner",
-      "description": "changed unselected owner",
+      "description": "An edit shared with a blocked dependent reaches the required owner.",
       "setup": [
         {
           "overlay": "changed-unselected-owner"
@@ -405,8 +405,8 @@
             "cache": {},
             "expect": {
               "stdout": "expect/changed-unselected-owner-all.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
+              "stderr": "expect/changed-unselected-owner-all.stderr",
+              "code": 1
             }
           }
         }
@@ -1312,7 +1312,6 @@
     {
       "path": "expect/empty.stderr",
       "cases": [
-        "changed-unselected-owner",
         "owned-ad-hoc",
         "owned-ad-hoc-wide",
         "owned-graph",
@@ -1329,6 +1328,29 @@
         "unowned-ad-hoc"
       ],
       "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/changed-unselected-owner-all.stderr",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Complete diagnostics when the shared edit reaches the blocked dependent."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/monitoring/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "The required owner contains a malformed package.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/monitoring/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "The required owner contains a malformed package.",
+      "package": "failure"
     }
   ]
 }

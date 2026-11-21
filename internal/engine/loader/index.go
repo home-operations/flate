@@ -88,8 +88,10 @@ func (l *Loader) freezeConstruction() {
 			continue
 		}
 		for ref := range manifest.References(object, manifest.ReferenceRelations) {
-			if ref.ContentInput() && (ref.Name != "" || ref.Selector != nil) &&
-				!slices.Contains(l.inputReaders[ref.NamedResource], id) {
+			if !indexesReferenceReader(&ref) {
+				continue
+			}
+			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
 				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
 			}
 		}
@@ -533,10 +535,15 @@ func (l *Loader) markCompleteSources() {
 	}
 }
 
+func indexesReferenceReader(ref *manifest.Reference) bool {
+	readinessInput := ref.Ordering && !ref.Optional
+	return (ref.ContentInput() || readinessInput) && (ref.Name != "" || ref.Selector != nil)
+}
+
 func (l *Loader) indexRecordInputs() {
 	for id := range l.Index.Records {
 		for ref := range l.References(id) {
-			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
+			if !indexesReferenceReader(&ref) {
 				continue
 			}
 			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {

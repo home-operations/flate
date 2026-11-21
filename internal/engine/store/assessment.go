@@ -73,21 +73,26 @@ func (s *Store) AssessmentsWithToleratedCRDs() []*ReadSet {
 	})
 }
 
-// OrdinaryDemand captures purpose so later promotion invalidates qualification settlement.
-func (r *ReadSet) OrdinaryDemand(id manifest.NamedResource) bool {
+// ControllerDemand permits the controller body to establish a required outcome.
+func (r *ReadSet) ControllerDemand(id manifest.NamedResource) bool {
+	return r.captureDemand(id) != 0
+}
+
+// ReadinessDemand distinguishes an assessed prerequisite from ordinary rendering.
+func (r *ReadSet) ReadinessDemand(id manifest.NamedResource) bool {
+	return r.captureDemand(id)&uint8(demandReadiness) != 0
+}
+
+func (r *ReadSet) captureDemand(id manifest.NamedResource) uint8 {
 	r.GetObject(id)
 	input := r.input(id)
-	input.ordinaryDemand = true
-	demand := demandQualification
-	if input.view.ordinary {
-		demand = demandOrdinary
-	}
-	input.object.ordinary.Store(demand)
-	if input.object.head != nil && !input.object.ordinaryCurrent() {
+	input.demandCaptured = true
+	input.object.demand.Store(uint32(input.view.demand) | demandCaptured)
+	if input.object.head != nil && !input.object.demandCurrent() {
 		r.invalid.Store(true)
 		input.object.head.shard.queue(input.object.head)
 	}
-	return input.view.ordinary
+	return input.view.demand
 }
 
 // QualificationSettled MUST retain the original assessment's validity around capture matching.
@@ -101,5 +106,5 @@ func (r *ReadSet) QualificationSettled(id manifest.NamedResource) bool {
 	if previous == nil || previous.kind != AssessmentQualificationSettled || !previous.reads.Valid() {
 		return false
 	}
-	return r.Matches(previous.reads) && !r.OrdinaryDemand(id) && previous.reads.Valid()
+	return r.Matches(previous.reads) && !r.ControllerDemand(id) && previous.reads.Valid()
 }

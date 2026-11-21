@@ -104,7 +104,7 @@ func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.Dra
 		return err
 	}
 	if len(p.prepared.Inputs) != 0 {
-		if err := e.classify(ctx, level); err != nil {
+		if err := e.assess(ctx, level, depwait.AssessGates); err != nil {
 			p.cause = err
 			if _, blocked := errors.AsType[*depwait.BlockedError](err); blocked {
 				return p

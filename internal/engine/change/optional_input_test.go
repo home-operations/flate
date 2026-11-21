@@ -214,7 +214,7 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 	}
 }
 
-func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
+func TestFilter_OrderingSiblingAssessed(t *testing.T) {
 	t.Parallel()
 	before, after := t.TempDir(), t.TempDir()
 	for _, root := range []string{before, after} {
@@ -263,7 +263,9 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 		),
 		true,
 	)
-	assert.Equal(t, f.Reconcile(testutil.KustomizationID("flux-system", "app")), false)
+	app := testutil.KustomizationID("flux-system", "app")
+	assert.Equal(t, f.ReadinessDemand(app), true)
+	assert.Equal(t, f.Output(app), false)
 }
 
 func optionalInputFilters(
@@ -447,7 +449,9 @@ data: {VALUE: available}
 				id,
 			)
 		}
-		assert.Equal(t, filter.Reconcile(testutil.KustomizationID("flux-system", "stable")), false)
+		stable := testutil.KustomizationID("flux-system", "stable")
+		assert.Equal(t, filter.Output(stable), false)
+		assert.Equal(t, filter.ReadinessDemand(stable), true)
 	}
 }
 

@@ -54,8 +54,7 @@ func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedRe
 		})
 }
 
-func (cv *capture) declaration() manifest.BaseManifest {
-	c := *cv
+func (c *capture) declaration() manifest.BaseManifest {
 	if c.independent || c.accepted || c.classified || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
 		return c.child.Obj
 	}
@@ -327,6 +326,7 @@ type productionResult struct {
 	captureTarget bool
 	incoming      *Child
 	watch         bool
+	retainOmitted bool
 }
 
 func (r *productionResult) add(p *manifest.Production) {
@@ -358,7 +358,6 @@ func (r *productionResult) add(p *manifest.Production) {
 	r.out = append(r.out, *p)
 }
 
-// result MUST be fresh for each traversal.
 func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.DiscoveryIndex, result *productionResult) {
 	reads := result.reads
 	if reads != nil && result.captureTarget {
@@ -601,7 +600,6 @@ func (s *Store) addDiscoveryCoverage(
 				c.bindings[p.Source] = new(s.discoveryBinding(index, p.Owner, p.Source))
 			}
 			c.declaredOutputs = c.declaredOutputs || p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
-			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
 				c.records = append(c.records, *record)
 			}
@@ -734,21 +732,23 @@ func (r *productionResult) addVisibleProduction(
 	p *manifest.Production,
 	reads *ReadSet,
 ) {
+	var omitted bool
 	if c := s.coverage[p.Owner]; c != nil {
-		accepted := c.slot.current.Load()
+		accepted, binding := c.slot.current.Load(), c.binding(p.Source)
 		if reads != nil {
 			reads.sample(id, c.slot, accepted, r.watch)
 		}
-		binding := c.binding(p.Source)
-		shadowed := accepted.shadows(binding)
-		if shadowed && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
+		omitted = accepted.shadows(binding)
+		if omitted && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
 			r.open = false
 		}
-		if c.slot.hidden.Load() || shadowed {
+		otherDeclaration := p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
+		if c.slot.hidden.Load() || omitted && (!r.retainOmitted || otherDeclaration) {
 			return
 		}
 	}
-	if !r.hideEvidence && (!r.retiredStatic || p.Owner != (manifest.NamedResource{}) && p.Owner != id) {
+	externalOwner := p.Owner != (manifest.NamedResource{}) && p.Owner != id
+	if omitted || !r.hideEvidence && (!r.retiredStatic || externalOwner) {
 		r.add(p)
 	}
 }

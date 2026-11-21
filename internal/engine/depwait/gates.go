@@ -3,13 +3,17 @@ package depwait
 import (
 	"iter"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // SelectGates retains the authored order and applies the checkpoint's content mask.
-func (w *Waiter) SelectGates(
-	references iter.Seq[manifest.Reference], stage manifest.GateStage, capacity int,
+func SelectGates(
+	references iter.Seq[manifest.Reference], stage manifest.GateStage, capacity int, reads *store.ReadSet,
 ) []manifest.DependencyRef {
+	if reads != nil && stage == manifest.GateInputs {
+		reads.AssessOrdering()
+	}
 	var deps []manifest.DependencyRef
 	for ref := range references {
 		if ref.Optional {
@@ -22,16 +26,14 @@ func (w *Waiter) SelectGates(
 		} else if ref.Gate&stage == 0 {
 			continue
 		}
-		if ref.Ordering && !w.Decision.Ordering(
-			ref.NamedResource, w.Store.GetObject(ref.NamedResource) != nil,
-			w.Indexed != nil && w.Indexed.IsFileIndexed(ref.NamedResource),
-		) {
-			continue
-		}
 		if deps == nil {
 			deps = make([]manifest.DependencyRef, 0, capacity)
 		}
+		if reads != nil && ref.Ordering {
+			reads.RequireOrdering(ref.NamedResource)
+		}
 		dep := ref.DependencyRef
+		dep.RequiresDeclaration = dep.RequiresDeclaration || ref.Ordering
 		dep.Artifact = dep.Artifact && ref.ArtifactStages&stage != 0
 		deps = append(deps, dep)
 	}

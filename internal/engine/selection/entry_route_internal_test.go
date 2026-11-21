@@ -62,8 +62,8 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 				<-prepared
 				switch change {
 				case "publication":
-					st.SetIncluded(owner.Named(), false, false)
-					st.SetIncluded(owner.Named(), true, true)
+					st.SetIncluded(owner.Named(), false, false, false)
+					st.SetIncluded(owner.Named(), true, true, false)
 				case "source":
 					st.SetArtifact(
 						manifest.BootstrapSourceID,

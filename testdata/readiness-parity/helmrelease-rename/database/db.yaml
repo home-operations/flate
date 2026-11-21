@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: db, namespace: web}
+spec:
+  interval: 1m
+  chart:
+    spec:
+      chart: ./chart
+      sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}

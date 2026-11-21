@@ -1,0 +1,4 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: sync-second, namespace: flux-system}
+spec: {path: ./second, prune: false, sourceRef: {kind: GitRepository, name: source-second}}

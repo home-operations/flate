@@ -1,0 +1,7 @@
+resources: [flux-system, apps.yaml]
+configMapGenerator:
+- name: generated-vars
+  namespace: flux-system
+  literals: [COLOR=red]
+generatorOptions:
+  disableNameSuffixHash: true

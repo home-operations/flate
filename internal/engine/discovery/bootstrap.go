@@ -411,7 +411,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFro
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	enclosingPackages  []string
+	generatorPackages  []string
 	privateInventories []*declarationRender
 	entryPreparation   kustomize.Preparation
 	packageRender      packagePreparation
@@ -458,7 +458,7 @@ func (d *Session) admission() *Admission {
 	}
 	admission := &Admission{
 		packageRender:     d.cfg.packagePreparation(),
-		enclosingPackages: d.enclosingPackages,
+		generatorPackages: d.generatorPackages,
 		input:             input,
 		path:              d.cfg.Path,
 		remotes:           maps.Clone(d.remotes),

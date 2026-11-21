@@ -282,7 +282,7 @@ func (d *Session) Close() {
 	d.packages = nil
 	d.entryPackages = nil
 	d.entryPackagesToQualify = nil
-	d.enclosingPackages = nil
+	d.generatorPackages = nil
 	d.publicOperands = nil
 	d.entryBuilderInput = nil
 	d.entryBuilderPath = ""
@@ -313,7 +313,7 @@ func (d *Session) Close() {
 }
 
 func (d *Session) hasEntryOperands() bool {
-	return len(d.entryPackagesToQualify) != 0 || len(d.enclosingPackages) != 0
+	return len(d.entryPackagesToQualify) != 0 || len(d.generatorPackages) != 0
 }
 
 func (d *Session) finishEntryOperands(ctx context.Context, repoRoot string) error {

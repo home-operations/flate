@@ -1,0 +1,54 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "marker",
+      "namespace": "default"
+    }
+  },
+  {
+    "apiVersion": "source.toolkit.fluxcd.io/v1",
+    "kind": "GitRepository",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "1m",
+      "ref": {
+        "branch": "main"
+      },
+      "url": "https://example.invalid/cluster.git"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./clusters/x",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system"
+      }
+    }
+  }
+]

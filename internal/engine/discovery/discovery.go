@@ -4,6 +4,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -95,7 +96,7 @@ type Session struct {
 	aggregate              bool
 	aggregateRequiresBuild bool
 	entryPackagesToQualify [][]selection.OccurrenceFacts
-	enclosingPackages      []string
+	generatorPackages      []string
 	publicOperands         []manifest.NamedResource
 	entryPackages          []*plannedPackage
 	planner                *entryPlanner
@@ -332,25 +333,21 @@ func newDiscoverer(config *Config) *Session {
 	if input == nil {
 		return d
 	}
-	if !cfg.Entry.matches(input, cfg.Path) {
-		if input == cfg.Entry.Input && cfg.Path == cfg.Entry.Path {
-			d.entryPackagesToQualify = prepared.packagesToQualify
-			d.enclosingPackages = prepared.enclosing
-			d.cfg.Entry = cfg.Entry
-			d.aliasViews = maps.Clone(prepared.aliasViews)
-			if cfg.Projections == nil {
-				l.Options.Projections = prepared.projections
-			}
-			d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
-		}
+	matched := cfg.Entry.matches(input, cfg.Path)
+	if !matched && (input != cfg.Entry.Input || cfg.Path != cfg.Entry.Path) {
 		return d
 	}
-	l.Options.ParsedInputs = prepared.parsed
-	d.entryPackages = prepared.packages
+	if matched {
+		l.Options.ParsedInputs = prepared.parsed
+		d.entryPackages = prepared.packages
+	} else if cfg.Projections == nil {
+		l.Options.Projections = prepared.projections
+	}
 	d.aliasViews = maps.Clone(prepared.aliasViews)
 	d.entryPackagesToQualify = prepared.packagesToQualify
-	d.enclosingPackages = prepared.enclosing
+	d.generatorPackages = prepared.generatorPackages
 	d.cfg.Entry = cfg.Entry
+	d.cfg.Path = cmp.Or(cfg.Entry.target, cfg.Path)
 	d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 	return d
 }

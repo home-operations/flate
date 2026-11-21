@@ -1,0 +1,1 @@
+resources: [gotk-sync.yaml, apps.yaml, marker.yaml, app-source.yaml]

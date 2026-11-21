@@ -1,0 +1,165 @@
+[
+  {
+    "cluster": "a",
+    "documents": [
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "attach-shared",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "shared-workload",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./payload-shared",
+          "prune": false,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster-repository"
+          }
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared-workload",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "payload-shared"
+        }
+      },
+      {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync-a",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-repository",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "url": "https://example.invalid/cluster.git"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync-a",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "attach-shared",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./b/shared",
+          "prune": false,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster-repository"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync-a",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "sync-a",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./a",
+          "prune": false,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster-repository"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "b",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared-workload",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "payload-shared"
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync-b",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "payload-b"
+        }
+      },
+      {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "cluster-repository",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "url": "https://example.invalid/cluster.git"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "shared-workload",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./payload-shared",
+          "prune": false,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster-repository"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "sync-b",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./payload-b",
+          "prune": false,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster-repository"
+          }
+        }
+      }
+    ]
+  }
+]

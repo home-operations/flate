@@ -1,0 +1,17 @@
+{
+  "apiVersion": "fluxcd.controlplane.io/v1",
+  "kind": "FluxInstance",
+  "metadata": {
+    "name": "flux",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "sync": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "path": "./main/sync",
+      "ref": "refs/heads/main",
+      "url": "https://example.invalid/cluster.git"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "value": "test-new"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "marker",
+    "namespace": "apps"
+  }
+}

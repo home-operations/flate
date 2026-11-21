@@ -4,7 +4,11 @@ import "testing"
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_RepositoryRootMultiCluster_IsolatesCollidingIdentities(t *testing.T) {
-	for _, name := range []string{"root-partition", "one-sided-diff"} {
+	for _, name := range []string{
+		"root-partition", "one-sided-diff", "shared-instance", "shared-classic",
+		"classic-native", "classic-generated-values", "instance-subpackage", "instance-subpackage-values",
+		"authored-parent", "shared-member",
+	} {
 		t.Run(name, func(t *testing.T) {
 			testScopeCase(t, "multi-cluster", name)
 		})

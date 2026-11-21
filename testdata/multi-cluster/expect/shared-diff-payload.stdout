@@ -1,0 +1,106 @@
+[
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "workload",
+          "path": "payload"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "apps",
+        "name": "shared",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "common"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "workload",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "common-new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "workload",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "main/sync",
+    "suppressed": []
+  },
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "workload",
+          "path": "payload"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "apps",
+        "name": "shared",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "common"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "workload",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "common-new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "workload",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "test/sync",
+    "suppressed": []
+  }
+]

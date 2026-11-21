@@ -276,3 +276,36 @@ type nameUpdater struct {
 }
 
 type subjectName struct{ kind, name string }
+
+func (n Names) resourceLabel(id manifest.NamedResource) string {
+	kind := n.Subjects[id].Kind
+	if kind == "" {
+		kind = id.Kind
+	}
+	return n.Prefix + kind + " " + id.NamespacedName()
+}
+
+func (t *producerTransition) appendSubjects(ids []manifest.NamedResource) []manifest.NamedResource {
+	for _, endpoint := range [...]*manifest.DiagnosticIdentity{&t.From, &t.To} {
+		if endpoint.Resource != (manifest.NamedResource{}) {
+			ids = append(ids, endpoint.Resource)
+		}
+	}
+	return ids
+}
+
+func (t *producerTransition) description(names Names) string {
+	return "producer: " + names.producerLabel(&t.From) + " -> " + names.producerLabel(&t.To)
+}
+
+func (n Names) producerLabel(endpoint *manifest.DiagnosticIdentity) string {
+	if endpoint.ID == (manifest.NamedResource{}) {
+		return "(none)"
+	}
+	labels := subjectLabels(&endpoint.Resource, endpoint.Path, "", nil)
+	kind := n.Subjects[endpoint.Resource].Kind
+	if endpoint.Resource != (manifest.NamedResource{}) && kind == endpoint.Resource.KindLabel() {
+		labels.kind = kind
+	}
+	return labels.kind + " " + labels.name
+}

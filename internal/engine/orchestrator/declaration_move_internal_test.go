@@ -82,15 +82,15 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 		assert.NoError(t, err)
 
 		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
+			Subjects:    selected[0].Subjects,
+			Manifests:   selected[0].Manifests,
+			Bindings:    selected[0].Bindings,
+			Unavailable: selected[0].Unavailable,
 		}, Current: diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
+			Subjects:    selected[1].Subjects,
+			Manifests:   selected[1].Manifests,
+			Bindings:    selected[1].Bindings,
+			Unavailable: selected[1].Unavailable,
 		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
 
 		var comparisonOutput1 bytes.Buffer
@@ -257,15 +257,15 @@ func testRenderTreesDeclarationMoveChangesCase(
 		selected, selectedErr, err := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.NoError(t, err)
 		comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
+			Subjects:    selected[0].Subjects,
+			Manifests:   selected[0].Manifests,
+			Bindings:    selected[0].Bindings,
+			Unavailable: selected[0].Unavailable,
 		}, Current: diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
+			Subjects:    selected[1].Subjects,
+			Manifests:   selected[1].Manifests,
+			Bindings:    selected[1].Bindings,
+			Unavailable: selected[1].Unavailable,
 		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
 		var comparisonOutput2 bytes.Buffer
 		writeErr2 := comparison2.Write(&comparisonOutput2, nil)

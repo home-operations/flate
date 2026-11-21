@@ -153,7 +153,7 @@ func implicitSourceDiff(t *testing.T, runs []Rendered) ([]byte, []diff.Change) {
 	for side, result := range selected {
 		snapshots[side] = diff.Snapshot{
 			Subjects: result.Subjects, Manifests: result.Manifests,
-			ProducerKeys: result.ProducerKeys, Unavailable: result.Unavailable,
+			Bindings: result.Bindings, Unavailable: result.Unavailable,
 		}
 	}
 	comparison1, preparationErr1 := diff.Compare(

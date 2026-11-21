@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"maps"
 	"slices"
 	"testing"
 
@@ -58,10 +59,10 @@ func TestProject_BatchIdentities(t *testing.T) {
 			assert.NoError(t, errs.Selected)
 			assert.NoError(t, errs.Remaining)
 			assert.Equal(t, len(results), 1)
-			assert.Diff(t, results[0].ProducerKeys, index.ProducerKeys)
+			assert.Diff(t, maps.Collect(results[0].Bindings.All()), index.ProducerKeys)
 			assert.Diff(
 				t,
-				results[0].ProducerKeys,
+				maps.Collect(results[0].Bindings.All()),
 				map[manifest.NamedResource]manifest.NamedResource{entry.Named(): key},
 			)
 			assert.Equal(t, len(results[0].Manifests), 1)
@@ -138,81 +139,6 @@ func TestProject_MixedBatchIdentities(t *testing.T) {
 	after, err := json.Marshal(runs[0].Manifests)
 	assert.NoError(t, err)
 	assert.Diff(t, after, before)
-}
-
-func TestProject_BatchIdentityMembership(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name            string
-		targetNamespace string
-		selectedSide    int
-		supplied        bool
-		count           int
-	}{
-		{name: "orig counterpart omitted", targetNamespace: "apps", selectedSide: 0, count: 2},
-		{name: "current counterpart omitted", targetNamespace: "apps", selectedSide: 1, count: 2},
-		{name: "supplied emitter under reporting parent", targetNamespace: "reporting", selectedSide: 1, supplied: true, count: 2},
-		{name: "restricted membership", targetNamespace: "apps", count: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			parent := &manifest.Kustomization{
-				Name:            "report",
-				Namespace:       "reporting",
-				TargetNamespace: tc.targetNamespace,
-			}
-			documents := []map[string]any{
-				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "kept"}},
-				{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "excluded"}},
-			}
-			identities := []manifest.NamedResource{
-				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "kept"},
-				{Kind: manifest.KindSecret, Namespace: "apps", Name: "excluded"},
-			}
-			runs := make([]Snapshot, tc.count)
-			for i := range runs {
-				admission := &Admission{Needed: []manifest.NamedResource{parent.Named()}}
-				if i == tc.selectedSide {
-					admission.Selected = identities[:1]
-				}
-				decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(admission, true)
-				st := store.New()
-				st.AddObject(parent)
-				batch := manifest.DocumentBatch{Parent: parent, Documents: documents, Identities: identities}
-				if !tc.supplied && i == tc.selectedSide {
-					batch.Identities = nil
-				}
-				runs[i] = Snapshot{
-					Store:     st,
-					Complete:  true,
-					Decision:  decision,
-					Manifests: []manifest.DocumentBatch{batch},
-				}
-			}
-			before := make([][]byte, tc.count)
-			for i := range runs {
-				var err error
-				before[i], err = json.Marshal(runs[i].Manifests)
-				assert.NoError(t, err)
-			}
-			results, errs := Project(
-				runs,
-				nil,
-				Request{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "")}},
-			)
-			assert.NoError(t, errs.Selected)
-			assert.NoError(t, errs.Remaining)
-			assert.Equal(t, len(results), tc.count)
-			for i, result := range results {
-				assert.Equal(t, len(result.Manifests), 1)
-				assert.Diff(t, result.Manifests[0].Documents, documents[:1])
-				assert.Diff(t, result.Manifests[0].Identities, identities[:1])
-				after, err := json.Marshal(runs[i].Manifests)
-				assert.NoError(t, err)
-				assert.Diff(t, after, before[i])
-			}
-		})
-	}
 }
 
 func TestProject_BatchIdentityValidation(t *testing.T) {

@@ -31,12 +31,13 @@ type Result struct {
 	// Unavailable contains canonical failure, soft-skip or suspension evidence for
 	// paired producer output, independently of fatal namespace scope.
 	Unavailable map[manifest.NamedResource]store.StatusInfo
-	// ProducerKeys maps actual producers to their paired comparison identities.
-	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
+	Bindings    store.ProducerBindings
 	// Unrelated contains prepared advisories for failures outside named fatal scope.
 	Unrelated []manifest.Warning
 	// External contains paired external-source skip disclosures, honoring explicit namespace scope.
 	External []manifest.Warning
+	// Producers maps batch and document positions to emitters that differ from the reporting parent.
+	Producers map[int]map[int]manifest.DiagnosticIdentity
 }
 
 // BlockedCount excludes dependency-cycle roots promoted to primary failures.

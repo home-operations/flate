@@ -1,0 +1,4 @@
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [DiffSuppressed] HelmRelease apps/podinfo: 0 objects withheld; diff suppressed (suspended on orig; suspended on current)

@@ -20,8 +20,16 @@ func documentSnapshots(left, right []Doc, opts *Options) [2]Snapshot {
 	var snapshots [2]Snapshot
 	for i, docs := range [2][]Doc{left, right} {
 		snapshots[i].Subjects = opts.subjects[i]
-		snapshots[i].ProducerKeys = opts.producerKeys[i]
-		for _, doc := range docs {
+		for j := range docs {
+			doc := &docs[j]
+			if doc.Producer.ID != (manifest.NamedResource{}) {
+				if snapshots[i].Producers == nil {
+					snapshots[i].Producers = make(map[int]map[int]manifest.DiagnosticIdentity)
+				}
+				snapshots[i].Producers[j] = map[int]manifest.DiagnosticIdentity{
+					0: doc.Producer,
+				}
+			}
 			var parent manifest.BaseManifest
 			if doc.Parent.NamedResource != (manifest.NamedResource{}) {
 				apiVersion := "v1"

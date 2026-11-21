@@ -242,6 +242,9 @@ tr.folded { display: none; }
       <div class="rtop">
         <h2 class="rhead"><span class="status status-{{$res.Status}}">{{$res.Status}}</span>{{$res.Title}}</h2>
         <div class="rparent">{{$res.Parent}}</div>
+        {{- if $res.Move}}
+        <div class="rparent">{{$res.Move}}</div>
+        {{- end}}
       </div>
       <div class="side-wrap">
         <table class="view side"><colgroup><col class="cn"><col class="cl"><col class="cn"><col class="cr"></colgroup><tbody>

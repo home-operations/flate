@@ -332,12 +332,14 @@ func testCompareUnavailableProducerPolicyCase(
 	t.Helper()
 
 	left, right := hrDocs(testCaseInput.tc.leftN), hrDocs(testCaseInput.tc.rightN)
-	for _, doc := range left {
+	for i := range left {
+		doc := &left[i]
 		doc.Manifest["spec"] = map[string]any{
 			"containers": []any{map[string]any{"image": "ghcr.io/demo/orig:v1"}},
 		}
 	}
-	for _, doc := range right {
+	for i := range right {
+		doc := &right[i]
 		doc.Manifest["spec"] = map[string]any{
 			"containers": []any{map[string]any{"image": "ghcr.io/demo/current:v2"}},
 		}

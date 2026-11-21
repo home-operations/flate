@@ -14,8 +14,9 @@ func normalizeDocs(docs []Doc, attrs, fields []string, hook func(map[string]any)
 		return docs, false
 	}
 	out := make([]Doc, len(docs))
-	for i, d := range docs {
-		out[i] = Doc{Manifest: normalizeManifest(d.Manifest, attrs, fields, hook), Parent: d.Parent}
+	for i := range docs {
+		out[i] = docs[i]
+		out[i].Manifest = normalizeManifest(docs[i].Manifest, attrs, fields, hook)
 	}
 	return out, true
 }
@@ -36,8 +37,8 @@ func normalizeManifest(m map[string]any, attrs, fields []string, hook func(map[s
 
 // Empty binaryData maps also require normalization copies.
 func docsContainBinaryData(docs []Doc) bool {
-	for _, d := range docs {
-		if _, ok := configMapBinaryData(d.Manifest); ok {
+	for i := range docs {
+		if _, ok := configMapBinaryData(docs[i].Manifest); ok {
 			return true
 		}
 	}

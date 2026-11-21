@@ -94,8 +94,8 @@ func (r *Run) Select(
 			Warnings: result.Warnings, ClusterWarnings: result.ClusterWarnings,
 			Objects: result.Objects, Counts: result.Counts, Statuses: statuses(result.Statuses),
 			ChartVersions: result.ChartVersions, Causes: result.Causes,
-			Unavailable: statuses(result.Unavailable), ProducerKeys: result.ProducerKeys,
-			Unrelated: result.Unrelated, External: result.External, BlockedCount: result.BlockedCount(),
+			Unavailable: statuses(result.Unavailable),
+			Unrelated:   result.Unrelated, External: result.External, BlockedCount: result.BlockedCount(),
 		}
 	}
 	return selected, ProjectionErrors{Selected: projection.Selected, Remaining: projection.Remaining}

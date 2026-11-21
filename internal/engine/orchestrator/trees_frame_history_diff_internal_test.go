@@ -221,10 +221,10 @@ func observeFrameHistoryDiff(
 	observed.Selected, observed.Remaining = fmt.Sprint(failures.Selected), fmt.Sprint(failures.Remaining)
 	comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
 		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-		ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable,
+		Bindings: selected[0].Bindings, Unavailable: selected[0].Unavailable,
 	}, Current: diff.Snapshot{
 		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-		ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable,
+		Bindings: selected[1].Bindings, Unavailable: selected[1].Unavailable,
 	}, SelectedErr: failures.Selected}}, diff.Options{Format: diff.FormatJSON})
 	var comparisonOutput1 bytes.Buffer
 	writeErr1 := comparison1.Write(&comparisonOutput1, nil)

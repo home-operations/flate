@@ -26,8 +26,8 @@ func selectedSnapshot(parentValue *Parent, docs []Doc, unavailable store.StatusI
 		obj = ks
 	}
 	batch := make([]map[string]any, 0, len(docs))
-	for _, doc := range docs {
-		batch = append(batch, doc.Manifest)
+	for i := range docs {
+		batch = append(batch, docs[i].Manifest)
 	}
 	result := Snapshot{
 		Manifests: []manifest.DocumentBatch{testutil.DocumentBatch(obj, batch)},
@@ -430,11 +430,27 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 		"ephemeralContainers": []any{map[string]any{"image": "ghcr.io/demo/stale:v1"}},
 	}
 	other := &manifest.HelmRelease{Name: "healthy", Namespace: "monitoring"}
+	declaration := map[string]any{
+		"apiVersion": "helm.toolkit.fluxcd.io/v2",
+		"kind":       "HelmRelease",
+		"metadata":   map[string]any{"name": "suspended", "namespace": "apps"},
+		"spec": map[string]any{
+			"suspend": true,
+			"values":  map[string]any{"image": "ghcr.io/demo/suspended:v1"},
+		},
+	}
+	left.Manifests[0] = testutil.DocumentBatch(
+		left.Manifests[0].Parent,
+		append(left.Manifests[0].Documents, declaration),
+	)
 	left.Manifests = append(
 		left.Manifests,
 		testutil.DocumentBatch(
 			other,
-			[]map[string]any{{"containers": []any{map[string]any{"image": "ghcr.io/demo/removed:v1"}}}},
+			[]map[string]any{
+				declaration,
+				{"containers": []any{map[string]any{"image": "ghcr.io/demo/removed:v1"}}},
+			},
 		),
 	)
 	right.Manifests = append(
@@ -455,9 +471,9 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 		want           []string
 	}{
 		{name: "additions", want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/shared:v1"}},
-		{name: "including removals", includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1"}},
-		{name: "reversed additions", reverse: true, want: []string{"ghcr.io/demo/removed:v1"}},
-		{name: "reversed including removals", reverse: true, includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1"}},
+		{name: "including removals", includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1", "ghcr.io/demo/suspended:v1"}},
+		{name: "reversed additions", reverse: true, want: []string{"ghcr.io/demo/removed:v1", "ghcr.io/demo/suspended:v1"}},
+		{name: "reversed including removals", reverse: true, includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1", "ghcr.io/demo/suspended:v1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -474,7 +490,7 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 				err,
 				tc.want,
 			)
-			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: reportSide, Count: 2, Reason: "failed"}
+			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: reportSide, Count: 3, Reason: "failed"}
 			assert.ErrorIf(
 				t,
 				!slices.Equal(notes, []Suppression{wantSuppression}),
@@ -637,10 +653,18 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		Unavailable: map[manifest.NamedResource]store.StatusInfo{
 			key: {Status: store.StatusFailed, Message: "missing input"},
 		},
-		ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{root.Named(): key},
+		Bindings: store.Bindings(
+			&manifest.DiscoveryIndex{
+				ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{root.Named(): key},
+			},
+		),
 	}
 	healthy := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), store.StatusInfo{})
-	healthy.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{helmReleaseParent().NamedResource: key}
+	healthy.Bindings = store.Bindings(
+		&manifest.DiscoveryIndex{
+			ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{helmReleaseParent().NamedResource: key},
+		},
+	)
 	orig, current := healthy, failed
 	switch *testCaseInput.side {
 	case sideOrig:

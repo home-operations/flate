@@ -750,7 +750,7 @@ func (a *Admission) acceptProducerKeys(producer, key manifest.NamedResource) {
 	if q := a.qualification; q != nil {
 		l = q.loader
 	}
-	if current, known := l.Index.ProducerKeys[producer]; !known || current != key {
+	if current, known := store.Bindings(l.Index).Slot(producer); !known || current != key {
 		index := *l.Index
 		index.ProducerKeys = nil
 		if producer != (manifest.NamedResource{}) {

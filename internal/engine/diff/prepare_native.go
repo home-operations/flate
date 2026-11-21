@@ -53,7 +53,7 @@ func (p prepared) native() (dyff.Report, error) {
 				Details: []dyff.Detail{{Kind: dyff.REMOVAL, From: from.Documents[p.OldPos]}},
 			})
 		default:
-			if p.status() == "" {
+			if !p.contentChanged() {
 				continue
 			}
 			compared, err := dyff.CompareInputFiles(

@@ -123,6 +123,33 @@ The Flux expectation retains the real HelmRelease reference edits.
 | `diff-generator-pairing/bare-secret` | Pair a synthetic Secret edit. |
 | `diff-generator-pairing/flux` | Retain generated values, local Helm output, and real reference edits. |
 
+`producer-moves/` covers diff output when a Flux object moves between producers.
+A producer is the Flux object that emits a document.
+The harness compares complete stdout, stderr, and exit codes through `cli.Run`.
+Each case runs twice with two workers and a fresh private cache at the start of each replay.
+
+| Case | Behavior |
+| --- | --- |
+| `producer-moves/resourceset` | Move the five podinfo kinds from ResourceSet `default/podinfo` to Kustomization `flux-system/podinfo`. The old reporting Kustomization is `flux-system/reporter`. |
+| `producer-moves/kustomizations` | Show one move in each format. Compare both a full directory diff and a changed-only Git diff. |
+| `producer-moves/content-edits` | Keep the Deployment replica count and unrelated label edits in both comparison modes. |
+| `producer-moves/clusters` | Move the shared identity only in `main` and retain an independent addition in `other`. |
+| `producer-moves/partial` | Keep the healthy move, the missing-path error, and the failing exit code. |
+| `producer-moves/competing` | Keep the conflict warning, winning producer, and winning content with the conflict on the current side. |
+| `producer-moves/competing-reverse` | Keep the same evidence with the conflict on the base side in changed-only mode. |
+
+The Owner decision in `plans/diff-pair-by-identity/request.md` governs these expectation changes.
+
+| Expectations | Reviewed change |
+| --- | --- |
+| `producer-moves/expect/` | Report each move once. Keep the spec and label edits, cluster boundaries, failures, and conflict warnings. |
+| `entry-membership/expect/membership-namespace-namespace-{forward,reverse}-diff.stdout` | Pair `apps/reachable-cm` across the two producers. Keep both one-sided identities in each namespace. |
+| `entry-membership/expect/selected-diff-owner-{added,removed,renamed}-{forward,reverse}-diff.stdout` | Report the new producer and preserve the ConfigMap value edit. Keep each distinct Kustomization declaration. |
+| `entry-membership/expect/selected-diff-owner-winner-changed-{forward,reverse}-diff.stdout` | Report the winning occurrence of each identity. Keep the winning ConfigMap's value edit and the one-sided declaration. |
+| `entry-packages-entry-prerequisite-{forward,reverse}/expect/*-diff.stdout` | Report the owner declaration once. Keep the dependency edit and changes to both ConfigMaps. |
+| `scope-selection-ownership-cycle/expect/ownership-cycle-diff.stdout` | Keep one change for the ConfigMap that both paths reach. |
+| `source-warnings/expect/bootstrap-submodule-aliases.stdout` | Keep one change for the ConfigMap from the two source aliases. Keep all three warnings. |
+
 `duplicate-producers/` covers complete duplicate attribution through `cli.Run`.
 Each aggregate lacks a parent `kustomization.yaml`, so rendering discovers its resources.
 The healthy base emits three ConfigMaps from two directories and one loose file.

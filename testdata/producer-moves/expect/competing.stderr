@@ -1,0 +1,5 @@
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [ConflictingProducers] current snapshot: Deployment apps/podinfo: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/replacement
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/original, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/replacement

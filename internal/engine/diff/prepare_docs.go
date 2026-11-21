@@ -6,12 +6,20 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func documents(manifests []manifest.DocumentBatch) []Doc {
-	out := make([]Doc, 0, len(manifests))
-	for _, batch := range manifests {
+func documents(snapshot Snapshot) []Doc {
+	out := make([]Doc, 0, len(snapshot.Manifests))
+	for i, batch := range snapshot.Manifests {
 		parent := objectParent(batch.Parent)
-		for _, doc := range batch.Documents {
-			out = append(out, Doc{Manifest: doc, Parent: parent})
+		defaultProducer := manifest.DiagnosticFor(parent.NamedResource, batch.Parent)
+		producers := snapshot.Producers[i]
+		for j, doc := range batch.Documents {
+			producer, ok := producers[j]
+			if !ok {
+				producer = defaultProducer
+			}
+			out = append(out, Doc{
+				Manifest: doc, Parent: parent, Producer: producer,
+			})
 		}
 	}
 	return out

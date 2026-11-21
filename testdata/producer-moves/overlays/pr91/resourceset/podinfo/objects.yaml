@@ -1,0 +1,22 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: podinfo, namespace: apps}
+spec: {secretName: podinfo-tls}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: podinfo, namespace: apps}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha1
+kind: ListenerSet
+metadata: {name: podinfo, namespace: apps}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: podinfo, namespace: apps}
+spec: {suspend: true, url: oci://example.invalid/podinfo}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: podinfo, namespace: apps}
+spec: {suspend: true, chartRef: {kind: OCIRepository, name: podinfo}}

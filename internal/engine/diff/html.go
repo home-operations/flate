@@ -62,7 +62,8 @@ type htmlResource struct {
 	Name     string // ns/name (tree leaf label)
 	Parent   string // producing KS/HR, e.g. "HelmRelease app/web"
 	Status   string // "changed" | "added" | "removed"
-	Add, Del int    // changed-line counts (tree badges)
+	Move     string
+	Add, Del int // changed-line counts (tree badges)
 	URows    []uRow
 	SRows    []sRow
 }
@@ -178,6 +179,7 @@ func buildHTMLResource(p *lineChange, hl *highlighter) htmlResource {
 		Name:   p.Resource.Name,
 		Parent: parent,
 		Status: p.Status,
+		Move:   p.Move,
 		URows:  unifiedRows(highlighted.orig, highlighted.current, groups),
 		SRows:  sideRows(highlighted.orig, highlighted.current, groups),
 	}

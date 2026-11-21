@@ -1,0 +1,1 @@
+Deployment apps/podinfo producer: Kustomization flux-system/original -> Kustomization flux-system/replacement

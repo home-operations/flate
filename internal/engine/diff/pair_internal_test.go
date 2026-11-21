@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -9,27 +10,52 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestPair_DistinguishesByParent(t *testing.T) {
+func TestPair_DistinguishesByIdentity(t *testing.T) {
 	t.Parallel()
-	for _, tt := range []struct {
-		name, parentGroup, parentKind, parentNamespace, parentName, apiVersion string
-		pairs                                                                  int
+	oldParent := Parent{NamedResource: testutil.HelmReleaseID("ns", "a")}
+	newParent := Parent{NamedResource: testutil.HelmReleaseID("ns", "b")}
+	for _, tc := range []struct {
+		name, apiVersion, namespace string
+		paired                      bool
 	}{
-		{"ownerless parent", "", "", "", "", "apps/v1", 2},
-		{"parent name", manifest.HelmReleaseDomain, "HelmRelease", "ns", "b", "apps/v1", 2},
-		{"parent group", "example.test", "HelmRelease", "ns", "a", "apps/v1", 2},
-		{"resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "example.test/v1", 2},
-		{"resource version", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "apps/v2", 1},
-		{"parent kind", manifest.HelmReleaseDomain, "OtherProducer", "ns", "a", "apps/v1", 2},
-		{"parent namespace", manifest.HelmReleaseDomain, "HelmRelease", "other", "a", "apps/v1", 2},
-		{"permissive resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "apps/v1/extra", 1},
-		{"core resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "v1", 2},
+		{"same identity", "apps/v1", "ns", true},
+		{"resource group", "example.test/v1", "ns", false},
+		{"resource version", "apps/v2", "ns", true},
+		{"resource namespace", "apps/v1", "other", false},
+		{"permissive resource group", "apps/v1/extra", "ns", true},
+		{"core resource group", "v1", "ns", false},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testPairDistinguishesByParentCase(t, &tt)
-		},
-		)
+			old := cmDoc(&oldParent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
+			current := cmDoc(&newParent, manifest.NamedResource{Name: "x", Namespace: tc.namespace}, "new", "")
+			old.Manifest["kind"], old.Manifest["apiVersion"] = "Deployment", "apps/v1"
+			current.Manifest["kind"], current.Manifest["apiVersion"] = "Deployment", tc.apiVersion
+			left, right := []Doc{old}, []Doc{current}
+			result := prepare(left, right, &Options{})
+			changes := publicChanges(result)
+			lines, err := prepareLines(result)
+			assert.NoError(t, err)
+			out := renderDiff(t, left, right, &Options{Format: FormatGitHub})
+			if !tc.paired {
+				assert.Equal(t, len(lines), 2)
+				assert.Equal(t, len(changes), 2)
+				assert.Equal(t, changes[0].Status, StatusRemoved)
+				assert.Equal(t, changes[1].Status, ChangeStatus("added"))
+				assert.Equal(t, strings.Count(out, "one document removed:"), 1)
+				assert.Equal(t, strings.Count(out, "one document added:"), 1)
+				return
+			}
+			assert.Equal(t, len(lines), 1)
+			assert.Equal(t, len(changes), 1)
+			assert.Equal(t, lines[0].Parent.ID, newParent.NamedResource)
+			assert.Equal(t, lines[0].Resource.ID, manifest.DocIdentity(current.Manifest))
+			assert.Equal(t, changes[0].Status, ChangeStatus("changed"))
+			assert.Equal(t, changes[0].APIVersion, tc.apiVersion)
+			assert.Equal(t, strings.Count(out, "producer: HelmRelease ns/a -> HelmRelease ns/b"), 1)
+			assert.Equal(t, strings.Contains(out, "one document"), false)
+			assert.Equal(t, strings.Contains(out, "@@ apiVersion @@"), tc.apiVersion != "apps/v1")
+		})
 	}
 }
 
@@ -60,6 +86,9 @@ func TestComparison_DuplicateWarningOrder(t *testing.T) {
 		cmDoc(new(parent), z, "old", ""), cmDoc(new(parent), z, "new", ""),
 		cmDoc(new(parent), a, "old", ""), cmDoc(new(parent), a, "new", ""),
 	}
+	winner := Parent{NamedResource: testutil.KustomizationID("flux-system", "winner")}
+	conflicts := []Doc{cmDoc(&winner, z, "chosen", ""), cmDoc(&winner, a, "chosen", "")}
+	winnerFirst := slices.Concat(conflicts, left)
 	want := make([]manifest.Warning, 0, 2)
 	for _, id := range []manifest.NamedResource{a, z} {
 		want = append(want, manifest.Warning{
@@ -68,13 +97,19 @@ func TestComparison_DuplicateWarningOrder(t *testing.T) {
 			Detail:  []string{"side: orig", "parent: " + parent.String(), "parent path: ./apps", "apiVersion: v1"},
 		})
 	}
-	first, warnings, err := renderDocuments(left, nil, new(Options{Format: FormatGitHub}))
+	first, warnings, err := renderDocuments(append(left, conflicts...), nil, &Options{Format: FormatGitHub})
 	assert.NoError(t, err)
 	assert.Diff(t, warnings, want)
-	second, warnings, err := renderDocuments(left, nil, new(Options{Format: FormatGitHub}))
+	second, warnings, err := renderDocuments(winnerFirst, nil, &Options{Format: FormatGitHub})
 	assert.NoError(t, err)
 	assert.Diff(t, warnings, want)
 	assert.Equal(t, string(first), string(second))
+	changes := jsonChanges(t, winnerFirst, nil, &Options{})
+	assert.Equal(t, len(changes), 2)
+	for _, change := range changes {
+		assert.Equal(t, change.Parent, winner)
+		assert.Equal(t, change.Old["data"].(map[string]any)["k"], any("chosen"))
+	}
 }
 
 func TestComparison_NormalizedDuplicatesOnce(t *testing.T) {
@@ -134,89 +169,6 @@ func TestComparison_NormalizedDuplicatesOnce(t *testing.T) {
 			}
 		})
 	}
-}
-
-func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
-	name            string
-	parentGroup     string
-	parentKind      string
-	parentNamespace string
-	parentName      string
-	apiVersion      string
-	pairs           int
-},
-) {
-	t.Helper()
-
-	parent := Parent{NamedResource: testutil.HelmReleaseID("ns", "a")}
-	left := cmDoc(new(parent), manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
-	left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
-	parent.Group, parent.Kind, parent.Namespace, parent.Name = testCaseInput.parentGroup, testCaseInput.parentKind, testCaseInput.parentNamespace, testCaseInput.parentName
-	right := cmDoc(new(parent), manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
-	right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", testCaseInput.apiVersion
-	l, r := []Doc{left}, []Doc{right}
-	if got := prepare(
-		l,
-		r,
-		&Options{},
-	).Pairs; len(
-		got,
-	) != testCaseInput.pairs {
-		t.Fatalf("pairs = %+v, want %d", got, testCaseInput.pairs)
-	}
-	changes := publicChanges(prepare(l, r, new(Options{})))
-	if len(changes) != testCaseInput.pairs {
-		t.Fatalf("changes = %+v, want %d", changes, testCaseInput.pairs)
-	}
-	count := 0
-	result := prepare(l, r, &Options{})
-	lines, err := prepareLines(result)
-	assert.NoError(t, err)
-	{
-		cValues := lines
-		for cIndex := range cValues {
-			c := cValues[cIndex]
-			count++
-			want := left
-			if c.Status != string(StatusRemoved) {
-				want = right
-			}
-			group := "apps"
-			if c.Status != string(StatusRemoved) {
-				group, _, _ = strings.Cut(testCaseInput.apiVersion, "/")
-				if !strings.Contains(testCaseInput.apiVersion, "/") {
-					group = ""
-				}
-			}
-			assert.ErrorIf(t, c.Parent.ID != want.Parent.NamedResource ||
-				c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}), "line change dropped identity: %+v", c)
-		}
-	}
-	if count != testCaseInput.pairs {
-		t.Errorf("line changes = %d, want %d", count, testCaseInput.pairs)
-	}
-	native := renderDiff(t, l, r, new(Options{Format: FormatGitHub}))
-	if testCaseInput.pairs == 2 {
-		assert.ErrorIf(t, strings.Count(native, "one document removed:") != 1 ||
-			strings.Count(
-				native,
-				"one document added:",
-			) != 1, "native lost parent/resource identity:\n%s", native)
-	} else {
-		assert.ErrorIf(
-			t,
-			strings.Contains(native, "one document") || !strings.Contains(native, "@@ apiVersion @@"),
-			"native version update must be one content change:\n%s",
-			native,
-		)
-	}
-	assert.ErrorIf(
-		t,
-		testCaseInput.pairs == 1 &&
-			(changes[0].Status != ChangeStatus("changed") || changes[0].APIVersion != testCaseInput.apiVersion),
-		"version change must retain the current authored version: %+v",
-		changes,
-	)
 }
 
 type testPairPathIsPresentationCaseInputs struct {

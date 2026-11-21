@@ -18,7 +18,7 @@ func TestDocuments_BorrowsPayload(t *testing.T) {
 		"data": map[string]any{"payload": payload},
 	}
 	batches := []manifest.DocumentBatch{testutil.DocumentBatch(nil, []map[string]any{doc})}
-	projected := documents(batches)
+	projected := documents(Snapshot{Manifests: batches})
 	if reflect.ValueOf(projected[0].Manifest).Pointer() != reflect.ValueOf(doc).Pointer() {
 		t.Fatal("projection copied the completed document")
 	}
@@ -27,7 +27,7 @@ func TestDocuments_BorrowsPayload(t *testing.T) {
 		t.Fatal("projection copied the immutable payload")
 	}
 	allocs := testing.AllocsPerRun(2, func() {
-		if got := documents(batches); len(got) != 1 {
+		if got := documents(Snapshot{Manifests: batches}); len(got) != 1 {
 			t.Fatal("projection lost the document")
 		}
 	})

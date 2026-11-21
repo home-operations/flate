@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.8.1](https://github.com/home-operations/flate/compare/v0.8.0...v0.8.1) (2026-11-21)
+
+
+### Features
+
+* **discovery:** apply the effective sync root ([#1629](https://github.com/home-operations/flate/issues/1629)) ([c056043](https://github.com/home-operations/flate/commit/c0560435c7751eea792140a1dfa6fd8369276584))
+
+
+### Bug Fixes
+
+* **depwait:** decide render gates and data inputs once ([#1638](https://github.com/home-operations/flate/issues/1638)) ([b7a27ba](https://github.com/home-operations/flate/commit/b7a27bacb293c05b475f7e982363fcdec1ffc675))
+* **discovery:** keep entrySourceView from writing to its candidate ([#1636](https://github.com/home-operations/flate/issues/1636)) ([2c25762](https://github.com/home-operations/flate/commit/2c257623c2ce134100d20b8a75cb1e38f2b69c8c))
+* **discovery:** keep every FluxInstance cluster in a root build ([#1642](https://github.com/home-operations/flate/issues/1642)) ([c5e7313](https://github.com/home-operations/flate/commit/c5e7313c3c982db51dfaae3916a23c42df9c3c85))
+* **discovery:** recognize a custom-named bootstrap source ([#1627](https://github.com/home-operations/flate/issues/1627)) ([1024fdf](https://github.com/home-operations/flate/commit/1024fdf53dca4472932aba6fead0f438e4bedd4f))
+* **output:** print the Flux objects that a ResourceSet applies ([#1646](https://github.com/home-operations/flate/issues/1646)) ([fb60dc5](https://github.com/home-operations/flate/commit/fb60dc500ad6cd7bee415e4049f1f03b98483de2))
+* **release:** find the split archives when publishing the packslip ([#1632](https://github.com/home-operations/flate/issues/1632)) ([aa215eb](https://github.com/home-operations/flate/commit/aa215eb787b470dbd4fca515e2c57796b7c6c2cb))
+* **store:** compare labels and read render frames through one seam ([#1637](https://github.com/home-operations/flate/issues/1637)) ([cac9983](https://github.com/home-operations/flate/commit/cac99838311889ea85eec8abc28239a30f3367ca))
+
+
+### Code Refactoring
+
+* **discovery:** classify clusters from bootstrap roots ([#1618](https://github.com/home-operations/flate/issues/1618)) ([f0440e5](https://github.com/home-operations/flate/commit/f0440e5eeb12f6ee8ab54345f87fecef6ef353a0))
+
+
+### Documentation
+
+* **action:** correct the cache directory ([d9234ab](https://github.com/home-operations/flate/commit/d9234ab7a93365f8114f921cae40d7dd9eb1f6ea))
+* **action:** simplify the action guide ([53bc65d](https://github.com/home-operations/flate/commit/53bc65dc85a5957a27afafc58319057eaa97e348))
+* **readme:** simplify the project overview ([e976fcd](https://github.com/home-operations/flate/commit/e976fcddfc2004fce233f11153bd9d019ed46a0d))
+
+
+### Miscellaneous Chores
+
+* **github-action:** update action actions/create-github-app-token (v3.3.0 → v3.4.0) ([#1641](https://github.com/home-operations/flate/issues/1641)) ([5904e77](https://github.com/home-operations/flate/commit/5904e772d3fcb326aef14ee18466d2555d069f9c))
+* **github-action:** update action jdx/mise-action (v5.2.9 → v5.2.10) ([#1643](https://github.com/home-operations/flate/issues/1643)) ([e09d439](https://github.com/home-operations/flate/commit/e09d4398f817d9b09a8fb46594f6decf236864e4))
+* **go:** update module charm.land/bubbles/v2 (v2.2.1 → v2.2.2) ([#1633](https://github.com/home-operations/flate/issues/1633)) ([dccedc9](https://github.com/home-operations/flate/commit/dccedc94d54173ebc204c0a561cdc8218e62534b))
+* **go:** update module github.com/controlplaneio-fluxcd/flux-operator (v0.62.1 → v0.63.0) ([#1634](https://github.com/home-operations/flate/issues/1634)) ([995b48b](https://github.com/home-operations/flate/commit/995b48b0790cd5b4bc250f54df08b044db35e499))
+* **go:** update module github.com/fluxcd/helm-controller/api (v1.7.1 → v1.7.2) ([#1630](https://github.com/home-operations/flate/issues/1630)) ([dc452e1](https://github.com/home-operations/flate/commit/dc452e1dd2b3901082f4f046260ee502b0112943))
+* **go:** update module github.com/fluxcd/kustomize-controller/api (v1.10.1 → v1.10.2) ([#1628](https://github.com/home-operations/flate/issues/1628)) ([44100e2](https://github.com/home-operations/flate/commit/44100e2181855dd11f954de96cc68d9327d2db5b))
+* **go:** update module github.com/fluxcd/source-controller/api (v1.10.1 → v1.10.2) ([#1631](https://github.com/home-operations/flate/issues/1631)) ([d8229fa](https://github.com/home-operations/flate/commit/d8229fa579a964a926f30e4ca958183791d11910))
+
 ## [0.8.0](https://github.com/home-operations/flate/compare/v0.7.3...v0.8.0) (2026-11-19)
 
 

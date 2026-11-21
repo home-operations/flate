@@ -417,8 +417,9 @@ func (p *substitutionResolution) resolveScalars(
 	facts.labels = projectLabels(facts.labels, resolve)
 	facts.refs = projectReferences(facts.refs, resolve)
 	facts.reverse = nil
-	for i := range facts.refs {
-		ref := &facts.refs[i]
+	relations := facts.relations()
+	for i := range relations {
+		ref := &relations[i]
 		if ref.AffectedInput() {
 			facts.reverse = append(facts.reverse, ref.NamedResource)
 		}

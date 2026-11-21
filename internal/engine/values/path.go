@@ -23,7 +23,7 @@ func ResolveStaticValue(
 	if parent.PostBuild != nil {
 		inline = parent.PostBuild.Substitute
 		for ref := range manifest.References(parent, manifest.ReferenceRelations) {
-			if ref.Use != substitutionUse {
+			if keyed, data := ref.DataInput(); !data || keyed {
 				continue
 			}
 			result := Resolve(
@@ -43,7 +43,7 @@ func ResolveStaticValue(
 	if parent.PostBuild != nil {
 		variables = manifest.VarsMap(parent.PostBuild.Substitute)
 	}
-	if !SubstitutionActive(parent) && !unknownInputs {
+	if !staticSubstitutionActive(parent, unknownInputs) {
 		return value, true
 	}
 	incomplete := false

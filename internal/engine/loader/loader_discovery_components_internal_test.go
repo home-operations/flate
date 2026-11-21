@@ -182,6 +182,7 @@ func TestLoader_DiscoveryRecordsComponentDataResources(t *testing.T) {
 kind: Component
 resources:
   - ./cluster-settings.yaml
+  - ./cluster-secret.yaml
   - ./templated-ks.yaml
 `)
 	testutil.WriteFile(t, dir, "components/settings/cluster-settings.yaml", `apiVersion: v1
@@ -192,6 +193,21 @@ metadata:
 data:
   FOO: bar
 `)
+	testutil.WriteFile(t, dir, "components/settings/cluster-secret.yaml", `apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-secret
+  namespace: flux-system
+stringData:
+  TOKEN: fixture
+`)
+	testutil.WriteFile(t, dir, "consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  path: ./app
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substituteFrom:
+      - {kind: ConfigMap, name: cluster-settings}
+      - {kind: Secret, name: cluster-secret}
+`))
 	testutil.WriteFile(
 		t,
 		dir,
@@ -224,6 +240,16 @@ data:
 		s.GetObject(cmID) != nil,
 		"Component-housed CM must NOT be in Store during discovery (existence-only)",
 	)
+	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "cluster-secret"}
+	_, recorded := l.Index.Lookup(secretID)
+	assert.Equal(t, recorded, true)
+	consumer, found := l.Index.Lookup(testutil.KustomizationID("flux-system", "consumer"))
+	assert.FatalIf(t, !found, "consumer must be recorded during discovery")
+	assert.Diff(t, consumer.Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"},
+		cmID,
+		secretID,
+	})
 	leakID := testutil.KustomizationID("ns", "${APP}-leak")
 	assert.ErrorIf(
 		t,
@@ -322,6 +348,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	assert.Diff(t, l.Index.Records[ks.Named()].Refs, []manifest.NamedResource{
 		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+		{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"},
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
 	})
 	assert.Diff(t, l.Index.Records[hrID].Refs, want)

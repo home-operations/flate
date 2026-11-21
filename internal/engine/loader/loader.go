@@ -521,7 +521,7 @@ func (l *Loader) recordOccurrence(path string, o *authoredOccurrence) {
 		File:     l.fileCoordinate(path),
 	}
 	{
-		refValues := o.facts.refs
+		refValues := o.facts.relations()
 		for refIndex := range refValues {
 			ref := refValues[refIndex]
 			if discoveryReference(new(ref)) {
@@ -561,9 +561,10 @@ func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifes
 func discoveryReference(refValue *manifest.Reference) bool {
 	ref := *refValue
 
-	return ref.Use == "valuesFrom" ||
-		ref.Use == substitutionReferenceUse && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		ref.IsSource() && ref.Kind != "" && ref.Name != ""
+	if keyed, data := ref.DataInput(); data {
+		return keyed || ref.NamedResource.KindInfo().Data
+	}
+	return ref.IsSource() && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {

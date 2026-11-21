@@ -19,44 +19,57 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 		reads.Init(s.Store, manifest.BootstrapSourceID, nil)
 		defer reads.Retire()
 		for id := range s.Index.Files() {
-			if !id.KindInfo().Discovery {
-				continue
-			}
-			if _, known := s.Store.GetStatus(id); known {
-				continue
-			}
-			evidence := CaptureRoot(s.Facts.RootEvidence(id, &reads), &reads, s.Index)
-			parent, _ := s.Store.Parent(id, s.Index)
-			parent = cmp.Or(parent, Root(evidence).Owner)
-			if evidence.Scope.NativeOperand {
-				parent = cmp.Or(parent, s.Entry.Producer)
-			}
-			failure, failed := s.Failed[parent]
-			switch {
-			case !failed:
-				continue
-			case parent.ReportHidden():
-				// Synthetic entry parents have no emitted declaration to require.
-			case s.Store.EmissionOwner(parent) == (manifest.NamedResource{}):
-				continue
-			case CaptureRoot(s.Facts.RootEvidence(parent, &reads), &reads, s.Index).Occurrence.Declaration.File == "":
-				continue
-			}
-			occurrence := evidence.Occurrence
-			occurrence.Identity = id
-			optional := parent.ReportHidden() || occurrence.Declaration.File == "" ||
-				failure.Outcome() != store.OutcomeBlocked
-			var references []manifest.Reference
-			occurrence.references(func(ref manifest.Reference) bool {
-				references = append(references, ref)
-				return true
-			})
-			references = append(references, manifest.Reference{
-				NamedResource: parent, Use: "materializer", Gate: manifest.GateParents, Optional: optional,
-			})
-			if !yield(id, slices.Values(references)) {
+			references := s.predictionReferences(id, &reads)
+			if len(references) != 0 && !yield(id, slices.Values(references)) {
 				return
 			}
 		}
 	}
+}
+
+func (s *Snapshot) predictionReferences(id manifest.NamedResource, reads *store.ReadSet) []manifest.Reference {
+	kind := id.KindInfo()
+	if !kind.Discovery && !kind.Render {
+		return nil
+	}
+	if _, known := s.Store.GetStatus(id); known {
+		return nil
+	}
+	evidence := CaptureRoot(s.Facts.RootEvidence(id, reads), reads, s.Index)
+	parent, _ := s.Store.Parent(id, s.Index)
+	parent = cmp.Or(parent, Root(evidence).Owner)
+	if evidence.Scope.NativeOperand {
+		parent = cmp.Or(parent, s.Entry.Producer)
+	}
+	failure, failed := s.Failed[parent]
+	hidden := parent.ReportHidden()
+	switch {
+	case !failed:
+		return nil
+	case !kind.Discovery && !hidden:
+		// Visible producers own diagnostics for their unmaterialized render-only children.
+		return nil
+	case hidden:
+		// Synthetic entry parents have no emitted declaration to require.
+	case s.Store.EmissionOwner(parent) == (manifest.NamedResource{}):
+		return nil
+	case CaptureRoot(s.Facts.RootEvidence(parent, reads), reads, s.Index).Occurrence.Declaration.File == "":
+		return nil
+	}
+	occurrence := evidence.Occurrence
+	occurrence.Identity = id
+	if occurrence.Object == nil && occurrence.Witness == nil {
+		record, _ := s.Index.Lookup(id)
+		occurrence.Object = record.Declaration
+	}
+	optional := hidden || occurrence.Declaration.File == "" ||
+		failure.Outcome() != store.OutcomeBlocked
+	var references []manifest.Reference
+	occurrence.references(manifest.ReferenceAll, func(ref manifest.Reference) bool {
+		references = append(references, ref)
+		return true
+	})
+	return append(references, manifest.Reference{
+		NamedResource: parent, Use: "materializer", Gate: manifest.GateParents, Optional: optional,
+	})
 }

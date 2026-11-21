@@ -44,7 +44,7 @@ func BenchmarkCollectDeps(b *testing.B) {
 	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
-		c.dependencies(ks, manifest.GateInputs)
+		collectGates(c, ks, manifest.GateInputs)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestCollectDeps_Allocations(t *testing.T) {
 	)
 	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
 	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
-	allocs := testing.AllocsPerRun(100, func() { c.dependencies(ks, manifest.GateInputs) })
+	allocs := testing.AllocsPerRun(100, func() { collectGates(c, ks, manifest.GateInputs) })
 
 	assert.FatalIf(t, allocs > 3, "dependency collection allocated %g times, want at most 3", allocs)
 }
@@ -163,7 +163,7 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	t.Parallel()
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 	c := New(store.New(), nil)
-	deps := gateExecution(c, child.Named()).dependencies(child, manifest.GateInputs)
+	deps := collectGates(gateExecution(c, child.Named()), child, manifest.GateInputs)
 
 	assert.ErrorIf(t, len(deps) != 0, "expected no deps for KS without sourceRef/dependsOn/parent; got %+v", deps)
 }
@@ -659,7 +659,7 @@ func testCollectDepsDeclarationAvailabilityUsesCommonGateCase(
 	}
 	c := New(st, nil)
 	c.Configure(Options{Index: index})
-	deps := gateExecution(c, (*testCaseInput.child).Named()).dependencies((*testCaseInput.child), manifest.GateInputs)
+	deps := collectGates(gateExecution(c, (*testCaseInput.child).Named()), (*testCaseInput.child), manifest.GateInputs)
 
 	assert.FatalIf(
 		t,

@@ -448,7 +448,7 @@ func TestResolve_PrivateEncryptedAuthority(t *testing.T) {
 				Accepted: tc.accepted,
 			}
 			result := Resolve(
-				&ResolveRequest{Reference: manifest.Reference{NamedResource: id, Use: substitutionUse}, Facts: input},
+				&ResolveRequest{Reference: manifest.Reference{NamedResource: id, Use: "substituteFrom"}, Facts: input},
 			)
 			assert.Equal(t, result.Effect(), tc.effect)
 			assert.Equal(t, result.Present(), tc.present)
@@ -529,7 +529,7 @@ func TestResolve_CapturedFailuresAndSettlement(t *testing.T) {
 	t.Run("object derived absence", func(t *testing.T) {
 		t.Parallel()
 		request := ResolveRequest{
-			Reference: manifest.Reference{NamedResource: id, Use: substitutionUse},
+			Reference: manifest.Reference{NamedResource: id, Use: "substituteFrom"},
 			Demand:    ObjectDemand,
 		}
 		result := Resolve(&request)
@@ -560,7 +560,7 @@ func TestResolve_UnreadableKeysUseCapturedData(t *testing.T) {
 		}},
 	}
 	request := ResolveRequest{
-		Reference: manifest.Reference{NamedResource: id, Use: substitutionUse},
+		Reference: manifest.Reference{NamedResource: id, Use: "substituteFrom"},
 		Facts:     store.ReferenceFacts{Data: data, Original: data},
 	}
 	result := Resolve(&request)
@@ -591,7 +591,7 @@ func TestResolve_SuppliedMaterialAndStaticCertainty(t *testing.T) {
 	data := &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "stable"}}
 	result := Resolve(
 		&ResolveRequest{
-			Reference: manifest.Reference{NamedResource: id, Use: substitutionUse},
+			Reference: manifest.Reference{NamedResource: id, Use: "substituteFrom"},
 			Facts: store.ReferenceFacts{
 				Data:      data,
 				Generated: true,

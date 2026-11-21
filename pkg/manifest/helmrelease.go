@@ -389,7 +389,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			Kind:             ref.Kind,
 			Name:             ref.Name,
 			Namespace:        h.Namespace,
-			Use:              "valuesFrom",
+			Use:              valuesFromKey,
 			Position:         i,
 			Optional:         ref.Optional,
 			Content:          true,

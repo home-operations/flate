@@ -88,20 +88,20 @@ func TestSourceInput_Validation(t *testing.T) {
 			t.Parallel()
 			reads := &sourceInputFixture{artifact: tc.artifact}
 			ks := &manifest.Kustomization{Namespace: "apps", Path: tc.path, SourceRef: tc.ref}
-			source, ignore, err := SourceInput(reads, ks)
+			request, err := NewRenderRequest(ks, nil, &RenderRequestOptions{SourceReads: reads})
 			assert.Equal(t, reads.lookup, tc.lookup)
 			if tc.category != nil {
 				assert.FatalIf(t, err == nil, "expected source input error")
 				assert.Equal(t, errors.Is(err, tc.category), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, err.Error(), tc.message)
-				assert.Equal(t, source, (*store.SourceArtifact)(nil))
-				assert.Equal(t, ignore, false)
+				assert.Equal(t, request.Source, (*store.SourceArtifact)(nil))
+				assert.Equal(t, request.ApplyIgnore, false)
 				return
 			}
 			assert.NoError(t, err)
-			assert.Equal(t, source, acquired)
-			assert.Equal(t, ignore, false)
+			assert.Equal(t, request.Source, acquired)
+			assert.Equal(t, request.ApplyIgnore, false)
 		})
 	}
 }

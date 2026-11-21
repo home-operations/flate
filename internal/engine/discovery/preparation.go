@@ -20,7 +20,7 @@ func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	}
 	ready := true
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
-		if ref.Use != "substituteFrom" {
+		if keyed, data := ref.DataInput(); !data || keyed {
 			continue
 		}
 		input := d.cfg.Store.ReferenceFacts(ref.NamedResource, d.loader.Index, ks.Named())
@@ -57,12 +57,12 @@ func (d *Session) retainPackage(pkg *plannedPackage) {
 	if pkg.render.source != input || d.prepared[owner.Named()] != nil {
 		return
 	}
-	request := kustomize.RenderRequest{
-		Source: input, Spec: owner, SubPath: owner.Path,
-		ApplyIgnore:         kustomize.ApplySourceIgnore(owner, input),
-		StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds,
-	}
-	if !pkg.render.preparation.Matches(d.cfg.Trees, &request) {
+	request, err := kustomize.NewRenderRequest(owner, nil, &kustomize.RenderRequestOptions{
+		Source:              input,
+		SkipKinds:           d.cfg.SkipKinds,
+		StrictSubstitutions: d.cfg.StrictSubstitutions,
+	})
+	if err != nil || !pkg.render.preparation.Matches(d.cfg.Trees, &request) {
 		return
 	}
 	frame := &declarationPreparation{

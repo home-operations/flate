@@ -36,6 +36,7 @@ type OccurrenceFacts struct {
 	Witness         any
 	Located         bool
 	CatalogKnown    bool
+	ImplicitGate    *manifest.Reference
 	Refs            []manifest.Reference
 	Reverse         []manifest.NamedResource
 	TemplateInputs  []manifest.TemplateInput
@@ -193,16 +194,19 @@ type RootEvidence struct {
 }
 
 //nolint:gocritic // References MUST use an immutable occurrence snapshot.
-func (o OccurrenceFacts) references(yield func(manifest.Reference) bool) bool {
+func (o OccurrenceFacts) references(view manifest.ReferenceView, yield func(manifest.Reference) bool) bool {
 	if o.Witness == nil && !o.CatalogKnown && o.Refs == nil {
 		active := true
 		if o.Object != nil {
-			manifest.References(o.Object, manifest.ReferenceRelations)(func(ref manifest.Reference) bool {
+			manifest.References(o.Object, view)(func(ref manifest.Reference) bool {
 				active = yield(ref)
 				return active
 			})
 		}
 		return active
+	}
+	if view == manifest.ReferenceAll && o.ImplicitGate != nil && !yield(*o.ImplicitGate) {
+		return false
 	}
 	for i := range o.Refs {
 		ref := o.Refs[i]

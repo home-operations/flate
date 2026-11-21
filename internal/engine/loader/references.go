@@ -38,7 +38,7 @@ func (l *Loader) referenceInputs(id manifest.NamedResource) ([]manifest.Referenc
 		authored := record.Builder == "" && !l.documents.eager
 		projected := current && object != nil && object == occurrence.object && object == record.Declaration
 		if authored || projected {
-			refs := occurrence.facts.refs
+			refs := occurrence.facts.relations()
 			if !current && occurrence.facts.derivedInputs != 0 {
 				refs = refs[:len(refs)-occurrence.facts.derivedInputs]
 			}

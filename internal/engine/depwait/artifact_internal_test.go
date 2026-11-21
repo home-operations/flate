@@ -40,6 +40,7 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 		name                                                    string
 		level                                                   manifest.DrainLevel
 		content, descriptor, registry, promote, skipped, absent bool
+		missingArtifact, artifactOnly                           bool
 		expr                                                    string
 		status                                                  store.Status
 		want                                                    schedule.Kind
@@ -50,8 +51,11 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 		{name: "missing source before cascade", absent: true, want: schedule.Blocked},
 		{name: "missing source at cascade", absent: true, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "dependency not found"},
 		{name: "cascade without content", status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "artifact content unavailable", wantErr: manifest.ErrObjectNotFound},
+		{name: "cascade without artifact", status: store.StatusReady, missingArtifact: true, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "artifact not found", wantErr: manifest.ErrObjectNotFound},
 		{name: "force never readmits missing content", status: store.StatusReady, level: manifest.DrainForce, want: schedule.DependencyFailed, message: "artifact content unavailable", wantErr: manifest.ErrObjectNotFound},
 		{name: "content available", status: store.StatusReady, content: true, want: schedule.Terminal},
+		{name: "artifact only with content", status: store.StatusPending, artifactOnly: true, content: true, want: schedule.Terminal},
+		{name: "artifact only without content", status: store.StatusReady, artifactOnly: true, want: schedule.DependencyFailed, message: "has no readable content", wantErr: manifest.ErrInput},
 		{name: "CEL ready still requires content", status: store.StatusPending, expr: "true", want: schedule.Blocked},
 		{name: "CEL error precedes content", status: store.StatusReady, expr: "!", level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "readyExpr:"},
 		{name: "promoted without content", promote: true, want: schedule.Blocked},
@@ -142,18 +146,20 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 	name string
 
-	level      manifest.DrainLevel
-	content    bool
-	descriptor bool
-	registry   bool
-	promote    bool
-	skipped    bool
-	absent     bool
-	expr       string
-	status     store.Status
-	want       schedule.Kind
-	message    string
-	wantErr    error
+	level           manifest.DrainLevel
+	content         bool
+	descriptor      bool
+	registry        bool
+	promote         bool
+	skipped         bool
+	absent          bool
+	missingArtifact bool
+	artifactOnly    bool
+	expr            string
+	status          store.Status
+	want            schedule.Kind
+	message         string
+	wantErr         error
 },
 ) {
 	t.Helper()
@@ -187,6 +193,9 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 			message = "fetch failed"
 		}
 		s.UpdateStatus(source.Named(), store.StatusInfo{Status: status, Reason: reason, Message: message})
+		if testCaseInput.missingArtifact {
+			return
+		}
 		artifact := &store.SourceArtifact{}
 		if testCaseInput.content {
 			artifact.FS = fstest.MapFS{}
@@ -215,6 +224,7 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 			NamedResource: source.Named(),
 			ReadyExpr:     new(testCaseInput.expr),
 			Artifact:      true,
+			ArtifactOnly:  testCaseInput.artifactOnly,
 		},
 		testCaseInput.level,
 	)

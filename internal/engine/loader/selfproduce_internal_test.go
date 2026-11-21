@@ -664,7 +664,7 @@ func testFinalizeIndexBareDirComponentNamespaceCase(
 	assert.FatalIf(t, !ok,
 		"consumer %s not indexed: records=%+v", consumer, idx.Records)
 
-	assert.Diff(t, record.Refs, []manifest.NamedResource{generated})
+	assert.Diff(t, record.Refs, []manifest.NamedResource{generated, secret})
 	obj, ok := candidateForTest(t, l, consumer).(*manifest.Kustomization)
 	assert.FatalIf(t, !ok, "consumer %s not stored", consumer)
 	refs := 0

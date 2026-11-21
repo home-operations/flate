@@ -634,6 +634,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 		refs,
 		[]manifest.NamedResource{
 			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+			{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"},
 			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
 		},
 	)
@@ -668,7 +669,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 		got := l.Index.Records[id].Refs
 		assert.FatalIf(
 			t,
-			len(got) != 2 || len(refs) != 2 || &got[0] != &refs[0],
+			len(got) != 3 || len(refs) != 3 || &got[0] != &refs[0],
 			"%s",
 			"stable projected identity replaced retained references",
 		)

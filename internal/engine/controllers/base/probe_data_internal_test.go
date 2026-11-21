@@ -440,8 +440,8 @@ func TestAwaitData_FailedAndPendingInputs(t *testing.T) {
 			if tc.level < manifest.DrainForce {
 				pending, ok := errors.AsType[*pendingDataError](err)
 				assert.FatalIf(t, !ok, "expected pending settlement, got %v", err)
-				assert.Diff(t, pending.blocked, []manifest.NamedResource{producer.Named()})
-				assert.Diff(t, pending.failed.Failed, []manifest.NamedResource{missing})
+				assert.Diff(t, pending.assessment.Blocked, []manifest.NamedResource{producer.Named()})
+				assert.Diff(t, pending.assessment.Failed.Failed, []manifest.NamedResource{missing})
 				_, terminal := errors.AsType[*manifest.DependencyFailedError](err)
 				assert.Equal(t, terminal, false)
 			} else {
@@ -718,7 +718,7 @@ func TestAwaitData_SharedPendingProducer(t *testing.T) {
 	e, err := assess(manifest.DrainCascade)
 	pending, ok := errors.AsType[*pendingDataError](err)
 	assert.FatalIf(t, !ok, "expected producer wait, got %T: %v", err, err)
-	assert.Diff(t, pending.blocked, []manifest.NamedResource{producer.Named()})
+	assert.Diff(t, pending.assessment.Blocked, []manifest.NamedResource{producer.Named()})
 	assert.Equal(t, e.Reads.Valid(), true)
 	err = pending.Settle(t.Context(), manifest.DrainForce)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)

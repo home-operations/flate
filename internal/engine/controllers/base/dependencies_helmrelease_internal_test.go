@@ -38,7 +38,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
-		c.dependencies(hr, manifest.GateInputs)
+		collectGates(c, hr, manifest.GateInputs)
 	}
 }
 
@@ -83,8 +83,8 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 			{Name: "third"},
 		},
 	}
-	assert.Equal(t, testing.AllocsPerRun(100, func() { c.dependencies(hr, manifest.GateInputs) }), float64(1))
-	got := c.dependencies(hr, manifest.GateInputs)
+	assert.Equal(t, testing.AllocsPerRun(100, func() { collectGates(c, hr, manifest.GateInputs) }), float64(1))
+	got := collectGates(c, hr, manifest.GateInputs)
 	assert.Diff(
 		t,
 		got,
@@ -103,6 +103,7 @@ func TestDependencies_HelmRelease_ArtifactStages(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name:      "consumer",
 		Namespace: "apps",
+		DependsOn: []helmv2.DependencyReference{{Name: "ordered", ReadyExpr: "dep.spec.suspend == false"}},
 		Chart: manifest.HelmChart{
 			Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: "chart"},
 		},
@@ -123,7 +124,13 @@ func TestDependencies_HelmRelease_ArtifactStages(t *testing.T) {
 				Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart",
 				Artifact: tc.artifact, ChartSource: true,
 			}}
-			got := c.dependencies(hr, tc.stage)
+			if tc.stage == manifest.GateInputs {
+				want = append(want, manifest.DependencyRef{
+					NamedResource: testutil.HelmReleaseID("apps", "ordered"),
+					ReadyExpr:     new("dep.spec.suspend == false"),
+				})
+			}
+			got := collectGates(c, hr, tc.stage)
 			assert.Diff(t, got, want)
 		})
 	}
@@ -156,7 +163,7 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 	next.Children = []store.Child{{Obj: child}}
 	st.RecordEmitted(parent.Named(), &next, nil)
 	run := gateExecution(c, child.Named())
-	deps := run.dependencies(child, manifest.GateInputs)
+	deps := collectGates(run, child, manifest.GateInputs)
 	assert.FatalIf(t, len(deps) != 0, "structural declaration owners leaked into authored dependencies: %v", deps)
 	fresh := run.Reads.GetDeclaration(child.Named())
 	err := run.Require(t.Context(), deps, manifest.DrainNone)
@@ -246,7 +253,7 @@ func testControllerCollectHRDepsOrderingFilterCase(
 			{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")},
 		}
 	}
-	assert.Diff(t, sortedDependencies(c.dependencies(hr, manifest.GateInputs)), sortedDependencies(want))
+	assert.Diff(t, sortedDependencies(collectGates(c, hr, manifest.GateInputs)), sortedDependencies(want))
 	assert.ErrorIf(
 		t,
 		filter.Snapshot() != decision || len(hr.DependsOn) != 1,

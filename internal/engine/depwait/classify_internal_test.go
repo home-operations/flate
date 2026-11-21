@@ -465,7 +465,7 @@ func testClassifyCoreStatesCase3(t *testing.T, testCaseInput testClassifyCoreSta
 		if level == manifest.DrainNone {
 			want = Classification{Kind: schedule.Blocked}
 		} else if (*testCaseInput.allow) && (*testCaseInput.group) == "apiextensions.k8s.io" {
-			want = Classification{Kind: schedule.Terminal}
+			want = Classification{Kind: schedule.Terminal, ToleratedCRD: true}
 		}
 		{
 			got := testCaseInput.w.Classify(t.Context(), dep, level)

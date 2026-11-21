@@ -447,7 +447,7 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	if ks == nil {
 		return d.entryState.changed, nil
 	}
-	sourceID, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
+	sourceID, _ := kustomize.SourceInput(d.cfg.Store, ks)
 	if d.cfg.Trees == nil || sourceID == nil || !d.canPrepare(ks) {
 		return false, nil
 	}
@@ -634,7 +634,7 @@ func (d *Session) entryCandidateReady(
 	if d.cfg.Trees == nil {
 		return len(candidate.DependsOn) == 0
 	}
-	artifact, _, err := kustomize.SourceInput(reads, candidate)
+	artifact, err := kustomize.SourceInput(reads, candidate)
 	if err != nil {
 		return len(candidate.DependsOn) == 0
 	}
@@ -696,7 +696,7 @@ func (d *Session) renderPreparation(
 	provider := values.NewStoreProvider(&frame.support)
 	var inputs []values.Result
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
-		if ref.Use == "substituteFrom" {
+		if keyed, data := ref.DataInput(); data && !keyed {
 			inputs = append(
 				inputs,
 				values.Resolve(
@@ -720,22 +720,16 @@ func (d *Session) renderPreparation(
 			return nil
 		}
 	}
-	prepared, err := kustomize.Prepare(ks, inputs)
+	request, err := kustomize.NewRenderRequest(ks, inputs, &kustomize.RenderRequestOptions{
+		Source:              input,
+		SkipKinds:           d.cfg.SkipKinds,
+		StrictSubstitutions: d.cfg.StrictSubstitutions,
+	})
 	if err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
 		return err
 	}
-	work := d.preparationWork(ks, sourceID)
-	request := kustomize.RenderRequest{
-		Work:                work.RenderWork(),
-		Source:              input,
-		ApplyIgnore:         kustomize.ApplySourceIgnore(prepared, input),
-		SubPath:             prepared.Path,
-		Spec:                prepared,
-		StrictSubstitutions: d.cfg.StrictSubstitutions,
-		SubstitutionActive:  values.ResolvedSubstitutionActive(inputs),
-		SkipKinds:           d.cfg.SkipKinds,
-	}
+	request.Work = d.preparationWork(ks, sourceID).RenderWork()
 	request.Preparation = &frame.preparation
 	docs, receipt, found := d.cfg.Trees.PreviousRender(ctx, request)
 	if !found {
@@ -746,13 +740,13 @@ func (d *Session) renderPreparation(
 			return err
 		}
 	}
-	d.cfg.PrepareDocuments(prepared, docs)
+	d.cfg.PrepareDocuments(request.Spec, docs)
 	shaping := kustomize.PrepareShape(&request, docs)
 	content := shaping.Content()
 	if err := shaping.Apply(
 		ctx,
 		kustomize.ShapeOptions{
-			Strict: d.cfg.StrictSubstitutions,
+			Strict: request.StrictSubstitutions,
 			Work:   request.Work.Substitution(),
 		},
 	); err != nil {
@@ -760,10 +754,10 @@ func (d *Session) renderPreparation(
 		return err
 	}
 	parseChildrenResult2 := loader.ParseChildren(
-		prepared,
+		request.Spec,
 		docs,
 		manifest.ParseDocOptions{},
-		d.cfg.SkipKinds,
+		request.SkipKinds,
 	)
 	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	if err := manifest.DocumentFailure(failures); err != nil {

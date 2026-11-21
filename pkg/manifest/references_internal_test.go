@@ -63,7 +63,10 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 			count, inputs := 0, 0
 			for ref := range References(tc.obj, ReferenceAll) {
 				count++
-				if ref.Use == "substituteFrom" || ref.Use == "valuesFrom" {
+				keyed, data := ref.DataInput()
+				assert.Equal(t, keyed, ref.Use == "valuesFrom")
+				assert.Equal(t, data, ref.Use == "substituteFrom" || ref.Use == "valuesFrom")
+				if data {
 					inputs++
 				}
 			}

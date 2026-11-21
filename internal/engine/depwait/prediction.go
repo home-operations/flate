@@ -4,7 +4,6 @@ import (
 	"context"
 	"iter"
 
-	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -14,26 +13,35 @@ func (w *Waiter) Prediction(
 	ctx context.Context,
 	reads *store.ReadSet,
 	references iter.Seq[manifest.Reference],
+	index *manifest.DiscoveryIndex,
 ) error {
 	assessment := *w
 	assessment.Existence = nil
-	for ref := range references {
-		if ref.Optional {
-			continue
+	for _, stage := range [...]manifest.GateStage{manifest.GateParents, manifest.GateInputs, manifest.GateArtifacts} {
+		if stage == manifest.GateArtifacts {
+			var data DataAssessment
+			for ref := range DataReferences(references) {
+				data.Inputs = append(data.Inputs, DataDependency{
+					Reference: ref, Input: reads.ReferenceFacts(ref.NamedResource, index, w.Parent),
+				})
+			}
+			if err := data.Settle(ctx, &assessment, reads, manifest.DrainForce); err != nil {
+				return err
+			}
+			if len(data.Blocked) != 0 {
+				return &BlockedError{Deps: data.Blocked}
+			}
 		}
-		switch ref.Use {
-		case "materializer":
-			reads.RequireMaterializer(ref.NamedResource)
-		case "substituteFrom", "valuesFrom":
-			input := reads.ReferenceFacts(ref.NamedResource, nil, w.Parent)
-			if w.Missing.Admission(&ref, &input) == selection.RequiredInput {
-				reads.Require(ref.DependencyRef)
+		for _, dep := range assessment.SelectGates(references, stage, 0) {
+			if stage == manifest.GateParents {
+				reads.RequireMaterializer(dep.NamedResource)
+			} else {
+				reads.Require(dep)
 			}
-		default:
-			if ref.Gate != 0 {
-				reads.Require(ref.DependencyRef)
-			}
+		}
+		if err := assessment.Assess(ctx, reads, manifest.DrainForce); err != nil {
+			return err
 		}
 	}
-	return assessment.Assess(ctx, reads, manifest.DrainForce)
+	return nil
 }

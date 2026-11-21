@@ -237,6 +237,7 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 	failed := o.store.FailedResources()
 	res.Manifests, res.emissions = o.collectCompletedManifests()
 	res.catalog = o.loader.DetachCatalog()
+	discovered := o.index
 	o.index = selection.ProjectIndex(o.index, o.selection.Snapshot())
 	o.store.SetDiscoveryIndex(o.index)
 	maps.Copy(res.Failed, failed)
@@ -251,8 +252,10 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 	for id, references := range snapshot.Predictions() {
 		var reads store.ReadSet
 		reads.Init(o.store, id, nil)
-		waiter := depwait.Waiter{Store: &reads, Parent: id, Missing: o.cfg.missing}
-		if err := waiter.Prediction(ctx, &reads, references); err != nil {
+		waiter := depwait.Waiter{
+			Store: &reads, Parent: id, Missing: o.cfg.missing, Decision: snapshot.Decision, Indexed: o.loader,
+		}
+		if err := waiter.Prediction(ctx, &reads, references, discovered); err != nil {
 			res.Failed[id] = store.FailureStatus(err)
 		}
 		reads.Retire()

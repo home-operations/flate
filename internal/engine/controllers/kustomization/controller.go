@@ -115,7 +115,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if _, localErr := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); localErr != nil {
 		return localErr
 	}
-	source, _, err := kustomize.SourceInput(&c.run.Reads, ks)
+	source, err := kustomize.SourceInput(&c.run.Reads, ks)
 	if err != nil {
 		return err
 	}
@@ -142,8 +142,13 @@ func (c *execution) render(
 	inputs []values.Result,
 ) error {
 	id := ks.Named()
-	unreadable := values.UnreadableSubstitutions(ks, inputs)
-	ks, err := kustomize.Prepare(ks, inputs)
+	request, err := kustomize.NewRenderRequest(ks, inputs, &kustomize.RenderRequestOptions{
+		Source:              source,
+		HeldSlot:            c.Tasks,
+		SkipKinds:           c.SkipKinds,
+		StrictSubstitutions: c.strictSubstitutions,
+		TrackUnreadable:     true,
+	})
 	if err != nil {
 		return err
 	}
@@ -160,25 +165,8 @@ func (c *execution) render(
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
-	request := kustomize.RenderRequest{
-		Work:                    c.run.Reads.Work().Scope().RenderWork(),
-		Source:                  source,
-		ApplyIgnore:             kustomize.ApplySourceIgnore(ks, source),
-		SubPath:                 ks.Path,
-		Spec:                    ks,
-		HeldSlot:                c.Tasks,
-		SkipKinds:               c.SkipKinds,
-		StrictSubstitutions:     c.strictSubstitutions,
-		SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
-		UnreadableSubstitutions: unreadable,
-	}
-	request.Preparation = c.run.Prepare(
-		&c.Preparation,
-		c.Discovery.Preparation(ks.Named()),
-		func(p *kustomize.Preparation) bool {
-			return p.Matches(c.Trees, &request)
-		},
-	)
+	request.Work = c.run.Reads.Work().Scope().RenderWork()
+	c.matchPreparation(&request)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {
 		return err
@@ -189,9 +177,9 @@ func (c *execution) render(
 	defer shaping.Retire()
 	content := shaping.Content()
 	acceptance := cache.RenderAcceptance{
-		Work:    c.run.Reads.Work().Scope().RenderWork(),
+		Work:    request.Work,
 		Owner:   id,
-		Source:  source.HistoryIdentity(ks.EffectiveSourceID()),
+		Source:  source.HistoryIdentity(request.Spec.EffectiveSourceID()),
 		Content: content,
 	}
 	fingerprintDedupResult2, fingerprintDedupResult2Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
@@ -206,15 +194,15 @@ func (c *execution) render(
 	if err := shaping.Apply(
 		ctx,
 		kustomize.ShapeOptions{
-			Strict: c.strictSubstitutions,
-			Work:   c.run.Reads.Work().Scope().RenderWork().Substitution(),
+			Strict: request.StrictSubstitutions,
+			Work:   request.Work.Substitution(),
 		},
 	); err != nil {
 		return c.run.RenderFailure(ctx, err, docs, nil)
 	}
 
 	parseChildrenResult3 := c.run.ParseChildren(
-		ks,
+		request.Spec,
 		docs,
 		manifest.ParseDocOptions{},
 	)
@@ -250,46 +238,39 @@ func (c *Controller) PreviousRender(
 	if !ok || ctx.Err() != nil {
 		return base.History{}
 	}
-	var ex execution
+	ex := execution{Controller: c}
 	history, results, err := ex.run.Probe(ctx, c.Controller, obj, previous)
 	if err != nil {
 		return history
 	}
-	reads := &ex.run.Reads
-	unreadable := values.UnreadableSubstitutions(ks, results)
-	prepared, err := kustomize.Prepare(ks, results)
+	request, err := kustomize.NewRenderRequest(ks, results, &kustomize.RenderRequestOptions{
+		SourceReads:         &ex.run.Reads,
+		SkipKinds:           c.SkipKinds,
+		StrictSubstitutions: c.strictSubstitutions,
+		TrackUnreadable:     true,
+	})
 	if err != nil {
 		return history
 	}
-	source, ignore, err := kustomize.SourceInput(reads, prepared)
-	if err != nil {
-		return history
-	}
-	request := kustomize.RenderRequest{
-		Work:                    reads.Work().Scope().RenderWork(),
-		Source:                  source,
-		ApplyIgnore:             ignore,
-		SubPath:                 prepared.Path,
-		Spec:                    prepared,
-		SkipKinds:               c.SkipKinds,
-		StrictSubstitutions:     c.strictSubstitutions,
-		SubstitutionActive:      values.ResolvedSubstitutionActive(results),
-		UnreadableSubstitutions: unreadable,
-	}
-	request.Preparation = ex.run.Prepare(
-		&ex.Preparation,
-		c.Discovery.Preparation(prepared.Named()),
-		func(p *kustomize.Preparation) bool {
-			return p.Matches(c.Trees, &request)
-		},
-	)
+	request.Work = ex.run.Reads.Work().Scope().RenderWork()
+	ex.matchPreparation(&request)
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
 	if !found {
 		return history
 	}
-	base.PrepareDocuments(prepared, docs)
+	base.PrepareDocuments(request.Spec, docs)
 	shaping := kustomize.PrepareShape(&request, docs)
 	content := shaping.Content()
 	history.Records, history.Complete = c.Trees.RenderHistory(ks.Named(), receipt, content)
 	return history
+}
+
+func (c *execution) matchPreparation(request *kustomize.RenderRequest) {
+	request.Preparation = c.run.Prepare(
+		&c.Preparation,
+		c.Discovery.Preparation(request.Spec.Named()),
+		func(p *kustomize.Preparation) bool {
+			return p.Matches(c.Trees, request)
+		},
+	)
 }

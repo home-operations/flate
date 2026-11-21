@@ -45,7 +45,7 @@ func TestResolve_DiagnosticsAcceptedOnce(t *testing.T) {
 	st := store.New()
 	owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	st.AddObject(owner)
-	ref := manifest.Reference{Kind: manifest.KindSecret, Namespace: "apps", Name: "missing", Use: substitutionUse}
+	ref := manifest.Reference{Kind: manifest.KindSecret, Namespace: "apps", Name: "missing", Use: "substituteFrom"}
 	result := Resolve(&ResolveRequest{Reference: ref, Permission: testPermissions{manifest.KindSecret}})
 	assert.Equal(t, result.Effect(), Omitted)
 	var reads store.ReadSet

@@ -67,6 +67,37 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 	}
 }
 
+// ClearToleratedCRDs starts a new pass over the retained gates.
+func (r *ReadSet) ClearToleratedCRDs() {
+	if !r.hasToleratedCRDs {
+		return
+	}
+	r.hasToleratedCRDs = false
+	for input := r.inputs; input != nil; input = input.next {
+		input.toleratedCRD = false
+	}
+}
+
+// RecordToleratedCRD requires a gate already retained for id.
+func (r *ReadSet) RecordToleratedCRD(id manifest.NamedResource) {
+	r.findInput(id).toleratedCRD = true
+	r.hasToleratedCRDs = true
+}
+
+// ToleratedCRDs yields the missing declarations admitted in the latest gate pass.
+func (r *ReadSet) ToleratedCRDs() iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		if !r.hasToleratedCRDs {
+			return
+		}
+		for input := r.inputs; input != nil; input = input.next {
+			if input.toleratedCRD && !yield(input.Ref.NamedResource) {
+				return
+			}
+		}
+	}
+}
+
 // Required enumerates the required inputs of the accepted execution.
 func (r *ReadSet) Required() iter.Seq2[manifest.NamedResource, bool] {
 	return func(yield func(manifest.NamedResource, bool) bool) {

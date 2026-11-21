@@ -45,7 +45,7 @@ func (r *ReadSet) CarryAdvisories(previous *ReadSet) {
 // AdvisoryEvidence returns defensive copies of current valid accepted facts.
 func (s *Store) AdvisoryEvidence() AdvisoryEvidence {
 	var out AdvisoryEvidence
-	for _, reads := range s.assessments() {
+	for _, reads := range s.assessments(nil) {
 		for _, override := range reads.advisories.Overrides {
 			override.Keys = slices.Clone(override.Keys)
 			out.Overrides = append(out.Overrides, override)

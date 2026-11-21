@@ -426,7 +426,7 @@ func (d *Session) preparePendingProducer(
 	if guard != nil {
 		objects = guard
 	}
-	input, _, err := kustomize.SourceInput(objects, ks)
+	input, err := kustomize.SourceInput(objects, ks)
 	if err != nil || !guard.Valid() || d.cfg.Trees == nil || !d.canPrepare(ks) {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}

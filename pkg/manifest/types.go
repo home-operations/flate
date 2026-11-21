@@ -200,9 +200,25 @@ func (r Reference) Clone() Reference {
 	return r
 }
 
+// DataInput reports whether the reference selects a key and whether it consumes data.
+func (r Reference) DataInput() (keyed, ok bool) { //nolint:nonamedreturns // The names distinguish the two boolean results.
+	switch r.Use {
+	case valuesFromKey:
+		return true, true
+	case substituteFromKey:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 // ContentInput reports whether a reference carries affected or required input content.
 func (r Reference) ContentInput() bool {
-	return r.Content || r.Use == substituteFromKey && r.Name != ""
+	if r.Content || r.Name == "" {
+		return r.Content
+	}
+	keyed, data := r.DataInput()
+	return data && !keyed
 }
 
 // IsSource classifies relation use without implying a publication binding.
@@ -222,7 +238,11 @@ func (r Reference) ReadsSourceTree() bool {
 
 // AffectedInput includes source relations even when they carry no content edge.
 func (r Reference) AffectedInput() bool {
-	return r.ContentInput() || r.IsSource() || r.Use == "valuesFrom" || r.Use == "inputsFrom"
+	if r.Content || r.IsSource() || r.Use == "inputsFrom" {
+		return true
+	}
+	keyed, data := r.DataInput()
+	return data && (keyed || r.Name != "")
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.
@@ -412,9 +432,11 @@ func referenceExpression(expr *string) *string {
 func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
 	return func(yield func(NamedResource) bool) {
 		for ref := range References(obj, ReferenceRelations) {
-			include := ref.Content || ref.Use == substituteFromKey && ref.Name != ""
+			var include bool
 			if reverse {
 				include = ref.AffectedInput()
+			} else {
+				include = ref.ContentInput()
 			}
 			if include && !yield(ref.NamedResource) {
 				return

@@ -38,6 +38,7 @@ type ReadSet struct {
 	acceptedRecord     acceptedAssessment
 	acquisition        AcquisitionState
 	hasAcquisition     bool
+	hasToleratedCRDs   bool
 }
 
 // Input co-owns a captured dependency and its authority registrations.
@@ -56,6 +57,7 @@ type Input struct {
 	settled         bool
 	watchProducer   bool
 	gate            bool
+	toleratedCRD    bool
 	materializer    bool
 	declaration     bool
 	required        bool
@@ -129,6 +131,7 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.originHead, r.expected = nil, [2]*acceptedAssessment{}
 	r.acceptedRecord = acceptedAssessment{}
 	r.acquisition, r.hasAcquisition = AcquisitionPending, false
+	r.hasToleratedCRDs = false
 	for i := range inputs {
 		inputs[i].next, r.spare = r.spare, &inputs[i]
 	}
@@ -362,6 +365,12 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 		r.bindAuthority(input, contentFacet, originFacet)
 	}
 	return details.artifact
+}
+
+// ReadableSourceArtifact captures source content. A descriptor can exist without a file system.
+func (r *ReadSet) ReadableSourceArtifact(id manifest.NamedResource) (*SourceArtifact, bool) {
+	artifact, _ := r.GetArtifact(id, ArtifactContent).(*SourceArtifact)
+	return artifact, artifact != nil && artifact.FS != nil
 }
 
 func (r *ReadSet) captureArtifact(input *Input, details *inputDetails) uint64 {

@@ -559,11 +559,6 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 	return failed
 }
 
-func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
-	return e.selection.Snapshot().
-		Ordering(id, e.Reads.GetObject(id) != nil, e.existence != nil && e.existence.IsFileIndexed(id))
-}
-
 // Deduplication omits its fingerprint when no stable content key exists.
 type Deduplication struct {
 	Fingerprint string

@@ -215,12 +215,15 @@ func TestShape_UnknownNamesActivate(t *testing.T) {
 			prepared, err := Prepare(ks, inputs)
 			assert.NoError(t, err)
 			assert.Equal(t, len(prepared.PostBuild.Substitute), 0)
-			assert.Equal(t, values.ResolvedSubstitutionActive(inputs), true)
+			uncertain := values.ResolvedSubstitutionActive(inputs)
+			assert.Equal(t, uncertain, true)
 			docs := []manifest.DocOccurrence{{Document: map[string]any{"value": tc.expression}}}
+			inactive := PrepareShape(&RenderRequest{Spec: prepared}, docs)
 			shape := PrepareShape(
-				&RenderRequest{Spec: prepared, SubstitutionActive: values.ResolvedSubstitutionActive(inputs)},
+				&RenderRequest{Spec: prepared, SubstitutionActive: uncertain},
 				docs,
 			)
+			assert.Equal(t, manifest.Fingerprint(inactive.Content()) == manifest.Fingerprint(shape.Content()), false)
 			err = shape.Apply(t.Context(), ShapeOptions{Strict: tc.strict})
 			assert.Equal(t, err != nil, tc.failed)
 			if err == nil {

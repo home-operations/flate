@@ -125,7 +125,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, inputs []Result, cache *Cac
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
 	}
-	if err := validateResults(hr, inputs, "valuesFrom"); err != nil {
+	if err := validateResults(hr, inputs); err != nil {
 		return err
 	}
 	ex := valueExpansion{inline: hr.Values}
@@ -159,10 +159,11 @@ func ExpandValueReferences(hr *manifest.HelmRelease, inputs []Result, cache *Cac
 	return nil
 }
 
-func validateResults(obj manifest.BaseManifest, inputs []Result, use string) error {
+func validateResults(obj manifest.BaseManifest, inputs []Result) error {
 	position := 0
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use != use || ref.Name == "" {
+		keyed, data := ref.DataInput()
+		if !data || ref.Name == "" {
 			continue
 		}
 		if position == len(inputs) {
@@ -176,8 +177,9 @@ func validateResults(obj manifest.BaseManifest, inputs []Result, use string) err
 		if err := result.Err(); err != nil {
 			return err
 		}
-		matchesReference := result.ref.NamedResource == ref.NamedResource && result.ref.Use == use &&
-			result.ref.Position == ref.Position
+		resultKeyed, resultData := result.ref.DataInput()
+		matchesReference := resultData && resultKeyed == keyed &&
+			result.ref.NamedResource == ref.NamedResource && result.ref.Position == ref.Position
 		if !matchesReference || result.effect != Used && result.effect != Omitted {
 			return manifest.NewError(
 				manifest.ErrInvalidValuesReference,
@@ -267,7 +269,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, inputs []Res
 			"Kustomization with substituteFrom has no namespace",
 		)
 	}
-	if err := validateResults(ks, inputs, substitutionUse); err != nil {
+	if err := validateResults(ks, inputs); err != nil {
 		return err
 	}
 	capacity := len(ks.PostBuild.Substitute)

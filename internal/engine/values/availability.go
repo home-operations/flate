@@ -116,7 +116,7 @@ func (r *Result) resolve(request *ResolveRequest) {
 	}
 	demand := request.Demand
 	if demand == 0 {
-		demand = referenceDemand(ref.Use)
+		demand = referenceDemand(ref)
 	}
 	if private {
 		r.data = nil
@@ -132,12 +132,14 @@ func (r *Result) resolve(request *ResolveRequest) {
 	r.resolveDemand(request, demand, allowed)
 }
 
-func referenceDemand(use string) Demand {
-	switch use {
-	case substitutionUse:
+func referenceDemand(ref *manifest.Reference) Demand {
+	if keyed, data := ref.DataInput(); data {
+		if keyed {
+			return HelmDemand
+		}
 		return SubstitutionDemand
-	case "valuesFrom":
-		return HelmDemand
+	}
+	switch ref.Use {
 	case "secretRef", "certSecretRef", "proxySecretRef":
 		return SourceDemand
 	default:
@@ -465,7 +467,7 @@ func (r *Result) StaticCertain() bool { return r.effect == Used && r.certain }
 
 // UnreadableInput retains required substitution provenance independently of warnings.
 func (r *Result) UnreadableInput() bool {
-	if r.ref.Use != substitutionUse || r.certain {
+	if keyed, data := r.ref.DataInput(); !data || keyed || r.certain {
 		return false
 	}
 	return r.effect == Used || r.effect == Omitted && !r.ref.Optional
@@ -494,7 +496,7 @@ func (r *Result) ReportWarnings(reads *store.ReadSet) {
 	}
 	for i := range r.diagnostics {
 		warning := r.diagnostics[i]
-		if r.ref.Use != substitutionUse {
+		if keyed, data := r.ref.DataInput(); !data || keyed {
 			warning.Resource = reads.ID()
 		}
 		reads.AddWarning(warning)
@@ -512,5 +514,3 @@ func OmittedIDs(inputs []Result) []manifest.NamedResource {
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	return slices.Compact(ids)
 }
-
-const substitutionUse = "substituteFrom"

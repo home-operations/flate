@@ -11,8 +11,21 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// SubstitutionActive requires a non-nil Kustomization with references already expanded.
-func SubstitutionActive(ks *manifest.Kustomization) bool {
+// ProjectionSubstitutionActive requires a prepared Kustomization with known inputs.
+func ProjectionSubstitutionActive(ks *manifest.Kustomization) bool {
+	return preparedSubstitutionActive(ks)
+}
+
+// RenderSubstitutionActive requires ks to contain the expanded, readable bindings.
+func RenderSubstitutionActive(ks *manifest.Kustomization, uncertainUsedInputs bool) bool {
+	return uncertainUsedInputs || preparedSubstitutionActive(ks)
+}
+
+func staticSubstitutionActive(ks *manifest.Kustomization, unknownInputs bool) bool {
+	return preparedSubstitutionActive(ks) || unknownInputs
+}
+
+func preparedSubstitutionActive(ks *manifest.Kustomization) bool {
 	return ks.PostBuild != nil && len(ks.PostBuild.Substitute) != 0 ||
 		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 }
@@ -21,7 +34,7 @@ func SubstitutionActive(ks *manifest.Kustomization) bool {
 func ResolvedSubstitutionActive(inputs []Result) bool {
 	for i := range inputs {
 		result := &inputs[i]
-		if result.ref.Use == substitutionUse && result.effect == Used && !result.certain {
+		if keyed, data := result.ref.DataInput(); data && !keyed && result.effect == Used && !result.certain {
 			return true
 		}
 	}
@@ -33,7 +46,7 @@ func UnreadableSubstitutions(ks *manifest.Kustomization, inputs []Result) map[st
 	var unreadable map[string]manifest.Reference
 	for i := range inputs {
 		result := &inputs[i]
-		if result.effect != Used || result.ref.Use != substitutionUse {
+		if keyed, data := result.ref.DataInput(); result.effect != Used || !data || keyed {
 			continue
 		}
 		for name := range result.variables {
@@ -61,8 +74,7 @@ func UnreadableValueReferences(inputs []Result) []manifest.Reference {
 	var references []manifest.Reference
 	for i := range inputs {
 		result := &inputs[i]
-		omitted := result.ref.Use == "valuesFrom" && result.effect == Omitted
-		if !omitted || !result.present {
+		if keyed, _ := result.ref.DataInput(); !keyed || result.effect != Omitted || !result.present {
 			continue
 		}
 		unreadable := !result.materialized && (result.knownKey || !result.complete)

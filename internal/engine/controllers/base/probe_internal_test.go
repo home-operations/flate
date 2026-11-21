@@ -104,7 +104,7 @@ func TestExecution_ProbeProviderLifetime(t *testing.T) {
 		assert.FatalIf(t, !ok, "waiting error was reclassified: %T", err)
 		assert.Equal[error](t, err, pending)
 		assert.Equal(t, pending.execution, &run)
-		assert.Equal(t, len(pending.wait.Inputs), 1)
+		assert.Equal(t, len(pending.assessment.Inputs), 1)
 		assert.Equal(t, history.Assessment, &run)
 		assert.Equal(t, len(results), 0)
 		assert.Equal(t, run.Reads.Valid(), true)

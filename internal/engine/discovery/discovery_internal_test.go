@@ -692,7 +692,7 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 	}
 	if (*tailCaseInput.cacheDir) != "" {
 		owner := (*tailCaseInput.st).GetObject(result.Binding.Producer).(*manifest.Kustomization)
-		source, _, err := kustomize.SourceInput((*tailCaseInput.st), owner)
+		source, err := kustomize.SourceInput((*tailCaseInput.st), owner)
 		assert.NoError(t, err)
 		req := preparedRequest(t, &cfg, owner, source)
 		want := map[manifest.NamedResource]manifest.DiscoveryRecord{

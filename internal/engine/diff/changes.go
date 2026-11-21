@@ -12,12 +12,10 @@ type ChangeStatus string
 // StatusRemoved identifies a resource present only in the original snapshot.
 const StatusRemoved ChangeStatus = "removed"
 
-// Change retains producer identity so equal resource names from different owners remain distinct.
+// Change describes one resource comparison.
 type Change struct {
-	// Parent is the Flux Kustomization / HelmRelease that rendered this
-	// resource — the pairing discriminator (so a Deployment from HR A is
-	// never matched against the same-named Deployment from HR B).
-	Parent Parent `json:"parent"`
+	Parent         Parent          `json:"parent"`
+	ProducerChange *producerChange `json:"producerChange,omitempty"`
 	// APIVersion is the authored current version, or the original version for removals.
 	APIVersion string       `json:"apiVersion"`
 	Kind       string       `json:"kind"`
@@ -35,6 +33,18 @@ type Change struct {
 	// no longer carry.
 	OldChart string `json:"oldChart"`
 	NewChart string `json:"newChart"`
+}
+
+type producerChange struct {
+	From *Parent `json:"from"`
+	To   *Parent `json:"to"`
+}
+
+func producerEndpoint(endpoint *manifest.DiagnosticIdentity) *Parent {
+	if endpoint.ID == (manifest.NamedResource{}) {
+		return nil
+	}
+	return &Parent{NamedResource: endpoint.Resource, Path: endpoint.Path}
 }
 
 func renderJSON(
@@ -69,8 +79,15 @@ func renderJSON(
 func publicChanges(prepared prepared) []Change {
 	out := make([]Change, 0, len(prepared.Pairs))
 	for c, status := range prepared.changes() {
+		var move *producerChange
+		if c.ProducerChange != nil {
+			move = &producerChange{
+				From: producerEndpoint(&c.ProducerChange.From),
+				To:   producerEndpoint(&c.ProducerChange.To),
+			}
+		}
 		out = append(out, Change{
-			Parent: c.Parent, APIVersion: c.APIVersion,
+			Parent: c.Parent, ProducerChange: move, APIVersion: c.APIVersion,
 			Kind: c.Resource.Kind, Namespace: c.Resource.Namespace, Name: c.Resource.Name,
 			Status: ChangeStatus(status), Old: c.Old, New: c.New,
 			OldChart: c.OldChart, NewChart: c.NewChart,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -191,7 +192,7 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 	assert.Diff(t, res.Manifests[0].Documents, docs)
 	assert.Diff(
 		t,
-		res.ProducerKeys,
+		maps.Collect(res.Bindings.All()),
 		map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()},
 	)
 }
@@ -330,9 +331,9 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 	snapshots := [2]diff.Snapshot{}
 	for i, side := range selected {
 		snapshots[i] = diff.Snapshot{
-			Manifests:    side.Manifests,
-			Unavailable:  side.Unavailable,
-			ProducerKeys: side.ProducerKeys,
+			Manifests:   side.Manifests,
+			Unavailable: side.Unavailable,
+			Bindings:    side.Bindings,
 		}
 	}
 	comparison1, preparationErr1 := diff.Compare(
@@ -575,7 +576,11 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 		assert.Equal(t, len(selected[i].Counts), 0)
 		id := runs[i].entryBinding.Producer
 		assert.Equal(t, selected[i].Manifests[0].Parent.Named(), id)
-		assert.Diff(t, selected[i].ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{id: id})
+		assert.Diff(
+			t,
+			maps.Collect(selected[i].Bindings.All()),
+			map[manifest.NamedResource]manifest.NamedResource{id: id},
+		)
 		assert.Diff(t, selected[i].Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
 			id: {ID: id, Resource: testutil.KustomizationID("apps", name), Path: "."},
 		})
@@ -655,16 +660,16 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 		"entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
 
 	left := diff.Snapshot{
-		Subjects:     selected[0].Subjects,
-		Manifests:    selected[0].Manifests,
-		Unavailable:  selected[0].Unavailable,
-		ProducerKeys: selected[0].ProducerKeys,
+		Subjects:    selected[0].Subjects,
+		Manifests:   selected[0].Manifests,
+		Unavailable: selected[0].Unavailable,
+		Bindings:    selected[0].Bindings,
 	}
 	right := diff.Snapshot{
-		Subjects:     selected[1].Subjects,
-		Manifests:    selected[1].Manifests,
-		Unavailable:  selected[1].Unavailable,
-		ProducerKeys: selected[1].ProducerKeys,
+		Subjects:    selected[1].Subjects,
+		Manifests:   selected[1].Manifests,
+		Unavailable: selected[1].Unavailable,
+		Bindings:    selected[1].Bindings,
 	}
 	comparison2, preparationErr2 := diff.Compare(
 		[]diff.Group{{Orig: left, Current: right, SelectedErr: nil}},

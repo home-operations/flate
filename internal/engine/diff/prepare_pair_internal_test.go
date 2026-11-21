@@ -136,14 +136,11 @@ func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
 	t.Parallel()
 	old := Parent{NamedResource: testutil.KustomizationID("apps", "old"), Path: "entry"}
 	current := Parent{NamedResource: testutil.KustomizationID("apps", "current"), Path: "entry"}
-	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}
 	result := prepare(
 		[]Doc{preparedCMDoc(&old, id, "before", "")},
 		[]Doc{preparedCMDoc(&current, id, "after", "")},
-		&Options{producerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
-			{old.NamedResource: key}, {current.NamedResource: key},
-		}},
+		&Options{},
 	)
 	assert.Equal(t, len(result.Pairs), 1)
 	assert.Equal(t, len(result.Warnings), 0)
@@ -152,21 +149,8 @@ func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
 	assert.Equal(t, entry.status(), "changed")
 	assert.Equal(t, entry.Old["data"].(map[string]any)["k"], any("before"))
 	assert.Equal(t, entry.New["data"].(map[string]any)["k"], any("after"))
-	t.Run("generated", func(t *testing.T) {
-		t.Parallel()
-		before := withGeneratorHash(t, new(preparedCMDoc(&old, id, "before", "")))
-		after := withGeneratorHash(t, new(preparedCMDoc(&current, id, "after", "")))
-		result := prepare(
-			[]Doc{before},
-			[]Doc{after},
-			&Options{producerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
-				{old.NamedResource: key}, {current.NamedResource: key},
-			}},
-		)
-		assert.Equal(t, len(result.Pairs), 1)
-		assert.Equal(t, result.Pairs[0].Parent, current)
-		assert.Equal(t, result.Pairs[0].Resource, manifest.DocIdentity(after.Manifest))
-	})
+	assert.Equal(t, entry.ProducerChange.From.ID, old.NamedResource)
+	assert.Equal(t, entry.ProducerChange.To.ID, current.NamedResource)
 }
 
 func withGeneratorHash(t *testing.T, docValue *Doc) Doc {
@@ -404,19 +388,25 @@ func (generatorEncodingError) MarshalYAML() (any, error) {
 	return nil, errors.New("cannot encode synthetic test value")
 }
 
-func TestPair_CanonicalParentOrder(t *testing.T) {
+func TestPair_ReportingParentOrder(t *testing.T) {
 	t.Parallel()
-	parent := Parent{NamedResource: testutil.KustomizationID("apps", "render")}
-	id := manifest.NamedResource{Name: "same"}
-	old, current := preparedCMDoc(&parent, id, "before", ""), preparedCMDoc(&parent, id, "after", "")
-	opts := Options{producerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
-		{parent.NamedResource: testutil.KustomizationID("apps", "z")},
-		{parent.NamedResource: testutil.KustomizationID("apps", "a")},
-	}}
-	first := prepare([]Doc{old}, []Doc{current}, &opts)
-	second := prepare([]Doc{old}, []Doc{current}, &opts)
-	assert.Equal(t, len(first.Pairs), 2)
+	a := Parent{NamedResource: testutil.KustomizationID("apps", "a")}
+	z := Parent{NamedResource: testutil.KustomizationID("apps", "z")}
+	moved := manifest.NamedResource{Name: "same"}
+	left := []Doc{
+		preparedCMDoc(&a, moved, "before", ""),
+		preparedCMDoc(&z, manifest.NamedResource{Name: "removed"}, "old", ""),
+	}
+	right := []Doc{
+		preparedCMDoc(&a, manifest.NamedResource{Name: "added"}, "new", ""),
+		preparedCMDoc(&z, moved, "after", ""),
+	}
+	first := prepare(left, right, &Options{})
+	second := prepare(left, right, &Options{})
+	assert.Equal(t, len(first.Pairs), 3)
 	assert.Equal(t, first.Pairs[0].status(), "added")
 	assert.Equal(t, first.Pairs[1].status(), "removed")
+	assert.Equal(t, first.Pairs[2].status(), "changed")
+	assert.Equal(t, first.Pairs[2].Parent, z)
 	assert.Diff(t, second.Pairs, first.Pairs)
 }

@@ -151,6 +151,50 @@ func TestRun_LazySelectionLifetime(t *testing.T) {
 	}
 }
 
+func TestRun_PairedSelectionMatchesHeadOnly(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.Abs("../../testdata/producer-moves/pr91")
+	assert.NoError(t, err)
+	head := manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
+	base := manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}
+	roots := []manifest.NamedResource{
+		testutil.KustomizationID("", ""),
+		testutil.HelmReleaseID("", ""),
+	}
+	cfg := Config{Concurrency: 2, CacheDir: t.TempDir(), Selection: SelectionRequest{Roots: roots}}
+	single, err := RenderTrees(t.Context(), []Tree{{ID: head, RepoRoot: root}}, cfg)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, single.Close()) })
+	pair, err := RenderTrees(t.Context(), []Tree{{ID: base, RepoRoot: root}, {ID: head, RepoRoot: root}}, cfg)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, pair.Close()) })
+
+	want, projection := single.Select([]manifest.TreeID{head}, roots, nil)
+	assert.NoError(t, projection.Selected)
+	assert.NoError(t, projection.Remaining)
+	got, projection := pair.Select([]manifest.TreeID{base, head}, roots, nil)
+	assert.NoError(t, projection.Selected)
+	assert.NoError(t, projection.Remaining)
+	assert.Equal(t, len(want), 1)
+	assert.Equal(t, len(got), 2)
+	assert.FatalIf(t, len(want[0].Manifests) == 0, "expected rendered documents from the fixture")
+	for _, side := range got {
+		batches := want[0].Manifests
+		assert.FatalIf(
+			t,
+			len(side.Manifests) != len(batches),
+			"got %d batches, want %d",
+			len(side.Manifests),
+			len(batches),
+		)
+		for i, batch := range side.Manifests {
+			assert.Equal(t, batch.Parent.Named(), batches[i].Parent.Named())
+			assert.Diff(t, batch.Identities, batches[i].Identities)
+			assert.Diff(t, batch.Documents, batches[i].Documents)
+		}
+	}
+}
+
 func TestRun_StatusSnapshots(t *testing.T) {
 	t.Parallel()
 	st := store.New()

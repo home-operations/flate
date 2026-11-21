@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -224,8 +225,16 @@ func TestCompare_GeneratorProducerKeys(t *testing.T) {
 			t.Parallel()
 			left := selectedSnapshot(&oldParent, []Doc{old}, store.StatusInfo{})
 			right := selectedSnapshot(&currentParent, []Doc{current}, store.StatusInfo{})
-			left.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{oldParent.NamedResource: key}
-			right.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{currentParent.NamedResource: key}
+			left.Bindings = store.Bindings(
+				&manifest.DiscoveryIndex{
+					ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{oldParent.NamedResource: key},
+				},
+			)
+			right.Bindings = store.Bindings(
+				&manifest.DiscoveryIndex{
+					ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{currentParent.NamedResource: key},
+				},
+			)
 			if opposite {
 				stillOwned := current
 				stillOwned.Parent = oldParent
@@ -236,24 +245,73 @@ func TestCompare_GeneratorProducerKeys(t *testing.T) {
 			comparison, err := Compare([]Group{{Orig: left, Current: right}}, Options{Format: FormatJSON})
 			assert.NoError(t, err)
 			changes := comparison.output[0].changes
-			want := 1
 			if opposite {
-				want = 2
+				assert.Equal(t, len(changes), 1)
+				assert.Equal(t, changes[0].Status, ChangeStatus("changed"))
+				assert.Equal(t, changes[0].Parent, oldParent)
+				assert.Equal(t, changes[0].Name, manifest.DocIdentity(current.Manifest).Name)
+				assert.Equal(t, changes[0].ProducerChange, (*producerChange)(nil))
+				return
 			}
-			assert.Equal(t, len(changes), want)
+			assert.Equal(t, len(changes), 2)
+			assert.Equal(t, changes[0].Status, ChangeStatus("added"))
+			assert.Equal(t, changes[0].Parent, currentParent)
+			assert.Equal(t, changes[0].Name, manifest.DocIdentity(current.Manifest).Name)
+			assert.Equal(t, changes[1].Status, StatusRemoved)
+			assert.Equal(t, changes[1].Parent, oldParent)
+			assert.Equal(t, changes[1].Name, manifest.DocIdentity(old.Manifest).Name)
 			for _, change := range changes {
-				if change.Status != ChangeStatus("changed") {
-					assert.Equal(t, opposite, true)
-					assert.Equal(t, change.Status, ChangeStatus("added"))
-					continue
-				}
-				parent := currentParent
-				if opposite {
-					parent = oldParent
-				}
-				assert.Equal(t, change.Parent, parent)
-				assert.Equal(t, change.Name, manifest.DocIdentity(current.Manifest).Name)
+				assert.Equal(t, change.ProducerChange, (*producerChange)(nil))
 			}
+		})
+	}
+}
+
+func TestCompare_ProducerAfterSuppression(t *testing.T) {
+	t.Parallel()
+	missing := Parent{NamedResource: testutil.KustomizationID("apps", "unavailable")}
+	reporting := Parent{NamedResource: testutil.KustomizationID("apps", "reporting")}
+	emitter := manifest.NamedResource{
+		Group: "resourceset.fluxcd.controlplane.io", Kind: "ResourceSet", Namespace: "apps", Name: "actual",
+	}
+	doc := ncm("moved", "key", "same")
+	left := selectedSnapshot(&missing, []Doc{ncm("withheld", "key", "value")}, store.StatusInfo{})
+	left.Manifests = append(left.Manifests, selectedSnapshot(&reporting, []Doc{doc}, store.StatusInfo{}).Manifests...)
+	left.Producers = map[int]map[int]manifest.DiagnosticIdentity{1: {0: manifest.DiagnosticFor(emitter, nil)}}
+	right := selectedSnapshot(&missing, nil, store.StatusInfo{Status: store.StatusFailed, Message: "unavailable"})
+	right.Manifests = append(right.Manifests, testutil.DocumentBatch(nil, []map[string]any{doc.Manifest}))
+
+	for _, tc := range []struct {
+		name, text, nullField string
+		orig, current         Snapshot
+	}{
+		{"to ownerless", "ResourceSet apps/actual -> (none)", "to", left, right},
+		{"from ownerless", "(none) -> ResourceSet apps/actual", "from", right, left},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			groups := []Group{{Orig: tc.orig, Current: tc.current}}
+			text, err := Compare(groups, Options{Format: FormatDiff})
+			assert.NoError(t, err)
+			assert.Equal(t, len(text.Groups[0].Suppressed), 1)
+			assert.Equal(t, text.Groups[0].Suppressed[0].Count, 1)
+			var out bytes.Buffer
+			assert.NoError(t, text.Write(&out, nil))
+			assert.Equal(t, out.String(), "ConfigMap apps/moved producer: "+tc.text+"\n")
+
+			structured, err := Compare(groups, Options{Format: FormatJSON})
+			assert.NoError(t, err)
+			changes := structured.output[0].changes
+			assert.Equal(t, len(changes), 1)
+			assert.Equal(t, changes[0].Status, ChangeStatus("changed"))
+			want := &producerChange{From: &Parent{NamedResource: emitter}}
+			if tc.nullField == "from" {
+				want.From, want.To = want.To, want.From
+			}
+			assert.Diff(t, changes[0].ProducerChange, want)
+			out.Reset()
+			assert.NoError(t, structured.Write(&out, nil))
+			assert.Equal(t, strings.Count(out.String(), `"`+tc.nullField+`": null`), 1)
 		})
 	}
 }

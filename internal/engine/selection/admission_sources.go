@@ -16,26 +16,19 @@ func (c *admissionClosure) comparisonInputs(
 	input manifest.NamedResource,
 ) iter.Seq2[manifest.NamedResource, change.InputChange] {
 	return func(yield func(manifest.NamedResource, change.InputChange) bool) {
-		index := c.facts.SelectionIndex()
-		if index == nil || len(index.ProducerKeys) == 0 {
+		if delta == nil {
+			return
+		}
+		bindings := store.Bindings(c.facts.SelectionIndex())
+		if bindings.Empty() {
 			delta.Inputs(input)(yield)
 			return
 		}
-		query := input
-		if key, mapped := index.ProducerKeys[input]; mapped {
-			query = key
-		}
-		for id, changed := range delta.Inputs(query) {
-			for actual, key := range index.ProducerKeys {
-				if key == id {
-					id = actual
-					break
-				}
-			}
-			if !yield(id, changed) {
-				return
-			}
-		}
+		query, _ := bindings.Slot(input)
+		delta.Inputs(query)(func(id manifest.NamedResource, changed change.InputChange) bool {
+			id, _ = bindings.Producer(id)
+			return yield(id, changed)
+		})
 	}
 }
 

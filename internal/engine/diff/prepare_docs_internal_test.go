@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -29,7 +30,7 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 			[]map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}},
 		),
 	}
-	docs := documents(manifests)
+	docs := documents(Snapshot{Manifests: manifests})
 	assert.FatalIf(t, len(docs) != 6, "want 6 docs, got %d", len(docs))
 	if docs[0].Parent.NamedResource != a.Named() || docs[0].Parent.Path != "./apps/a" {
 		t.Errorf("doc[0] parent = %+v; want a / ./apps/a", docs[0].Parent)
@@ -50,7 +51,36 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 		t.Fatalf("ownerless identity or attribution lost: %+v", docs[5])
 	}
 	{
-		got := documents(manifests)
+		got := documents(Snapshot{Manifests: manifests})
 		assert.ErrorIf(t, !reflect.DeepEqual(docs, got), "%v", "documents must preserve the completed selection order")
 	}
+}
+
+func TestDocuments_ProducerAfterSuppressedBatch(t *testing.T) {
+	t.Parallel()
+	failed := &manifest.Kustomization{Name: "failed", Namespace: "apps"}
+	parent := &manifest.Kustomization{Name: "reporting", Namespace: "apps", Path: "./apps"}
+	emitter := &manifest.ResourceSet{Name: "driver", Namespace: "apps"}
+	producer := manifest.DiagnosticFor(emitter.Named(), emitter)
+	orig := Snapshot{
+		Manifests: []manifest.DocumentBatch{
+			{Parent: failed, Documents: []map[string]any{{"kind": "ConfigMap"}}},
+			{Parent: parent, Documents: []map[string]any{
+				{"kind": "ConfigMap", "metadata": map[string]any{"name": "first"}},
+				{"kind": "ConfigMap", "metadata": map[string]any{"name": "second"}},
+			}},
+		},
+		Producers: map[int]map[int]manifest.DiagnosticIdentity{1: {1: producer}},
+	}
+	current := Snapshot{Unavailable: map[manifest.NamedResource]store.StatusInfo{
+		failed.Named(): {Status: store.StatusFailed, Message: "current render failed"},
+	}}
+	retained := suppress(orig, current)
+	assert.Equal(t, len(retained.Suppressed), 1)
+	docs := documents(retained.Orig)
+	assert.FatalIf(t, len(docs) != 2, "got %d documents, want 2", len(docs))
+	assert.Diff(t, docs[0].Producer, manifest.DiagnosticFor(parent.Named(), parent))
+	assert.Diff(t, docs[1].Producer, producer)
+	assert.Diff(t, docs[1].Parent, Parent{NamedResource: parent.Named(), Path: "apps"})
+	assert.Diff(t, orig.Producers, map[int]map[int]manifest.DiagnosticIdentity{1: {1: producer}})
 }

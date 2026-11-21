@@ -2,7 +2,6 @@ package selection
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -79,32 +78,17 @@ func collectProjectionSides(
 	kinds map[manifest.NamedResource]bool,
 	complete bool,
 ) ([]*Result, error) {
-	var inputErr error
-	for i := range sides {
-		if !complete || sides[i].run.Absent {
-			continue
-		}
-		for j, batch := range sides[i].run.Manifests {
-			if _, err := batch.IdentityAccessor(); err != nil {
-				inputErr = errors.Join(inputErr, fmt.Errorf("run %d batch %d: %w", i, j, err))
-			}
-		}
-	}
-	if inputErr != nil {
-		return nil, inputErr
+	if err := validateProjectionBatches(sides, complete); err != nil {
+		return nil, err
 	}
 	selected := make([]*Result, len(sides))
-	roots, labels := request.Roots, request.Labels
+	var collections [comparisonSides]selectionCollection
+	prepareCollections(sides, request, complete, &collections)
+	roots := request.Roots
 	for i := range sides {
 		run := &sides[i].run
-		var other *selectionSide
-		if len(sides) == comparisonSides {
-			other = &sides[1-i]
-		}
-		if !complete || run.Absent {
-			sides[i].result = &Result{}
-		} else if err := sides[i].collect(roots, labels, other); err != nil {
-			return nil, err
+		if complete && !run.Absent {
+			collections[i].collectBatches()
 		}
 		sides[i].collectWarnings(roots[0], kinds, len(sides) == comparisonSides)
 		if run.Store != nil {
@@ -179,280 +163,6 @@ func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]b
 		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}
 	return kinds, nil
-}
-
-func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, other *selectionSide) error {
-	s.result = &Result{Counts: make(map[string]int, len(roots))}
-	if s.run.Index != nil {
-		s.result.ProducerKeys = s.run.Index.ProducerKeys
-	}
-	c := selectionCollection{
-		side:   s,
-		intent: Request{Roots: roots},
-		labels: labels,
-		other:  other,
-		scope:  s.run.entryScope(),
-	}
-	c.collectObjects()
-	return c.collectBatches()
-}
-
-type selectionCollection struct {
-	side     *selectionSide
-	intent   Request
-	labels   map[string]string
-	other    *selectionSide
-	emitters []manifest.BaseManifest
-	scope    map[manifest.NamedResource]bool
-}
-
-func (c *selectionCollection) collectObjects() {
-	for _, root := range c.intent.Roots {
-		for _, obj := range c.rootObjects(root) {
-			c.collectObject(root, obj)
-		}
-	}
-}
-
-func (c *selectionCollection) rootObjects(root manifest.NamedResource) []manifest.BaseManifest {
-	s := c.side
-	objects := s.run.Store.ListObjects(root.Group, root.Kind)
-	stored := len(objects)
-	for id, record := range s.run.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if id.Group == root.Group && id.Kind == root.Kind {
-			if obj := s.unchangedDeclaration(id, &record); obj != nil {
-				objects = append(objects, obj)
-			}
-		}
-	}
-	if len(objects) != stored {
-		slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	}
-	return objects
-}
-
-func (c *selectionCollection) collectObject(root manifest.NamedResource, obj manifest.BaseManifest) {
-	s := c.side
-	id := obj.Named()
-	if c.scope != nil && !c.scope[id] || !s.run.Store.Policy(id).Report && !id.ReportHidden() {
-		return
-	}
-	if c.other != nil {
-		s.prepareExternal(root, obj)
-	}
-	if id.ReportHidden() && manifest.KindOf(obj).Render {
-		if root.Name == "" {
-			s.roots = append(s.roots, id)
-			c.emitters = append(c.emitters, obj)
-		}
-		return
-	}
-	if !c.intent.Matches(id) || !s.includes(id.Namespace) {
-		if root.Name == "" && s.run.Decision.restricted() && s.run.Decision.Reconcile(id) {
-			c.emitters = append(c.emitters, obj)
-		}
-		return
-	}
-	if !s.selectedObject(obj, c.counterpart()) {
-		return
-	}
-	s.result.Counts[root.Kind]++
-	s.roots = append(s.roots, id)
-	if !matchesLabels(obj, c.labels) {
-		return
-	}
-	s.result.Objects = append(s.result.Objects, obj)
-	if version := s.chartVersion(obj); version != "" {
-		if s.result.ChartVersions == nil {
-			s.result.ChartVersions = make(map[manifest.NamedResource]string)
-		}
-		s.result.ChartVersions[id] = version
-	}
-}
-
-func (c *selectionCollection) counterpart() *Snapshot {
-	if c.other == nil {
-		return nil
-	}
-	return &c.other.run
-}
-
-func (s *selectionSide) selectedObject(obj manifest.BaseManifest, other *Snapshot) bool {
-	id := obj.Named()
-	if !s.run.Decision.restricted() || manifest.KindOf(obj).Discovery {
-		return true
-	}
-	if s.run.outputsProducer(id, other) || s.run.Store.GetObject(id) == nil {
-		return true
-	}
-	parent, owned := s.run.Store.Parent(id, s.run.Index)
-	parentSelected := s.run.Decision.Output(parent)
-	return owned && parentSelected
-}
-
-func (c *selectionCollection) collectBatches() error {
-	s := c.side
-	scoped := s.namespaces != nil
-	if c.other != nil && !c.other.run.Absent {
-		scoped = scoped && c.other.namespaces != nil
-	}
-	positions := make(map[manifest.NamedResource]int, len(s.run.Manifests))
-	for i, batch := range s.run.Manifests {
-		if batch.Parent != nil {
-			positions[batch.Parent.Named()] = i
-		}
-	}
-	if len(s.run.Manifests) != 0 {
-		s.result.Manifests = make([]manifest.DocumentBatch, 0, len(s.result.Objects)+1)
-	}
-	var selectedOwners batchOwners
-	for _, objects := range [2][]manifest.BaseManifest{s.result.Objects, c.emitters} {
-		for _, obj := range objects {
-			i, ok := positions[obj.Named()]
-			if !ok {
-				continue
-			}
-			batch := batchSelection{
-				collection: c, object: obj, batch: s.run.Manifests[i], owners: s.run.owners[obj.Named()],
-			}
-			if err := batch.selectDocuments(scoped); err != nil {
-				return err
-			}
-			if len(batch.batch.Documents) != 0 {
-				s.result.Manifests = append(s.result.Manifests, batch.batch)
-				selectedOwners.set(obj.Named(), batch.owners)
-			}
-		}
-	}
-	s.result.Manifests = collapseOverlaps(s.result.Manifests, selectedOwners)
-	return nil
-}
-
-type batchSelection struct {
-	collection       *selectionCollection
-	object           manifest.BaseManifest
-	batch            manifest.DocumentBatch
-	owners           documentOwners
-	counterpart      *manifest.DocumentBatch
-	counterpartKnown bool
-}
-
-func (b *batchSelection) selectedOutput(id manifest.NamedResource) (bool, error) {
-	s, other := b.collection.side, b.collection.other
-	selected := s.run.Decision.Output(id)
-	if selected || other == nil || other.run.Absent {
-		return selected, nil
-	}
-	if selected := other.run.Decision.Output(id); !selected {
-		return false, nil
-	}
-	if !b.counterpartKnown {
-		for i := range other.run.Manifests {
-			batch := &other.run.Manifests[i]
-			if batch.Parent != nil && batch.Parent.Named() == b.object.Named() {
-				b.counterpart = batch
-				break
-			}
-		}
-		b.counterpartKnown = true
-	}
-	if b.counterpart == nil {
-		return false, nil
-	}
-	identity, err := b.counterpart.IdentityAccessor()
-	if err != nil {
-		return false, err
-	}
-	for i := range b.counterpart.Documents {
-		if identity(i) == id {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (b *batchSelection) selectDocuments(scoped bool) error {
-	identity, err := b.batch.IdentityAccessor()
-	if err != nil {
-		return err
-	}
-	var policy manifest.EmissionPolicy
-	if manifest.KindOf(b.object).Parent {
-		policy = b.object.EmissionPolicy()
-	}
-	if policy.DocumentScope {
-		return b.selectScopedDocuments(scoped, identity)
-	}
-	s := b.collection.side
-	if !s.run.Decision.restricted() || s.run.outputsProducer(b.object.Named(), b.collection.counterpart()) {
-		return nil
-	}
-	documents, owners := b.batch.Documents, b.owners
-	b.batch.Documents, b.batch.Identities, b.owners = nil, nil, nil
-	for i, doc := range documents {
-		id := identity(i)
-		selected, selectionErr := b.selectedOutput(id)
-		if selectionErr != nil {
-			return selectionErr
-		}
-		if selected {
-			owner := owners[i]
-			b.keepDocument(doc, id, &owner)
-		}
-	}
-	return nil
-}
-
-func (b *batchSelection) selectScopedDocuments(scoped bool, identity func(int) manifest.NamedResource) error {
-	s, other := b.collection.side, b.collection.other
-	compared := other == nil || other.run.Absent ||
-		other.run.Decision.Reconcile(other.actualProducer(s.comparisonKey(b.object.Named())))
-	documents, owners := b.batch.Documents, b.owners
-	b.batch.Documents, b.batch.Identities, b.owners = nil, nil, nil
-	for i, doc := range documents {
-		id := identity(i)
-		included, err := b.scopeIncludes(id)
-		if err != nil {
-			return err
-		}
-		if !included {
-			continue
-		}
-		if s.run.Decision.restricted() && !scoped {
-			selected, err := b.declarationSelected(id, compared)
-			if err != nil {
-				return err
-			}
-			if !selected {
-				continue
-			}
-		}
-		selected := selectOutput(doc, b.collection.intent.Roots, s.namespaces, b.collection.labels)
-		if !selected && other != nil && !other.run.Absent {
-			selected = selectOutput(doc, b.collection.intent.Roots, other.namespaces, b.collection.labels)
-		}
-		if selected {
-			owner := owners[i]
-			b.keepDocument(doc, id, &owner)
-		}
-	}
-	return nil
-}
-
-func (b *batchSelection) keepDocument(doc map[string]any, id manifest.NamedResource, owner *documentOwner) {
-	b.owners.record(len(b.batch.Documents), owner)
-	b.batch.Documents = append(b.batch.Documents, doc)
-	b.batch.Identities = append(b.batch.Identities, id)
-}
-
-func (b *batchSelection) declarationSelected(id manifest.NamedResource, compared bool) (bool, error) {
-	declaration := compared && slices.ContainsFunc(b.collection.intent.Roots, func(root manifest.NamedResource) bool {
-		return root.Group == id.Group && root.Kind == id.Kind
-	})
-	if declaration {
-		return true, nil
-	}
-	return b.selectedOutput(id)
 }
 
 func (s *selectionSide) unchangedDeclaration(
@@ -579,20 +289,24 @@ func selectionCandidates(sides []selectionSide) []manifest.NamedResource {
 	producers := make(map[manifest.NamedResource]struct{})
 	for i := range sides {
 		side := &sides[i]
+		bindings := store.Bindings(side.run.Index)
 		for _, id := range side.roots {
 			if id.KindInfo().Render {
-				producers[side.comparisonKey(id)] = struct{}{}
+				key, _ := bindings.Slot(id)
+				producers[key] = struct{}{}
 			}
 		}
 		for _, obj := range side.result.Objects {
 			id := obj.Named()
 			if manifest.KindOf(obj).Render {
-				producers[side.comparisonKey(id)] = struct{}{}
+				key, _ := bindings.Slot(id)
+				producers[key] = struct{}{}
 			}
 		}
 		for _, batch := range side.result.Manifests {
 			if batch.Parent != nil {
-				producers[side.comparisonKey(batch.Parent.Named())] = struct{}{}
+				key, _ := bindings.Slot(batch.Parent.Named())
+				producers[key] = struct{}{}
 			}
 		}
 	}
@@ -642,7 +356,7 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 	counterpart := make(map[manifest.NamedResource]store.StatusInfo)
 	var path []manifest.NamedResource
 	for _, id := range candidates {
-		actual := s.actualProducer(id)
+		actual, _ := store.Bindings(s.run.Index).Producer(id)
 		var unavailable store.StatusInfo
 		if s.run.Decision.restricted() {
 			unavailable = s.localStatus(actual)
@@ -659,11 +373,11 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 		}
 		start := actual
 		if owner != &s.run {
-			start = other.actualProducer(id)
+			start, _ = store.Bindings(other.run.Index).Producer(id)
 		}
 		unavailable, path = s.walkUnavailable(start, owner, resolved, path)
 		if !unavailable.IsUnavailable() && owner == &s.run {
-			if prior, found := s.unpublishedCounterpart(other, path); found {
+			if prior, found := s.unpublishedAncestor(other, path); found {
 				unavailable, path = s.walkUnavailable(prior, &other.run, counterpart, path)
 			}
 		}
@@ -671,7 +385,7 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 	}
 }
 
-func (s *selectionSide) unpublishedCounterpart(
+func (s *selectionSide) unpublishedAncestor(
 	other *selectionSide,
 	path []manifest.NamedResource,
 ) (manifest.NamedResource, bool) {
@@ -686,35 +400,35 @@ func (s *selectionSide) unpublishedCounterpart(
 		if !found || record.File == "" || record.Authored == (manifest.NamedResource{}) {
 			continue
 		}
-		if prior := other.declarationCounterpart(id, &record); prior != (manifest.NamedResource{}) {
+		var prior manifest.NamedResource
+		for candidate := range other.run.Index.Records {
+			previous := other.run.Index.Records[candidate]
+			if candidate != id && (prior == (manifest.NamedResource{}) || candidate.Compare(prior) < 0) &&
+				other.publishedDeclaration(candidate, &previous, &record) {
+				prior = candidate
+			}
+		}
+		if prior != (manifest.NamedResource{}) {
 			return prior, true
 		}
 	}
 	return manifest.NamedResource{}, false
 }
 
-func (s *selectionSide) declarationCounterpart(
+func (s *selectionSide) publishedDeclaration(
 	id manifest.NamedResource,
-	record *manifest.DiscoveryRecord,
-) manifest.NamedResource {
-	var prior manifest.NamedResource
-	for candidate := range s.run.Index.Records {
-		previous := s.run.Index.Records[candidate]
-		if candidate == id || previous.Authored != record.Authored || previous.File != record.File ||
-			s.run.Store.EmissionOwner(candidate) == (manifest.NamedResource{}) {
-			continue
-		}
-		sameSource := slices.ContainsFunc(previous.Productions, func(p manifest.Production) bool {
-			return p.Source != (manifest.NamedResource{}) && slices.ContainsFunc(
-				record.Productions,
-				func(q manifest.Production) bool { return p.Source == q.Source },
-			)
-		})
-		if sameSource && (prior == (manifest.NamedResource{}) || candidate.Compare(prior) < 0) {
-			prior = candidate
-		}
+	previous, current *manifest.DiscoveryRecord,
+) bool {
+	if previous.Authored != current.Authored || previous.File != current.File ||
+		s.run.Store.EmissionOwner(id) == (manifest.NamedResource{}) {
+		return false
 	}
-	return prior
+	return slices.ContainsFunc(previous.Productions, func(p manifest.Production) bool {
+		return p.Source != (manifest.NamedResource{}) && slices.ContainsFunc(
+			current.Productions,
+			func(q manifest.Production) bool { return p.Source == q.Source },
+		)
+	})
 }
 
 func (s *selectionSide) recordUnavailable(id manifest.NamedResource, unavailable store.StatusInfo) {
@@ -751,10 +465,8 @@ func (s *selectionSide) walkUnavailable(
 		resolved[id] = store.StatusInfo{}
 		path = append(path, id)
 		actual := id
-		if owner.Index != nil {
-			if key, ok := owner.Index.ProducerKeys[id]; ok {
-				actual = s.actualProducer(key)
-			}
+		if key, mapped := store.Bindings(owner.Index).Slot(id); mapped {
+			actual, _ = store.Bindings(s.run.Index).Producer(key)
 		}
 		info := s.localStatus(actual)
 		if info.IsUnavailable() {
@@ -775,26 +487,6 @@ func (s *selectionSide) walkUnavailable(
 		resolved[parent] = unavailable
 	}
 	return unavailable, path
-}
-
-func (s *selectionSide) comparisonKey(id manifest.NamedResource) manifest.NamedResource {
-	if s.run.Index != nil {
-		if key, ok := s.run.Index.ProducerKeys[id]; ok {
-			return key
-		}
-	}
-	return id
-}
-
-func (s *selectionSide) actualProducer(key manifest.NamedResource) manifest.NamedResource {
-	if s.run.Index != nil {
-		for actual, comparison := range s.run.Index.ProducerKeys {
-			if comparison == key {
-				return actual
-			}
-		}
-	}
-	return key
 }
 
 func (s *selectionSide) prepareSubjects() {

@@ -180,15 +180,31 @@
       "parent": {
         "group": "kustomize.toolkit.fluxcd.io",
         "kind": "Kustomization",
-        "namespace": "media",
+        "namespace": "shifted",
         "name": "app",
         "path": "payload"
+      },
+      "producerChange": {
+        "from": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "media",
+          "name": "app",
+          "path": ""
+        },
+        "to": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "shifted",
+          "name": "app",
+          "path": ""
+        }
       },
       "apiVersion": "v1",
       "kind": "ConfigMap",
       "namespace": "apps",
       "name": "reachable-cm",
-      "status": "removed",
+      "status": "changed",
       "old": {
         "apiVersion": "v1",
         "data": {
@@ -196,32 +212,10 @@
         },
         "kind": "ConfigMap",
         "metadata": {
-          "labels": {
-            "kustomize.toolkit.fluxcd.io/name": "app",
-            "kustomize.toolkit.fluxcd.io/namespace": "media"
-          },
           "name": "reachable-cm",
           "namespace": "apps"
         }
       },
-      "new": null,
-      "oldChart": "",
-      "newChart": ""
-    },
-    {
-      "parent": {
-        "group": "kustomize.toolkit.fluxcd.io",
-        "kind": "Kustomization",
-        "namespace": "shifted",
-        "name": "app",
-        "path": "payload"
-      },
-      "apiVersion": "v1",
-      "kind": "ConfigMap",
-      "namespace": "apps",
-      "name": "reachable-cm",
-      "status": "added",
-      "old": null,
       "new": {
         "apiVersion": "v1",
         "data": {
@@ -229,10 +223,6 @@
         },
         "kind": "ConfigMap",
         "metadata": {
-          "labels": {
-            "kustomize.toolkit.fluxcd.io/name": "app",
-            "kustomize.toolkit.fluxcd.io/namespace": "shifted"
-          },
           "name": "reachable-cm",
           "namespace": "apps"
         }

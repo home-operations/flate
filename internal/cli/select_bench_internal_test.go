@@ -245,14 +245,14 @@ func benchmarkSelectCompletedScopeCase(b *testing.B, count *int, failures *bool,
 			_ = testrunner.Run(selected[0])
 		case "documents", "images":
 			orig := diff.Snapshot{
-				Manifests:    selected[0].Manifests,
-				Unavailable:  selected[0].Unavailable,
-				ProducerKeys: selected[0].ProducerKeys,
+				Manifests:   selected[0].Manifests,
+				Unavailable: selected[0].Unavailable,
+				Bindings:    selected[0].Bindings,
 			}
 			current := diff.Snapshot{
-				Manifests:    selected[1].Manifests,
-				Unavailable:  selected[1].Unavailable,
-				ProducerKeys: selected[1].ProducerKeys,
+				Manifests:   selected[1].Manifests,
+				Unavailable: selected[1].Unavailable,
+				Bindings:    selected[1].Bindings,
 			}
 			if (*capturedInputs.command) == "documents" {
 				comparison1, preparationErr1 := diff.Compare(

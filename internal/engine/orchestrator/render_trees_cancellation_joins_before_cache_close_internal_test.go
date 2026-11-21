@@ -507,19 +507,19 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			if testCaseInput[side] != "discovery" {
 				wantKeys = 1
 			}
-			assert.Equal(t, len(selection.ProducerKeys), wantKeys)
+			assert.Equal(t, len(maps.Collect(selection.Bindings.All())), wantKeys)
 			assert.Equal(t, len(selection.Unavailable), 0)
 		}
 		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
+			Subjects:    selected[0].Subjects,
+			Manifests:   selected[0].Manifests,
+			Bindings:    selected[0].Bindings,
+			Unavailable: selected[0].Unavailable,
 		}, Current: diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
+			Subjects:    selected[1].Subjects,
+			Manifests:   selected[1].Manifests,
+			Bindings:    selected[1].Bindings,
+			Unavailable: selected[1].Unavailable,
 		}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
 		var comparisonOutput1 bytes.Buffer
 		writeErr1 := comparison1.Write(&comparisonOutput1, nil)

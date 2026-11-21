@@ -258,8 +258,8 @@ func testCompareInvalidOutputGroup(
 	t.Helper()
 	format := control.format
 	left, right := groups[0].Orig, groups[0].Current
-	old := documents(left.Manifests)
-	current := documents(right.Manifests)
+	old := documents(left)
+	current := documents(right)
 	producer := &manifest.ResourceSet{Name: "invalid", Namespace: "apps"}
 	subject := manifest.DiagnosticIdentity{
 		ID: producer.Named(), Path: "clusters/apps",

@@ -340,7 +340,7 @@ func sourceRevalidationProjection(
 		manifests = append(manifests, batches)
 		snapshots = append(snapshots, diff.Snapshot{
 			Subjects: result.Subjects, Manifests: result.Manifests,
-			ProducerKeys: result.ProducerKeys, Unavailable: result.Unavailable,
+			Bindings: result.Bindings, Unavailable: result.Unavailable,
 		})
 	}
 	body, err := json.Marshal(manifests)

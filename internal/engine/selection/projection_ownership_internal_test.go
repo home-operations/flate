@@ -146,6 +146,9 @@ func TestCollectEmissions_IdentityAlignment(t *testing.T) {
 			for i, position := range tc.want {
 				assert.Diff(t, batch.Documents[i], documents[position])
 				assert.Diff(t, batch.Identities[i], identities[position])
+				emitter := map[string]manifest.BaseManifest{"apps": first, "other": second}[identities[position].Namespace]
+				subject := manifest.DiagnosticFor(emitter.Named(), emitter)
+				assert.Diff(t, snapshot.owners[parent.Named()][i].producer, &subject)
 			}
 			assert.Equal(t, len(snapshot.Emissions[0].Documents), 2)
 			assert.Equal(t, len(snapshot.Emissions[1].Documents), 1)

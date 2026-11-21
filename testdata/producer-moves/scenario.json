@@ -1,0 +1,1051 @@
+{
+  "source": {
+    "repository": "hardes-bv/hardes-homelab-infra",
+    "revision": "725f47a51602902f1ce1c35f77d37fbeade99e5e",
+    "paths": [
+      "kubernetes/clusters/desk8s"
+    ],
+    "reductions": "Model the five podinfo kinds from PR 91 with local declarations. The other cases use small ConfigMaps authored for flate."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "trees",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "trees",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "resourceset",
+      "directory": "pr91"
+    },
+    {
+      "name": "resourceset-base",
+      "directory": "pr91"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "moved",
+      "overlay": "move",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:01Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "edited",
+      "overlay": "with-edits",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:02Z",
+      "parents": [
+        "moved"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "competing",
+      "overlay": "competing",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:03Z",
+      "parents": [
+        "edited"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "competing",
+      "directory": "overlays/competing"
+    },
+    {
+      "name": "move",
+      "directory": "overlays/move",
+      "operations": [
+        {
+          "delete": "repo/apps/main/old/app.yaml"
+        }
+      ]
+    },
+    {
+      "name": "multi",
+      "directory": "overlays/multi"
+    },
+    {
+      "name": "partial",
+      "directory": "overlays/partial"
+    },
+    {
+      "name": "pr91",
+      "directory": "overlays/pr91",
+      "operations": [
+        {
+          "delete": "resourceset/reporter/rs.yaml"
+        }
+      ]
+    },
+    {
+      "name": "with-edits",
+      "directory": "overlays/with-edits"
+    }
+  ],
+  "cases": [
+    {
+      "name": "resourceset",
+      "description": "Move five podinfo objects from a ResourceSet nested under a reporting Kustomization.",
+      "setup": [
+        {
+          "overlay": "pr91"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "five-moves",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/../resourceset",
+              "--path-orig",
+              "@@repo@@/../resourceset-base",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--namespace",
+              "apps"
+            ],
+            "expect": {
+              "stdout": "expect/resourceset.stdout",
+              "stderr": "expect/resourceset.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "kustomizations",
+      "description": "Show one producer move in every output format.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "move"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "human",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "human"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "github",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "github"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "gitlab",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "gitlab"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "gitea",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "gitea"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "html",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "html"
+            ],
+            "expect": {
+              "stdout": "expect/move-html.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "brief",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "brief"
+            ],
+            "expect": {
+              "stdout": "expect/move.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "json",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/move-json.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--base",
+              "base",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/move-json.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "content-edits",
+      "description": "Keep the replica count and label edits on a moved Deployment.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "move"
+        },
+        {
+          "overlay": "with-edits"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/content-edits.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--base",
+              "base",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/content-edits.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "clusters",
+      "description": "Compare the same identity inside two independent clusters.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "move"
+        },
+        {
+          "overlay": "multi"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/clusters.stdout",
+              "stderr": "expect/clusters.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "base",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/clusters.stdout",
+              "stderr": "expect/clusters.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "partial",
+      "description": "Keep the healthy move when a different Kustomization fails.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "move"
+        },
+        {
+          "overlay": "partial"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/partial.stdout",
+              "stderr": "expect/partial.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "competing",
+      "description": "Keep the winning producer and content with a conflict on either side.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "move"
+        },
+        {
+          "overlay": "with-edits"
+        },
+        {
+          "overlay": "competing"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--path-orig",
+              "@@baseline@@/main",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/content-edits.stdout",
+              "stderr": "expect/competing.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-only-conflict-on-current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--base",
+              "base",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/content-edits.stdout",
+              "stderr": "expect/competing.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "competing-reverse",
+      "description": "Keep the winning producer and content when the base side contains the conflict.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "changed-only-conflict-on-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--base",
+              "@@commit:competing@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/competing-reverse.stdout",
+              "stderr": "expect/competing-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/clusters.stderr",
+      "cases": [
+        "clusters"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/clusters.stdout",
+      "cases": [
+        "clusters"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/competing-reverse.stderr",
+      "cases": [
+        "competing-reverse"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/competing-reverse.stdout",
+      "cases": [
+        "competing-reverse"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/competing.stderr",
+      "cases": [
+        "competing"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/content-edits.stdout",
+      "cases": [
+        "content-edits",
+        "competing"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/move-html.stdout",
+      "cases": [
+        "kustomizations"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/move-json.stdout",
+      "cases": [
+        "kustomizations"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/move.stdout",
+      "cases": [
+        "kustomizations"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/partial.stderr",
+      "cases": [
+        "partial"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/partial.stdout",
+      "cases": [
+        "partial"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/quiet.stderr",
+      "cases": [
+        "kustomizations",
+        "content-edits"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/resourceset.stderr",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "expect/resourceset.stdout",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Independently authored complete stream expectation."
+    },
+    {
+      "path": "overlays/competing/repo/apps/main/old/app.yaml",
+      "cases": [
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/competing/repo/apps/main/old/kustomization.yaml",
+      "cases": [
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/move/repo/apps/main/new/app.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/move/repo/apps/main/new/kustomization.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/move/repo/apps/main/old/kustomization.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/multi/repo/apps/other/app/kustomization.yaml",
+      "cases": [
+        "clusters"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/multi/repo/apps/other/app/new.yaml",
+      "cases": [
+        "clusters"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/partial/repo/main/failed.yaml",
+      "cases": [
+        "partial"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/pr91/resourceset/podinfo/kustomization.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/pr91/resourceset/podinfo/objects.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/pr91/resourceset/reporter/kustomization.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "overlays/with-edits/repo/apps/main/new/app.yaml",
+      "cases": [
+        "content-edits",
+        "competing"
+      ],
+      "purpose": "Input edit for a producer move or control."
+    },
+    {
+      "path": "pr91/flux.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "pr91/podinfo/kustomization.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "pr91/podinfo/stable.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "pr91/reporter/kustomization.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "pr91/reporter/rs.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "pr91/reporter/stable.yaml",
+      "cases": [
+        "resourceset"
+      ],
+      "purpose": "Local inputs for the ResourceSet and Kustomization comparison."
+    },
+    {
+      "path": "trees/apps/main/new/kustomization.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/main/new/stable.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/main/old/app.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/main/old/kustomization.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/main/old/stable.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/other/app/app.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/apps/other/app/kustomization.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/main/flux.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    },
+    {
+      "path": "trees/other/flux.yaml",
+      "cases": [
+        "kustomizations",
+        "content-edits",
+        "clusters",
+        "partial",
+        "competing"
+      ],
+      "purpose": "Local base tree copied on each replay."
+    }
+  ]
+}

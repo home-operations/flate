@@ -99,23 +99,14 @@ func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: 0}
 }
 
-func clusterSnapshot(side *selection.Result) diff.Snapshot {
-	return diff.Snapshot{
-		Subjects:     side.Subjects,
-		Manifests:    side.Manifests,
-		Unavailable:  side.Unavailable,
-		ProducerKeys: side.ProducerKeys,
-	}
-}
-
 func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.Encoder) selectedPayload {
 	t.Helper()
 	groups := make([]diff.Group, len(inv.groups))
 	for i, group := range inv.groups {
 		groups[i] = diff.Group{
 			Cluster: group.cluster,
-			Orig:    clusterSnapshot(group.sides[0]),
-			Current: clusterSnapshot(group.sides[1]),
+			Orig:    diffSnapshot(group.sides[0]),
+			Current: diffSnapshot(group.sides[1]),
 			Added:   group.absent[manifest.TreeBase],
 			Removed: group.absent[manifest.TreeHead],
 		}
@@ -602,8 +593,8 @@ func (c *clusterInputCommand) imagePayload(inv *selectedInvocation, encoder outp
 			if c.verb == "diff" {
 				var notes []diff.Suppression
 				images, notes, err = diff.CompareImages(
-					clusterSnapshot(group.sides[0]),
-					clusterSnapshot(group.sides[1]),
+					diffSnapshot(group.sides[0]),
+					diffSnapshot(group.sides[1]),
 					nil,
 					false,
 				)

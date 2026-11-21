@@ -391,15 +391,15 @@ func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
 		selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			Unavailable:  selected[0].Unavailable,
-			ProducerKeys: selected[0].ProducerKeys,
+			Subjects:    selected[0].Subjects,
+			Manifests:   selected[0].Manifests,
+			Unavailable: selected[0].Unavailable,
+			Bindings:    selected[0].Bindings,
 		}, Current: diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			Unavailable:  selected[1].Unavailable,
-			ProducerKeys: selected[1].ProducerKeys,
+			Subjects:    selected[1].Subjects,
+			Manifests:   selected[1].Manifests,
+			Unavailable: selected[1].Unavailable,
+			Bindings:    selected[1].Bindings,
 		}, SelectedErr: nil}}, diff.Options{
 			Format: diff.FormatJSON,
 		})

@@ -148,7 +148,6 @@ type Selection struct {
 	ChartVersions   map[manifest.NamedResource]string
 	Causes          map[manifest.NamedResource][]manifest.NamedResource
 	Unavailable     map[manifest.NamedResource]StatusInfo
-	ProducerKeys    map[manifest.NamedResource]manifest.NamedResource
 	Unrelated       []manifest.Warning
 	External        []manifest.Warning
 	BlockedCount    int

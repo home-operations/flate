@@ -1,12 +1,9 @@
 package diff
 
-import (
-	"github.com/home-operations/flate/pkg/manifest"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
-// manifest. Its zero value identifies an ownerless document. It distinguishes
-// resources from different producers and attributes structured output.
+// manifest. Its zero value identifies an ownerless document.
 type Parent struct {
 	manifest.NamedResource
 
@@ -20,12 +17,12 @@ type Parent struct {
 type Doc struct {
 	Manifest map[string]any
 	Parent   Parent
+	Producer manifest.DiagnosticIdentity
 }
 
 // Options normalize copied documents without mutating either input snapshot.
 type Options struct {
-	subjects     [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
-	producerKeys [2]map[manifest.NamedResource]manifest.NamedResource
+	subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
 	// is computed. Cuts chart-bump noise — annotations like

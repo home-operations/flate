@@ -25,8 +25,18 @@ func TestPrepared_NativeInputs(t *testing.T) {
 	rightParent := Parent{NamedResource: testutil.HelmReleaseID("apps", "b")}
 	left, right := preparedCM("hello", "greeting", "same"), preparedCM("hello", "greeting", "same")
 	left.Parent, right.Parent = leftParent, rightParent
-	t.Run("report bodies", func(t *testing.T) {
+	t.Run("producer-only move", func(t *testing.T) {
 		t.Parallel()
+		report, err := prepare([]Doc{left}, []Doc{right}, &Options{}).native()
+		assert.NoError(t, err)
+		assert.Equal(t, len(report.Diffs), 0)
+		assert.Diff(t, report.From.Names, []string{"v1/ConfigMap/apps/hello"})
+		assert.Diff(t, report.To.Names, report.From.Names)
+	})
+	t.Run("one-sided bodies", func(t *testing.T) {
+		t.Parallel()
+		right := right
+		right.Manifest = preparedCM("new", "greeting", "same").Manifest
 		report, err := prepare([]Doc{left}, []Doc{right}, &Options{}).native()
 		assert.NoError(t, err)
 		assert.FatalIf(t, len(report.Diffs) != 2, "want two report diffs, got %+v", report.Diffs)

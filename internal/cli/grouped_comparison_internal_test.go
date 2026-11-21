@@ -37,8 +37,8 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 			for i, group := range inv.groups {
 				groups[i] = diff.Group{
 					Cluster: group.cluster,
-					Orig:    clusterSnapshot(group.sides[0]),
-					Current: clusterSnapshot(group.sides[1]),
+					Orig:    diffSnapshot(group.sides[0]),
+					Current: diffSnapshot(group.sides[1]),
 				}
 			}
 			groups[0].SelectedErr = selectedErr
@@ -115,6 +115,7 @@ func TestDiffPayload_GroupedSDKEquivalence(t *testing.T) {
 					manifest.Kustomization{},
 					manifest.HelmRelease{},
 					store.StatusInfo{},
+					store.ProducerBindings{},
 				),
 				cmp.Comparer(func(a, b error) bool { return errors.Is(a, b) && errors.Is(b, a) }),
 			}

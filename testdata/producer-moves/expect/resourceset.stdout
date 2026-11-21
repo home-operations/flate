@@ -1,0 +1,9 @@
+Certificate apps/podinfo producer: ResourceSet default/podinfo -> Kustomization flux-system/podinfo
+
+HTTPRoute apps/podinfo producer: ResourceSet default/podinfo -> Kustomization flux-system/podinfo
+
+HelmRelease apps/podinfo producer: ResourceSet default/podinfo -> Kustomization flux-system/podinfo
+
+ListenerSet apps/podinfo producer: ResourceSet default/podinfo -> Kustomization flux-system/podinfo
+
+OCIRepository apps/podinfo producer: ResourceSet default/podinfo -> Kustomization flux-system/podinfo

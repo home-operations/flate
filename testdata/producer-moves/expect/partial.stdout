@@ -1,0 +1,135 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "cluster",
+        "path": "main"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "flux-system",
+      "name": "failed",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "failed",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./apps/main/missing",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "cluster"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "replacement",
+        "path": "apps/main/new"
+      },
+      "producerChange": {
+        "from": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "original",
+          "path": ""
+        },
+        "to": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "replacement",
+          "path": ""
+        }
+      },
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "apps",
+      "name": "podinfo",
+      "status": "changed",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "podinfo",
+          "namespace": "apps"
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "app": "podinfo"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "podinfo"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "ghcr.io/stefanprodan/podinfo:6.9.4",
+                  "name": "podinfo"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "podinfo",
+          "namespace": "apps"
+        },
+        "spec": {
+          "replicas": 1,
+          "selector": {
+            "matchLabels": {
+              "app": "podinfo"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "podinfo"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "ghcr.io/stefanprodan/podinfo:6.9.4",
+                  "name": "podinfo"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

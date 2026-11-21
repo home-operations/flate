@@ -20,9 +20,9 @@ import (
 type Snapshot struct {
 	Subjects    map[manifest.NamedResource]manifest.DiagnosticIdentity
 	Manifests   []manifest.DocumentBatch
+	Producers   map[int]map[int]manifest.DiagnosticIdentity
 	Unavailable map[manifest.NamedResource]store.StatusInfo
-	// ProducerKeys maps actual producers to their paired comparison identities.
-	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
+	Bindings    store.ProducerBindings
 }
 
 // Group retains selected errors so partial output stays available.
@@ -47,10 +47,16 @@ type Comparison struct {
 	output []preparedGroup
 }
 
+type resourceTransition struct {
+	resource manifest.NamedResource
+	change   *producerTransition
+}
+
 type preparedGroup struct {
 	cluster        string
 	added, removed bool
 	lines          []lineChange
+	moves          []resourceTransition
 	native         dyff.Report
 	changes        []Change
 	subjects       [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
@@ -93,6 +99,12 @@ func prepareOutput(p prepared, format Format) (preparedGroup, GroupResult, error
 	case FormatJSON:
 		out.changes = publicChanges(p)
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
+		for i := range p.Pairs {
+			pair := &p.Pairs[i]
+			if pair.ProducerChange != nil {
+				out.moves = append(out.moves, resourceTransition{resource: pair.Resource, change: pair.ProducerChange})
+			}
+		}
 		out.native, err = p.native()
 		if err == nil {
 			inventory = nativeDiffInventory(&p, &out.native)
@@ -111,9 +123,14 @@ func (c *Comparison) nativeInventory() {
 	for i := range c.output {
 		count += len(c.output[i].native.From.Documents)
 	}
-	if c.format == FormatBrief || count <= 1 {
-		for i := range c.Groups {
-			c.Groups[i].Subjects = nil
+	for i := range c.Groups {
+		inventory := &c.Groups[i].Subjects
+		if c.format == FormatBrief || count <= 1 {
+			*inventory = nil
+		}
+		for _, move := range c.output[i].moves {
+			*inventory = append(*inventory, move.resource)
+			*inventory = move.change.appendSubjects(*inventory)
 		}
 	}
 }
@@ -144,26 +161,36 @@ func (c *Comparison) Write(w io.Writer, names []Names) error {
 		}
 		return e.lines(lines)
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
-		groups := make([]dyff.Report, len(c.output))
-		for i := range groups {
-			groups[i] = c.output[i].native
-		}
-		report := aggregateNative(groups)
-		from, to := 0, 0
-		for i := range groups {
-			for j, name := range groups[i].From.Names {
-				report.From.Names[from+j] = names[i].Prefix + name
-			}
-			for j, name := range groups[i].To.Names {
-				report.To.Names[to+j] = names[i].Prefix + name
-			}
-			from += len(groups[i].From.Names)
-			to += len(groups[i].To.Names)
-		}
-		return e.native(report)
+		return c.writeNative(e, names)
 	default:
 		return nil
 	}
+}
+
+func (c *Comparison) writeNative(e encoder, names []Names) error {
+	groups := make([]dyff.Report, len(c.output))
+	for i := range groups {
+		groups[i] = c.output[i].native
+		for _, move := range c.output[i].moves {
+			label := names[i].resourceLabel(move.resource)
+			if err := e.writeMove(label, move.change.description(names[i])); err != nil {
+				return err
+			}
+		}
+	}
+	report := aggregateNative(groups)
+	from, to := 0, 0
+	for i := range groups {
+		for j, name := range groups[i].From.Names {
+			report.From.Names[from+j] = names[i].Prefix + name
+		}
+		for j, name := range groups[i].To.Names {
+			report.To.Names[to+j] = names[i].Prefix + name
+		}
+		from += len(groups[i].From.Names)
+		to += len(groups[i].To.Names)
+	}
+	return e.native(report)
 }
 
 func (c *Comparison) names() []Names {
@@ -203,8 +230,8 @@ func MergeWarnings(warnings []manifest.Warning, notes []Suppression) []manifest.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
 	projection := suppress(orig, current)
 	left, right, suppressed := projection.Orig, projection.Current, projection.Suppressed
-	origImages := imageutil.Collect(left)
-	currentImages := imageutil.Collect(right)
+	origImages := imageutil.Collect(left.Manifests)
+	currentImages := imageutil.Collect(right.Manifests)
 	out := make([]string, 0, len(currentImages))
 	for img := range currentImages {
 		if _, ok := origImages[img]; !ok {

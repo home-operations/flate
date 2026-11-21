@@ -214,7 +214,7 @@ func inspectSelection(t *testing.T, s *orchestrator.Selection) {
 	if s.BlockedCount > len(s.Blocked) {
 		t.Fatal("invalid blocked count")
 	}
-	_ = len(s.Subjects) + len(s.Manifests) + len(s.Failed) + len(s.Warnings) + len(s.ClusterWarnings) + len(s.Objects) + len(s.Counts) + len(s.ChartVersions) + len(s.Causes) + len(s.Unavailable) + len(s.ProducerKeys) + len(s.Unrelated) + len(s.External)
+	_ = len(s.Subjects) + len(s.Manifests) + len(s.Failed) + len(s.Warnings) + len(s.ClusterWarnings) + len(s.Objects) + len(s.Counts) + len(s.ChartVersions) + len(s.Causes) + len(s.Unavailable) + len(s.Unrelated) + len(s.External)
 }
 
 func writeClusters(t *testing.T, root string, clusters []string, head bool) {

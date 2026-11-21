@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "host": "service.${DOMAIN}"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "service",
+    "namespace": "apps"
+  }
+}

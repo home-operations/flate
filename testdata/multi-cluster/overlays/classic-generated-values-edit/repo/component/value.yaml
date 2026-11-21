@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "value": "new-${COLOR}"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "component",
+    "namespace": "apps"
+  }
+}

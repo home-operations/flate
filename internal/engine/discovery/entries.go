@@ -1,15 +1,14 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
-	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
@@ -34,6 +33,7 @@ type Entry struct {
 	prepared  *entryInputs
 	aggregate bool
 	roots     []int
+	target    string
 }
 
 type entryInputs struct {
@@ -44,7 +44,7 @@ type entryInputs struct {
 	projections       *manifest.ProducerProjections
 	publicOperands    []manifest.NamedResource
 	packagesToQualify [][]selection.OccurrenceFacts
-	enclosing         []string
+	generatorPackages []string
 	packages          []*plannedPackage
 	unknown           bool
 }
@@ -130,14 +130,14 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 	if entry.aggregate {
 		prepared.unknown = aggregateRequiresBuild(entry, d.packages)
 	}
-	relative, err := filepath.Rel(input.LocalPath, entry.Path)
+	relative, err := filepath.Rel(input.LocalPath, cmp.Or(entry.target, entry.Path))
 	if err != nil {
 		return fmt.Errorf("entry path: %w", err)
 	}
-	scope := prepared.collectEntryOperands(entry, roots, filepath.ToSlash(relative))
-	if relative != "." && d.cfg.Trees != nil {
-		generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
-		prepared.enclosing, err = d.loader.EnclosingPackages(ctx, input, relative, generator)
+	relative = filepath.ToSlash(relative)
+	scope := prepared.collectEntryOperands(entry, roots, relative)
+	if d.cfg.Trees != nil {
+		prepared.generatorPackages, err = d.plannedGeneratorPackages(ctx, entry, roots, relative)
 		if err != nil {
 			return err
 		}
@@ -166,6 +166,31 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 	}
 	entry.prepared = prepared
 	return nil
+}
+
+func (d *Session) plannedGeneratorPackages(
+	ctx context.Context, entry *Entry, roots []clusterRoot, relative string,
+) ([]string, error) {
+	input := d.cfg.Input
+	generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
+	packages, err := d.loader.EnclosingPackages(ctx, input, relative, generator)
+	if err != nil || entry.target == "" {
+		return packages, err
+	}
+	for _, index := range entry.roots {
+		pkg := roots[index].Path
+		if pkg == relative || slices.Contains(packages, pkg) {
+			continue
+		}
+		native, err := nativeEntry(input.FS, pkg)
+		if err != nil {
+			return nil, err
+		}
+		if native {
+			packages = slices.Insert(packages, 0, pkg)
+		}
+	}
+	return packages, nil
 }
 
 func (p *entryInputs) collectEntryOperands(entry *Entry, roots []clusterRoot, relative string) *rootScope {
@@ -255,56 +280,24 @@ func (d *Session) loadPlan(ctx context.Context) error {
 }
 
 func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan string) []Entry {
-	parents := producerGroups(roots, input.LocalPath)
-	groups := map[int]struct {
-		coordinate string
-		roots      []int
-	}{}
-	anchors := map[int][]string{}
+	owned := ownedUnanchoredRoots(roots)
+	entries := map[string]Entry{}
 	for i := range roots {
 		root := &roots[i]
-		if !root.bootstrap {
+		if len(root.qualifying) == 0 || owned[i] {
 			continue
 		}
-		group := parents[i]
-		members, exists := groups[group]
-		coordinate := members.coordinate
-		if !exists {
-			coordinate = root.Path
+		anchor := root.clusterAnchor(input.LocalPath, scan)
+		coordinate := anchor.target
+		entry := entries[coordinate]
+		entry.ID = manifest.ClusterID(coordinate)
+		entry.Path = filepath.Join(input.LocalPath, filepath.FromSlash(coordinate))
+		entry.Input = input
+		if anchor.source != (manifest.NamedResource{}) {
+			entry.target = entry.Path
 		}
-		for coordinate != "." && !safepath.Contains(filepath.FromSlash(coordinate), filepath.FromSlash(root.Path)) {
-			coordinate = path.Dir(coordinate)
-		}
-		members.coordinate = coordinate
-		groups[group] = members
-		anchors[group] = append(anchors[group], root.Anchors...)
-	}
-	for i, group := range parents {
-		if members, exists := groups[group]; exists {
-			members.roots = append(members.roots, i)
-			groups[group] = members
-		}
-	}
-	entries := make([]Entry, 0, len(groups))
-	for _, group := range slices.Sorted(maps.Keys(groups)) {
-		members := groups[group]
-		coordinate := members.coordinate
-		targets := anchors[group]
-		slices.Sort(targets)
-		targets = slices.Compact(targets)
-		if len(targets) == 1 {
-			coordinate = targets[0]
-		}
-		absolute := filepath.Join(input.LocalPath, filepath.FromSlash(coordinate))
-		if !safepath.Contains(scan, absolute) {
-			coordinate, absolute = members.coordinate, filepath.Join(
-				input.LocalPath,
-				filepath.FromSlash(members.coordinate),
-			)
-		}
-		entries = append(entries, Entry{
-			ID: manifest.ClusterID(coordinate), Path: absolute, Input: input, roots: members.roots,
-		})
+		entry.roots = append(entry.roots, i)
+		entries[coordinate] = entry
 	}
 	if len(entries) == 0 {
 		coordinate, _ := filepath.Rel(input.LocalPath, scan)
@@ -312,21 +305,87 @@ func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan strin
 		for i := range members {
 			members[i] = i
 		}
-		return []Entry{
-			{
-				ID:        manifest.ClusterID(filepath.ToSlash(coordinate)),
-				Path:      scan,
-				Input:     input,
-				aggregate: true,
-				roots:     members,
-			},
+		return []Entry{{
+			ID: manifest.ClusterID(filepath.ToSlash(coordinate)), Path: scan, Input: input,
+			aggregate: true, roots: members,
+		}}
+	}
+	result := make([]Entry, 0, len(entries))
+	for _, coordinate := range slices.Sorted(maps.Keys(entries)) {
+		entry := entries[coordinate]
+		if len(entries) == 1 {
+			// An explicit ancestor retains its own output inventory.
+			if scan != input.LocalPath && scan != entry.Path {
+				entry.target = ""
+			}
+			entry.Path = scan
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+func (r *clusterRoot) partitionAnchors(input *store.SourceArtifact) []clusterRoot {
+	roots := make([]clusterRoot, len(r.anchors))
+	for i, anchor := range r.anchors {
+		roots[i].Path = anchor.target
+	}
+	for i := range r.seeds {
+		seed := &r.seeds[i]
+		file := filepath.Join(seed.Declaration.Source, seed.Declaration.File)
+		selected, depth := -1, 0
+		for j, anchor := range r.anchors {
+			dir := filepath.Join(input.LocalPath, anchor.target)
+			if len(dir) > depth && safepath.Contains(dir, file) {
+				selected, depth = j, len(dir)
+			}
+		}
+		if selected >= 0 {
+			roots[selected].seeds = append(roots[selected].seeds, *seed)
 		}
 	}
-	if len(entries) == 1 {
-		entries[0].Path = scan
+	return roots
+}
+
+func (r *clusterRoot) clusterAnchor(inputRoot, scan string) bootstrapAnchor {
+	if len(r.anchors) == 1 {
+		anchor := r.anchors[0]
+		absolute := filepath.Join(inputRoot, filepath.FromSlash(anchor.target))
+		if safepath.Contains(scan, absolute) {
+			return anchor
+		}
 	}
-	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(string(a.ID), string(b.ID)) })
-	return slices.CompactFunc(entries, func(a, b Entry) bool { return a.ID == b.ID })
+	return bootstrapAnchor{target: r.Path}
+}
+
+func ownedUnanchoredRoots(roots []clusterRoot) []bool {
+	// Source references and predictions cannot establish package ownership.
+	owners := map[selection.OccurrenceID]int{}
+	for i := range roots {
+		root := &roots[i]
+		if len(root.qualifying) == 0 {
+			continue
+		}
+		for declaration := range root.reached {
+			if _, shared := owners[declaration]; shared {
+				owners[declaration] = -1
+			} else {
+				owners[declaration] = i
+			}
+		}
+	}
+	owned := make([]bool, len(roots))
+	for i := range roots {
+		root := &roots[i]
+		if len(root.qualifying) == 0 || len(root.anchors) != 0 {
+			continue
+		}
+		owned[i] = !slices.ContainsFunc(root.qualifying, func(declaration selection.OccurrenceID) bool {
+			owner, reached := owners[declaration]
+			return !reached || owner == i
+		})
+	}
+	return owned
 }
 
 func aggregateInput(
@@ -384,38 +443,6 @@ func syntheticAggregateInput(
 	projected.Content, projected.Digest, projected.ContentFingerprint = "", "", nil
 	projected.FS = &inputprojection.Overlay{Tree: content, Authored: input}
 	return &projected, nil
-}
-
-func producerGroups(roots []clusterRoot, root string) []int {
-	parents := make([]int, len(roots))
-	declarations := map[selection.OccurrenceID]int{}
-	for i := range roots {
-		parents[i] = i
-		for j := range roots[i].seeds {
-			occurrence := &roots[i].seeds[j]
-			if safepath.Contains(filepath.Join(root, roots[i].Path),
-				filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File)) {
-				declarations[occurrence.Declaration] = i
-			}
-		}
-	}
-	var find func(int) int
-	find = func(i int) int {
-		if parents[i] != i {
-			parents[i] = find(parents[i])
-		}
-		return parents[i]
-	}
-	join := func(left, right int) {
-		a, b := find(left), find(right)
-		parents[max(a, b)] = min(a, b)
-	}
-	joinRootSources(roots, declarations, join)
-	joinRootOccurrences(roots, declarations, join)
-	for i := range parents {
-		parents[i] = find(i)
-	}
-	return parents
 }
 
 func aggregateRequiresBuild(entry *Entry, packages []loader.PackageEvidence) bool {
@@ -555,42 +582,6 @@ func nativeEntry(input fs.FS, dir string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
-}
-
-func joinRootSources(roots []clusterRoot, declarations map[selection.OccurrenceID]int, join func(int, int)) {
-	for i := range roots {
-		for _, coordinate := range roots[i].sourceDeclarations {
-			owner, known := declarations[coordinate]
-			if known && roots[owner].bootstrap {
-				join(i, owner)
-			}
-		}
-	}
-	for i := range roots {
-		for _, resolution := range roots[i].sources {
-			for j := range resolution.producers {
-				producer := &resolution.producers[j]
-				if owner, known := declarations[producer.declaration]; known {
-					join(i, owner)
-				}
-			}
-		}
-	}
-}
-
-func joinRootOccurrences(roots []clusterRoot, declarations map[selection.OccurrenceID]int, join func(int, int)) {
-	for i := range roots {
-		if !roots[i].bootstrap {
-			continue
-		}
-		for j := range roots[i].Occurrences {
-			occurrence := &roots[i].Occurrences[j]
-			owner, known := declarations[occurrence.Declaration]
-			if known && roots[owner].bootstrap {
-				join(i, owner)
-			}
-		}
-	}
 }
 
 func (d *Session) beginRootPlan(ctx context.Context) error {

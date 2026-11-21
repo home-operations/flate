@@ -1,0 +1,1 @@
+resources: [source.yaml, sync.yaml, attach.yaml]

@@ -1,0 +1,27 @@
+{
+  "apiVersion": "fluxcd.controlplane.io/v1",
+  "kind": "FluxInstance",
+  "metadata": {
+    "name": "flux",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "kustomize": {
+      "patches": [
+        {
+          "patch": "- op: add\n  path: /spec/patches\n  value:\n  - target:\n      kind: Kustomization\n    patch: |\n      - op: add\n        path: /spec/postBuild\n        value:\n          substituteFrom:\n            - kind: ConfigMap\n              name: cluster-vars\n",
+          "target": {
+            "kind": "Kustomization",
+            "name": "flux-system"
+          }
+        }
+      ]
+    },
+    "sync": {
+      "kind": "GitRepository",
+      "path": "clusters/x",
+      "ref": "refs/heads/main",
+      "url": "https://example.invalid/cluster.git"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "rendered"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "demo",
+        "helm.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "demo-chart",
+      "namespace": "apps"
+    }
+  }
+]

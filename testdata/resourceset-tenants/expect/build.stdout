@@ -1,0 +1,234 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "replicas": 2
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "apps-backend",
+        "kustomize.toolkit.fluxcd.io/namespace": "backend"
+      },
+      "name": "backend"
+    }
+  },
+  {
+    "apiVersion": "source.toolkit.fluxcd.io/v1",
+    "kind": "GitRepository",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "1m",
+      "ref": {
+        "branch": "main"
+      },
+      "url": "https://github.com/example/fleet.git"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./clusters/x",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "tenants",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./rs",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-system",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "tenants",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "apps-backend",
+      "namespace": "backend"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./tenants/backend",
+      "postBuild": {
+        "substitute": {
+          "REPLICAS": "2"
+        }
+      },
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system",
+        "namespace": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "tenants",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "apps-frontend",
+      "namespace": "frontend"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./tenants/frontend",
+      "postBuild": {
+        "substitute": {
+          "REPLICAS": "1"
+        }
+      },
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system",
+        "namespace": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "tenants",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "backend"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "tenants",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "frontend"
+    }
+  },
+  {
+    "apiVersion": "fluxcd.controlplane.io/v1",
+    "kind": "ResourceSet",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "tenants",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "tenants",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "inputs": [
+        {
+          "replicas": "1",
+          "tenant": "frontend"
+        },
+        {
+          "replicas": "2",
+          "tenant": "backend"
+        }
+      ],
+      "resources": [
+        {
+          "apiVersion": "v1",
+          "kind": "Namespace",
+          "metadata": {
+            "name": "\u003c\u003c inputs.tenant \u003e\u003e"
+          }
+        },
+        {
+          "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+          "kind": "Kustomization",
+          "metadata": {
+            "name": "apps-\u003c\u003c inputs.tenant \u003e\u003e",
+            "namespace": "\u003c\u003c inputs.tenant \u003e\u003e"
+          },
+          "spec": {
+            "interval": "10m",
+            "path": "./tenants/\u003c\u003c inputs.tenant \u003e\u003e",
+            "postBuild": {
+              "substitute": {
+                "REPLICAS": "\u003c\u003c inputs.replicas | quote \u003e\u003e"
+              }
+            },
+            "prune": true,
+            "sourceRef": {
+              "kind": "GitRepository",
+              "name": "flux-system",
+              "namespace": "flux-system"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "replicas": 1
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "apps-frontend",
+        "kustomize.toolkit.fluxcd.io/namespace": "frontend"
+      },
+      "name": "frontend"
+    }
+  }
+]

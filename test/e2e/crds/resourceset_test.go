@@ -28,6 +28,9 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 	t.Run("static", func(t *testing.T) {
 		runCRDScenario(t, "resourceset", "resource-set-expands-into-child-kustomizations")
 	})
+	t.Run("tenants", func(t *testing.T) {
+		runCRDScenario(t, "resourceset-tenants", "tenant-declarations")
+	})
 	for _, name := range []string{
 		"provider-warnings", "static-provider", "selector-provider", "flatten-provider", "permute-provider",
 		"supplied-provider", "oci-tags", "invalid-template", "invalid-selector",

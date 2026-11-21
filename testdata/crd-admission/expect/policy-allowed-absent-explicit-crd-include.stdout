@@ -1,5 +1,36 @@
 [
   {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "flux-operator",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "flux-operator",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "chartRef": {
+        "kind": "OCIRepository",
+        "name": "flux-operator"
+      },
+      "interval": "1h",
+      "releaseName": "flux-operator",
+      "serviceAccountName": "flux-operator",
+      "suspend": true,
+      "values": {
+        "multitenancy": {
+          "defaultServiceAccount": "default",
+          "enabled": true
+        },
+        "reporting": {
+          "interval": "5m"
+        }
+      }
+    }
+  },
+  {
     "apiVersion": "source.toolkit.fluxcd.io/v1",
     "kind": "OCIRepository",
     "metadata": {

@@ -1,0 +1,133 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "demo",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "demo-chart",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "rendered"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "demo",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "demo-chart",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "apps",
+      "name": "demo",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "releases",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "demo",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "charts/demo",
+              "sourceRef": {
+                "kind": "GitRepository",
+                "name": "flux-system",
+                "namespace": "flux-system"
+              }
+            }
+          },
+          "interval": "10m"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps"
+      },
+      "apiVersion": "fluxcd.controlplane.io/v1",
+      "kind": "ResourceSet",
+      "namespace": "flux-system",
+      "name": "releases",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "fluxcd.controlplane.io/v1",
+        "kind": "ResourceSet",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "releases",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "resources": [
+            {
+              "apiVersion": "helm.toolkit.fluxcd.io/v2",
+              "kind": "HelmRelease",
+              "metadata": {
+                "name": "demo",
+                "namespace": "apps"
+              },
+              "spec": {
+                "chart": {
+                  "spec": {
+                    "chart": "charts/demo",
+                    "sourceRef": {
+                      "kind": "GitRepository",
+                      "name": "flux-system",
+                      "namespace": "flux-system"
+                    }
+                  }
+                },
+                "interval": "10m"
+              }
+            }
+          ]
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

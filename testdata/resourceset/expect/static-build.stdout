@@ -15,6 +15,52 @@
     }
   },
   {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "flate",
+        "resourceset.fluxcd.controlplane.io/name": "apps",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "apps-backend",
+      "namespace": "backend"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./tenants/backend",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system",
+        "namespace": "flux-system"
+      }
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "flate",
+        "resourceset.fluxcd.controlplane.io/name": "apps",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "apps-frontend",
+      "namespace": "frontend"
+    },
+    "spec": {
+      "interval": "10m",
+      "path": "./tenants/frontend",
+      "prune": true,
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system",
+        "namespace": "flux-system"
+      }
+    }
+  },
+  {
     "apiVersion": "v1",
     "kind": "Namespace",
     "metadata": {

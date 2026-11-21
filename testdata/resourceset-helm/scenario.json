@@ -1,0 +1,209 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "testdata/helm-render"
+    ],
+    "reductions": "Use the same local Git source and ConfigMap chart pattern with a ResourceSet as the release producer."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "without-resource-set",
+      "operations": [
+        {
+          "delete": "repo/apps/release.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "applied-release",
+      "description": "Print the HelmRelease declaration and its chart workload. Compare both directions after removing the ResourceSet.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "named",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "-n",
+              "apps",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/named.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remove-resource-set",
+          "edit": {
+            "overlay": "without-resource-set"
+          }
+        },
+        {
+          "id": "removal",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/removal.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "addition",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/addition.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/addition.stdout",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Reviewed complete expectation."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Reviewed complete expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Reviewed complete expectation."
+    },
+    {
+      "path": "expect/named.stdout",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Reviewed complete expectation."
+    },
+    {
+      "path": "expect/removal.stdout",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Reviewed complete expectation."
+    },
+    {
+      "path": "repo/apps/keep.yaml",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Source fixture."
+    },
+    {
+      "path": "repo/apps/release.yaml",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Source fixture."
+    },
+    {
+      "path": "repo/charts/demo/Chart.yaml",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Source fixture."
+    },
+    {
+      "path": "repo/charts/demo/templates/configmap.yaml",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Source fixture."
+    },
+    {
+      "path": "repo/entry/apps.yaml",
+      "cases": [
+        "applied-release"
+      ],
+      "purpose": "Source fixture."
+    }
+  ]
+}

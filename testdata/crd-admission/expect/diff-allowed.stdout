@@ -8,6 +8,84 @@
         "name": "apps",
         "path": "apps"
       },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "flux-system",
+      "name": "flux-operator",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "flux-operator",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "flux-operator",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "flux-operator"
+          },
+          "interval": "1h",
+          "releaseName": "flux-operator",
+          "serviceAccountName": "flux-operator",
+          "suspend": true,
+          "values": {
+            "multitenancy": {
+              "defaultServiceAccount": "default",
+              "enabled": true
+            },
+            "reporting": {
+              "interval": "5m"
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "flux-operator",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "flux-operator",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "flux-operator"
+          },
+          "interval": "1h",
+          "releaseName": "flux-operator",
+          "serviceAccountName": "flux-operator",
+          "suspend": true,
+          "values": {
+            "multitenancy": {
+              "defaultServiceAccount": "default",
+              "enabled": true
+            },
+            "reporting": {
+              "interval": "10m"
+            }
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps"
+      },
       "apiVersion": "fluxcd.controlplane.io/v1",
       "kind": "ResourceSet",
       "namespace": "flux-system",

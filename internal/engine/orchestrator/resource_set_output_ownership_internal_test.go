@@ -210,7 +210,7 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 				recordResourceSetDocumentBoundary(t, doc, counts)
 			}
 		}
-		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
+		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 1} {
 			assert.ErrorIf(t, counts[key] != want,
 				"%s count=%d, want %d; all=%v", key, counts[key], want, counts)
 		}

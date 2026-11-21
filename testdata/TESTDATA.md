@@ -670,6 +670,7 @@ Both sequence replays start with empty caches.
 | `helm-dependencies/changed-only-emitted-kustomization-path-templated-root` | changed only emitted kustomization path templated root. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal` | changed only emitted kustomization path literal. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal-root` | changed only emitted kustomization path literal root. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-helmrelease-chart-templated` | A ResourceSet provider input fills a local chart path; a committed values edit and a later library-only edit to its `file://` dependency each reach the generated release diff. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-render-emitted-dependency` | changed only render emitted dependency. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/ready-expr--helm-release` | ready expr  helm release. | Reuse within sequence; reset on replay. |
 | `helm-oci/helm-missingoci-source` | helm missingoci source. | Reuse within sequence; reset on replay. |

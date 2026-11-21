@@ -45,6 +45,7 @@ func TestE2E_HelmCorpus(t *testing.T) {
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-templated-root"},
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-literal"},
 		{"helm-dependencies", "changed-only-emitted-kustomization-path-literal-root"},
+		{"helm-dependencies", "changed-only-emitted-helmrelease-chart-templated"},
 		{"helm-dependencies", "changed-only-render-emitted-dependency"},
 		{"helm-dependencies", "ready-expr--helm-release"},
 		{"helm-dependencies", "source-siblings-build-diff"},

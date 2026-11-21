@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -414,7 +415,11 @@ func (p *TemplateProjection) addObjectInputs(object BaseManifest, authoredNamesp
 		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
 		ref.Gate, ref.ArtifactStages = 0, 0
 		ref.Artifact, ref.ChartSource = false, false
-		unresolved := false
+		unresolved := !concreteTemplateOperand(ref.ChartPath) ||
+			slices.ContainsFunc(ref.Files, func(file string) bool { return !concreteTemplateOperand(file) })
+		if unresolved {
+			ref.ChartPath, ref.Files = "", nil
+		}
 		if ref.Use == sourceKey {
 			for root := range SourceRoots(object) {
 				if concreteTemplateOperand(root) {

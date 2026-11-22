@@ -12,10 +12,15 @@ import (
 
 func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 	role := c.role(id)
-	if c.incoming(id).Entry != nil && !role.needed {
+	outside := c.outsideEntry(c.owner, id)
+	if outside && c.proposal.Request.AwaitEmission && c.session.request.Matches(id) &&
+		!c.scopes.scopes.Scope(c.owner).Current() {
+		return EntryMembershipFailure(c.context.EntryPath, c.owner, id)
+	}
+	if !role.needed && (outside || c.incoming(id).Entry != nil) {
 		return nil
 	}
-	eligible := c.session.request.Matches(id)
+	eligible := !outside && c.session.request.Matches(id)
 	if c.decision.unrestricted {
 		c.add(id, admissionRole{needed: true, selected: eligible, dirty: true, ordinary: true})
 		return nil
@@ -59,9 +64,10 @@ func (c *admissionClosure) productionRole(id manifest.NamedResource, role admiss
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
 			parent := c.role(production.Owner)
-			inherited := parent.selected && parent.dirty && c.selectsChild(id)
+			inherited := parent.selected && parent.dirty && c.selectsChild(production.Owner, id)
 			inherited = inherited && (!production.Owner.ReportHidden() || !c.isFileIndexed(id))
-			selected := inherited || c.changedProduction(production) && eligible
+			selected := inherited || eligible && c.scopes.scopes.allowsProduction(&production, id) &&
+				c.changedProduction(production)
 			if selected &&
 				(!c.session.request.Changed || !c.unchangedDeclaration(id, production.Owner, c.incoming(id).Obj)) {
 				role.needed, role.selected, role.dirty = true, true, true

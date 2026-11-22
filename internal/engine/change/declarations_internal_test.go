@@ -291,6 +291,55 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 	}
 }
 
+func TestWithDeclarations_PreparedNamespaceMove(t *testing.T) {
+	t.Parallel()
+	stores := [2]*store.Store{store.New(), store.New()}
+	source := (&manifest.GitRepository{Name: "package", Namespace: "flux-system"}).Named()
+	owner := (&manifest.Kustomization{Name: "package", Namespace: "flux-system"}).Named()
+	var prepared [2]map[manifest.NamedResource]store.Child
+	var children [2]*manifest.Kustomization
+	for side, namespace := range []string{"before", "after"} {
+		input := &store.SourceArtifact{
+			LocalPath: t.TempDir(), Provider: store.ProviderCommit, Content: namespace,
+			FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("namespace: " + namespace + "\n")}},
+		}
+		stores[side].SetArtifact(source, input)
+		child := &manifest.Kustomization{Name: "child", Namespace: namespace, Path: "./workload"}
+		children[side] = child
+		prepared[side] = map[manifest.NamedResource]store.Child{
+			child.Named(): {
+				Obj:         child,
+				Productions: []manifest.Production{{Owner: owner, Source: source, File: "kustomization.yaml"}},
+			},
+		}
+	}
+	changes, err := Qualify(
+		t.Context(), &Set{paths: map[string][2]filePresence{}},
+		SourcePair{Stores: stores}, manifest.WorkScope{},
+	)
+	assert.NoError(t, err)
+	for _, complete := range []bool{false, true} {
+		input := prepared
+		if !complete {
+			input[1] = nil
+		}
+		refined, err := changes.WithDeclarations(t.Context(), DeclarationInputs{Stores: stores, Prepared: input})
+		assert.NoError(t, err)
+		for side, child := range children {
+			known := complete || side == 0
+			key := comparisonKey{source: source, owner: child.Named(), input: child.Named()}
+			got, found := refined.declarations[key]
+			assert.Equal(t, found, known)
+			assert.Equal(t, got.changed, known)
+			assert.Equal(t, got.objects[1-side], nil)
+			if known {
+				assert.Equal(t, got.objects[side], manifest.BaseManifest(child))
+			}
+			assert.Equal(t, stores[side].GetDeclaration(child.Named()), nil)
+		}
+	}
+}
+
 func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

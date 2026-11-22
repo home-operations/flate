@@ -1,9 +1,11 @@
 package loader
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -47,4 +49,88 @@ func TestRegisterBuilt_RenderInputs(t *testing.T) {
 			assert.Equal(t, record.Builder, "kustomization.yaml")
 		})
 	}
+}
+
+func TestRegisterBuilt_CompleteEmptyReplacementRetiresOnlyItsOwner(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "previous/kustomization.yaml", "resources: [release.yaml]\n")
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	entry := filepath.Join(root, "entry")
+	_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	owner := &manifest.Kustomization{Name: "current", Namespace: "apps", Path: "./previous"}
+	st.AddObject(owner)
+	first := (manifest.Production{Owner: owner.Named(), Source: manifest.BootstrapSourceID, File: "previous/release.yaml"})
+	second := (manifest.Production{
+		Owner: testutil.KustomizationID("apps", "second"), Source: manifest.BootstrapSourceID, File: "second/release.yaml",
+	})
+	pending := &manifest.HelmRelease{Name: "demo"}
+	l.Index.Records[pending.Named()] = manifest.DiscoveryRecord{
+		Path: filepath.Join(root, first.File), File: first.File, Productions: []manifest.Production{first, second},
+	}
+	input := BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: owner.Named()}
+
+	oldInput := input
+	oldInput.Root = filepath.Join(root, "previous")
+	incomplete := supportedBuiltInputForTest(l, &oldInput)
+	replacement := owner.Clone()
+	replacement.Path = "./entry"
+	st.AddObject(replacement)
+	assert.Equal(t, incomplete.Support.Valid(), false)
+	assert.NoError(t, l.RegisterBuilt(t.Context(), incomplete, nil))
+	assert.Diff(t, l.Index.Records[pending.Named()].Productions, []manifest.Production{first, second})
+
+	complete := supportedBuiltInputForTest(l, &input)
+	assert.NoError(t, l.RegisterBuilt(t.Context(), complete, nil))
+	assert.Diff(t, l.Index.Records[pending.Named()].Productions, []manifest.Production{second})
+}
+
+func TestRegisterBuilt_EntryScopeSurvivesOrdinaryRegistration(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	t.Cleanup(l.Close)
+	l.SourceRoot = root
+	entry := filepath.Join(root, "leaf")
+	_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./leaf"}
+	child := &manifest.HelmRelease{Name: "outside", Namespace: "apps"}
+	st.AddObject(owner)
+	input := BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: owner.Named()}
+	full := []store.Child{{Obj: child}}
+	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full))
+	_, ok := l.Index.Lookup(child.Named())
+	assert.Equal(t, ok, true)
+
+	prepared := supportedBuiltInputForTest(l, &input)
+	scope := &selection.EntryScope{Preparation: prepared.Support}
+	l.SetEntryScope(owner.Named(), scope)
+	l.Store.Retire(prepared.Support)
+	assert.Equal(t, l.RootEvidence(owner.Named(), nil).EntryScope, scope)
+	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full))
+	_, ok = l.Index.Lookup(child.Named())
+	assert.Equal(t, ok, false)
+	assert.Equal(t, l.RootEvidence(owner.Named(), nil).EntryScope, scope)
+	assert.Equal(t, scope.Current(), true)
+
+	catalog := l.DetachCatalog()
+	t.Cleanup(catalog.Close)
+	l.Close()
+	assert.Equal(t, catalog.RootEvidence(owner.Named(), nil).EntryScope, scope)
+	assert.Equal(t, scope.Current(), true)
+	before, _ := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	replacement := *before
+	replacement.Content = "replacement"
+	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+	assert.Equal(t, scope.Current(), false)
 }

@@ -39,6 +39,14 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: roots[1]},
 	}, Config{Concurrency: 2})
 	assert.NoError(t, err)
+	candidate := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "unrelated", manifest.NamedResource{})
+	for i := range runs {
+		runs[i].Result.lookupEvidence = []selection.LookupFailure{{
+			Package: manifest.DiagnosticFor(candidate.Named(), candidate),
+			Path:    roots[i],
+			Cause:   fmt.Errorf("broken candidate"),
+		}}
+	}
 	for _, id := range []manifest.NamedResource{
 		testutil.KustomizationID("flux-system", "app-a"), testutil.HelmReleaseID("flux-system", "release"),
 	} {
@@ -53,6 +61,8 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 				_, known := runs[side].index.Lookup(id)
 				assert.Equal(t, known, true)
 				assert.Equal(t, runs[side].store.GetObject(id) == nil, true)
+				assert.Equal(t, result.LookupMatched, true)
+				assert.Equal(t, result.LookupFailed, false)
 				assert.Equal(t, result.Counts[id.Kind], 1)
 				assert.Equal(t, result.Statuses[id].Outcome(), store.OutcomeUnchanged)
 				if len(result.Objects) != 1 {
@@ -110,6 +120,8 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 			for _, result := range filtered {
 				assert.Equal(t, result.Counts[id.Kind], 1)
 				assert.Equal(t, len(result.Objects), 0)
+				assert.Equal(t, result.LookupMatched, true)
+				assert.Equal(t, result.LookupFailed, false)
 			}
 			full, fullErr := renderTreesForTest(t.Context(), t,
 				[]Tree{{Path: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},

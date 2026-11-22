@@ -12,6 +12,7 @@ import (
 type Catalog struct {
 	physicalView
 
+	EntryScopes   *selection.EntryScopes
 	buckets       [64]*map[manifest.BaseManifest]producerFact
 	retainedRoots rootInventory
 	provider      func(manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex) store.SourceProvider
@@ -34,7 +35,9 @@ type physicalView struct {
 // DetachCatalog keeps borrowed catalog facts alive beyond Loader.Close.
 func (l *Loader) DetachCatalog() *Catalog {
 	if l.catalog == nil {
-		l.catalog = &Catalog{physicalView: l.physicalView(), provider: l.SourceProvider}
+		l.catalog = &Catalog{
+			physicalView: l.physicalView(), provider: l.SourceProvider, EntryScopes: l.entryScopes.Load(),
+		}
 		l.catalog.retainedRoots = l.roots
 		l.catalog.roots = &l.catalog.retainedRoots
 		l.catalog.projections = &l.catalog.buckets
@@ -48,6 +51,7 @@ func (l *Loader) DetachCatalog() *Catalog {
 // Close releases borrowed catalog storage and is safe to repeat.
 func (c *Catalog) Close() {
 	if c != nil {
+		retireEntryScopes(c.EntryScopes)
 		*c = Catalog{}
 	}
 }
@@ -69,7 +73,9 @@ func (c *Catalog) RootEvidence(
 	if c == nil || c.index == nil {
 		return selection.RootEvidence{}
 	}
-	return c.evidence(id, reads, nil)
+	facts := c.evidence(id, reads, nil)
+	facts.EntryScope = c.EntryScopes.Scope(id)
+	return facts
 }
 
 func (l *Loader) physicalView() physicalView {

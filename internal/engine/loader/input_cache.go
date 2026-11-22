@@ -47,6 +47,7 @@ type cachedInput struct {
 	Digest            string                `json:"Digest,omitempty"`
 	Builder           string                `json:"Builder,omitempty"`
 	Body              *types.Kustomization  `json:"Body,omitzero"`
+	Recipe            recipeClass           `json:"Recipe,omitempty"`
 	Coverage          manifest.DocumentRole `json:"Coverage,omitempty"`
 	Possible          bool                  `json:"Possible,omitempty"`
 	Objects           []cachedOccurrence    `json:"Objects,omitempty"`
@@ -326,6 +327,7 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 		Name:     name,
 		Digest:   digest,
 		Body:     doc.body,
+		Recipe:   doc.recipe,
 		Coverage: doc.coverage,
 		Possible: doc.possible,
 		Parsed:   doc.objects != nil,
@@ -575,7 +577,7 @@ func (l *Loader) restoreCachedBuilder(root string, state *inputCache, file *cach
 	key := filepath.Dir(absolute)
 	doc := l.documents.cache[key]
 	doc.body, doc.file, doc.searched, doc.pathState = file.Body, absolute, true, pathDirectory
-	doc.sourceRoot = root
+	doc.sourceRoot, doc.recipe = root, file.Recipe
 	l.documents.cache[key] = doc
 	return nil
 }

@@ -175,3 +175,33 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmission_SourceUsesPreparedOwner(t *testing.T) {
+	t.Parallel()
+	child := &manifest.HelmRelease{Name: "demo", Namespace: "apps"}
+	id := child.Named()
+	prepared := (&manifest.Kustomization{Name: "prepared", Namespace: "apps"}).Named()
+	incoming := (&manifest.Kustomization{Name: "incoming", Namespace: "apps"}).Named()
+	source := (&manifest.GitRepository{Name: "package", Namespace: "apps"}).Named()
+	other := manifest.Production{Owner: incoming, Source: manifest.BootstrapSourceID}
+	facts := &solverFacts{index: manifest.DiscoveryIndex{
+		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			id: {
+				Builder: "app/kustomization.yaml", BuilderOwner: prepared,
+				Productions: []manifest.Production{other, {Owner: prepared, Source: source}},
+			},
+		},
+	}}
+	c := admissionClosure{
+		facts: facts,
+		states: map[manifest.NamedResource]admissionState{
+			id: {productionsKnown: true, productions: []manifest.Production{other}},
+		},
+	}
+	assert.Equal(t, c.source(id), source)
+	state := c.states[id]
+	state.incoming = 1
+	c.states[id] = state
+	c.owner, c.generation = incoming, []store.Child{{Obj: child}}
+	assert.Equal(t, c.source(id), other.Source)
+}

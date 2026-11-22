@@ -1176,6 +1176,16 @@ Expected test rows and human diffs follow the existing CLI output format.
 The loader tests also use the authored current tree for structural closure and accepted input-cache replay.
 The persistence proof requires a clean test binary with `-buildvcs=true`.
 
+## Seed identity
+
+`seed-identity/repo` contains two Flux Kustomizations that render HelmReleases with the same name.
+Each package starts with an inline namespace transformer. Both releases use the same local chart.
+
+`TestRun_SeedIdentityChangedDiff` compares complete diffs for six cases. It edits the shared chart
+and the cluster B release under three namespace configurations. `TestRun_SeedIdentityNamedBuild`
+uses the same tree for copied artifacts, narrow entries, and a patch that renames a release.
+It also covers a Flux owner outside the selected path and a patch that changes the owner's namespace policy.
+
 ## Scope migration
 
 `unclaimed-change/unclaimed-path-without-history` retains the authored fixture from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.

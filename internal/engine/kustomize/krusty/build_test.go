@@ -162,7 +162,7 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	openapi.ResetOpenAPI()
 	defer openapi.ResetOpenAPI()
 
-	first, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, "plain"))
+	first, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, "plain"), false)
 	assert.NoError(t, err)
 	want, err := first.AsYaml()
 	assert.NoError(t, err)
@@ -170,7 +170,7 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	definition := openapi.SchemaForResourceType(meta).Schema
 	for _, dir := range []string{"plain", "ordinary-error"} {
 		t.Run(dir, func(t *testing.T) {
-			rm, buildErr := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir))
+			rm, buildErr := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir), false)
 			switch {
 			case dir == "plain":
 
@@ -188,7 +188,7 @@ func TestBuild_BuiltinRetention(t *testing.T) {
 	}
 
 	openapi.ResetOpenAPI()
-	custom, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, "custom"))
+	custom, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, "custom"), false)
 	assert.NoError(t, err)
 	got, err := custom.AsYaml()
 	assert.NoError(t, err)
@@ -255,7 +255,7 @@ func TestBuild_FluxParity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			openapi.ResetOpenAPI()
 			for _, dir := range []string{"plain", tc.name, "plain"} {
-				rm, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir))
+				rm, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir), false)
 				want := expected[dir]
 				if want.failure != "" {
 					assert.FatalIf(t, err == nil, "%s: expected error %q", dir, want.failure)
@@ -318,12 +318,12 @@ func TestBuild_PanicRecovery(t *testing.T) {
 		t.Run(dir, func(t *testing.T) {
 			openapi.ResetOpenAPI()
 			definitions := openapi.Schema()
-			_, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir))
+			_, err := krusty.Build(fixture.fs, filepath.Join(fixture.root, dir), false)
 			assert.FatalIf(t, err == nil, "%v", "expected recovered panic")
 			assert.Equal(t, err.Error(), expected[dir])
 			assert.Equal(t, openapi.GetSchemaVersion(), openapi.DefaultOpenAPI)
 			assert.Equal(t, len(definitions.Definitions), 0)
-			_, err = krusty.Build(fixture.fs, filepath.Join(fixture.root, "plain"))
+			_, err = krusty.Build(fixture.fs, filepath.Join(fixture.root, "plain"), false)
 			assert.NoError(t, err)
 			namespaced, found := openapi.IsNamespaceScoped(yaml.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"})
 			assert.Equal(t, found, true)

@@ -779,12 +779,15 @@ func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.S
 	if p.session.cfg.Trees == nil {
 		return false
 	}
+	request := p.session.cfg.Selection
+	restricted := request.RestrictedPackageLookup()
 	for i := range root.seeds {
 		occurrence := &root.seeds[i]
 		if !occurrence.RequiresBuild {
 			continue
 		}
-		if p.directoryInventory && rootPreparationProducer(occurrence) {
+		lookupOwner := restricted && occurrence.Identity.KindInfo().Structural && !request.Matches(occurrence.Identity)
+		if lookupOwner || p.directoryInventory && rootPreparationProducer(occurrence) {
 			if !generatesEntry(occurrence) {
 				return true
 			}

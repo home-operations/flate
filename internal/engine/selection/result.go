@@ -10,6 +10,8 @@ import (
 // Result contains the objects and diagnostics projected onto requested roots.
 // Borrowed manifests and document batches MUST remain immutable in use.
 type Result struct {
+	LookupMatched bool
+	LookupFailed  bool
 	// Subjects maps raw identities to captured display context.
 	Subjects        map[manifest.NamedResource]manifest.DiagnosticIdentity
 	Manifests       []manifest.DocumentBatch

@@ -138,24 +138,34 @@ func (l *Loader) RegisterBuilt(
 	case l.frozen || input.Support == nil || !input.Support.Valid():
 		return nil
 	}
-	root, selected := input.Root, map[string]bool{}
-	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
-	scopeRoot, admitted, err := l.admitBuiltRoot(ctx, &input, sourceRoot)
-	if err != nil || !admitted {
-		return err
+	if scope := l.EntryScope(input.Owner); scope != nil {
+		docs = slices.DeleteFunc(slices.Clone(docs), func(child store.Child) bool {
+			return !scope.Allows(child.Obj.Named())
+		})
 	}
-	rel, _ := filepath.Rel(sourceRoot, root)
-	inputs := l.selectBuiltInputs(sourceRoot, rel, &input, selected)
-	slices.Sort(inputs.inputs)
-	slices.Sort(inputs.shared)
-	inputs.inputs, inputs.shared = slices.Compact(inputs.inputs), slices.Compact(inputs.shared)
-	builder := l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
+	root := input.Root
+	var inputs builtInputs
+	var selected map[string]bool
+	scopeRoot, builder := l.SourceRoot, filepath.ToSlash(root)
+	if filepath.IsAbs(root) {
+		sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
+		var admitted bool
+		var err error
+		scopeRoot, admitted, err = l.admitBuiltRoot(ctx, &input, sourceRoot)
+		if err != nil || !admitted {
+			return err
+		}
+		rel, _ := filepath.Rel(sourceRoot, root)
+		selected = map[string]bool{}
+		inputs = l.selectBuiltInputs(sourceRoot, rel, &input, selected)
+		builder = l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
+	}
 	records, locations, authored := make([]manifest.DiscoveryRecord, len(docs)),
 		make([]authoredOccurrence, len(docs)), map[manifest.NamedResource]store.Child{}
 	for i := range docs {
 		record, original := l.builtRecord(&input, docs[i].Obj, &inputs, builder)
 		records[i] = record
-		locations[i], _ = l.catalogOccurrence(docs[i].Obj.Named())
+		locations[i] = l.locations[docs[i].Obj.Named()]
 		if original.Obj != nil {
 			authored[docs[i].Obj.Named()] = original
 		}
@@ -170,17 +180,16 @@ func (l *Loader) RegisterBuilt(
 	input.Reads = maps.Clone(input.Reads)
 	// Directory membership and node-kind probes MUST NOT claim descendant content.
 	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
-	if l.candidates == nil {
-		l.candidates = map[manifest.NamedResource]store.Child{}
-	}
 	l.publishBuiltRecords(
 		&builtBatch{input: &input, documents: slices.Clone(docs), builder: builder},
 		docs, records, authored,
 	)
-	rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
-	l.refreshNativeBuildFacts(root, rebuild)
+	if filepath.IsAbs(root) {
+		rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
+		l.refreshNativeBuildFacts(root, rebuild)
+	}
 	l.scopes.complete = false
-	err = l.admit(ctx, scopeRoot, nil)
+	err := l.admit(ctx, scopeRoot, nil)
 	retained = input.Support.Valid()
 	if previous != nil && previous.input.Support != input.Support {
 		l.Store.Retire(previous.input.Support)
@@ -200,15 +209,14 @@ func (l *Loader) builtRecord(
 	}
 	var authored store.Child
 	raw, _ := l.Index.Lookup(id)
-	if occurrence, found := l.catalogOccurrence(id); found && occurrence.facts.collection {
+	if occurrence, found := l.locations[id]; found && occurrence.facts.collection {
 		raw = manifest.DiscoveryRecord{}
 	}
-	if raw.Path == "" && id.Namespace != "" {
-		if occurrence, known := l.catalogOccurrence(id); known && occurrence.Authored.Namespace == "" {
-			bare := id
-			bare.Namespace = ""
-			raw, _ = l.Index.Lookup(bare)
-		}
+	_, read := slices.BinarySearch(inputs.inputs, raw.File)
+	sameOwner := raw.BuilderOwner == (manifest.NamedResource{}) || raw.BuilderOwner == input.Owner
+	sameDeclaration := raw.Authored == id && sameOwner
+	if !filepath.IsAbs(input.Root) || !read && !sameDeclaration {
+		raw = manifest.DiscoveryRecord{}
 	}
 	same := false
 	if raw.File != "" {
@@ -409,7 +417,9 @@ func (l *Loader) selectBuiltInputs(
 			}
 		}
 	}
-	return builtInputs{inputs: inputs, shared: shared}
+	slices.Sort(inputs)
+	slices.Sort(shared)
+	return builtInputs{inputs: slices.Compact(inputs), shared: slices.Compact(shared)}
 }
 
 func (l *Loader) removeReplacedRecords(
@@ -432,9 +442,14 @@ func (l *Loader) removeReplacedRecords(
 		}
 		if record.Builder == "" && slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
 			return production.Owner != (manifest.NamedResource{}) && production.Owner != input.Owner
-		}) && !slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
-			return production.Owner == input.Owner
 		}) {
+			record.Productions = slices.DeleteFunc(
+				slices.Clone(record.Productions),
+				func(production manifest.Production) bool {
+					return production.Owner == input.Owner
+				},
+			)
+			l.Index.Records[id] = record
 			continue
 		}
 		if record.Path == "" || !selected[record.Path] {
@@ -569,6 +584,9 @@ func (l *Loader) publishBuiltRecords(
 		l.builtBatches = map[manifest.NamedResource]*builtBatch{}
 	}
 	l.builtBatches[batch.input.Owner] = batch
+	if l.candidates == nil {
+		l.candidates = map[manifest.NamedResource]store.Child{}
+	}
 	if l.builtRoots == nil {
 		l.builtRoots = make(map[manifest.NamedResource]builtRoot)
 	}
@@ -606,10 +624,17 @@ func (l *Loader) admitBuiltRoot(
 ) (string, bool, error) {
 	scopeRoot := sourceRoot
 	mount := l.documents.artifacts[sourceRoot]
+	enclosing := false
 	if sourceRoot != l.SourceRoot && mount.OriginPath(sourceRoot) == l.SourceRoot {
 		owner, _ := l.Index.Lookup(input.Owner)
 		if owner.Path != "" && safepath.Contains(mount.OriginPath(input.Root), owner.Path) {
 			scopeRoot = l.SourceRoot
+		} else if object := l.Store.GetDeclaration(input.Owner); object != nil && l.entryPath != "" {
+			application, applies := manifest.ApplicationFor(object)
+			ks, _ := object.(*manifest.Kustomization)
+			if applies && l.EntryPackageReached(mount, application.Path, ks, l.entryPath) {
+				scopeRoot, enclosing = l.SourceRoot, true
+			}
 		}
 	}
 	if l.documents.compact {
@@ -620,7 +645,8 @@ func (l *Loader) admitBuiltRoot(
 		return "", false, err
 	}
 	packageFile := l.documents.read(input.Root).file
-	return scopeRoot, packageFile == "" || l.documents.cache[packageFile].eligible != selection.RootInactive, nil
+	return scopeRoot, enclosing || packageFile == "" ||
+		l.documents.cache[packageFile].eligible != selection.RootInactive, nil
 }
 
 func (l *Loader) builtInputsUnchanged(raw *manifest.DiscoveryRecord, input *BuiltInput, inputs *builtInputs) bool {

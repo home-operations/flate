@@ -334,7 +334,7 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 				assert.NoError(t, fs.WriteFile(target, file.Data))
 			}
 			internalkustomize.BuildMutex.Lock()
-			result, buildErr := internalkustomize.Build(fs, filepath.Join(root, "entry"))
+			result, buildErr := internalkustomize.Build(fs, filepath.Join(root, "entry"), false)
 			internalkustomize.BuildMutex.Unlock()
 			assert.NoError(t, buildErr)
 			data, err := result.AsYaml()

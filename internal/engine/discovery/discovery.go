@@ -33,8 +33,10 @@ type Result struct {
 	Binding    Binding
 	Admission  *Admission
 	// Admitted inputs may use a synthetic label with no corresponding directory.
-	RepoRoot string
-	Index    *manifest.DiscoveryIndex
+	RepoRoot       string
+	Index          *manifest.DiscoveryIndex
+	LookupFailures []manifest.NamedResource
+	LookupEvidence []selection.LookupFailure
 }
 
 // Config is the input contract for Begin. Store is mandatory.
@@ -97,6 +99,7 @@ type Session struct {
 	aggregate              bool
 	aggregateRequiresBuild bool
 	entryPackagesToQualify [][]selection.OccurrenceFacts
+	partitionedEntry       bool
 	generatorPackages      []string
 	publicOperands         []manifest.NamedResource
 	entryPackages          []*plannedPackage
@@ -105,6 +108,7 @@ type Session struct {
 	planLoaded             bool
 	pendingSources         []manifest.NamedResource
 	pendingMaterializers   []manifest.NamedResource
+	lookupSources          []selection.LookupSource
 	sourceGroups           map[manifest.NamedResource]*entrySourceGroup
 	loaded                 bool
 	built                  bool
@@ -233,6 +237,7 @@ func (d *Session) finishDiscovery(
 		RepoRoot:  repoRoot,
 		Index:     l.Index,
 	}
+	d.finishLookup(result)
 	d.result = result
 	return result, nil
 }
@@ -279,6 +284,8 @@ type declarationPreparation struct {
 	err        error
 	work       *manifest.RenderWork
 	registered bool
+	lookup     lookupMode
+	lookupErr  error
 	support    store.ReadSet
 }
 
@@ -349,6 +356,7 @@ func newDiscoverer(config *Config) *Session {
 	d.entryPackagesToQualify = prepared.packagesToQualify
 	d.generatorPackages = prepared.generatorPackages
 	d.cfg.Entry = cfg.Entry
+	d.partitionedEntry = cfg.Entry.partitioned
 	d.cfg.Path = cmp.Or(cfg.Entry.target, cfg.Path)
 	d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 	return d
@@ -566,6 +574,7 @@ func (d *Session) prepareRequest(request *selection.PrepareRequest) selection.Pr
 	previous := d.request
 	request.Changes = d.loader.Options.Changes
 	request.Missing = d.loader.Options.Missing
+	request.LookupSources = d.lookupSources
 	if request.ReadHistory == nil {
 		request.ReadHistory = previous.ReadHistory
 	}
@@ -806,7 +815,7 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 func (d *Session) acceptPrepared(ctx context.Context) error {
 	for _, prepared := range d.prepared {
 		ks := prepared.owner
-		if !prepared.registered || prepared.err != nil {
+		if !prepared.complete || !prepared.registered && prepared.lookup == noLookup || prepared.err != nil {
 			continue
 		}
 		input := prepared.source
@@ -819,6 +828,9 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 			Sources: d.cfg.Store.ChildSourcePaths(ks.Named(), prepared.children, d.loader.Index),
 		}); err != nil {
 			return fmt.Errorf("discovery entry %q publish: %w", ks.Path, err)
+		}
+		if !prepared.registered {
+			continue
 		}
 		for warningIndex := range prepared.warnings {
 			warning := prepared.warnings[warningIndex]

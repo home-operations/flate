@@ -1,6 +1,9 @@
 package selection
 
 import (
+	"errors"
+	"hash/maphash"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -99,6 +102,83 @@ func TestPrepareExternal_EntryMustOwnReaderAndGenerator(t *testing.T) {
 			}
 			assert.FatalIf(t, len(side.result.External) != 1, "warnings = %v, want one", side.result.External)
 			assert.Equal(t, side.result.External[0].Category, manifest.WarnExternalSource)
+		})
+	}
+}
+
+func TestPrepareFailures_RequiredNamedLookup(t *testing.T) {
+	t.Parallel()
+	owner := (&manifest.Kustomization{Name: "package", Namespace: "apps"}).Named()
+	unrelated := (&manifest.Kustomization{Name: "unrelated", Namespace: "apps"}).Named()
+	request := (&manifest.HelmRelease{Name: "release", Namespace: "apps"}).Named()
+	failure := store.StatusInfo{Status: store.StatusFailed}
+	for _, tc := range []struct {
+		name    string
+		matched bool
+		roots   []manifest.NamedResource
+	}{
+		{name: "missing"},
+		{name: "matched", matched: true, roots: []manifest.NamedResource{request}},
+		{name: "matched without output roots", matched: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
+				Needed: []manifest.NamedResource{owner}, lookups: []manifest.NamedResource{owner},
+			}, true)
+			side := &selectionSide{
+				run: Snapshot{
+					Store:    store.New(),
+					Failed:   map[manifest.NamedResource]store.StatusInfo{owner: failure, unrelated: failure},
+					Decision: decision,
+				},
+				roots:  tc.roots,
+				result: &Result{LookupMatched: tc.matched},
+			}
+			side.prepareFailures([]manifest.NamedResource{request}, nil)
+			_, fatal := side.result.Failed[owner]
+			assert.Equal(t, fatal, !tc.matched)
+			_, fatal = side.result.Failed[unrelated]
+			assert.Equal(t, fatal, false)
+		})
+	}
+}
+
+func TestProject_LookupFailureSupersedesOtherDiagnostics(t *testing.T) {
+	t.Parallel()
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "candidate", manifest.NamedResource{})
+	pkg := manifest.DiagnosticFor(owner.Named(), owner)
+	failure := store.FailureStatus(&manifest.DependencyFailedError{
+		Parent: pkg.ID, Failed: []manifest.NamedResource{manifest.BootstrapSourceID},
+	})
+	target := (&manifest.HelmRelease{Name: "target"}).Named()
+	request := Request{Roots: []manifest.NamedResource{target}}
+	lookups := []manifest.NamedResource{pkg.ID}
+	for _, tc := range []struct {
+		name            string
+		requiredLookups []manifest.NamedResource
+	}{
+		{name: "unrelated failure"},
+		{name: "blocked lookup owner", requiredLookups: lookups},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(&Admission{
+				Needed: lookups, lookups: tc.requiredLookups,
+			}, true)
+			runs := []Snapshot{{
+				Store: store.New(), Complete: true, HasResult: true, Decision: decision,
+				Failed:         map[manifest.NamedResource]store.StatusInfo{pkg.ID: failure},
+				Blocked:        map[manifest.NamedResource][]manifest.NamedResource{pkg.ID: failure.BlockedBy()},
+				LookupEvidence: []LookupFailure{{Package: pkg, Path: "/entry", Cause: errors.New("bad candidate")}},
+			}}
+			results, errs := Project(runs, nil, request)
+			assert.FatalIf(t, errs.Selected == nil, "missing projected failure")
+			assert.Equal(t, strings.Count(errs.Selected.Error(), "cannot establish membership"), 1)
+			assert.Equal(t, strings.Count(errs.Selected.Error(), failure.Message), 1)
+			assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{pkg.ID: nil})
+			assert.Equal(t, len(results[0].Blocked), 0)
+			assert.Equal(t, len(results[0].Unrelated), 0)
 		})
 	}
 }

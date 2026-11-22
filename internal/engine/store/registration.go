@@ -268,7 +268,11 @@ func (in *Input) objectCurrent() bool {
 }
 
 func (in *Input) current() bool {
-	if !in.objectCurrent() || !in.production.Load().current() {
+	return in.objectCurrent() && in.supportCurrent()
+}
+
+func (in *Input) supportCurrent() bool {
+	if !in.production.Load().current() {
 		return false
 	}
 	details := in.details.Load()
@@ -324,10 +328,7 @@ func (r *ReadSet) Valid() bool {
 		return false
 	}
 	for input := r.inputs; input != nil; input = input.next {
-		if !input.current() ||
-			input.view.bound &&
-				(input.view.binding != nil && input.view.binding.Ref.NamedResource != r.id && !input.view.binding.sourceCurrent() ||
-					input.view.support != nil && input.view.support.Ref.NamedResource != r.id && !input.view.support.productionCurrent()) {
+		if !input.current() || !r.bindingCurrent(input) {
 			if !r.accepted.Load() {
 				r.invalid.Store(true)
 			}
@@ -335,6 +336,15 @@ func (r *ReadSet) Valid() bool {
 		}
 	}
 	return true
+}
+
+func (r *ReadSet) bindingCurrent(in *Input) bool {
+	if !in.view.bound {
+		return true
+	}
+	binding, support := in.view.binding, in.view.support
+	return (binding == nil || binding.Ref.NamedResource == r.id || binding.sourceCurrent()) &&
+		(support == nil || support.Ref.NamedResource == r.id || support.productionCurrent())
 }
 
 // Retire releases only this execution's subscriptions at the next boundary.
@@ -479,4 +489,20 @@ func completeRegistrationChange(cell *registration, deliver *bool, yield func(ma
 	if cell.owner.delivered.CompareAndSwap(false, true) {
 		*deliver = yield(cell.owner.id)
 	}
+}
+
+// MaterialCurrent checks the retained proof's facets after a source changes execution role.
+// The invalid flag also records role changes, so it cannot decide material validity.
+func (r *ReadSet) MaterialCurrent() bool {
+	if r == nil {
+		return false
+	}
+	for in := r.inputs; in != nil; in = in.next {
+		details := in.details.Load()
+		source := details != nil && details.artifactRead != 0 && in.Ref.NamedResource.KindInfo().SourceArtifact
+		if (!source && !in.objectCurrent()) || !in.supportCurrent() || !r.bindingCurrent(in) {
+			return false
+		}
+	}
+	return true
 }

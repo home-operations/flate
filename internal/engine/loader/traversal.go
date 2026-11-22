@@ -43,6 +43,9 @@ type traversal struct {
 	count        int
 	err          error
 	canceled     bool
+
+	qualificationEntry string
+	qualify            bool
 }
 
 func (w *traversal) proceed(ctx context.Context) bool {
@@ -267,14 +270,9 @@ func (w *traversal) scopeReference(
 	case visit.parent.role != kustomizeinput.Configuration:
 		visit.child.role = kustomizeinput.Resource
 	}
-	resolved, ok := kustpath.Resolve(
-		filepath.Join(visit.parent.root, visit.parent.dir),
-		visit.reference.Path,
-		kustpath.Dependency,
-	)
-	if !ok || !safepath.Contains(visit.parent.root, resolved) ||
-		new(w.documents).mountedRoot(resolved) != new(w.documents).mountedRoot(visit.parent.root) {
-		if visit.child.role == kustomizeinput.Configuration {
+	resolved, ok := w.scopePath(visit.parent.root, visit.parent.dir, visit.reference.Path)
+	if !ok {
+		if w.qualify || visit.child.role == kustomizeinput.Configuration {
 			return traversalDecision{done: true, more: w.uncertain(
 				new(*visit.parent),
 				visit.reference.FieldPath()+": configuration reference cannot be inspected locally",
@@ -295,6 +293,12 @@ func (w *traversal) scopeReference(
 		visit.child.deferDecode = !admitted || filepath.IsAbs(visit.reference.Path)
 	}
 	return traversalDecision{}
+}
+
+func (w *traversal) scopePath(root, dir, reference string) (string, bool) {
+	resolved, ok := kustpath.Resolve(filepath.Join(root, dir), reference, kustpath.Dependency)
+	return resolved, ok && safepath.Contains(root, resolved) &&
+		new(w.documents).mountedRoot(resolved) == new(w.documents).mountedRoot(root)
 }
 
 func (w *traversal) inlineReference(ctx context.Context, visit *referenceVisit, yield func(graphVisit) bool) bool {

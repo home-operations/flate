@@ -93,6 +93,15 @@ func (c *admissionClosure) declarationSource(id manifest.NamedResource) string {
 }
 
 func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResource {
+	record, _ := c.facts.SelectionIndex().Lookup(id)
+	if record.Builder != "" && (c.incoming(id).Obj == nil || record.BuilderOwner == c.owner) {
+		for i := range record.Productions {
+			production := &record.Productions[i]
+			if production.Owner == record.BuilderOwner && production.Source != (manifest.NamedResource{}) {
+				return production.Source
+			}
+		}
+	}
 	occurrence, located := c.catalogOccurrence(id)
 	{
 		pValues := c.productions(id)
@@ -260,7 +269,7 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 	declared := c.declarationChanged(id, object)
 	record := c.record(id)
 	produced := owner != (manifest.NamedResource{}) || record.Builder != ""
-	authoritative := declared.Known || record.Authored == id
+	authoritative := declared.Known || record.Authored == id || record.Builder != "" && record.BuilderOwner == owner
 	if comparison := c.outputChanged(
 		id,
 		new(manifest.Reference{NamedResource: id}),
@@ -701,6 +710,9 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 }
 
 func (c *admissionClosure) acceptedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
+	if c.outsideEntry(owner, id) {
+		return false
+	}
 	// A producer MUST not authorize its pending generation with its own previous output.
 	if owner != (manifest.NamedResource{}) && owner != id && (c.incoming(id).Obj == nil || owner != c.owner) {
 		output, _ := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)

@@ -92,10 +92,10 @@ func materializeGeneratorData(r *generatorRecord, pairs []types.Pair) (materiali
 		kind = manifest.KindConfigMap
 	}
 	doc := map[string]any{
-		"apiVersion": manifest.CoreAPIVersion,
-		"kind":       kind,
-		"metadata":   map[string]any{"name": r.args.Name, "namespace": r.namespace},
-		"data":       data,
+		apiVersionKey: manifest.CoreAPIVersion,
+		kindKey:       kind,
+		"metadata":    map[string]any{"name": r.args.Name, "namespace": r.namespace},
+		"data":        data,
 	}
 	child, outcome, _ := Prepare(manifest.DocOccurrence{Document: doc}, manifest.ParseDocOptions{})
 	if outcome.Err != nil {

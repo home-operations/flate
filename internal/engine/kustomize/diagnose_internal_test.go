@@ -353,7 +353,7 @@ func TestDuplicateID_FileLoadFailures(t *testing.T) {
 	kus := []byte(existingKustomization("one.yaml", "two.yaml", "unreadable.yaml", "malformed.yaml", "duplicated.yaml"))
 	assert.NoError(t, fsys.WriteFile("/apps/kustomization.yaml", kus))
 	kustomizestate.BuildMutex.Lock()
-	_, err := kustomizestate.Build(counting, "/apps")
+	_, err := kustomizestate.Build(counting, "/apps", false)
 	kustomizestate.BuildMutex.Unlock()
 	// The parent MUST fail independently of best-effort attribution.
 	assert.FatalIf(t, err == nil, "%s", "expected the original aggregate failure")
@@ -399,7 +399,7 @@ func TestDuplicateID_SchemaIsolation(t *testing.T) {
 	go func() {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
-		_, err := kustomizestate.Build(changing, "/schema")
+		_, err := kustomizestate.Build(changing, "/schema", false)
 		buildDone <- err
 	}()
 	<-schemaEntered

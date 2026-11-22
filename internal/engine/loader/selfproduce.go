@@ -140,6 +140,7 @@ func (l *Loader) addGenerator(ctx context.Context, r *generatorRecord) error {
 
 type graphContext struct {
 	root, dir, namespace, fallback string
+	enclosing                      string
 	namePrefix, nameSuffix         string
 	pluginRoot                     string
 	role, edge                     kustomizeinput.Role

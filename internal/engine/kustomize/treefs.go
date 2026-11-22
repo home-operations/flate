@@ -24,17 +24,18 @@ const overlayFileMode = 0o644
 // treeFS adapts the common resolver to kyaml's OS mount names. Mutable state
 // belongs to one render; only the sealed lower tree is shared.
 type treeFS struct {
-	work    manifest.WorkScope
-	upper   *tree.Builder
-	lower   fs.FS
-	root    string
-	rec     *readSet
-	changed map[string]struct{}
-	maxAge  time.Duration
-	retry   cache.RetryConfig
-	slot    *task.Service
-	bases   map[remoteInput]string
-	origins []mountOrigin
+	work         manifest.WorkScope
+	upper        *tree.Builder
+	lower        fs.FS
+	root         string
+	rec          *readSet
+	changed      map[string]struct{}
+	contributors *entryContributors
+	maxAge       time.Duration
+	retry        cache.RetryConfig
+	slot         *task.Service
+	bases        map[remoteInput]string
+	origins      []mountOrigin
 }
 
 type mountOrigin struct {

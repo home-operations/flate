@@ -277,6 +277,10 @@ func (l *Loader) Close() {
 		l.producerFacts[i].Store(nil)
 	}
 	l.constructionPurpose.Store(nil)
+	scopes := l.entryScopes.Swap(nil)
+	if l.catalog == nil {
+		retireEntryScopes(scopes)
+	}
 	l.projections.Clear()
 	l.catalog, l.scopeRoots = nil, nil
 	l.SourceProvider = nil

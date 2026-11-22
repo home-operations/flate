@@ -175,8 +175,10 @@ type Orchestrator struct {
 // Result contains rendered document batches, failures and discovery diagnostics.
 // All borrowed payloads MUST remain immutable.
 type Result struct {
-	emissions []selection.EmissionFacts
-	catalog   *loader.Catalog
+	lookupFailures []manifest.NamedResource
+	lookupEvidence []selection.LookupFailure
+	emissions      []selection.EmissionFacts
+	catalog        *loader.Catalog
 
 	Work manifest.WorkSummary
 

@@ -268,6 +268,11 @@ func (d *Session) advance(ctx context.Context, admission *selection.AdmissionRes
 	}
 	changed = d.refreshEntryReceipt(ctx, previousReceipt) || changed
 	root := d.cfg.Input.LocalPath
+	lookupChanged, err := d.refreshEnclosingLookups(ctx, root)
+	if err != nil {
+		return false, err
+	}
+	changed, refresh = changed || lookupChanged, refresh || lookupChanged
 	prepared, err := d.prepareDemandedProducers(ctx, admission.Demands, root)
 	if err != nil {
 		return false, err
@@ -509,8 +514,20 @@ func (d *Session) preparePendingProducer(
 		objects = guard
 	}
 	input, err := kustomize.SourceInput(objects, ks)
-	if err != nil || !guard.Valid() || d.cfg.Trees == nil || !d.canPrepare(ks) {
+	if err != nil || !guard.Valid() || d.cfg.Trees == nil {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
+	}
+	if scope := d.loader.EntryScope(ks.Named()); scope != nil {
+		if previous := d.prepared[ks.Named()]; previous != nil && previous.source == input &&
+			manifest.Equal(previous.owner, ks) && previous.support.Valid() {
+			return false, nil
+		}
+		prepareErr := d.prepareLookupPackage(ctx, ks, input, nil)
+		frame := d.prepared[ks.Named()]
+		return frame != nil && frame.inventoryReady(), prepareErr
+	}
+	if !d.canPrepare(ks) {
+		return false, nil
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered && previous.err == nil &&
 		previous.matches(ks, input, nil) {

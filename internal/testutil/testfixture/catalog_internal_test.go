@@ -119,7 +119,7 @@ func assertRawPackages(t *testing.T, dir string, files []fileUse, missing map[st
 			continue
 		}
 		krusty.BuildMutex.Lock()
-		resources, err := krusty.Build(filesys.MakeFsOnDisk(), filepath.Join(dir, filepath.Dir(file.Path)))
+		resources, err := krusty.Build(filesys.MakeFsOnDisk(), filepath.Join(dir, filepath.Dir(file.Path)), false)
 		krusty.BuildMutex.Unlock()
 		if err == nil {
 			complete[file.Path] = true
@@ -283,7 +283,7 @@ func (f *Fixture) assertMaterializedPackage(t *testing.T, path string, role *fil
 		}
 	}
 	krusty.BuildMutex.Lock()
-	resources, err := krusty.Build(observed, target)
+	resources, err := krusty.Build(observed, target, false)
 	krusty.BuildMutex.Unlock()
 	if err != nil {
 		if role.Package == "failure" && codes[1] || role.Package == "excluded" && codes[0] {

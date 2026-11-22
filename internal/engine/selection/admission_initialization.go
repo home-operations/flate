@@ -96,6 +96,7 @@ func (c *admissionClosure) start(
 		}
 	}
 	c.admitInitialStates(claims)
+	c.qualifySelectionProducers()
 	c.finishStart(known, materializers)
 
 	return nil
@@ -202,7 +203,10 @@ func (c *admissionClosure) finishStart(
 			continue
 		}
 		materializers(
-			materializerDemand{target: target, source: c.context.Root, required: target.Name != ""},
+			materializerDemand{
+				target: target, source: c.context.Root, lookup: target.Name != "" && target.KindInfo().Render,
+				required: target.Name != "",
+			},
 			manifest.NamedResource{},
 		)
 	}
@@ -507,7 +511,8 @@ func (c *admissionClosure) recordDirectState(
 	if incoming := c.incoming(id); incoming.Obj != nil {
 		root = incoming.Policy(id).Root
 	}
-	state.eligible = root && c.session.request.Matches(id)
+	state.eligible = root && c.session.request.Matches(id) &&
+		(c.scopes.scopes == nil || c.lookupEligible(id))
 	if state.eligible && c.decision.unrestricted {
 		state.eligible = c.rootEvidence(id).Admitted || c.objects.GetDeclaration(id) != nil
 	}
@@ -541,6 +546,9 @@ func (c *admissionClosure) noteKnownSelection(
 	productions []manifest.Production,
 	known []bool,
 ) {
+	if c.scopes.scopes != nil && !c.lookupEligible(id) {
+		return
+	}
 	for i, target := range c.session.request.Roots {
 		if !known[i] && id.Group == target.Group && id.Kind == target.Kind &&
 			(target.Name == "" || id.Name == target.Name) &&

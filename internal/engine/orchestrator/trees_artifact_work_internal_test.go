@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source"
@@ -382,6 +383,54 @@ func assertArtifactSelection(t *testing.T, trees []Tree, full [2]*Result) {
 			first = body
 		} else {
 			assert.Equal(t, string(body), string(first))
+		}
+	}
+}
+
+func TestPromotionChildren_KeepEachPackageOwnerAndSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	l.SourceRoot = root
+	app := filepath.Join(root, "app")
+	_, err := l.Load(t.Context(), app, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	want := map[manifest.NamedResource]store.Child{}
+	for _, ns := range []string{"first", "second"} {
+		gitSource := &manifest.GitRepository{Name: "input", Namespace: ns}
+		st.AddObject(gitSource)
+		st.SetArtifact(gitSource.Named(), input)
+		owner := &manifest.Kustomization{Name: "package", Namespace: ns, Path: "./app"}
+		owner.SourceRef.Kind, owner.SourceRef.Name = gitSource.Named().Kind, gitSource.Name
+		st.AddObject(owner)
+		support := new(store.ReadSet)
+		support.Init(st, owner.Named(), nil)
+		support.GetArtifact(gitSource.Named(), store.ArtifactContent)
+		support.GetDeclaration(owner.Named())
+		t.Cleanup(support.Retire)
+		child := &manifest.HelmRelease{Name: "demo", Namespace: ns}
+		assert.NoError(t, l.RegisterBuilt(t.Context(), loader.BuiltInput{
+			Owner: owner.Named(), Source: gitSource.Named(), Root: app, Support: support,
+		}, []store.Child{{Obj: child}}))
+		want[child.Named()] = store.Child{
+			Obj: child,
+			Productions: []manifest.Production{
+				{Owner: owner.Named(), Source: gitSource.Named(), File: "app/kustomization.yaml"},
+			},
+		}
+		assert.Equal(t, st.GetDeclaration(child.Named()), nil)
+	}
+	o := &Orchestrator{loader: l, store: st, index: l.Index}
+	for range 2 {
+		got := o.promotionChildren()
+		assert.Equal(t, len(got), len(want))
+		for id, child := range want {
+			assert.Equal(t, got[id].Obj, child.Obj)
+			assert.Diff(t, got[id].Productions, child.Productions)
 		}
 	}
 }

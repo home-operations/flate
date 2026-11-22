@@ -401,7 +401,7 @@ func (l *Loader) projectIdentity(
 	if projected, ok := l.scopes.projections[projection][key]; ok {
 		return projected, nil
 	}
-	doc := map[string]any{"apiVersion": version, "kind": id.Kind, "metadata": map[string]any{"name": id.Name}}
+	doc := map[string]any{apiVersionKey: version, kindKey: id.Kind, "metadata": map[string]any{"name": id.Name}}
 	r, err := resource.NewFactory(nil).FromMap(doc)
 	if err != nil {
 		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project identity: %w", err), "")

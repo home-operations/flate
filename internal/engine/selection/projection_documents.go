@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"iter"
@@ -33,6 +34,7 @@ func prepareCollections(
 ) {
 	roots, labels := request.Roots, request.Labels
 	paired := len(sides) == comparisonSides && sides[0].run.pairsOutput(&sides[1].run)
+	var canPairDocuments [comparisonSides]bool
 	for i := range sides {
 		run := &sides[i].run
 		var other *selectionSide
@@ -40,12 +42,13 @@ func prepareCollections(
 			other = &sides[1-i]
 		}
 		if !complete || run.Absent {
-			sides[i].result = &Result{}
+			sides[i].result = &Result{LookupFailed: len(run.LookupFailures) != 0}
 		} else {
 			collections[i] = sides[i].collect(roots, labels, other, paired)
+			canPairDocuments[i] = len(run.Manifests) != 0 && len(sides[i].lookupFailures) == 0
 		}
 	}
-	if paired && len(sides[0].run.Manifests) != 0 && len(sides[1].run.Manifests) != 0 {
+	if paired && canPairDocuments[0] && canPairDocuments[1] {
 		collections[0].peer = &collections[1]
 		collections[1].peer = &collections[0]
 	}
@@ -75,6 +78,10 @@ func (s *selectionSide) collect(
 		}
 	}
 	c.collectObjects()
+	if roots[0].Name != "" && !s.result.LookupMatched {
+		s.lookupFailures = s.run.LookupEvidence
+	}
+	s.result.LookupFailed = len(s.run.LookupFailures) != 0 || len(s.lookupFailures) != 0
 	return c
 }
 
@@ -120,6 +127,9 @@ func (c *selectionCollection) rootObjects(root manifest.NamedResource) []manifes
 func (c *selectionCollection) collectObject(root manifest.NamedResource, obj manifest.BaseManifest) {
 	s := c.side
 	id := obj.Named()
+	if !s.lookupAllowsObject(id) {
+		return
+	}
 	if !s.run.Store.Policy(id).Report && !id.ReportHidden() {
 		return
 	}
@@ -164,6 +174,9 @@ func (c *selectionCollection) selectRoot(root manifest.NamedResource, obj manife
 			c.emitters = append(c.emitters, obj)
 		}
 		return false
+	}
+	if root.Name != "" {
+		s.result.LookupMatched = true
 	}
 	if !s.selectedObject(obj, c.counterpart()) {
 		if c.canPair(obj) {
@@ -313,6 +326,16 @@ func (b *batchSelection) selects(
 ) bool {
 	c := b.collection
 	s := c.side
+	producer, child := b.object.Named(), id
+	if owner.producer != nil {
+		producer = owner.producer.ID
+	}
+	if owner.declaration != nil {
+		child = cmp.Or(*owner.declaration, id)
+	}
+	if !s.run.EntryScopes.Scope(producer).Allows(child) {
+		return false
+	}
 	member := s.run.Decision.Output(id)
 	if b.includesDocument(doc, id, owner, member) {
 		return true
@@ -358,7 +381,7 @@ func (b *batchSelection) includesDocument(
 }
 
 func (b *batchSelection) selectDocuments() {
-	if b.allDocuments && (!b.collection.paired || len(b.owners) == 0) {
+	if b.allDocuments && b.collection.side.run.EntryScopes == nil && (!b.collection.paired || len(b.owners) == 0) {
 		return
 	}
 	identity, _ := b.batch.IdentityAccessor()
@@ -378,5 +401,26 @@ func (b *batchSelection) selectDocuments() {
 func (b *batchSelection) comparesDeclaration(id manifest.NamedResource) bool {
 	return b.compared && slices.ContainsFunc(b.collection.intent.Roots, func(root manifest.NamedResource) bool {
 		return root.Group == id.Group && root.Kind == id.Kind
+	})
+}
+
+func (s *selectionSide) lookupAllowsObject(id manifest.NamedResource) bool {
+	scopes := s.run.EntryScopes
+	if scopes == nil {
+		return true
+	}
+	if owner := s.run.Store.EmissionOwner(id); owner != (manifest.NamedResource{}) && owner != id {
+		return scopes.Scope(owner).Allows(id)
+	}
+	record, _ := s.run.Index.Lookup(id)
+	owner := record.BuilderOwner
+	if owner == (manifest.NamedResource{}) {
+		owner, _ = s.run.Store.Parent(id, s.run.Index)
+	}
+	return scopes.lookupAllowsCandidate(id, owner, func() bool {
+		return owner == (manifest.NamedResource{}) ||
+			s.run.Facts != nil && Root(s.run.Facts.RootEvidence(id, nil)).InitialIndependent
+	}, func() []manifest.Production {
+		return s.run.Store.Productions(id, s.run.Index)
 	})
 }

@@ -24,7 +24,7 @@ const (
 	frameHeaderLimit    = 16 << 20
 	frameIdentityBuffer = 4 << 10
 	inputFrameDomain    = "loader-inputs"
-	inputFrameVersion   = 4
+	inputFrameVersion   = 5
 )
 
 type frameEnvelope struct {

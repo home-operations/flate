@@ -485,7 +485,7 @@ spec:
 			for _, namespace := range []string{"default", "flux-system", "other"} {
 				dir := filepath.Join("apps", namespace)
 				internalkustomize.BuildMutex.Lock()
-				result, err := internalkustomize.Build(fs, filepath.Join(root, dir))
+				result, err := internalkustomize.Build(fs, filepath.Join(root, dir), false)
 				internalkustomize.BuildMutex.Unlock()
 				assert.NoError(t, err)
 				data, err := result.AsYaml()

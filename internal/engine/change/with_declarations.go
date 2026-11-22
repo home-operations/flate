@@ -91,22 +91,26 @@ func (d *declarationScope) capture(
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
 		}
-		source, known := d.declarationSource(side, id)
+		source, known := d.declarationSource(side, &child)
 		if !known {
 			delete(d.objects[side], id)
 			continue
 		}
-		d.objects[side][id] = store.Child{Obj: child.Obj, Doc: manifest.DeepCopyMap(child.Doc)}
+		child.Doc = manifest.DeepCopyMap(child.Doc)
+		d.objects[side][id] = child
 		d.sources[side][id] = source
 	}
 	return nil
 }
 
-func (d *declarationScope) declarationSource(side int, id manifest.NamedResource) (manifest.NamedResource, bool) {
+func (d *declarationScope) declarationSource(side int, child *store.Child) (manifest.NamedResource, bool) {
 	st := d.stores[side]
 	source, found := manifest.BootstrapSourceID, false
 	{
-		productionValues := st.Productions(id, nil)
+		productionValues := child.Productions
+		if len(productionValues) == 0 {
+			productionValues = st.Productions(child.Obj.Named(), nil)
+		}
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
 

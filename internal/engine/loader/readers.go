@@ -93,6 +93,12 @@ func (l *Loader) finalizeRecords(
 		if rf.repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
 			continue
 		}
+		if occurrence.requiresBuild && r.Builder == "" && len(r.Productions) != 0 {
+			if err := rf.collectPendingPackageReads(ctx, &occurrence, &r); err != nil {
+				return err
+			}
+			continue
+		}
 		clear(rf.visited)
 		clear(rf.templateWalks)
 		if err := rf.collect(ctx, id, id, false); err != nil {

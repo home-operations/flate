@@ -247,10 +247,23 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 		Blocked:  map[manifest.NamedResource][]manifest.NamedResource{},
 		Warnings: assessment.Warnings,
 	}
+	if o.discoveryResult != nil {
+		res.lookupFailures = slices.Clone(o.discoveryResult.LookupFailures)
+		res.lookupEvidence = o.discoveryResult.LookupEvidence
+	}
 	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()
 	res.Manifests, res.emissions = o.collectCompletedManifests(assessment.GeneratedOverlaps)
 	res.catalog = o.loader.DetachCatalog()
+	if res.catalog.EntryScopes != nil {
+		for owner, scope := range *res.catalog.EntryScopes {
+			if !scope.Current() && failed[owner].Outcome() == store.OutcomeFailed &&
+				!slices.Contains(res.lookupFailures, owner) {
+				res.lookupFailures = append(res.lookupFailures, owner)
+			}
+		}
+		slices.SortFunc(res.lookupFailures, manifest.NamedResource.Compare)
+	}
 	discovered := o.index
 	o.index = selection.ProjectIndex(o.index, o.selection.Snapshot())
 	o.store.SetDiscoveryIndex(o.index)
@@ -322,14 +335,16 @@ func (o *Orchestrator) collectCompletedManifests(
 		emissions = append(emissions, emission)
 	}
 	snapshot := selection.Snapshot{
-		Store:     o.store,
-		Index:     o.index,
-		Decision:  o.selection.Snapshot(),
-		Emissions: emissions,
-		Entry:     o.entryBinding.Projection(),
+		Store:            o.store,
+		Index:            o.index,
+		Decision:         o.selection.Snapshot(),
+		RestrictedLookup: o.cfg.Selection.RestrictedPackageLookup(),
+		Emissions:        emissions,
+		Entry:            o.entryBinding.Projection(),
 	}
 	if o.loader != nil {
-		snapshot.Facts = o.loader.DetachCatalog()
+		catalog := o.loader.DetachCatalog()
+		snapshot.Facts, snapshot.EntryScopes = catalog, catalog.EntryScopes
 	}
 	snapshot.CollectEmissions(nil)
 	return snapshot.Manifests, emissions

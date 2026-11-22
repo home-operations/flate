@@ -1,8 +1,12 @@
 package loader
 
 import (
+	"cmp"
+	"context"
 	"iter"
+	"slices"
 
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -49,4 +53,38 @@ func (l *Loader) referenceInputs(id manifest.NamedResource) ([]manifest.Referenc
 		object = l.IndexedObject(id, record).Obj
 	}
 	return nil, "", object
+}
+
+func (rf *readerFinalizer) collectPendingPackageReads(
+	ctx context.Context, occurrence *authoredOccurrence, record *manifest.DiscoveryRecord,
+) error {
+	id := occurrence.Identity
+	var visited []manifest.NamedResource
+	for owner := range selection.PendingPackageProductions(id, record) {
+		if slices.Contains(visited, owner) {
+			continue
+		}
+		visited = append(visited, owner)
+		clear(rf.visited)
+		clear(rf.templateWalks)
+		if err := rf.projectOccurrence(ctx, occurrence, owner); err != nil {
+			return err
+		}
+		namespace := id.Namespace
+		if object := rf.object(owner); object != nil {
+			namespace = cmp.Or(object.EmissionPolicy().Namespace, namespace)
+		}
+		for ref := range rf.loader.References(id) {
+			if ref.NamespaceDefault && ref.NamedResource.KindInfo().Namespaced() {
+				if namespace == "" {
+					continue
+				}
+				ref.Namespace = namespace
+			}
+			if err := rf.observe(ctx, &ref, owner, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

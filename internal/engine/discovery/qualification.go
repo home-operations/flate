@@ -59,6 +59,8 @@ type applicationEvidence struct {
 	descendant        bool
 	reaches           []selection.OccurrenceID
 	visibleGeneration bool
+	lookup            bool
+	lookupReach       bool
 	builtRoot         string
 	child             *store.Child
 	next              *applicationEvidence
@@ -183,8 +185,13 @@ func (a *Admission) readApplication(
 	}
 	evidence.application = application
 	resolved := a.applicationSource(st, reads, &application)
-	if evidence.generatedSource != nil && resolved.object == nil {
-		resolved.object = evidence.generatedSource
+	if evidence.generatedSource != nil {
+		previous := a.resolvedSources.snapshot()[application.Source]
+		if resolved.object == nil {
+			resolved.object = evidence.generatedSource
+		} else if evidence.lookup && previous.synthetic && previous.ownsDeclaration(resolved.object) {
+			resolved = entryResolution{object: evidence.generatedSource}
+		}
 	}
 	if resolved.artifact == nil && resolved.object != nil && len(resolved.object.Composition().Includes) != 0 {
 		evidence.source = resolved
@@ -215,10 +222,7 @@ func (a *Admission) readApplication(
 		}
 	}
 	evidence.source = resolved
-	if evidence.object.Named().ReportHidden() {
-		return false, nil
-	}
-	return a.applicationReach(ctx, evidence, &application, &resolved)
+	return a.applicationReach(evidence), ctx.Err()
 }
 
 func (q *entryQualification) published(st *store.Store, a *Admission) iter.Seq[manifest.BaseManifest] {

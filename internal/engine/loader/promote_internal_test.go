@@ -130,7 +130,7 @@ spec:
 	rawSource := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "source"}
 	st.AddObject(candidateForTest(t, l, rawSource))
 	internalkustomize.BuildMutex.Lock()
-	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), entry)
+	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), entry, false)
 	internalkustomize.BuildMutex.Unlock()
 	assert.NoError(t, err)
 	data, err := result.AsYaml()
@@ -511,7 +511,7 @@ spec:
 		assert.FatalIf(t, exists, "%s", "invalid selected resource produced a raw record")
 	}
 	internalkustomize.BuildMutex.Lock()
-	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), root)
+	result, err := internalkustomize.Build(filesys.MakeFsOnDisk(), root, false)
 	internalkustomize.BuildMutex.Unlock()
 	assert.NoError(t, err)
 	data, err := result.AsYaml()

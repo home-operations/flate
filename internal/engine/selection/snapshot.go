@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"cmp"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -39,17 +40,28 @@ type EmissionFacts struct {
 	ParentRecorded   bool
 }
 
+// LookupFailure captures a failed exploratory render with current discovery support.
+type LookupFailure struct {
+	Package manifest.DiagnosticIdentity
+	Path    string
+	Cause   error
+}
+
 // Snapshot borrows completed storage. Its owners MUST remain immutable through projection.
 type Snapshot struct {
 	Store            *store.Store
 	Index            *manifest.DiscoveryIndex
 	Facts            projectionFacts
+	EntryScopes      *EntryScopes
 	Decision         *Decision
+	RestrictedLookup bool
 	Entry            EntryIdentity
 	Emissions        []EmissionFacts
 	Manifests        []manifest.DocumentBatch
 	owners           batchOwners
 	Failed           map[manifest.NamedResource]store.StatusInfo
+	LookupFailures   []manifest.NamedResource
+	LookupEvidence   []LookupFailure
 	Blocked          map[manifest.NamedResource][]manifest.NamedResource
 	Warnings         []manifest.Warning
 	ClusterWarnings  []manifest.Warning
@@ -149,16 +161,17 @@ func (s *Snapshot) collectEmission(
 		producer = &subject
 	}
 	documentScope := s.emissionDocumentScope(emission)
-	output := s.outputsProducer(id, other)
-	reconciledEmitter := !output && other != nil && parent != id && s.Decision.Reconcile(id)
-	output = output || reconciledEmitter && s.outputsProducer(parent, other)
+	output := s.outputsProducer(id, other) || s.outputsReconciledEmitter(id, parent, other)
+	entryScope := s.EntryScopes.Scope(id)
+	retainInventory := documentScope && !s.RestrictedLookup
 	for i := range emission.Documents {
 		document := &emission.Documents[i]
-		if !s.eligibleDocument(emission, document, documentScope) ||
+		if !entryScope.Allows(cmp.Or(document.Child, document.Identity)) ||
+			!s.eligibleDocument(emission, document, documentScope) ||
 			!s.entryIncludesDocument(scope, id, document) {
 			continue
 		}
-		peerOnly := !documentScope && !output && !s.Decision.Reconcile(document.Identity)
+		peerOnly := !retainInventory && !output && !s.Decision.Reconcile(document.Identity)
 		if peerOnly && (!paired || !s.Decision.Reconcile(id)) {
 			continue
 		}
@@ -169,6 +182,9 @@ func (s *Snapshot) collectEmission(
 			s.Manifests = append(s.Manifests, manifest.DocumentBatch{Parent: parentObject})
 		}
 		owner := documentOwner{producer: producer, peerOnly: peerOnly}
+		if entryScope != nil {
+			owner.declaration = &document.Child
+		}
 		if document.GeneratedOverlap {
 			owner.child = document.Child
 		}
@@ -259,6 +275,10 @@ func (s *Snapshot) outputsProducer(id manifest.NamedResource, other *Snapshot) b
 		return true
 	}
 	return other != nil && !other.Absent && s.Decision.Reconcile(id) && other.Decision.Output(id)
+}
+
+func (s *Snapshot) outputsReconciledEmitter(id, parent manifest.NamedResource, other *Snapshot) bool {
+	return other != nil && parent != id && s.Decision.Reconcile(id) && s.outputsProducer(parent, other)
 }
 
 func prepareProjectionSides(runs []Snapshot, request Request) []selectionSide {

@@ -15,6 +15,7 @@ type materializerDemand struct {
 	key, use           string
 	source             string
 	ordering, required bool
+	lookup             bool
 }
 
 func (c *admissionClosure) materializerCandidates(ordering bool) [2][]*OccurrenceFacts {
@@ -77,7 +78,7 @@ func (c *admissionClosure) materializers(
 		Key:       demand.key,
 		Use:       demand.use,
 	}
-	if c.missing != nil &&
+	if !demand.lookup && c.missing != nil &&
 		c.missing.Admission(
 			new(ref),
 			new(c.objects.ReferenceFacts(target, c.facts.SelectionIndex(), consumer)),
@@ -104,12 +105,7 @@ func (c *admissionClosure) materializers(
 		if !match {
 			continue
 		}
-		output2 := c.materializerOutputMatches(id, target)
-		if !output2.include {
-			continue
-		}
-		pending = pending || !output2.complete
-		c.admitMaterializer(id, &demand)
+		pending = c.admitMatchedMaterializer(id, &demand) || pending
 	}
 	if !pending {
 		pending = c.admitOpaqueMaterializers(consumer, &demand, opaque)
@@ -394,7 +390,8 @@ func (c *admissionClosure) materializerTargetsMatch(
 			return true
 		}
 	}
-	return c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target)
+	return c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target) ||
+		demand.lookup && c.lookupPackageSource(id, target, facts)
 }
 
 func (c *admissionClosure) materializerPending(consumer manifest.NamedResource, demand *materializerDemand) bool {
@@ -614,7 +611,8 @@ func (c *admissionClosure) candidateMaterializerFacts(
 ) *OccurrenceFacts {
 	demand := *demandValue
 	target := demand.target
-	if id == consumer || id == target || demand.source != "" && demand.source != occurrence.Declaration.Source {
+	otherSource := !demand.lookup && demand.source != "" && demand.source != occurrence.Declaration.Source
+	if id == consumer || id == target || otherSource {
 		return nil
 	}
 	if consumer != (manifest.NamedResource{}) &&

@@ -363,23 +363,6 @@ func Local(root, dir, raw string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
-// PreservesOperands proves the narrow metadata-only configuration wrapper case.
-func PreservesOperands(k *types.Kustomization) bool {
-	if len(k.Patches) != 0 || len(k.PatchesJson6902) != 0 || len(k.PatchesStrategicMerge) != 0 ||
-		len(k.Replacements) != 0 || len(k.Configurations) != 0 || len(k.Crds) != 0 ||
-		len(k.Vars) != 0 || len(k.Images) != 0 || len(k.ImageTags) != 0 || len(k.Replicas) != 0 {
-		return false
-	}
-	for _, label := range k.Labels {
-		for _, spec := range label.FieldSpecs {
-			if !strings.HasPrefix(spec.Path, "metadata/") {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // MetadataOnly reports whether a plugin can only change configuration metadata.
 func MetadataOnly(doc *yaml.Node) bool {
 	api, kind := MappingValue(doc, "apiVersion"), MappingValue(doc, "kind")

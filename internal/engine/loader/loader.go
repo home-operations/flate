@@ -78,6 +78,7 @@ type Loader struct {
 	candidates            map[manifest.NamedResource]store.Child
 	builtRoots            map[manifest.NamedResource]builtRoot
 	builtBatches          map[manifest.NamedResource]*builtBatch
+	entryScopes           atomic.Pointer[selection.EntryScopes]
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
 	roots                 rootInventory
 	scopeRoots            []selection.NativeRootFacts
@@ -257,8 +258,7 @@ func (l *Loader) eachIndexedKustomization(yield func(store.Child)) {
 		child := l.IndexedObject(id, r)
 		if r.Builder != "" && r.Declaration != nil {
 			child.Obj = r.Declaration
-		}
-		if occurrence, known := l.locations[id]; known && occurrence.facts.structural != nil &&
+		} else if occurrence, known := l.locations[id]; known && occurrence.facts.structural != nil &&
 			occurrence.facts.structural.Named() == id {
 			child.Obj = occurrence.facts.structural
 		}

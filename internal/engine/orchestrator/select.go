@@ -117,9 +117,12 @@ func renderSnapshot(run Rendered) selection.Snapshot {
 	if result := run.Result; result != nil {
 		if result.catalog != nil {
 			snapshot.Facts = result.catalog
+			snapshot.EntryScopes = result.catalog.EntryScopes
 		}
 		snapshot.Manifests, snapshot.Emissions = result.Manifests, result.emissions
 		snapshot.Failed, snapshot.Blocked = result.Failed, result.Blocked
+		snapshot.LookupFailures = result.lookupFailures
+		snapshot.LookupEvidence = result.lookupEvidence
 		snapshot.Warnings, snapshot.ClusterWarnings = result.Warnings, result.ClusterWarnings
 	}
 	if run.Orchestrator == nil {

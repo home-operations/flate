@@ -102,7 +102,7 @@ func patchBuild(cfg *kustypes.Kustomization, documents []byte, partial bool) (_ 
 			return nil, fmt.Errorf("write patched input: %w", writeErr)
 		}
 	}
-	return kustomizestate.Build(fs, ".")
+	return kustomizestate.Build(fs, ".", false)
 }
 
 func patchPartialDocuments(documents []byte, patches []kustypes.Patch) ([]byte, error) {

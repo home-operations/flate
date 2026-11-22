@@ -342,3 +342,47 @@ func TestFilter_UnavailableArtifactSource(t *testing.T) {
 		})
 	}
 }
+
+func TestFinalizeRecords_PendingPackageReaders(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	l := New(store.New())
+	l.SourceRoot = root
+	raw := &manifest.Kustomization{Name: "pending", PostBuild: &kustomizev1.PostBuild{
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+	}}
+	pending := compactOccurrence(raw, manifest.TemplateProjection{})
+	pending.requiresBuild = true
+	l.locations = map[manifest.NamedResource]authoredOccurrence{raw.Named(): pending}
+	r := manifest.DiscoveryRecord{
+		Declaration: raw,
+		Refs:        []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "settings"}},
+	}
+	want := make([]manifest.FileReader, 0, 2)
+	for _, ns := range []string{"first", "second"} {
+		owner := &manifest.Kustomization{Name: "package", Namespace: ns, TargetNamespace: ns}
+		settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "settings"}
+		l.Store.AddObject(owner)
+		l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
+			Declaration: owner,
+			Refs:        []manifest.NamedResource{settings},
+		}
+		l.Index.Records[settings] = manifest.DiscoveryRecord{File: "settings.yaml"}
+		r.Productions = append(
+			r.Productions,
+			manifest.Production{Owner: owner.Named(), Source: manifest.BootstrapSourceID},
+		)
+		want = append(want, manifest.FileReader{
+			Reader: owner.Named(), Source: manifest.BootstrapSourceID, Declaration: settings, Exact: true,
+		})
+	}
+	l.Index.Records[manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}] = manifest.DiscoveryRecord{
+		File: "settings.yaml",
+	}
+	l.Index.Records[raw.Named()] = r
+	for range 2 {
+		l.Index.Readers = map[string][]manifest.FileReader{}
+		assert.NoError(t, l.finalizeRecords(t.Context(), root, nil))
+		assert.Diff(t, slices.Collect(l.Index.ReadersOfFile("settings.yaml")), want)
+	}
+}

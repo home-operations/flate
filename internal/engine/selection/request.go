@@ -34,9 +34,7 @@ func (s Request) matches(id manifest.NamedResource, named bool) bool {
 		return true
 	}
 	for _, root := range s.Roots {
-		if root.Group == id.Group && root.Kind == id.Kind &&
-			(!named || root.Name == "" || root.Name == id.Name) &&
-			(root.Namespace == "" || id.Namespace == "" || root.Namespace == id.Namespace) {
+		if rootMatchesIdentity(root, id, named) {
 			return true
 		}
 	}
@@ -45,6 +43,13 @@ func (s Request) matches(id manifest.NamedResource, named bool) bool {
 	}
 
 	return false
+}
+
+func rootMatchesIdentity(root, id manifest.NamedResource, named bool) bool {
+	groupAndKindMatch := root.Group == id.Group && root.Kind == id.Kind
+	nameMatches := !named || root.Name == "" || root.Name == id.Name
+	namespaceMatches := root.Namespace == "" || id.Namespace == "" || root.Namespace == id.Namespace
+	return groupAndKindMatch && nameMatches && namespaceMatches
 }
 
 func (s Request) includesRenderKinds(named bool) bool {

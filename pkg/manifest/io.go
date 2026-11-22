@@ -263,7 +263,7 @@ func applicationDocument(node *yaml.Node, option yaml.Option) (map[string]any, e
 		projected["apiVersion"] = fields.APIVersion
 		return projected, nil
 	}
-	if id.Group != FluxOperatorDomain || id.Kind != "FluxInstance" {
+	if id.Group != FluxOperatorDomain || id.Kind != kindFluxInstance {
 		return doc, nil
 	}
 	return applicationSyncDocument(doc, &fields.Spec, option)

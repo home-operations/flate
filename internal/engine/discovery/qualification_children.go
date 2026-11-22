@@ -17,12 +17,8 @@ func (w *qualificationWalk) follow(
 	children := slices.Clone(batch.children)
 	slices.SortFunc(children, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	continuations := make([]applicationEvidence, 0, len(children))
-	for i := range children {
-		child := &children[i]
-		if child.Obj == nil {
-			continue
-		}
-		evidence := w.followedChild(batch, child, owner)
+	for i := 0; i < len(children) && !w.selectedTargetsReached(); i++ {
+		evidence := w.followedChild(batch, &children[i], owner)
 		if w.q.pending {
 			return false, nil
 		}
@@ -37,39 +33,37 @@ func (w *qualificationWalk) follow(
 			continuations = append(continuations, *evidence)
 		}
 	}
-	if len(w.q.matches) > previousMatches {
+	if len(w.q.matches) > previousMatches && w.enoughMatches() {
 		return true, nil
 	}
-	if batch.root != "" &&
-		owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
-			Named() {
-		continuations = w.nativeContinuations(continuations)
-	}
+	continuations = w.nativeContinuations(continuations, batch.root, owner)
 	for i := range continuations {
 		found, err := w.visit(ctx, &continuations[i])
-		if err != nil || found || w.q.pending {
+		if err != nil || found && w.enoughMatches() || w.q.pending {
 			return found, err
 		}
 	}
 	return false, nil
 }
 
-func (w *qualificationWalk) nativeContinuations(candidates []applicationEvidence) []applicationEvidence {
+func (w *qualificationWalk) nativeContinuations(
+	candidates []applicationEvidence, root string, owner manifest.NamedResource,
+) []applicationEvidence {
+	if root == "" ||
+		owner != manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
+			Named() {
+		return candidates
+	}
 	// A history request can need the native inventory without demanding its applications.
 	if w.q.session != nil && w.q.session.entryReceiptRequest != nil && !w.q.session.entryDemand {
 		return nil
 	}
-	projections := w.q.loader.SourceFacts(manifest.BootstrapSourceID, w.reads).Context.TemplateProjections
 	return slices.DeleteFunc(candidates, func(evidence applicationEvidence) bool {
 		kind := manifest.KindOf(evidence.object)
 		if !kind.Parent || kind.Structural {
 			return true
 		}
-		objects := projections[evidence.object.Named()].Objects
-		return !slices.ContainsFunc(objects, func(object manifest.BaseManifest) bool {
-			_, applies := manifest.ApplicationFor(object)
-			return applies
-		})
+		return !w.applicationProjection(evidence.object)
 	})
 }
 
@@ -78,6 +72,9 @@ func (w *qualificationWalk) followedChild(
 	child *store.Child,
 	owner manifest.NamedResource,
 ) *applicationEvidence {
+	if child.Obj == nil {
+		return nil
+	}
 	evidence := &applicationEvidence{
 		object:            child.Obj,
 		document:          child.Doc,
@@ -120,12 +117,12 @@ func (w *qualificationWalk) matchChild(
 ) (bool, error) {
 	if batch.private {
 		evidence.root = evidence.object.Named()
+		if evidence.private && slices.ContainsFunc(w.probed, func(known manifest.BaseManifest) bool {
+			return manifest.Equal(known, evidence.object)
+		}) {
+			return false, nil
+		}
 		if evidence.private {
-			if slices.ContainsFunc(w.probed, func(known manifest.BaseManifest) bool {
-				return manifest.Equal(known, evidence.object)
-			}) {
-				return false, nil
-			}
 			w.probed = append(w.probed, evidence.object)
 		}
 		return w.visit(ctx, evidence)
@@ -136,20 +133,21 @@ func (w *qualificationWalk) matchChild(
 		}
 		return false, nil
 	}
+	if reused, pending := w.matchReceipt(ctx, evidence, nil); reused || pending {
+		return reused, nil
+	}
 	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 	if err != nil || !eligible {
 		return false, err
 	}
-	if batch.root != "" {
-		if candidate, ok := evidence.object.(*manifest.Kustomization); ok &&
-			w.admission.reuseEntry(ctx, w.reads, evidence, candidate) {
-			current, err := w.admitConstructed(ctx, evidence)
-			if err != nil || !current {
-				return false, err
-			}
+	candidate, structural := evidence.object.(*manifest.Kustomization)
+	if batch.root != "" && structural && w.admission.reuseEntry(ctx, w.reads, evidence, candidate) {
+		current, err := w.admitConstructed(ctx, evidence)
+		if err != nil || !current {
+			return false, err
 		}
 	}
 	evidence.root = w.q.root
-	w.q.matches = append(w.q.matches, *evidence)
+	w.q.recordMatch(evidence)
 	return true, nil
 }

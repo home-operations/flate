@@ -25,12 +25,10 @@ func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 		role.needed, role.selected, role.dirty = true, true, true
 	}
 	role = c.productionRole(id, role, eligible)
-	if (!role.selected || !role.dirty) && (eligible || role.needed || c.session.request.MatchesScope(id)) {
+	if c.incomingInScope(id, role, eligible) {
 		affected, footprintRead = c.affected(id, c.incoming(id).Obj), true
 	}
-	if (!role.selected || !role.dirty) &&
-		(eligible || role.needed || c.session.request.MatchesScope(id)) &&
-		(affected || c.changedInput(id, id)) {
+	if c.incomingInScope(id, role, eligible) && (affected || c.changedInput(id, id)) {
 		role.needed = true
 		if eligible {
 			role.selected, role.dirty = true, true
@@ -45,6 +43,11 @@ func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 			footprintRead: &footprintRead,
 		},
 	)
+}
+
+func (c *admissionClosure) incomingInScope(id manifest.NamedResource, role admissionRole, eligible bool) bool {
+	settled := role.selected && role.dirty
+	return !settled && (eligible || role.needed || c.matchesChangedScope(id))
 }
 
 func (c *admissionClosure) productionRole(id manifest.NamedResource, role admissionRole, eligible bool) admissionRole {
@@ -164,8 +167,7 @@ type completeSelectIncomingState struct {
 }
 
 func (c *admissionClosure) completeSelectIncoming(scope *completeSelectIncomingState) error {
-	if (!scope.role.selected || !scope.role.dirty) &&
-		((*scope.eligible) || scope.role.needed || c.session.request.MatchesScope((*scope.id))) {
+	if c.incomingInScope(*scope.id, *scope.role, *scope.eligible) {
 		(*scope.role) = c.reverseInputRole((*scope.id), (*scope.role), (*scope.eligible))
 	}
 	(*scope.role) = c.sourceRole((*scope.id), (*scope.role))

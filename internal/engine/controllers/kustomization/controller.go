@@ -276,4 +276,5 @@ func (c *execution) matchPreparation(request *kustomize.RenderRequest) {
 			return p.Matches(c.Trees, request)
 		},
 	)
+	c.run.RetainPreparation = true
 }

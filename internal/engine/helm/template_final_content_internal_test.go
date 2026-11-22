@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"maps"
+	"slices"
 	"testing"
 
 	"oras.land/oras-go/v2/errdef"
@@ -16,6 +17,95 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestTemplate_QualificationRequiresPreparedScope(t *testing.T) {
+	t.Parallel()
+	client := NewClient(cachetest.New(t, "", cache.New), nil)
+	hr := newHR()
+	values := func(path string) map[string]any {
+		return map[string]any{"specInput": map[string]any{"sync": map[string]any{
+			"name": "sync", "url": "https://fixture.invalid/repo",
+			"ref": "refs/heads/main", "path": path,
+		}}}
+	}
+	const direct = `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: sync, namespace: flux-system}
+spec: {{ toYaml .Values.specInput | nindent 2 }}
+`
+	const literal = `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: sync, namespace: flux-system}
+spec:
+  sync: {name: sync, url: "https://fixture.invalid/repo", ref: refs/heads/main, path: ./apps, kind: GitRepository}
+`
+	const list = `apiVersion: v1
+kind: List
+metadata: {name: instances}
+spec: {{ toYaml .Values.specInput | nindent 2 }}
+items:
+  - apiVersion: fluxcd.controlplane.io/v1
+    kind: FluxInstance
+    metadata: {name: sync, namespace: flux-system}
+    spec:
+      sync: {name: sync, url: "https://fixture.invalid/repo", ref: refs/heads/main, path: ./apps, kind: GitRepository}
+`
+	for _, tc := range []struct {
+		name, path, defaults, template, included string
+		possible                                 bool
+	}{
+		{"covered", "./apps", "specInput: {sync: {kind: GitRepository}}", direct, "", true},
+		{"different covered path", "./apps/plex", "specInput: {sync: {kind: GitRepository}}", direct, "", true},
+		{"disjoint", "./other", "specInput: {sync: {kind: GitRepository}}", direct, "", false},
+		{"different kind", "./apps", "specInput: {sync: {kind: OCIRepository}}", direct, "", false},
+		{"missing kind", "./apps", "{}", direct, "", false},
+		{"literal", "./other", "{}", literal, "", true},
+		{"list", "./other", "{}", list, "", true},
+		{"included CRD directory file", "./other", "specInput: {sync: {kind: GitRepository}}", direct, literal, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				"mychart/Chart.yaml":              "apiVersion: v2\nname: mychart\nversion: 0.1.0\n",
+				"mychart/values.yaml":             tc.defaults,
+				"mychart/templates/instance.yaml": tc.template,
+			}
+			if tc.included != "" {
+				files["mychart/crds/instance.yaml"] = tc.included
+			}
+			root := testutil.WriteTree(t, files)
+			var observed, projected bool
+			docs, _, err := client.Template(t.Context(), hr, values(tc.path), RenderOptions{
+				Sources: localChartResolver(t, "chart-repo", "flux-system", root),
+				EntryReach: func(objects []manifest.BaseManifest) bool {
+					projected = true
+					return slices.ContainsFunc(objects, func(object manifest.BaseManifest) bool {
+						entry, valid := manifest.ApplicationFor(object)
+						return valid && entry.Source.Kind == manifest.KindGitRepository &&
+							(entry.Path == "./apps" || entry.Path == "./apps/plex")
+					})
+				},
+				Admit: func(admission RenderAdmission) (bool, error) {
+					observed = true
+					assert.Equal(t, admission.Possible, tc.possible)
+					return !admission.Possible, nil
+				},
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, observed, true)
+			assert.Equal(t, projected, tc.template == direct && tc.included == "")
+			assert.Equal(t, len(docs) != 0, tc.possible)
+			if tc.template == literal || tc.template == list || tc.included != "" {
+				assert.ErrorIf(t, !slices.ContainsFunc(docs, func(doc manifest.DocOccurrence) bool {
+					parsed, err := manifest.ParseDoc(doc.Document, manifest.ParseDocOptions{})
+					assert.NoError(t, err)
+					app, valid := manifest.ApplicationFor(parsed.Object)
+					return valid && app.Path == "./apps"
+				}), "render did not emit the reachable FluxInstance")
+			}
+		})
+	}
+}
 
 func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 	t.Parallel()

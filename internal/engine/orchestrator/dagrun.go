@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -166,9 +167,21 @@ func (o *Orchestrator) seedPrivateOperands(inputs []manifest.NamedResource) []ma
 }
 
 func (o *Orchestrator) runDAG(ctx context.Context) error {
+	return o.dispatchDAG(ctx, nil)
+}
+
+func (o *Orchestrator) dispatchDAG(ctx context.Context, prior *selection.Decision) error {
 	o.sweepProbes(false)
 	dispatcher := dagDispatcher{o}
-	sched := schedule.New(dispatcher, dispatcher)
+	var sched *schedule.Scheduler
+	var phase *task.Service
+	if o.selection.EntryComparisonPending() {
+		// HTTP acquisitions MUST survive until paired admission finishes.
+		phase = o.tasks.Fork()
+		sched = schedule.New(phase, dispatcher)
+	} else {
+		sched = schedule.New(dispatcher, dispatcher)
+	}
 	o.scheduler = sched
 	defer func() { o.scheduler = nil }()
 
@@ -185,6 +198,12 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if prior != nil {
+		seeds = slices.DeleteFunc(seeds, func(id manifest.NamedResource) bool {
+			status, _ := o.store.GetStatus(id)
+			return prior.Reconcile(id) && status.Outcome() != store.OutcomePending
+		})
+	}
 	if o.session != nil {
 		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
 			return phaseErr
@@ -192,8 +211,19 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	}
 	sched.Seed(seeds)
 	err = sched.Run(ctx)
-	o.freezeWork()
+	if phase != nil {
+		if failures := phase.Failures(); failures != 0 {
+			err = errors.Join(
+				err, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", failures),
+			)
+		}
+		return err
+	}
+	return o.finishDAG(err)
+}
 
+func (o *Orchestrator) finishDAG(err error) error {
+	o.freezeWork()
 	return errors.Join(err, o.entryFailure, o.finalize())
 }
 

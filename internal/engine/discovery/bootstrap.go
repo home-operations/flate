@@ -389,21 +389,27 @@ func (d *Session) bindBootstrapArtifact(candidate *entryResolution) {
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	generatorPackages  []string
-	privateInventories []*declarationRender
-	entryPreparation   kustomize.Preparation
-	packageRender      packagePreparation
-	entryRequest       kustomize.RenderRequest
-	requestedEntry     manifest.EntryApplication
-	entryEvidence      *kustomize.EntryEvidence
-	documents          *entryDocuments
-	generation         map[manifest.NamedResource][]retainedGeneration
-	applications       atomic.Pointer[applicationEvidence]
-	entryBound         atomic.Bool
-	resolvedSources    *entrySourcePublisher
-	input              *store.SourceArtifact
-	path               string
-	remotes            []string
+	generatorPackages     []string
+	privateInventories    []*declarationRender
+	entryPreparation      kustomize.Preparation
+	packageRender         packagePreparation
+	entryRequest          kustomize.RenderRequest
+	requestedEntry        manifest.EntryApplication
+	entryTargets          []entryTarget
+	entryOccurrences      []kustomize.EntryOccurrence
+	entryChanged          bool
+	entryProjected        bool
+	entryProjectedPatches bool
+	changedApplications   []manifest.BaseManifest
+	entryEvidence         *kustomize.EntryEvidence
+	documents             *entryDocuments
+	generation            map[manifest.NamedResource][]retainedGeneration
+	applications          atomic.Pointer[applicationEvidence]
+	entryBound            atomic.Bool
+	resolvedSources       *entrySourcePublisher
+	input                 *store.SourceArtifact
+	path                  string
+	remotes               []string
 	// Construction MUST finish all view writes before runtime admission.
 	aliasViews    sourceViews
 	entryDemand   bool
@@ -641,7 +647,7 @@ func (r *entryResolution) resolveGit(ctx context.Context, id manifest.NamedResou
 	if err := ref.Validate(); err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve local git: %w", err), "")
 	}
-	if r.provider != store.ProviderCommit && !descriptor.RecurseSubmodules {
+	if !r.requiresGitResolution() {
 		return nil
 	}
 	var location *gitrepo.Location

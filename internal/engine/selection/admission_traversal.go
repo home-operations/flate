@@ -113,6 +113,9 @@ func (c *admissionClosure) selectIncomingProducers(
 	role admissionRole,
 	evidence *declarationEvidence,
 ) {
+	if incoming := c.incoming(id); incoming.Obj == nil || incoming.VisibleGeneration {
+		return
+	}
 	lookupRecord, _ := c.facts.SelectionIndex().Lookup(id)
 	{
 		productionValues3 := lookupRecord.Productions
@@ -246,9 +249,10 @@ func (c *admissionClosure) productionMaterialized(
 	if !evidence.independent || c.incoming(id).Obj == nil {
 		return false
 	}
-	needed := c.decision.Reconcile(id)
+	_, known := c.states[id]
+	reached := c.decision.unrestricted || c.decisionRoles(id, known)&needed != 0
 	unowned := production.Owner == (manifest.NamedResource{}) && production.Declaration == (manifest.NamedResource{})
-	if !needed || !unowned {
+	if !reached || !unowned {
 		return false
 	}
 	located := production.Path == record.Path && production.File == record.File && production.Source == c.source(id)
@@ -259,9 +263,10 @@ func (c *admissionClosure) walkObject(
 	id manifest.NamedResource,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) error {
+	selectedPending := c.entryPending[id]
 	role := c.role(id)
 	state := c.states[id]
-	if state.walkedOnce && state.walked == role {
+	if selectedPending || state.walkedOnce && state.walked == role {
 		return nil
 	}
 	state.walked, state.walkedOnce = role, true
@@ -287,9 +292,7 @@ func (c *admissionClosure) walkObject(
 		applicationSource, _, pathBearing = occurrence.SourcePath()
 	}
 	materialized := c.selectProductions(id, &record, role, &evidence)
-	if c.incoming(id).Obj != nil {
-		c.selectIncomingProducers(id, role, &evidence)
-	}
+	c.selectIncomingProducers(id, role, &evidence)
 
 	pending := false
 	if (!bootstrap || !state.requested) && !materialized &&
@@ -297,7 +300,7 @@ func (c *admissionClosure) walkObject(
 		pending = materializers(materializerDemand{target: id, source: c.declarationSource(id)}, id)
 	}
 	if !pending && role.selected && pathBearing {
-		pending = c.materializeEntryApplication(id, applicationSource, &record, materializers)
+		pending = c.demandEntryPath(id, applicationSource, &record)
 	}
 	if pending && pathBearing {
 		evidence.independent = false
@@ -580,26 +583,4 @@ func (c *admissionClosure) selectedDeclarationFileChanged(
 ) bool {
 	return selected &&
 		(c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj))
-}
-
-func (c *admissionClosure) materializeEntryApplication(
-	id, applicationSource manifest.NamedResource,
-	record *manifest.DiscoveryRecord,
-	materializers func(materializerDemand, manifest.NamedResource) bool,
-) bool {
-	if !c.context.PlainEntry ||
-		!containsPath(c.context.EntryPath, record.Path) {
-		return false
-	}
-	location := c.boundSource(applicationSource)
-	if !location.Input.WorkingTree() || location.Input.Provider == store.ProviderInput {
-		return false
-	}
-	if location.Input == c.boundSource(manifest.BootstrapSourceID).Input {
-		return false
-	}
-	return materializers(materializerDemand{
-		target: applicationSource, source: c.declarationSource(id), application: c.context.EntryPath,
-		required: c.fileChanged(c.source(id), record.File),
-	}, id)
 }

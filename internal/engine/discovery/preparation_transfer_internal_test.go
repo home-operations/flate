@@ -88,17 +88,36 @@ func TestResult_PreparationTransfer(t *testing.T) {
 
 func TestResult_AggregatePreparationTransfer(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		value  string
+		builds uint64
+	}{
+		{name: "unchanged input", value: "before", builds: 1},
+		{name: "changed input", value: "after", builds: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testAggregatePreparationTransfer(t, tc.value, tc.builds)
+		})
+	}
+}
+
+func testAggregatePreparationTransfer(t *testing.T, value string, builds uint64) {
+	t.Helper()
 	var recorder manifest.WorkRecorder
 	root := t.TempDir()
+	const plain = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: plain}\ndata: {value: "
+	inputFS := fstest.MapFS{
+		"package/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"package/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: package}\n"),
+		},
+		"plain.yaml": {Data: []byte(plain + "before}\n")},
+	}
 	cfg := testConfig(t, Config{
 		Path: root, Work: recorder.Scope(),
-		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
-			"package/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-			"package/cm.yaml": {
-				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: package}\n"),
-			},
-			"plain.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: plain}\n")},
-		}},
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: inputFS},
 	})
 	entries, err := Plan(t.Context(), cfg)
 	assert.NoError(t, err)
@@ -127,16 +146,27 @@ func TestResult_AggregatePreparationTransfer(t *testing.T) {
 		},
 	)
 	result.Close()
+	inputFS["plain.yaml"] = &fstest.MapFile{Data: []byte(plain + value + "}\n")}
 	docs, _, err := kustomize.Render(t.Context(), cfg.Trees, request, cfg.RemoteRetry)
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 2)
+	var plainValue any
+	for i := range docs {
+		if manifest.DocMetadata(docs[i].Document).Name == "plain" {
+			data, _ := docs[i].Document["data"].(map[string]any)
+			plainValue = data["value"]
+		}
+	}
+	assert.Equal(t, plainValue, any(value))
 	var after manifest.WorkCounts
-	for _, record := range recorder.Scope().Snapshot(0) {
+	summary := recorder.Scope().Snapshot(0)
+	for i := range summary {
+		record := &summary[i]
 		if record.Key.Phase == manifest.WorkKustomize {
 			after.Add(&record.Counts)
 		}
 	}
-	assert.Equal(t, after.Attempts, uint64(1))
+	assert.Equal(t, after.Attempts, builds)
 	execution.Retire()
 }
 

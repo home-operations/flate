@@ -60,6 +60,16 @@ func (c *Client) Template(
 		return nil, nil, err
 	}
 
+	previous := input.Previous
+	canReplay := previous != nil && previous.Accepted && previous.Receipt != nil && previous.Key == prepared.key
+	validInputs := prepared.loaded.valuesErr == nil && prepared.capabilityErr == nil
+	if input.Admit != nil && canReplay && validInputs {
+		frame, ok := previous.Receipt.Value().(renderFrame)
+		if ok && samePreparedRender(&frame, &prepared.binding, prepared.content) {
+			_, err := input.Admit(*previous)
+			return previous.Documents, previous.Receipt, err
+		}
+	}
 	return prepared.template(ctx, c)
 }
 
@@ -453,16 +463,9 @@ func (r *templateRequest) render(
 	if r.capabilityErr != nil {
 		return nil, nil, r.capabilityErr
 	}
-	finalValues := r.values
-	if len(r.release.ChartValuesFiles) > 0 {
-		base, mergeChartValuesFilesErr := c.mergeChartValuesFiles(
-			ctx, &r.loaded, r.release.ChartValuesFiles,
-			r.release.IgnoreMissingValuesFiles,
-		)
-		if mergeChartValuesFilesErr != nil {
-			return nil, nil, fmt.Errorf("chart valuesFiles: %w", mergeChartValuesFilesErr)
-		}
-		finalValues = values.DeepMergeInto(base, r.values)
+	finalValues, err := r.chartValues(ctx, c)
+	if err != nil {
+		return nil, nil, err
 	}
 	if cacheErr != nil {
 		return nil, nil, cacheErr
@@ -501,6 +504,17 @@ func (r *templateRequest) render(
 	return normalizeLists(docs), receipt, nil
 }
 
+func (r *templateRequest) chartValues(ctx context.Context, c *Client) (map[string]any, error) {
+	if len(r.release.ChartValuesFiles) == 0 {
+		return r.values, nil
+	}
+	base, err := c.mergeChartValuesFiles(ctx, &r.loaded, r.release.ChartValuesFiles, r.release.IgnoreMissingValuesFiles)
+	if err != nil {
+		return nil, fmt.Errorf("chart valuesFiles: %w", err)
+	}
+	return values.DeepMergeInto(base, r.values), nil
+}
+
 func (r *templateRequest) validate(
 	ctx context.Context,
 	c *Client,
@@ -523,7 +537,10 @@ func (r *templateRequest) validate(
 		return false, err
 	}
 	if current != r.loaded.record {
-		c.rememberDescription(&r.loaded, current)
+		r.loaded = c.rememberDescription(&r.loaded, current)
+		if r.input.Preparation != nil {
+			r.input.Preparation.loaded = r.loaded
+		}
 	}
 	result.docs, result.receipt, result.record = documents, current.receipt, current
 	return true, nil

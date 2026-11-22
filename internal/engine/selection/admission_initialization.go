@@ -169,7 +169,7 @@ func (c *admissionClosure) rootRequired(root string) bool {
 	}
 	for id := range c.states {
 		role := c.role(id)
-		if !id.KindInfo().Runnable || !role.needed || !role.ordinary {
+		if c.entryPending[id] || !id.KindInfo().Runnable || !role.needed || !role.ordinary {
 			continue
 		}
 		if role.selected && !c.states[id].requested {
@@ -206,7 +206,7 @@ func (c *admissionClosure) finishStart(
 			manifest.NamedResource{},
 		)
 	}
-	c.prepareEntryStart(materializers)
+	c.prepareEntryStart()
 
 	c.demandPendingSources()
 
@@ -256,34 +256,27 @@ func (c *admissionClosure) demandPendingSources() {
 	}
 }
 
-func (c *admissionClosure) prepareEntryStart(materializers func(materializerDemand, manifest.NamedResource) bool) {
+func (c *admissionClosure) prepareEntryStart() {
 	route := c.proposal.entry
-	if route != nil && route.Producer != (manifest.NamedResource{}) &&
-		c.proposal.reads.GeneratedDocument(route.Producer) && c.proposal.entrySupported() {
-		indexedChange := c.indexedEntryChanged()
-		if !c.session.request.Changed || indexedChange || c.literalEntryChanged() {
-			c.add(route.Producer, admissionRole{
-				needed: true, ordinary: true, dirty: true, selected: indexedChange,
-			})
+	if route == nil {
+		return
+	}
+	literalChanged := c.session.request.Changed && c.literalEntryChanged()
+	if route.Application != nil {
+		c.prepareApplicationDemand(route, literalChanged)
+	}
+	if route.Selected {
+		return
+	}
+	if c.proposal.entrySupported() {
+		indexedChanged := c.indexedEntryChanged()
+		pathNeeded := !c.session.request.Changed || literalChanged || route.Changed || indexedChanged
+		if route.generatedPath(c.proposal.reads) && pathNeeded {
+			c.add(route.Producer, admissionRole{needed: true, ordinary: true, dirty: true, selected: indexedChanged})
 		}
+	} else if route.Application != nil && c.context.PlainEntry && literalChanged {
+		c.acquireEntryPath()
 	}
-	if c.entryRequiresMaterialization() {
-		application := route.Application
-		root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
-		c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
-		materializers(materializerDemand{
-			target: application.Source, source: c.context.Root,
-			application: filepath.Join(c.context.Root, filepath.FromSlash(application.Path)), required: true,
-		}, manifest.NamedResource{})
-	}
-}
-
-func (c *admissionClosure) entryRequiresMaterialization() bool {
-	route := c.proposal.entry
-	if route == nil || route.Application == nil || c.proposal.entrySupported() {
-		return false
-	}
-	return c.context.PlainEntry && c.literalEntryChanged() && !c.pendingEntrySources()
 }
 
 func (c *admissionClosure) historyOwnerRequired(id manifest.NamedResource) bool {
@@ -535,8 +528,7 @@ func (c *admissionClosure) recordDirectState(
 
 func (c *admissionClosure) namedSelection(id manifest.NamedResource) bool {
 	for _, root := range c.session.request.Roots {
-		if root.Name != "" && root.Name == id.Name && root.Group == id.Group && root.Kind == id.Kind &&
-			(root.Namespace == "" || root.Namespace == id.Namespace) {
+		if root.Name != "" && rootMatchesIdentity(root, id, true) {
 			return true
 		}
 	}
@@ -669,7 +661,7 @@ func (c *admissionClosure) selectInitialState(id manifest.NamedResource, state *
 	if !state.listed {
 		return
 	}
-	if state.changed && c.session.request.MatchesScope(id) {
+	if state.changed && c.matchesChangedScope(id) {
 		c.add(id, admissionRole{needed: true, selected: state.eligible && !id.ReportHidden(), dirty: true})
 		return
 	}

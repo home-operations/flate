@@ -12,6 +12,8 @@ import (
 	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 )
 
+const kindFluxInstance = "FluxInstance"
+
 type fluxInstanceGenerationSpec struct {
 	Sync         *operatorv1.Sync `json:"sync,omitempty"         yaml:"sync"`
 	Distribution *struct {
@@ -24,7 +26,7 @@ type fluxInstanceGenerationSpec struct {
 }
 
 func (r *RawObject) isFluxInstance() bool {
-	return r.Kind == "FluxInstance" && apiGroup(r.APIVersion) == FluxOperatorDomain
+	return r.Kind == kindFluxInstance && apiGroup(r.APIVersion) == FluxOperatorDomain
 }
 
 //nolint:nilnil // An absent sync field leaves an empty generation recipe.
@@ -44,25 +46,33 @@ func (r *RawObject) syncSpec() (*operatorv1.Sync, error) {
 }
 
 func (r *RawObject) syncApplication(sync *operatorv1.Sync, err error) (EntryApplication, bool) {
-	if err != nil {
-		return EntryApplication{}, false
-	}
-	if sync == nil || sync.URL == "" || sync.Ref == "" || sync.Path == "" {
+	if err != nil || !hasSyncSource(sync) {
 		return EntryApplication{}, false
 	}
 	name := cmp.Or(sync.Name, r.Namespace)
 	if name == "" {
 		return EntryApplication{}, false
 	}
+	return EntryApplication{
+		Source: NamedResource{Group: SourceDomain, Kind: sync.Kind, Name: name, Namespace: r.Namespace},
+		Path:   sync.Path,
+	}, true
+}
+
+func hasSyncSource(sync *operatorv1.Sync) bool {
+	if !hasSyncLocation(sync) || sync.Path == "" {
+		return false
+	}
 	switch sync.Kind {
 	case KindGitRepository, KindOCIRepository, KindBucket:
-		return EntryApplication{
-			Source: NamedResource{Group: SourceDomain, Kind: sync.Kind, Name: name, Namespace: r.Namespace},
-			Path:   sync.Path,
-		}, true
+		return true
 	default:
-		return EntryApplication{}, false
+		return false
 	}
+}
+
+func hasSyncLocation(sync *operatorv1.Sync) bool {
+	return sync != nil && sync.URL != "" && sync.Ref != ""
 }
 
 // GeneratedTargets predicts possible sync identities from the unpatched declaration.

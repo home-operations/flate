@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	kustomizationctrl "github.com/home-operations/flate/internal/engine/controllers/kustomization"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/schedule"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
@@ -60,6 +62,124 @@ func TestRender_EntryApplicationBindingLifecycle(t *testing.T) {
 			warnings[i].Category == manifest.WarnConflictingProducers,
 			"withdrawal retained a stale binding advisory",
 		)
+	}
+}
+
+//nolint:paralleltest // Orchestrator setup changes process-global source policy.
+func TestRender_NamedEntryApplicationWithdrawal(t *testing.T) {
+	for _, namespace := range []string{"explicit", "omitted"} {
+		t.Run(namespace, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/kustomization.yaml",
+				"resources: [source.yaml, bootstrap.yaml, workload.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/bootstrap/factory/kustomization.yaml",
+				"namespace: apps\nresources: [factory.yaml]\n",
+			)
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/bootstrap.yaml",
+				testutil.KustomizationYAML(
+					"bootstrap",
+					"apps",
+					"  path: ./cluster/bootstrap/factory\n  sourceRef: {kind: GitRepository, name: self}\n",
+				),
+			)
+			testutil.WriteFile(t, root, "cluster/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: self, namespace: apps}
+spec: {url: https://fixture.invalid/repo, ref: {branch: main}}
+`)
+			testutil.WriteFile(
+				t,
+				root,
+				"cluster/workload.yaml",
+				testutil.KustomizationYAML(
+					"workload",
+					"apps",
+					"  path: ./payload\n  sourceRef: {kind: GitRepository, name: self}\n",
+				),
+			)
+			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: [config.yaml]\n")
+			testutil.WriteFile(
+				t,
+				root,
+				"payload/config.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n",
+			)
+			metadata := "name: factory"
+			if namespace == "explicit" {
+				metadata += ", namespace: apps"
+			}
+			testutil.WriteFile(t, root, "cluster/bootstrap/factory/factory.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {`+metadata+`}
+spec:
+  resourcesTemplate: |
+    apiVersion: fluxcd.controlplane.io/v1
+    kind: FluxInstance
+    metadata: {name: flux, namespace: apps}
+    spec:
+      distribution: {version: 2.6.x}
+      sync: {name: sync, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./cluster}
+      kustomize:
+        patches:
+          - target: {kind: Kustomization, name: sync}
+            patch: |-
+              - op: add
+                path: /spec/patches
+                value:
+                  - target: {kind: Kustomization, name: workload}
+                    patch: |-
+                      - op: add
+                        path: /spec/targetNamespace
+                        value: patched
+`)
+			workload := testutil.KustomizationID("apps", "workload")
+			syncRoot := testutil.KustomizationID("apps", "sync")
+			o, err := newTestOrchestrator(t, Tree{
+				Path: root, RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"},
+			}, Config{
+				Concurrency: 2,
+				CacheDir:    t.TempDir(),
+				Selection:   selection.Request{Roots: []manifest.NamedResource{workload}},
+			})
+			assert.NoError(t, err)
+			t.Cleanup(o.stop)
+			assert.NoError(t, o.bootstrap(t.Context()))
+			assert.NoError(t, o.run(t.Context()))
+
+			factory := (&manifest.ResourceSet{Name: "factory", Namespace: "apps"}).Named()
+			instance := (&manifest.RawObject{Kind: "FluxInstance", APIVersion: "fluxcd.controlplane.io/v1", Namespace: "apps", Name: "flux"}).Named()
+			assert.Equal(t, o.store.EmissionOwner(instance), factory)
+			assert.Equal(t, o.store.EmissionOwner(workload), syncRoot)
+			patched, ok := o.store.GetDeclaration(workload).(*manifest.Kustomization)
+			assert.FatalIf(t, !ok, "generated root did not emit the workload")
+			assert.Equal(t, patched.TargetNamespace, "patched")
+			assert.Equal(t, o.selection.Snapshot().OrdinaryDemand(syncRoot), true)
+			assert.Equal(t, o.selection.Snapshot().Output(workload), true)
+			current, ok := o.store.GetDeclaration(factory).(*manifest.ResourceSet)
+			assert.FatalIf(t, !ok, "normalized ResourceSet was not admitted")
+			empty := *current
+			empty.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: replacement, namespace: apps}\n"
+			o.store.AddObject(&empty, testutil.ObjectDocument(&empty))
+			assert.NoError(t, o.runDAG(t.Context()))
+
+			assert.Equal(t, o.store.GetDeclaration(syncRoot) == nil, true)
+			assert.Equal(t, o.store.EmissionOwner(workload), manifest.NamedResource{})
+			proposal, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{Invocation: true})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, slices.Contains(proposal.Selected, workload), true)
+			assert.Equal(t, slices.Contains(proposal.Ordinary, syncRoot), false)
+		})
 	}
 }
 

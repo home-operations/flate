@@ -53,7 +53,7 @@ func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 			}
 			l := New(store.New())
 			input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: files}
-			possible, err := l.EntryFrontier(t.Context(), input, ".")
+			possible, err := l.EntryFrontier(t.Context(), input, ".", nil)
 			assert.NoError(t, err)
 			assert.Equal(t, possible, tc.possible)
 			if _, exists := tc.files["object.yaml"]; exists {
@@ -66,7 +66,7 @@ func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 					manifest.ParseDocOptions{},
 				)
 				assert.NoError(t, err)
-				possible, err = physical.EntryFrontier(t.Context(), input, ".")
+				possible, err = physical.EntryFrontier(t.Context(), input, ".", nil)
 				assert.NoError(t, err)
 				assert.Equal(t, possible, tc.possible)
 			}
@@ -151,7 +151,7 @@ spec:
 			}
 			count := reads["objects.yaml"].Load()
 			listings := directories.Load()
-			possible, err := l.EntryFrontier(t.Context(), input, ".")
+			possible, err := l.EntryFrontier(t.Context(), input, ".", nil)
 			assert.NoError(t, err)
 			assert.Equal(t, possible, true)
 			load()
@@ -208,7 +208,7 @@ func TestEntryFrontier_RequiredDocumentCoverage(t *testing.T) {
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	before := reads.Load()
-	possible, err := l.EntryFrontier(t.Context(), input, ".")
+	possible, err := l.EntryFrontier(t.Context(), input, ".", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, possible, true)
 	assert.Equal(t, reads.Load(), before)
@@ -241,7 +241,7 @@ func TestEntryFrontier_SourceLifetime(t *testing.T) {
 	}}
 	l := New(store.New())
 	for range 2 {
-		possible, err := l.EntryFrontier(t.Context(), input, ".")
+		possible, err := l.EntryFrontier(t.Context(), input, ".", nil)
 		assert.NoError(t, err)
 		assert.Equal(t, possible, false)
 	}
@@ -250,10 +250,10 @@ func TestEntryFrontier_SourceLifetime(t *testing.T) {
 		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
 		"object.yaml":        {Data: []byte(testutil.KustomizationYAML("applier", "apps", "  path: ./entry\n"))},
 	}}
-	possible, err := l.EntryFrontier(t.Context(), replacement, ".")
+	possible, err := l.EntryFrontier(t.Context(), replacement, ".", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, possible, true)
-	possible, err = l.EntryFrontier(t.Context(), input, ".")
+	possible, err = l.EntryFrontier(t.Context(), input, ".", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, possible, false)
 	assert.Equal(t, reads.Load(), int64(2))
@@ -284,7 +284,7 @@ func TestEntryFrontier_FrozenOwnership(t *testing.T) {
 		},
 	}
 
-	possible, err := l.EntryFrontier(t.Context(), replacement, ".")
+	possible, err := l.EntryFrontier(t.Context(), replacement, ".", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, possible, true)
 	assert.Equal(t, l.documents.artifacts[root], input)

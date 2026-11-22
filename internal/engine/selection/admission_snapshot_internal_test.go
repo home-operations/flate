@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"iter"
 	"maps"
-	"path/filepath"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -557,10 +556,19 @@ func TestAdmission_EntrySourceRefreshPrecedesMaterialization(t *testing.T) {
 				Application: &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"},
 				Producer:    producer.Named(), Reads: &guard,
 			}
-			closure.materializers(materializerDemand{
-				target: source.Named(), source: root, application: filepath.Join(root, "entry"), required: true,
-			}, manifest.NamedResource{})
-			assert.Equal(t, closure.role(producer.Named()).needed, state == "changed" || state == "failed")
+			closure.proposal.preparation = &Preparation{}
+			if !closure.proposal.entrySupported() {
+				assert.Equal(t, closure.acquireEntryPath(), true)
+			}
+			if state == "changed" || state == "failed" {
+				assert.FatalIf(t, len(closure.proposal.demands) != 1, "expected one entry qualification demand")
+				demand := &closure.proposal.demands[0]
+				assert.Equal(t, demand.Root, "entry")
+				assert.Equal(t, demand.Source, manifest.BootstrapSourceID)
+			} else {
+				assert.Equal(t, len(closure.proposal.demands), 0)
+			}
+			assert.Equal(t, closure.role(producer.Named()).needed, false)
 			assert.Equal(t, closure.role(source.Named()).needed, state == "pending")
 			assert.Equal(t, closure.role(source.Named()).ordinary, state == "pending")
 		})

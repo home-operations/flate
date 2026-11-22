@@ -3,6 +3,7 @@ package selection
 import (
 	"context"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -81,10 +82,32 @@ func (c *admissionClosure) requestEntryReceipt() {
 	}
 	entry := route.Application
 	native := manifest.NewEntryKustomization(entry.Source, entry.Path, manifest.NamedResource{}).Named()
-	if (len(c.historyOwners[native]) != 0 || len(c.historyOwners[route.Previous]) != 0) &&
-		!c.proposal.entrySupported() {
+	if len(c.historyOwners[native]) == 0 && len(c.historyOwners[route.Previous]) == 0 &&
+		(!route.PreviousGeneratedEntry || !c.entryHistoryReachesDeclaration()) {
+		return
+	}
+	if !c.proposal.entrySupported() {
 		c.proposal.EntryReceipt = entry
 	}
+}
+
+// A changed workload can retain its own history when the entry no longer has a searchable inventory.
+func (c *admissionClosure) entryHistoryReachesDeclaration() bool {
+	if c.context.EntryPath == "" {
+		return false
+	}
+	for owner, evidence := range c.historyOwners {
+		if len(evidence) == 0 {
+			continue
+		}
+		occurrence, known := c.occurrence(owner)
+		declaration := occurrence.Declaration
+		if known && occurrence.Located && declaration.File != "" &&
+			containsPath(c.context.EntryPath, filepath.Join(declaration.Source, declaration.File)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *admissionClosure) readHistory() {

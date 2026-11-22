@@ -43,9 +43,10 @@ func (c *publicationHistoryController) PreviousRender(
 	} else {
 		assert.Equal(c.t, path, "after")
 		assert.Equal(c.t, *c.published, true)
+		assert.Equal(c.t, prior.ProbeCurrent(nil), false)
 	}
-	assessment := &base.Execution{Controller: &base.Controller{Store: c.store}}
-	assessment.Reads.Init(c.store, object.Named(), nil)
+	assessment := new(base.Execution)
+	assessment.InitProbe(&base.Controller{Store: c.store}, object)
 	assessment.Reads.GetDeclaration(object.Named())
 	history := base.History{Assessment: assessment}
 	if c.calls == 1 {
@@ -157,6 +158,9 @@ func TestPrepareAdmission_HistorySurvivesPublication(t *testing.T) {
 			assert.Equal(t, len(borrowed), 1)
 			assert.Equal(t, borrowed[owner.Named()].Records == nil, true)
 			assert.Equal(t, borrowed[owner.Named()].Complete, false)
+			current := *o.probeSlot(owner.Named())
+			assert.FatalIf(t, current == nil, "the current declaration has no history assessment")
+			assert.Equal(t, current.ProbeCurrent(nil), true)
 			o.sweepProbes(true)
 			var nextReads store.ReadSet
 			nextReads.Init(st, manifest.NamedResource{}, nil)

@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: cluster-info, namespace: flux-system}
+data: {CLUSTER: test}

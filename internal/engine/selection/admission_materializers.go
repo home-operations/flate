@@ -14,7 +14,6 @@ type materializerDemand struct {
 	target, consumer   manifest.NamedResource
 	key, use           string
 	source             string
-	application        string
 	ordering, required bool
 }
 
@@ -66,11 +65,7 @@ func (c *admissionClosure) materializers(
 		c.searched = map[materializerDemand]bool{}
 	}
 	c.searched[demand] = false
-	entry, matches := c.materializerMatcher(&demand)
-	if demand.application != "" && c.proposal.entrySupported() {
-		return false
-	}
-	if c.materializerPending(consumer, &demand, entry) {
+	if c.materializerPending(consumer, &demand) {
 		return true
 	}
 	target := demand.target
@@ -82,7 +77,7 @@ func (c *admissionClosure) materializers(
 		Key:       demand.key,
 		Use:       demand.use,
 	}
-	if demand.application == "" && c.missing != nil &&
+	if c.missing != nil &&
 		c.missing.Admission(
 			new(ref),
 			new(c.objects.ReferenceFacts(target, c.facts.SelectionIndex(), consumer)),
@@ -90,7 +85,7 @@ func (c *admissionClosure) materializers(
 		return false
 	}
 
-	available := c.materializerCandidates(demand.ordering || demand.application != "")
+	available := c.materializerCandidates(demand.ordering)
 	candidates := func(yield func(manifest.NamedResource, OccurrenceFacts) bool) {
 		c.yieldMaterializerCandidates(&demand, available, yield)
 	}
@@ -102,14 +97,14 @@ func (c *admissionClosure) materializers(
 		if facts == nil {
 			continue
 		}
-		match := c.materializerTargetsMatch(id, facts, &demand, matches)
+		match := c.materializerTargetsMatch(id, facts, &demand)
 		if !match && c.opaqueMaterializerPending(&demand, id, facts, target) {
 			opaque = append(opaque, occurrence)
 		}
 		if !match {
 			continue
 		}
-		output2 := c.materializerOutputMatches(id, matches)
+		output2 := c.materializerOutputMatches(id, target)
 		if !output2.include {
 			continue
 		}
@@ -129,7 +124,7 @@ func (c *admissionClosure) admitMaterializer(id manifest.NamedResource, demand *
 		state.requested = true
 		c.states[id] = state
 	}
-	c.add(id, admissionRole{needed: true, ordinary: demand.application == "", dirty: c.states[id].changed})
+	c.add(id, admissionRole{needed: true, ordinary: true, dirty: c.states[id].changed})
 }
 
 // A named input borrows the scratch slot until the next call.
@@ -380,7 +375,6 @@ func (c *admissionClosure) materializerTargetsMatch(
 	id manifest.NamedResource,
 	facts *OccurrenceFacts,
 	demand *materializerDemand,
-	matches materializerMatch,
 ) bool {
 	target := demand.target
 	targets := facts.Targets
@@ -400,42 +394,16 @@ func (c *admissionClosure) materializerTargetsMatch(
 			return true
 		}
 	}
-	if c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target) {
-		return true
-	}
-	if demand.application == "" {
-		return false
-	}
-	applies := func(object manifest.BaseManifest) bool {
-		if object.Named().Namespace == "" {
-			object = object.WithNamespace(id.Namespace)
-		}
-		return matches(object.Named(), object, nil)
-	}
-	return slices.ContainsFunc(facts.TemplateObjects, applies) ||
-		slices.ContainsFunc(c.context.TemplateProjections[id].Objects, applies)
+	return c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target)
 }
 
-func (c *admissionClosure) materializerPending(
-	consumer manifest.NamedResource,
-	demandValue *materializerDemand,
-	entry manifest.NamedResource,
-) bool {
-	demand := *demandValue
-	if demand.application != "" && c.pendingEntrySources() {
-		c.searched[demand] = true
-		return true
-	}
-	for owner := range c.materializerOwners(consumer, &demand, entry) {
-		if owner == (manifest.NamedResource{}) || owner == consumer ||
-			demand.application == "" && !c.role(owner).needed {
+func (c *admissionClosure) materializerPending(consumer manifest.NamedResource, demand *materializerDemand) bool {
+	for owner := range c.materializerOwners(consumer) {
+		if owner == (manifest.NamedResource{}) || owner == consumer || !c.role(owner).needed {
 			continue
 		}
 		if c.object(owner) == nil && !c.isFileIndexed(owner) {
 			continue
-		}
-		if demand.application != "" {
-			c.add(owner, admissionRole{needed: true, ordinary: true, dirty: c.states[owner].changed})
 		}
 		status, _ := c.objects.GetStatus(owner)
 		if status.Outcome() == store.OutcomeFailed {
@@ -443,7 +411,7 @@ func (c *admissionClosure) materializerPending(
 		}
 		output, ok := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
 		if !ok || !output.Complete {
-			c.searched[demand] = true
+			c.searched[*demand] = true
 			return true
 		}
 	}
@@ -609,7 +577,7 @@ func (c *admissionClosure) opaqueMaterializerPending(
 ) bool {
 	demand := *demandValue
 	templates := c.context.TemplateProjections[id].Targets
-	if demand.application != "" || demand.consumer == (manifest.NamedResource{}) {
+	if demand.consumer == (manifest.NamedResource{}) {
 		templates = nil
 	}
 	if !demand.required || target.Name == "" || !opaqueOccurrence(facts, templates) || c.replace[id] {
@@ -617,26 +585,19 @@ func (c *admissionClosure) opaqueMaterializerPending(
 	}
 	status, _ := c.objects.GetStatus(id)
 	output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-	if status.Outcome() == store.OutcomeFailed && demand.application == "" {
+	if status.Outcome() == store.OutcomeFailed {
 		return false
 	}
-	complete := output != nil && output.Complete && output.OutputReads.Valid()
-	if demand.application != "" && status.Outcome() != store.OutcomePassed {
-		complete = false
-	}
-	return !complete
+	return output == nil || !output.Complete || !output.OutputReads.Valid()
 }
 
-func (c *admissionClosure) acceptedMaterializerMatches(
-	id manifest.NamedResource,
-	matches materializerMatch,
-) bool {
-	present := false
-	for child := range c.accepted[id] {
-		record := c.accepted[id][child]
-		present = present || matches(child, c.object(child), &record)
+func (c *admissionClosure) acceptedMaterializerMatches(owner, target manifest.NamedResource) bool {
+	for child := range c.accepted[owner] {
+		if matchesMaterializerIdentity(target, child) {
+			return true
+		}
 	}
-	return present
+	return false
 }
 
 func matchesMaterializerIdentity(target, id manifest.NamedResource) bool {
@@ -669,7 +630,7 @@ func (c *admissionClosure) candidateMaterializerFacts(
 	if !c.materializerSourceMatches(&demand, consumer, id, occurrence) {
 		return nil
 	}
-	unconstrained := target.Kind == "" || demand.application != ""
+	unconstrained := target.Kind == ""
 	fixedPath := facts.HasPath && !slices.ContainsFunc(facts.Roots, manifest.HasEnvsubstReference)
 	if unconstrained && fixedPath && !c.coversDeclaration(new(rootOwnerFact(c.object(id), c.rootReader())), consumer) {
 		return nil
@@ -680,10 +641,9 @@ func (c *admissionClosure) candidateMaterializerFacts(
 type materializerOutput struct{ complete, include bool }
 
 func (c *admissionClosure) materializerOutputMatches(
-	id manifest.NamedResource,
-	matches materializerMatch,
+	id, target manifest.NamedResource,
 ) materializerOutput {
-	if c.replace[id] && !c.acceptedMaterializerMatches(id, matches) {
+	if c.replace[id] && !c.acceptedMaterializerMatches(id, target) {
 		return materializerOutput{}
 	}
 	complete := false
@@ -693,7 +653,7 @@ func (c *admissionClosure) materializerOutputMatches(
 		if complete &&
 			!slices.ContainsFunc(
 				output.Children,
-				func(child store.Child) bool { return matches(child.Obj.Named(), child.Obj, nil) },
+				func(child store.Child) bool { return matchesMaterializerIdentity(target, child.Obj.Named()) },
 			) {
 			return materializerOutput{complete: complete, include: false}
 		}
@@ -701,24 +661,11 @@ func (c *admissionClosure) materializerOutputMatches(
 	return materializerOutput{complete: complete, include: true}
 }
 
-func (c *admissionClosure) materializerOwners(
-	consumer manifest.NamedResource,
-	demand *materializerDemand,
-	entry manifest.NamedResource,
-) iter.Seq[manifest.NamedResource] {
+func (c *admissionClosure) materializerOwners(consumer manifest.NamedResource) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
 		record := c.record(consumer)
 		if !yield(record.Parent) || !yield(record.BuilderOwner) {
 			return
-		}
-		if demand.application != "" {
-			productionValues := c.productions(entry)
-			for productionIndex := range productionValues {
-				production := productionValues[productionIndex]
-				if !yield(production.Materializer(entry)) {
-					return
-				}
-			}
 		}
 		{
 			productionValues := c.productions(consumer)
@@ -748,10 +695,10 @@ func (c *admissionClosure) yieldObjectMaterializerCandidates(
 			}
 			_, _, pathBearing := occurrence.SourcePath()
 			policy := occurrence.Policy
-			if !pathBearing && !demand.ordering && demand.application == "" || policy == nil {
+			if !pathBearing && !demand.ordering || policy == nil {
 				continue
 			}
-			if demand.application == "" && !policy.MatchesNamespace(target) {
+			if !policy.MatchesNamespace(target) {
 				continue
 			}
 			if demand.ordering &&

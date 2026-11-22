@@ -26,6 +26,13 @@ func (c *admissionClosure) indexedEntryChanged() bool {
 	return len(record.ContentRoots[manifest.BootstrapSourceID]) != 0 && c.affected(owner, nil)
 }
 
+func (c *admissionClosure) matchesChangedScope(id manifest.NamedResource) bool {
+	if route := c.proposal.entry; route != nil && route.possibleSelectedApplication() {
+		return c.session.request.Matches(id)
+	}
+	return c.session.request.MatchesScope(id)
+}
+
 func (c *admissionClosure) entryFileDemand(file string) bool {
 	if file == "" || !containsPath(c.context.EntryPath, filepath.Join(c.context.Root, filepath.FromSlash(file))) {
 		return false

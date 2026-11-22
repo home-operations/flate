@@ -1,0 +1,55 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: flux-instance
+  namespace: flux-system
+spec:
+  chart:
+    spec:
+      chart: charts/flux-instance
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+  interval: 10m
+  values:
+    instance:
+      sync:
+        kind: GitRepository
+        name: flux-system
+        path: ./clusters/main
+        ref: refs/heads/main
+        url: https://example.invalid/cluster.git
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: flux-instance
+  namespace: flux-system
+spec:
+  interval: 10m
+  ref:
+    tag: 1.0.0
+  suspend: true
+  url: oci://example.invalid/fixture
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: flux-system
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: flux-instance-rules
+  namespace: flux-system
+spec:
+  groups:
+  - name: flux-instance
+    rules:
+    - expr: vector(1)
+      record: fixture:flux_instance:ready

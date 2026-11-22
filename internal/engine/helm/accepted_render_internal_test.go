@@ -311,6 +311,11 @@ func testPrepareTemplateSourceBinding(t *testing.T, name string) {
 		sources.SetArtifact(hr.ChartSource(), current)
 	}
 	priorRevision, priorURL := first.binding.Artifact.Revision, first.binding.Artifact.URL
+	if name == "revision" || name == "mutable_wrapper" {
+		pending, chartErr := client.PrepareChart(t.Context(), hr, &input)
+		assert.NoError(t, chartErr)
+		assert.Equal(t, pending == nil, true)
+	}
 	next, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
 	repeated, err := client.prepareTemplate(t.Context(), hr, nil, &input)

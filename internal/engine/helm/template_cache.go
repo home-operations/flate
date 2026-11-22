@@ -43,33 +43,29 @@ type ociChartContent struct {
 	DisableTracking bool   `json:"DisableTracking"`
 }
 
-// CommonMetadata is stamped after the cached pre-stamp render. Unsupported
-// content returns an empty key, which MUST bypass lookup and publication.
-func computeTemplateKey(
-	loaded *chartDescription,
-	releaseValues map[string]any,
-	opts Options,
-	hr *manifest.HelmRelease,
-) string {
-	if loaded.fingerprint == "" {
-		return ""
-	}
-	type keyHR struct {
-		ReleaseName              string                `json:"ReleaseName"`
-		ReleaseNamespace         string                `json:"ReleaseNamespace"`
-		SkipChartCRDs            bool                  `json:"SkipChartCRDs"`
-		DisableSchemaValidation  bool                  `json:"DisableSchemaValidation"`
-		DisableOpenAPIValidation bool                  `json:"DisableOpenAPIValidation"`
-		InstallDisableHooks      bool                  `json:"InstallDisableHooks"`
-		InstallReplace           bool                  `json:"InstallReplace"`
-		TestEnable               bool                  `json:"TestEnable"`
-		ChartVersion             string                `json:"ChartVersion"`
-		ChartValuesFiles         []string              `json:"ChartValuesFiles"`
-		IgnoreMissingValuesFiles bool                  `json:"IgnoreMissingValuesFiles"`
-		PostRenderers            []helmv2.PostRenderer `json:"PostRenderers"`
-	}
+type templateReleaseScalars struct {
+	ReleaseName              string `json:"ReleaseName"`
+	ReleaseNamespace         string `json:"ReleaseNamespace"`
+	SkipChartCRDs            bool   `json:"SkipChartCRDs"`
+	DisableSchemaValidation  bool   `json:"DisableSchemaValidation"`
+	DisableOpenAPIValidation bool   `json:"DisableOpenAPIValidation"`
+	InstallDisableHooks      bool   `json:"InstallDisableHooks"`
+	InstallReplace           bool   `json:"InstallReplace"`
+	TestEnable               bool   `json:"TestEnable"`
+	ChartVersion             string `json:"ChartVersion"`
+}
+
+type templateReleaseKey struct {
+	templateReleaseScalars
+
+	ChartValuesFiles         []string              `json:"ChartValuesFiles"`
+	IgnoreMissingValuesFiles bool                  `json:"IgnoreMissingValuesFiles"`
+	PostRenderers            []helmv2.PostRenderer `json:"PostRenderers"`
+}
+
+func templateReleaseFor(hr *manifest.HelmRelease) templateReleaseKey {
 	policy := (&helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}).GetInstall()
-	khr := keyHR{
+	key := templateReleaseKey{
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
 		SkipChartCRDs:            policy.CRDs == helmv2.Skip,
@@ -81,11 +77,34 @@ func computeTemplateKey(
 		PostRenderers:            hr.PostRenderers,
 	}
 	if hr.Install != nil {
-		khr.InstallDisableHooks = hr.Install.DisableHooks
-		khr.InstallReplace = hr.Install.Replace
+		key.InstallDisableHooks = hr.Install.DisableHooks
+		key.InstallReplace = hr.Install.Replace
 	}
 	if hr.Test != nil {
-		khr.TestEnable = hr.Test.Enable
+		key.TestEnable = hr.Test.Enable
+	}
+
+	return key
+}
+
+func (k *templateReleaseKey) equal(other *templateReleaseKey) bool {
+	sameValuesFiles := k.IgnoreMissingValuesFiles == other.IgnoreMissingValuesFiles &&
+		(k.ChartValuesFiles == nil) == (other.ChartValuesFiles == nil) &&
+		slices.Equal(k.ChartValuesFiles, other.ChartValuesFiles)
+	return k.templateReleaseScalars == other.templateReleaseScalars &&
+		sameValuesFiles && manifest.ValueEqual(k.PostRenderers, other.PostRenderers)
+}
+
+// CommonMetadata is stamped after the cached pre-stamp render. Unsupported
+// content returns an empty key, which MUST bypass lookup and publication.
+func computeTemplateKey(
+	loaded *chartDescription,
+	releaseValues map[string]any,
+	opts Options,
+	hr *manifest.HelmRelease,
+) string {
+	if loaded.fingerprint == "" {
+		return ""
 	}
 
 	inputs := loaded.values.fingerprint
@@ -97,16 +116,16 @@ func computeTemplateKey(
 		EnableDNS   bool   `json:"EnableDNS"`
 	}
 	return manifest.Fingerprint(struct {
-		Chart   string           `json:"Chart"`
-		OCI     *ociChartContent `json:"OCI"`
-		Inputs  *string          `json:"Inputs"`
-		Values  map[string]any   `json:"Values"`
-		Options keyOptions       `json:"Options"`
-		Release keyHR            `json:"Release"`
+		Chart   string             `json:"Chart"`
+		OCI     *ociChartContent   `json:"OCI"`
+		Inputs  *string            `json:"Inputs"`
+		Values  map[string]any     `json:"Values"`
+		Options keyOptions         `json:"Options"`
+		Release templateReleaseKey `json:"Release"`
 	}{
 		Chart: loaded.fingerprint, OCI: loaded.oci, Inputs: inputs, Values: releaseValues,
 		Options: keyOptions{opts.SkipCRDs, opts.SkipTests, opts.KubeVersion, opts.APIVersions, opts.EnableDNS},
-		Release: khr,
+		Release: templateReleaseFor(hr),
 	})
 }
 
@@ -174,6 +193,9 @@ func (c *Client) PreviousRender(
 	if ctx.Err() != nil || !c.cache.CanPersistRenders() {
 		return nil, false
 	}
+	if artifact := input.Sources.chartInput(hr); artifact == nil || artifact.FS == nil {
+		return nil, false
+	}
 	prepared, err := c.prepareTemplate(ctx, hr, hrValues, &input)
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
@@ -184,7 +206,10 @@ func (c *Client) PreviousRender(
 	}
 	records, complete := record.frame.History(hr.Named(), prepared.content)
 	if complete && record != prepared.loaded.record {
-		c.rememberDescription(&prepared.loaded, record)
+		prepared.loaded = c.rememberDescription(&prepared.loaded, record)
+		if input.Preparation != nil {
+			input.Preparation.loaded = prepared.loaded
+		}
 	}
 	if complete && input.Previous != nil {
 		*input.Previous = RenderAdmission{
@@ -222,7 +247,16 @@ func (r *templateRequest) lookupRender(
 		// Standalone history owns only a binding snapshot, with no preparation to borrow.
 		binding = new(r.binding)
 	}
+	pendingHistory := history && r.input.Previous == nil && record.accepted == nil
+	storedReceipt := record.frame.Stored != nil && record.receipt != nil
+	if pendingHistory && storedReceipt && samePreparedRender(&record.frame, binding, r.content) {
+		return record, nil, ctx.Err()
+	}
 	return r.validateRecord(ctx, record, binding, history)
+}
+
+func samePreparedRender(frame *renderFrame, binding *cache.RenderBinding[templatePolicy], content any) bool {
+	return frame.Inputs.Equal(binding, equalTemplatePolicy) && manifest.ValueEqual(frame.Header.content, content)
 }
 
 type templateResult struct {

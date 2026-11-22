@@ -1,0 +1,47 @@
+[
+  {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "plex",
+        "kustomize.toolkit.fluxcd.io/namespace": "media"
+      },
+      "name": "plex",
+      "namespace": "media"
+    },
+    "spec": {
+      "chart": {
+        "spec": {
+          "chart": "charts/plex",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "bootstrap",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "install": {
+        "crds": "CreateReplace"
+      },
+      "interval": "10m",
+      "rollback": {
+        "cleanupOnFail": true
+      },
+      "upgrade": {
+        "cleanupOnFail": true,
+        "crds": "CreateReplace",
+        "remediation": {
+          "remediateLastFailure": true,
+          "retries": 2
+        },
+        "strategy": {
+          "name": "RemediateOnFailure"
+        }
+      },
+      "values": {
+        "mode": "changed"
+      }
+    }
+  }
+]

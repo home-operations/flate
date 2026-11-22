@@ -378,9 +378,10 @@ func TestDiscovery_ComposedBootstrapWaitsForInputs(t *testing.T) {
 		FS:        fstest.MapFS{},
 	}
 	a := &Admission{
-		store: st,
-		input: bootstrap,
-		path:  filepath.Join(root, "entry"),
+		store:       st,
+		input:       bootstrap,
+		entryDemand: true,
+		path:        filepath.Join(root, "entry"),
 		resolvedSources: &entrySourcePublisher{store: st, mutable: map[manifest.NamedResource]entryResolution{
 			including.Named(): {object: including, input: bootstrap, artifact: selected},
 		}},
@@ -434,8 +435,9 @@ func TestDiscovery_ComposedBootstrapWaitsForInputs(t *testing.T) {
 				},
 			}
 		}
-		q.previous, q.matches, q.accepted = previous, nil, nil
-		reused, pending := q.reusePrevious(t.Context(), a, st, &reads)
+		q.previous, q.matches = previous, nil
+		walk := qualificationWalk{q: q, admission: a, store: st, reads: &reads}
+		reused, pending := walk.reusePrevious(t.Context(), q.previous.Owner)
 		assert.Equal(t, reused, value == "before")
 		assert.Equal(t, pending, false)
 		request := preparedRequest(t, &Config{}, owner, evidence.source.artifact)
@@ -561,49 +563,59 @@ func TestAdmission_PublishRequiredDeclaration(t *testing.T) {
 
 func TestAdmission_RequiredIncludeCannotRestoreAlias(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	including := &manifest.GitRepository{
-		Name:      "including",
-		Namespace: "ns",
-		Include:   []sourcev1.GitRepositoryInclude{{GitRepositoryRef: manifest.LocalObjectReference{Name: "input"}}},
-	}
-	required := including.Composition().Includes[0].Reference
-	entry := &manifest.Kustomization{
-		Name:      "reader",
-		Namespace: "ns",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"},
-	}
-	ordinary := slices.Collect(manifest.References(entry, manifest.ReferenceRelations))[0]
-	for _, order := range []string{"required first", "required last"} {
-		t.Run(order, func(t *testing.T) {
+	for _, id := range []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "input"},
+		manifest.BootstrapSourceID,
+	} {
+		t.Run(id.Name, func(t *testing.T) {
 			t.Parallel()
-			refs := []manifest.Reference{required, ordinary}
-			if order == "required last" {
-				slices.Reverse(refs)
+			root := t.TempDir()
+			including := &manifest.GitRepository{
+				Name:      "including",
+				Namespace: id.Namespace,
+				Include: []sourcev1.GitRepositoryInclude{
+					{GitRepositoryRef: manifest.LocalObjectReference{Name: id.Name}},
+				},
 			}
-			groups := map[manifest.NamedResource]*entrySourceGroup{}
-			for _, ref := range refs {
-				addEntrySource(groups, ref.NamedResource, including.Named(), &ref)
+			required := including.Composition().Includes[0].Reference
+			entry := &manifest.Kustomization{
+				Name:      "reader",
+				Namespace: id.Namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: id.Name},
 			}
-			assert.Equal(t, groups[required.NamedResource].reference.RequiresDeclaration, true)
+			ordinary := slices.Collect(manifest.References(entry, manifest.ReferenceRelations))[0]
+			for _, order := range []string{"required first", "required last"} {
+				t.Run(order, func(t *testing.T) {
+					t.Parallel()
+					refs := []manifest.Reference{required, ordinary}
+					if order == "required last" {
+						slices.Reverse(refs)
+					}
+					groups := map[manifest.NamedResource]*entrySourceGroup{}
+					for _, ref := range refs {
+						addEntrySource(groups, ref.NamedResource, including.Named(), &ref)
+					}
+					assert.Equal(t, groups[required.NamedResource].reference.RequiresDeclaration, true)
+				})
+			}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+			old, _ := required.NamedResource.BindLocal(root)
+			previous := entryResolution{object: old, input: input, synthetic: true}
+			a := &Admission{
+				store: store.New(),
+				input: input,
+				resolvedSources: &entrySourcePublisher{
+					mutable: map[manifest.NamedResource]entryResolution{required.NamedResource: previous},
+				},
+			}
+			resolved := a.classifySource(required.NamedResource, &sourceRequest{reference: required})
+			assert.Equal(t, resolved.synthetic, false)
+			assert.Equal(t, resolved.object, manifest.BaseManifest(nil))
+			restored := a.classifySource(ordinary.NamedResource, &sourceRequest{reference: ordinary})
+			assert.Equal(t, restored.synthetic, true)
+			assert.Equal(t, restored.object, old)
 		})
 	}
-	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
-	old, _ := required.NamedResource.BindLocal(root)
-	previous := entryResolution{object: old, input: input, synthetic: true}
-	a := &Admission{
-		store: store.New(),
-		input: input,
-		resolvedSources: &entrySourcePublisher{
-			mutable: map[manifest.NamedResource]entryResolution{required.NamedResource: previous},
-		},
-	}
-	resolved := a.classifySource(required.NamedResource, &sourceRequest{reference: required})
-	assert.Equal(t, resolved.synthetic, false)
-	assert.Equal(t, resolved.object, manifest.BaseManifest(nil))
-	restored := a.classifySource(ordinary.NamedResource, &sourceRequest{reference: ordinary})
-	assert.Equal(t, restored.synthetic, true)
-	assert.Equal(t, restored.object, old)
 }
 
 func TestDiscovery_PreparedIncludeAuthority(t *testing.T) {

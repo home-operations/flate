@@ -42,7 +42,7 @@ func (w *qualificationWalk) visitGeneration(ctx context.Context, evidence *appli
 	if w.reads.Policy(evidence.object.Named()).Supplied() {
 		matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 		if matched {
-			w.q.matches = append(w.q.matches, *evidence)
+			w.q.recordMatch(evidence)
 		}
 		return matched, err
 	}
@@ -83,6 +83,9 @@ func (w *qualificationWalk) visitSyncRoot(
 	}); i >= 0 {
 		generated.generatedSource = output.Children[i].Obj
 	}
+	if reused, pending := w.matchReceipt(ctx, generated, nil); reused || pending {
+		return reused, nil
+	}
 	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, generated)
 	if err != nil {
 		return false, err
@@ -96,7 +99,7 @@ func (w *qualificationWalk) visitSyncRoot(
 	if current, err := w.captureSyncGeneration(ctx, evidence, output, root); err != nil || !current {
 		return false, err
 	}
-	w.q.matches = append(w.q.matches, *generated)
+	w.q.recordMatch(generated)
 	return true, nil
 }
 

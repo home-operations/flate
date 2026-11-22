@@ -5,7 +5,7 @@
     "paths": [
       "kubernetes/apps/media/plex/ks.yaml"
     ],
-    "reductions": "Use two local charts. Keep the FluxInstance, generated sync Kustomization, and Plex patch chain."
+    "reductions": "Keep the FluxInstance, generated sync Kustomization, and Plex patch chain. Use working-tree charts for the original cases and a values-driven OCI generator for named-oci."
   },
   "repositories": [
     {
@@ -30,6 +30,39 @@
       "refs": [
         "refs/heads/main"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "named-base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "named"
+    },
+    {
+      "repository": "repo",
+      "name": "named-control",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "named-base"
+      ],
+      "overlay": "named-withdrawn"
+    },
+    {
+      "repository": "repo",
+      "name": "named-oci-base",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "named-oci"
     }
   ],
   "overlays": [
@@ -40,6 +73,51 @@
     {
       "name": "descendant",
       "directory": "overlays/descendant"
+    },
+    {
+      "name": "named",
+      "directory": "overlays/named"
+    },
+    {
+      "name": "named-patch",
+      "directory": "overlays/named-patch"
+    },
+    {
+      "name": "named-withdrawn",
+      "directory": "overlays/named-withdrawn"
+    },
+    {
+      "name": "authored-crds",
+      "directory": "overlays/authored-crds"
+    },
+    {
+      "name": "interval",
+      "directory": "overlays/interval"
+    },
+    {
+      "name": "named-oci",
+      "directory": "overlays/named-oci",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/instance-release.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/plex.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/source.yaml"
+        },
+        {
+          "delete": "repo/plex"
+        }
+      ]
+    },
+    {
+      "name": "named-oci-valuesfrom",
+      "directory": "overlays/named-oci-valuesfrom"
     }
   ],
   "cases": [
@@ -216,13 +294,1094 @@
           }
         }
       ]
+    },
+    {
+      "name": "named",
+      "description": "Build and diff Plex by name at both scopes and exercise generator withdrawal in both directions.",
+      "setup": [
+        {
+          "commit": "named-base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "patched-ks-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-patched.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "patched-ks-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-patched.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "patched-hr-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-patched.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "patched-hr-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-patched.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "edit": {
+            "overlay": "named-patch"
+          }
+        },
+        {
+          "id": "changed-ks-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-changed.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-ks-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-changed.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-hr-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-changed.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-hr-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-changed.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-patch-ks-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-patch-ks-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-patch-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-patch-ks-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-patch-ks-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-patch-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-patch-hr-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-patch-hr-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-patch-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-patch-hr-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-patch-hr-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-patch-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "control",
+          "edit": {
+            "overlay": "named-withdrawn"
+          }
+        },
+        {
+          "id": "control-ks-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-control.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "control-ks-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-ks-control.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "control-hr-repo",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-control.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "control-hr-apps",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/named-hr-control.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-withdraw-ks-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-withdraw-ks-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-withdraw-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-withdraw-ks-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-withdraw-ks-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-withdraw-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-withdraw-hr-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-withdraw-hr-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-withdraw-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-withdraw-hr-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-withdraw-hr-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-withdraw-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "named-restore",
+      "description": "Compare a restored FluxInstance with the committed state that omitted it.",
+      "setup": [
+        {
+          "commit": "named-control"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "restore-generator",
+          "edit": {
+            "overlay": "named"
+          }
+        },
+        {
+          "id": "diff-restore-ks-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-restore-ks-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-restore-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-restore-ks-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-restore-ks-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-restore-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-restore-hr-repo",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-restore-hr-repo"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-restore-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-restore-hr-apps",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "plex",
+              "-n",
+              "media",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "diff-restore-hr-apps"
+            },
+            "expect": {
+              "stdout": "expect/named-diff-restore-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-authored-crds",
+      "description": "Keep the generated root CRD override when only the authored setting changes.",
+      "setup": [
+        {
+          "commit": "named-base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-authored-crds",
+          "edit": {
+            "overlay": "authored-crds"
+          }
+        },
+        {
+          "id": "diff-authored-crds",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/authored-crds.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-interval",
+      "description": "Report the interval change to the Kustomization emitted by the generated root.",
+      "setup": [
+        {
+          "commit": "named-base"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-interval",
+          "edit": {
+            "overlay": "interval"
+          }
+        },
+        {
+          "id": "diff-interval",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/interval.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "named-oci",
+      "description": "Apply an OCI-generated root in a full build and in cold and reused named Plex builds.",
+      "setup": [
+        {
+          "commit": "named-oci-base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "full"
+            },
+            "expect": {
+              "stdout": "expect/named-oci-full.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "ks",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "default",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "ks"
+            },
+            "expect": {
+              "stdout": "expect/named-oci-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "hr",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "plex",
+              "-n",
+              "default",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "hr"
+            },
+            "expect": {
+              "stdout": "expect/named-oci-hr.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "named-oci-valuesfrom",
+      "description": "Apply the generated root when a ConfigMap supplies the sync path.",
+      "setup": [
+        {
+          "commit": "named-oci-base"
+        },
+        {
+          "overlay": "named-oci-valuesfrom"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "full"
+            },
+            "expect": {
+              "stdout": "expect/named-oci-valuesfrom-full.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "ks",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "plex",
+              "-n",
+              "default",
+              "--only-kinds=HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--registry-config",
+              "@@inputs@@/registry-config.json"
+            ],
+            "cache": {
+              "name": "ks"
+            },
+            "expect": {
+              "stdout": "expect/named-oci-ks.stdout",
+              "stderr": "expect/named.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
     {
       "path": "expect/diff.stderr",
       "cases": [
-        "patch-chain"
+        "patch-chain",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Record the diagnostics from both diff snapshots."
     },
@@ -272,7 +1431,11 @@
       "path": "repo/charts/bootstrap/Chart.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Declare the local bootstrap chart."
     },
@@ -280,7 +1443,11 @@
       "path": "repo/charts/bootstrap/templates/instance.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Emit the FluxInstance and define both layers of patches."
     },
@@ -288,7 +1455,11 @@
       "path": "repo/charts/plex/Chart.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Declare the local workload chart."
     },
@@ -296,7 +1467,11 @@
       "path": "repo/charts/plex/templates/config.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Render a workload when Helm reconciles Plex."
     },
@@ -304,7 +1479,11 @@
       "path": "repo/kubernetes/apps/instance-release.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Reconcile the chart that emits the FluxInstance."
     },
@@ -312,7 +1491,11 @@
       "path": "repo/kubernetes/apps/kustomization.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Build the physical package that backs the generated root."
     },
@@ -320,7 +1503,11 @@
       "path": "repo/kubernetes/apps/plex.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Declare the Plex Kustomization before the timeout edit."
     },
@@ -328,7 +1515,11 @@
       "path": "repo/kubernetes/apps/source.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Supply the local checkout to the bootstrap and workload charts."
     },
@@ -336,7 +1527,11 @@
       "path": "repo/plex/kustomization.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Include the Plex HelmRelease in the child package."
     },
@@ -344,7 +1539,11 @@
       "path": "repo/plex/release.yaml",
       "cases": [
         "patch-chain",
-        "descendant"
+        "descendant",
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
       ],
       "purpose": "Declare the HelmRelease before the patches set its rendering options."
     },
@@ -424,6 +1623,519 @@
         "descendant"
       ],
       "purpose": "Provide the out-of-scope workload."
+    },
+    {
+      "path": "expect/named-hr-changed.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "expect/named-hr-control.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "expect/named-hr-patched.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "expect/named-ks-changed.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "expect/named-ks-control.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "expect/named-ks-patched.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Record complete Plex output from the authored patch or control."
+    },
+    {
+      "path": "overlays/named/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/charts/plex/templates/config.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/bootstrap/bootstrap.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/bootstrap/factory/kustomization.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/bootstrap/factory/release.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/instance-release.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/kubernetes/apps/sibling.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/sibling/config.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named/repo/sibling/kustomization.yaml",
+      "cases": [
+        "named",
+        "named-restore",
+        "changed-only-authored-crds",
+        "changed-only-interval"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named-patch/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "named",
+        "named-restore"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "overlays/named-withdrawn/repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "named",
+        "named-restore"
+      ],
+      "purpose": "Supply the named Plex fixture and its generator changes."
+    },
+    {
+      "path": "expect/named.stderr",
+      "cases": [
+        "named",
+        "named-restore",
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Record the render persistence notice when the build identity disables the cache."
+    },
+    {
+      "path": "expect/named-diff-patch-ks.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/named-diff-patch-hr.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/named-diff-withdraw-ks.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/named-diff-withdraw-hr.stdout",
+      "cases": [
+        "named"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/named-diff-restore-ks.stdout",
+      "cases": [
+        "named-restore"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/named-diff-restore-hr.stdout",
+      "cases": [
+        "named-restore"
+      ],
+      "purpose": "Report the change between the independently specified Plex manifests."
+    },
+    {
+      "path": "expect/authored-crds.stdout",
+      "cases": [
+        "changed-only-authored-crds"
+      ],
+      "purpose": "Require an empty diff because the root overrides the authored CRD setting."
+    },
+    {
+      "path": "expect/interval.stdout",
+      "cases": [
+        "changed-only-interval"
+      ],
+      "purpose": "Report only the effective Plex Kustomization interval change."
+    },
+    {
+      "path": "overlays/authored-crds/repo/plex/release.yaml",
+      "cases": [
+        "changed-only-authored-crds"
+      ],
+      "purpose": "Edit only the field named in this step."
+    },
+    {
+      "path": "overlays/interval/repo/kubernetes/apps/plex.yaml",
+      "cases": [
+        "changed-only-interval"
+      ],
+      "purpose": "Edit only the field named in this step."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/kustomization.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Include the namespace declarations from the generated sync path."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Include the namespace declarations from the generated sync path."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/plex/ks.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/plex/app/kustomization.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/plex/app/release.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/sibling/ks.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/sibling/app/kustomization.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/default/sibling/app/config.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/flux-system/flux-instance/ks.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/flux-system/flux-instance/app/kustomization.yaml",
+      "cases": [
+        "named-oci"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/flux-system/flux-instance/app/source.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/kubernetes/apps/flux-system/flux-instance/app/release.yaml",
+      "cases": [
+        "named-oci"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "overlays/named-oci/repo/charts/plex/templates/config.yaml",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the two nested applications and the values-driven OCI generator."
+    },
+    {
+      "path": "inputs/flux-instance.tgz",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the generator chart outside the indexed repository."
+    },
+    {
+      "path": "inputs/manifest.json",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Describe the fixed OCI chart layer and configuration blob."
+    },
+    {
+      "path": "inputs/config.json",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the OCI chart configuration blob."
+    },
+    {
+      "path": "inputs/registry-config.json",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Use a fixed registry configuration without credentials."
+    },
+    {
+      "path": "expect/named-oci-full.stdout",
+      "cases": [
+        "named-oci"
+      ],
+      "purpose": "Record the patched Plex workload and the disjoint sibling."
+    },
+    {
+      "path": "expect/named-oci-ks.stdout",
+      "cases": [
+        "named-oci",
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Record the patched Plex HelmRelease."
+    },
+    {
+      "path": "expect/named-oci-hr.stdout",
+      "cases": [
+        "named-oci"
+      ],
+      "purpose": "Record the Plex workload rendered with the patched HelmRelease values."
+    },
+    {
+      "path": "overlays/named-oci-valuesfrom/repo/kubernetes/apps/flux-system/flux-instance/app/release.yaml",
+      "cases": [
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Supply the sync path through a ConfigMap values reference."
+    },
+    {
+      "path": "overlays/named-oci-valuesfrom/repo/kubernetes/apps/flux-system/flux-instance/app/kustomization.yaml",
+      "cases": [
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Generate the ConfigMap in the release namespace."
+    },
+    {
+      "path": "overlays/named-oci-valuesfrom/repo/kubernetes/apps/flux-system/flux-instance/app/values.yaml",
+      "cases": [
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Set the sync path only in the referenced values."
+    },
+    {
+      "path": "expect/named-oci-valuesfrom-full.stdout",
+      "cases": [
+        "named-oci-valuesfrom"
+      ],
+      "purpose": "Pin the full stream that contains both HelmReleases."
+    }
+  ],
+  "inputs": "inputs",
+  "transport": [
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-instance/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-instance/manifests/sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-instance/blobs/sha256:e3035cdb7b3e6dc7105c73e7e266360f9468a8e250755034d8f5541b628040d4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:e3035cdb7b3e6dc7105c73e7e266360f9468a8e250755034d8f5541b628040d4"
+      },
+      "body": "inputs/flux-instance.tgz"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-instance/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/config.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-instance/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-instance/manifests/sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:d411411e903128a926b52cfcf71f5b2bf9e702d9a26011f6588ca87a5f6944f4"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-instance/blobs/sha256:e3035cdb7b3e6dc7105c73e7e266360f9468a8e250755034d8f5541b628040d4",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:e3035cdb7b3e6dc7105c73e7e266360f9468a8e250755034d8f5541b628040d4"
+      },
+      "body": "inputs/flux-instance.tgz"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-instance/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.cncf.helm.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/config.json"
     }
   ]
 }

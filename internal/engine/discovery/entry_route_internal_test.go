@@ -3,12 +3,15 @@ package discovery
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -79,7 +82,8 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			receiptRoot := acceptedRoot
 			receiptRoot.Name = "receipt"
 			assert.Equal(t, a.qualification.matches[0].history, false)
-			a.qualification.accepted = &kustomize.EntryEvidence{Root: receiptRoot}
+			a.qualification.matches[0].root = receiptRoot
+			a.qualification.matches[0].receipt = &kustomize.EntryEvidence{Root: receiptRoot}
 			reused := a.publishEntry(provisional, replacement)
 			assert.Equal(t, reused.Reads, provisional)
 			assert.Equal(t, reused.Root, receiptRoot)
@@ -113,4 +117,91 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			assert.Equal(t, committed, true)
 		})
 	}
+}
+
+func TestEntryRoute_AcceptedNamedWinnersReplaceEarlierRoute(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	input := &store.SourceArtifact{LocalPath: root}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	l.SourceRoot = root
+	target := selection.OccurrenceID{Source: root, File: "apps/workload.yaml"}
+	workload := testutil.KustomizationID("apps", "workload")
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{workload}})
+	t.Cleanup(l.Retire)
+	a := &Admission{store: st, loader: l, entryTargets: []entryTarget{{occurrence: target}}}
+	for _, name := range []string{"first", "replacement"} {
+		owner := testutil.KustomizationID("flux-system", name)
+		a.qualification = &entryQualification{
+			loader: l, winners: map[selection.OccurrenceID]manifest.NamedResource{target: owner},
+		}
+		var reads store.ReadSet
+		reads.Init(st, manifest.BootstrapSourceID, nil)
+		reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+		binding, err := a.AcceptEntry(t.Context(), Binding{Producer: owner, Key: owner, Reads: &reads})
+		reads.ReleaseCapture()
+		reads.Retire()
+		assert.NoError(t, err)
+		assert.Equal(t, binding.Producer, owner)
+		route := a.acceptedEntry
+		assert.FatalIf(t, route == nil || route.Winners == nil, "acceptance omitted named winners")
+		assert.Diff(t, *route.Winners, map[selection.OccurrenceID]manifest.NamedResource{target: owner})
+	}
+}
+
+func TestEntryRoute_AcceptedNamedWithdrawalClearsWinner(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	testutil.WriteFile(t, repo, "apps/kustomization.yaml", "resources: [workload.yaml]\n")
+	workload := testutil.KustomizationID("apps", "workload")
+	testutil.WriteFile(
+		t,
+		repo,
+		"apps/workload.yaml",
+		testutil.KustomizationYAML(workload.Name, workload.Namespace, "  path: ./workload\n"),
+	)
+
+	st := store.New()
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(repo)
+	st.AddObject(bootstrap)
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: repo, FS: os.DirFS(repo)}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	l.SourceRoot = repo
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{workload}})
+	t.Cleanup(l.Retire)
+	target := selection.OccurrenceID{Source: repo, File: "apps/workload.yaml"}
+	a := &Admission{
+		store: st, loader: l, input: input, path: filepath.Join(repo, "apps"),
+		entryTargets: []entryTarget{{occurrence: target, origin: filepath.Join(repo, target.File)}},
+	}
+	producer := &manifest.Kustomization{Name: "factory", Namespace: "flux-system", Path: "./factory"}
+	winner := &manifest.Kustomization{Name: "sync", Namespace: "flux-system", Path: "./apps"}
+	st.AddObject(producer)
+	st.RecordEmitted(producer.Named(), &store.Emission{
+		Complete: true, Children: []store.Child{{Obj: winner, VisibleGeneration: true}},
+	}, nil)
+	a.AddApplication(st, winner)
+
+	_, proposal, err := a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.FatalIf(t, proposal.Reads == nil, "named entry did not propose the published winner")
+	accepted, err := a.AcceptEntry(t.Context(), proposal)
+	assert.NoError(t, err)
+	assert.Equal(t, accepted.Producer, winner.Named())
+	assert.FatalIf(t, a.acceptedEntry == nil || a.acceptedEntry.Winners == nil, "the first binding omitted its winner")
+	assert.Equal(t, (*a.acceptedEntry.Winners)[target], winner.Named())
+
+	st.RecordEmitted(producer.Named(), &store.Emission{Complete: true}, nil)
+	_, proposal, err = a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.FatalIf(t, proposal.Reads == nil, "withdrawal did not propose the literal entry")
+	assert.Equal(t, proposal.support, (*store.ReadSet)(nil))
+	accepted, err = a.AcceptEntry(t.Context(), proposal)
+	assert.NoError(t, err)
+	assert.Equal(t, accepted.Producer.ReportHidden(), true)
+	assert.FatalIf(t, a.acceptedEntry == nil || a.acceptedEntry.Winners == nil, "the fallback omitted the named route")
+	assert.Equal(t, len(*a.acceptedEntry.Winners), 0)
 }

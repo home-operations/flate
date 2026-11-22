@@ -1,0 +1,86 @@
+[
+  {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "plex",
+        "kustomize.toolkit.fluxcd.io/namespace": "default"
+      },
+      "name": "plex",
+      "namespace": "default"
+    },
+    "spec": {
+      "chart": {
+        "spec": {
+          "chart": "charts/plex",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "interval": "10m",
+      "upgrade": {
+        "strategy": {
+          "name": "RemediateOnFailure"
+        }
+      },
+      "values": {
+        "strategy": "RemediateOnFailure"
+      }
+    }
+  },
+  {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "flux-instance",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "flux-instance",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "chartRef": {
+        "kind": "OCIRepository",
+        "name": "flux-instance"
+      },
+      "interval": "10m",
+      "values": {
+        "instance": {
+          "cluster": {
+            "multitenant": true
+          },
+          "distribution": {
+            "version": "2.6.x"
+          },
+          "kustomize": {
+            "patches": [
+              {
+                "patch": "- op: add\n  path: /spec/patches\n  value:\n    - target: {kind: Kustomization, name: plex, namespace: default}\n      patch: |\n        - op: add\n          path: /spec/patches\n          value:\n            - target: {kind: HelmRelease, name: plex, namespace: default}\n              patch: |\n                - op: add\n                  path: /spec/upgrade\n                  value: {strategy: {name: RemediateOnFailure}}\n                - op: add\n                  path: /spec/values\n                  value: {strategy: RemediateOnFailure}\n",
+                "target": {
+                  "kind": "Kustomization",
+                  "name": "flux-system",
+                  "namespace": "flux-system"
+                }
+              }
+            ]
+          },
+          "sync": {
+            "ref": "refs/heads/main",
+            "url": "https://example.invalid/fixture"
+          }
+        }
+      },
+      "valuesFrom": [
+        {
+          "kind": "ConfigMap",
+          "name": "flux-instance-sync"
+        }
+      ]
+    }
+  }
+]

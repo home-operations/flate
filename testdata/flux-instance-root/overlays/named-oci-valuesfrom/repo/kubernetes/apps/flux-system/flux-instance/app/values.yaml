@@ -1,0 +1,3 @@
+instance:
+  sync:
+    path: ./kubernetes/apps/default

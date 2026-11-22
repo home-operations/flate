@@ -131,7 +131,8 @@ func (c *execution) render(
 			Complete: c.chartDependencyCompletion(hr, inputs, input.Preparation),
 		}, level)
 	}
-	docs, receipt, err := c.template(ctx, hr, &input)
+	input.Previous, c.replay = c.replay, nil
+	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if _, rendering := errors.AsType[*helm.RenderError](err); rendering {
 		return c.run.RenderFailure(ctx, err, nil, unreadable)
 	}
@@ -188,18 +189,6 @@ func (c *execution) admitQualification(admission helm.RenderAdmission) bool {
 	return c.run.AdmitQualification(admission.Possible)
 }
 
-func (c *execution) template(
-	ctx context.Context, hr *manifest.HelmRelease, input *helm.RenderOptions,
-) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-	if c.replay == nil || !c.replay.Accepted {
-		return c.Helm.Template(ctx, hr, hr.Values, *input)
-	}
-	admission := *c.replay
-	c.replay = nil
-	_, err := input.Admit(admission)
-	return admission.Documents, admission.Receipt, err
-}
-
 func (c *execution) renderRequest(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
@@ -221,17 +210,20 @@ func (c *execution) renderRequest(
 		}
 	}
 	request := helm.RenderOptions{
-		Work:    c.run.Reads.Work().Scope().RenderWork(),
-		Options: c.Options,
-		Sources: sources,
-		Omitted: values.OmittedIDs(inputs),
+		Work:       c.run.Reads.Work().Scope().RenderWork(),
+		Options:    c.Options,
+		Sources:    sources,
+		Omitted:    values.OmittedIDs(inputs),
+		EntryReach: c.run.QualifiedEntryReach(),
 	}
-	if reconcileLevel == nil {
+	// Replay history can run inside a reconcile task that already holds a worker slot.
+	if reconcileLevel == nil && !c.run.EntryReplay {
 		request.PreparationTasks = c.Tasks
 	}
 	request.Preparation = c.run.Prepare(&c.Preparation, nil, func(p *helm.Preparation) bool {
 		return p.Matches(c.Helm, prepared, &request)
 	})
+	c.run.RetainPreparation = true
 	return prepared, request, nil
 }
 

@@ -1,0 +1,6 @@
+resources: [source.yaml, release.yaml]
+configMapGenerator:
+  - name: flux-instance-sync
+    files: [values.yaml]
+generatorOptions:
+  disableNameSuffixHash: true

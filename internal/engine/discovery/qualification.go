@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
-	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -32,13 +31,16 @@ type entryQualification struct {
 	root            manifest.NamedResource
 	refresh         []manifest.NamedResource
 	candidates      []manifest.NamedResource
+	reach           *selection.EntryReach
 	matches         []applicationEvidence
+	winners         map[selection.OccurrenceID]manifest.NamedResource
 	pending         bool
 	closed          bool
-	accepted        *kustomize.EntryEvidence
+	waiting         *store.ReadSet
+	proposal        *store.ReadSet
 	receiptRead     bool
 	receiptPending  bool
-	replay          bool
+	replay          manifest.NamedResource
 	changed         bool
 }
 
@@ -53,7 +55,9 @@ type applicationEvidence struct {
 	declaration       manifest.NamedResource
 	private           bool
 	history           bool
+	receipt           *kustomize.EntryEvidence
 	descendant        bool
+	reaches           []selection.OccurrenceID
 	visibleGeneration bool
 	builtRoot         string
 	child             *store.Child
@@ -214,22 +218,7 @@ func (a *Admission) readApplication(
 	if evidence.object.Named().ReportHidden() {
 		return false, nil
 	}
-	entry, target := a.input.OriginPath(a.path), a.entryOrigin(&application, resolved.artifact)
-	switch {
-	case target == "":
-		return false, nil
-	case target == entry:
-		return true, nil
-	case !evidence.visibleGeneration:
-		return false, nil
-	case safepath.Contains(entry, target):
-		return true, nil
-	case !safepath.Contains(target, entry):
-		return false, nil
-	}
-	ks, _ := evidence.object.(*manifest.Kustomization)
-	evidence.descendant = a.qualification.loader.EntryPackageReached(resolved.artifact, application.Path, ks, entry)
-	return evidence.descendant, ctx.Err()
+	return a.applicationReach(ctx, evidence, &application, &resolved)
 }
 
 func (q *entryQualification) published(st *store.Store, a *Admission) iter.Seq[manifest.BaseManifest] {
@@ -270,18 +259,19 @@ const (
 	qualificationSettled
 )
 
-type qualificationWalk struct {
-	q         *entryQualification
-	admission *Admission
-	store     *store.Store
-	reads     *store.ReadSet
-	visits    map[applicationRoute]qualificationVisit
-	probed    []manifest.BaseManifest
-}
-
 func (q *entryQualification) advance(ctx context.Context, a *Admission, st *store.Store, reads *store.ReadSet) error {
+	q.proposal = nil
+	if q.waiting != nil {
+		if q.waiting.Valid() && q.arrivals == a.applications.Load() {
+			return nil
+		}
+		q.retireWait()
+	}
 	previous := q.candidates
-	q.pending, q.candidates, q.matches, q.receiptPending, q.changed, q.replay = false, nil, nil, false, false, false
+	q.pending, q.candidates, q.matches, q.receiptPending, q.changed = false, nil, nil, false, false
+	q.replay = manifest.NamedResource{}
+	q.reach = nil
+	q.winners = nil
 	q.arrivals = a.applications.Load()
 	walk := qualificationWalk{
 		q:         q,
@@ -290,27 +280,8 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 		reads:     reads,
 		visits:    map[applicationRoute]qualificationVisit{},
 	}
-	if !q.closed && a.entryDemand && (len(q.packages) != 0 || len(q.active) != 0) {
-		if err := walk.advanceOperands(ctx); err != nil {
-			return err
-		}
-		if q.pending || len(q.matches) != 0 {
-			if q.pending {
-				q.matches = nil
-			}
-			q.orderMatches()
-			return nil
-		}
-	}
-	if err := walk.visitPublishedRoots(ctx); err != nil {
+	if err := walk.advance(ctx, len(previous) != 0); err != nil {
 		return err
-	}
-	lostMatch := !q.pending && len(q.matches) == 0 && len(previous) != 0
-	fullMatch := len(q.matches) != 0 && q.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
-	if q.closed || lostMatch || fullMatch {
-		if err := walk.observe(ctx); err != nil {
-			return err
-		}
 	}
 	q.orderMatches()
 	return nil
@@ -360,12 +331,34 @@ func (w *qualificationWalk) root(ctx context.Context, root *selection.Occurrence
 	return evidence, nil
 }
 
+func (w *qualificationWalk) enoughMatches() bool {
+	if len(w.admission.entryTargets) == 0 {
+		return len(w.q.matches) != 0
+	}
+	return len(w.q.winners) == len(w.admission.entryTargets)
+}
+
+func (q *entryQualification) recordMatch(evidence *applicationEvidence) {
+	if len(evidence.reaches) != 0 {
+		if q.winners == nil {
+			q.winners = make(map[selection.OccurrenceID]manifest.NamedResource, len(evidence.reaches))
+		}
+		for _, occurrence := range evidence.reaches {
+			q.winners[occurrence] = evidence.object.Named()
+		}
+	}
+	q.matches = append(q.matches, *evidence)
+}
+
 func (w *qualificationWalk) observe(ctx context.Context) error {
 	seen := make(map[manifest.NamedResource]bool, len(w.q.matches))
 	for i := range w.q.matches {
 		seen[w.q.matches[i].object.Named()] = true
 	}
 	for object := range w.q.published(w.store, w.admission) {
+		if w.selectedTargetsReached() {
+			break
+		}
 		if seen[object.Named()] {
 			continue
 		}
@@ -378,12 +371,19 @@ func (w *qualificationWalk) observe(ctx context.Context) error {
 		if !accepted {
 			continue
 		}
+		if reused, pending := w.matchReceipt(ctx, evidence, nil); reused || pending {
+			if pending {
+				return nil
+			}
+			seen[object.Named()] = true
+			continue
+		}
 		matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 		if err != nil {
 			return err
 		}
 		if matched {
-			w.q.matches = append(w.q.matches, *evidence)
+			w.q.recordMatch(evidence)
 			seen[object.Named()] = true
 		}
 	}
@@ -439,20 +439,20 @@ func (w *qualificationWalk) visit(ctx context.Context, evidence *applicationEvid
 	if !manifest.KindOf(object).Runnable {
 		return w.visitGeneration(ctx, evidence)
 	}
+	if reused, pending := w.matchReceipt(ctx, evidence, nil); reused || pending {
+		return reused, nil
+	}
 	matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 	if err != nil {
 		return false, err
 	}
 	if matched {
-		if w.q.previous.Receipt != nil && manifest.ValueEqual(w.q.previous.Application, evidence.document) {
-			reused, pending := w.q.reusePrevious(ctx, w.admission, w.store, w.reads)
-			if reused || pending {
-				return reused, nil
-			}
-		}
 		evidence.root = w.q.root
-		w.q.matches = append(w.q.matches, *evidence)
+		w.q.recordMatch(evidence)
 		return true, nil
+	}
+	if !w.applicationContinuation(object) {
+		return false, nil
 	}
 	return w.continueRoute(ctx, evidence)
 }
@@ -480,12 +480,8 @@ func (w *qualificationWalk) continueRoute(ctx context.Context, evidence *applica
 	if err != nil || execution == nil {
 		return false, err
 	}
-	if w.q.previous.Receipt != nil &&
-		(w.q.previous.Root == object.Named() || w.q.previous.Owner == execution.Named()) {
-		reused, pending := w.q.reusePrevious(ctx, w.admission, w.store, w.reads)
-		if reused || pending {
-			return reused, nil
-		}
+	if reused, pending := w.matchReceipt(ctx, evidence, execution); reused || pending {
+		return reused, nil
 	}
 	if w.q.session == nil && w.store.GetDeclaration(execution.Named()) != nil &&
 		w.reads.QualificationSettled(execution.Named()) {
@@ -529,7 +525,7 @@ func (w *qualificationWalk) execution(
 	if !resolved.artifact.WorkingTree() {
 		return nil, nil
 	}
-	possible, err := w.q.loader.EntryFrontier(ctx, resolved.artifact, application.Path)
+	possible, err := w.entryFrontier(ctx, resolved.artifact, application.Path)
 	ordinary := w.ordinaryApplication(evidence, &application, possible)
 	if err != nil || !possible && !ordinary {
 		return nil, err
@@ -673,7 +669,7 @@ func (w *qualificationWalk) runtimeFrontier(
 	if input == nil {
 		return qualificationBatch{}, nil
 	}
-	possible, err := w.q.loader.EntryFrontier(ctx, input, relative)
+	possible, err := w.entryFrontier(ctx, input, relative)
 	if err != nil {
 		return qualificationBatch{}, err
 	}
@@ -701,7 +697,7 @@ func (w *qualificationWalk) construct(
 	if w.q.closed {
 		return qualificationBatch{}, nil
 	}
-	possible, err := w.q.loader.EntryFrontier(ctx, input, ks.Path)
+	possible, err := w.entryFrontier(ctx, input, ks.Path)
 	if err != nil {
 		return qualificationBatch{}, err
 	}
@@ -786,7 +782,7 @@ func (w *qualificationWalk) preparationSupport(
 }
 
 func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.NamedResource) {
-	if w.q.closed && !w.q.replay {
+	if w.q.closed && w.q.replay != id {
 		w.q.pending = w.admission.entryBound.Load()
 		decision := w.q.loader.Options.Session.Snapshot()
 		if w.q.pending || evidence.owner == (manifest.NamedResource{}) ||
@@ -810,5 +806,8 @@ func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.Nam
 		return
 	}
 	w.q.candidates = []manifest.NamedResource{id}
+	if len(w.admission.entryTargets) != 0 && id == evidence.object.Named() {
+		w.q.reach = w.captureEntryReach(id)
+	}
 	w.reads.RequireQualification(id)
 }

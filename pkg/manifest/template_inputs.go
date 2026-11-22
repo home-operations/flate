@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -50,16 +51,21 @@ type producerProjectionCache struct {
 	facts sync.Map
 }
 
-// Project derives source-free facts once per producer content.
+// Project derives source-free facts from producer content.
 func (p *ProducerProjections) Project(ctx context.Context, object BaseManifest) (TemplateProjection, error) {
-	resourceSet, ok := object.(*ResourceSet)
-	if !ok {
+	switch object := object.(type) {
+	case *HelmRelease:
+		return object.templateProjection(true), nil
+	case *ResourceSet:
+		if p == nil {
+			return object.templateProjection(true), nil
+		}
+		return p.project(ctx, Fingerprint(object), func() TemplateProjection {
+			return object.templateProjection(true)
+		})
+	default:
 		return TemplateProjection{}, nil
 	}
-	if p == nil {
-		return resourceSet.templateProjection(), nil
-	}
-	return p.project(ctx, Fingerprint(resourceSet), resourceSet.templateProjection)
 }
 
 // ProjectTemplate derives immutable references, identities, and applications once per template content and namespace.
@@ -126,8 +132,8 @@ func (p *ProducerProjections) Clear() {
 // ProjectProducer derives static facts and screens complete producer inputs for entry applications.
 func ProjectProducer(object BaseManifest, content iter.Seq[[]byte]) (TemplateProjection, bool) {
 	var projection TemplateProjection
-	if producer, ok := object.(interface{ templateProjection() TemplateProjection }); ok {
-		projection = producer.templateProjection()
+	if producer, ok := object.(interface{ templateProjection(bool) TemplateProjection }); ok {
+		projection = producer.templateProjection(content == nil)
 	}
 	if producer, ok := object.(interface{ entryPrecondition(iter.Seq[[]byte]) bool }); ok {
 		return projection, producer.entryPrecondition(content)
@@ -138,6 +144,50 @@ func ProjectProducer(object BaseManifest, content iter.Seq[[]byte]) (TemplatePro
 func (h *HelmRelease) entryPrecondition(content iter.Seq[[]byte]) bool {
 	declaration, err := json.Marshal(h)
 	return err != nil || application.Contains(declaration) || possibleApplication(content)
+}
+
+func (h *HelmRelease) templateProjection(authored bool) TemplateProjection {
+	var projection TemplateProjection
+	visitValuesSyncSpecs(h.Values, func(spec, sync map[string]any) {
+		// Only a Git source can use the bootstrap tree. Helm must prove the kind from prepared values.
+		if _, specified := sync[kindKey]; authored && !specified {
+			spec, sync = maps.Clone(spec), maps.Clone(sync)
+			sync[kindKey] = KindGitRepository
+			spec["sync"] = sync
+		}
+		object := &RawObject{
+			Kind: kindFluxInstance, APIVersion: FluxOperatorDomain + "/v1",
+			Namespace: h.ReleaseNamespace(), Spec: spec,
+		}
+		source, err := object.syncSpec()
+		if err != nil {
+			return
+		}
+		incomplete := authored && len(h.ValuesFrom) != 0 && hasSyncLocation(source) && source.Path == ""
+		if !hasSyncSource(source) && !incomplete {
+			return
+		}
+		if authored || source.Name != "" || object.Namespace != "" {
+			projection.Objects = append(projection.Objects, object.catalog(object.Named()))
+		}
+	})
+	return projection
+}
+
+func visitValuesSyncSpecs(value any, yield func(map[string]any, map[string]any)) {
+	switch value := value.(type) {
+	case map[string]any:
+		if source, valid := value["sync"].(map[string]any); valid {
+			yield(value, source)
+		}
+		for _, key := range slices.Sorted(maps.Keys(value)) {
+			visitValuesSyncSpecs(value[key], yield)
+		}
+	case []any:
+		for _, item := range value {
+			visitValuesSyncSpecs(item, yield)
+		}
+	}
 }
 
 func (r *ResourceSet) entryPrecondition(content iter.Seq[[]byte]) bool {
@@ -230,7 +280,7 @@ func concreteTemplateOperand(value string) bool {
 	return !strings.Contains(value, "{{") && !strings.Contains(value, "<<") && !HasEnvsubstReference(value)
 }
 
-func (r *ResourceSet) templateProjection() TemplateProjection {
+func (r *ResourceSet) templateProjection(_ bool) TemplateProjection {
 	var projection TemplateProjection
 	if len(r.Resources) == 0 && r.ResourcesTemplate == "" && len(r.Steps) == 0 {
 		return projection

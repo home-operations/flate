@@ -87,6 +87,9 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	}
 	authored := candidate.selectDeclaration(a, id, request, &previous)
 	candidate.inheritEntry(&previous, request.scoped)
+	if !request.scoped && candidate.projected && !candidate.entry && !candidate.entryScoped {
+		candidate.entry = a.emittedEntrySource(id, candidate.object)
+	}
 	if candidate.synthetic {
 		return candidate
 	}
@@ -99,11 +102,7 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	// A pending projection without a checkout descriptor MUST wait for its producer.
 	pending := candidate.projected && !authored && (request.scoped || len(request.producers) == 0)
 	source, hasDescriptor := candidate.object.(entrySource)
-	eligible := manifest.BootstrapSourceEligible(
-		candidate.object,
-		candidate.entry && (!pending || hasDescriptor),
-		a.remotes,
-	)
+	eligible := candidate.checkoutEligible(a.remotes, pending, hasDescriptor)
 	if pending && !eligible {
 		candidate.provider, candidate.entry = a.projectedProvider(id, request), false
 		return candidate
@@ -114,17 +113,53 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	case previous.reuseClassification(&candidate, request, a):
 		return previous
 	}
-	if !eligible {
-		return candidate
-	}
-	candidate.provider = store.ProviderAlias
-	if hasDescriptor {
-		_, candidate.git = source.BootstrapAlias(candidate.input.LocalPath)
-		if candidate.git.BootstrapPinned() {
-			candidate.provider = store.ProviderCommit
-		}
+	if eligible {
+		candidate.classifyCheckout(source)
 	}
 	return candidate
+}
+
+func (a *Admission) emittedEntrySource(id manifest.NamedResource, declaration manifest.BaseManifest) bool {
+	owner := a.store.EmissionOwner(id)
+	output, _ := a.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
+	if output == nil || !output.Complete {
+		return false
+	}
+	// Replacing the checkout can invalidate its producer's reads before either declaration changes.
+	// The two declarations MUST still belong to the complete inventory.
+	source, entry := false, false
+	for i := range output.Children {
+		child := &output.Children[i]
+		source = source || child.Obj == declaration
+		if child.VisibleGeneration && !entry {
+			application, applies := runnableApplication(child.Obj)
+			entry = applies && application.Source == id &&
+				a.input.ApplicationOrigin(application.Path) == a.input.OriginPath(a.path) &&
+				a.store.GetDeclaration(child.Obj.Named()) == child.Obj
+		}
+		if source && entry {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *entryResolution) checkoutEligible(remotes []string, pending, hasDescriptor bool) bool {
+	return manifest.BootstrapSourceEligible(r.object, r.entry && (!pending || hasDescriptor), remotes)
+}
+
+func (r *entryResolution) classifyCheckout(source entrySource) {
+	r.provider = store.ProviderAlias
+	if source != nil {
+		_, r.git = source.BootstrapAlias(r.input.LocalPath)
+		if r.git.BootstrapPinned() {
+			r.provider = store.ProviderCommit
+		}
+	}
+}
+
+func (r *entryResolution) requiresGitResolution() bool {
+	return r.provider == store.ProviderCommit || r.git != nil && r.git.RecurseSubmodules
 }
 
 func (a *Admission) projectedProvider(id manifest.NamedResource, request *sourceRequest) store.SourceProvider {
@@ -138,8 +173,9 @@ func (r *entryResolution) inheritEntry(previous *entryResolution, scoped bool) {
 	if scoped || previous.input != r.input {
 		return
 	}
-	// The arriving generation must use the same admitted checkout as its placeholder.
-	if r.projected && previous.synthetic && previous.artifact.WorkingTree() {
+	// A synthetic alias carries source-specific checkout authority.
+	if r.projected && previous.synthetic && previous.provider == store.ProviderAlias &&
+		previous.artifact.WorkingTree() {
 		r.entry = true
 		return
 	}
@@ -182,8 +218,9 @@ func (r *entryResolution) selectDeclaration(
 	if challengesSynthetic && !manifest.BootstrapSourceEligible(r.object, false, a.remotes) {
 		r.object = nil
 	}
+	// Producer predictions MUST NOT displace the checkout that supplies their construction input.
 	undeclared := r.object == nil && object == nil
-	if id == manifest.BootstrapSourceID && undeclared && !previous.projected && len(r.producers) == 0 {
+	if id == manifest.BootstrapSourceID && undeclared && !previous.projected && !request.reference.RequiresDeclaration {
 		r.bindCheckout(bootstrap, previous, request.scoped)
 		return false
 	}

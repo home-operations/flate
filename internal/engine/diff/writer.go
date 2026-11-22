@@ -2,6 +2,7 @@ package diff
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -80,15 +81,24 @@ func prepareLines(prepared prepared) ([]lineChange, error) {
 	for pIndex := range prepared.Pairs {
 		p := prepared.Pairs[pIndex]
 		var sides [2]string
+		var previous []byte
 		for i, doc := range [2]map[string]any{p.Old, p.New} {
 			if doc == nil {
 				continue
 			}
-			raw, err := yaml.Marshal(doc)
+			encoded, err := json.Marshal(doc)
+			if err != nil {
+				return nil, fmt.Errorf("marshal: error marshaling into JSON: %w", err)
+			}
+			if bytes.Equal(previous, encoded) {
+				sides[i] = sides[0]
+				continue
+			}
+			raw, err := yaml.JSONToYAML(encoded)
 			if err != nil {
 				return nil, fmt.Errorf("marshal: %w", err)
 			}
-			sides[i] = string(raw)
+			sides[i], previous = string(raw), encoded
 		}
 		if sides[0] == sides[1] && p.ProducerChange == nil {
 			continue

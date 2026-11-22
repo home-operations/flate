@@ -176,6 +176,10 @@ func (e *orchestratorExistence) promoteAdmission(
 }
 
 func (o *Orchestrator) run(ctx context.Context) error {
+	return o.runAfter(ctx, nil)
+}
+
+func (o *Orchestrator) runAfter(ctx context.Context, prior *selection.Decision) error {
 	o.cfg.work.Scope().Reserve(len(o.index.Records))
 	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		o.configureControllers()
@@ -192,7 +196,7 @@ func (o *Orchestrator) run(ctx context.Context) error {
 	}, false)
 	defer unsubCycles()
 
-	return o.runDAG(ctx)
+	return o.dispatchDAG(ctx, prior)
 }
 
 // Configure MUST precede dispatch; controllers freeze shaping config on start.

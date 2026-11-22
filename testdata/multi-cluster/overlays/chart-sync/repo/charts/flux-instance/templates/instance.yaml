@@ -1,0 +1,7 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: {{ .Release.Namespace }}
+spec:
+{{ toYaml .Values.instance | indent 2 }}

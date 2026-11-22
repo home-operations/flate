@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/helm"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source"
@@ -383,7 +384,15 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T) {
 	t.Parallel()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
-	c, st := newTestController(t, nil)
+	st := store.New()
+	l := loader.New(st)
+	t.Cleanup(l.Retire)
+	session, err := selection.New(st, l, selection.Request{})
+	assert.NoError(t, err)
+	l.Options.Session = session
+	c, _ := newTestController(t, l)
+	var accounting manifest.WorkRecorder
+	st.SetWorkTree(manifest.TreeID{}, accounting.Scope())
 	c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
 	c.Helm = helm.NewClient(c.Cache, nil)
 	root := t.TempDir()
@@ -449,6 +458,22 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	defer fresh.Assessment.Close()
 	assert.Equal(t, fresh.Complete, persistent)
 	assert.Equal(t, fresh.Assessment.Reads.Valid(), true)
+	assert.Equal(t, fresh.Replay == nil, true)
+	counts := fresh.Assessment.Reads.WorkScope().Record(manifest.WorkPreparation, "")
+	before := counts.Counts.OwnerPrepares
+	assert.Equal(t, before > 0, true)
+	session.PublishEntry(&selection.EntryRoute{Replay: owner.Named()})
+	replay := c.PreviousRender(t.Context(), owner, schedule.Result{Assessment: fresh.Assessment})
+	assert.FatalIf(t, replay.Assessment == nil || replay.Replay == nil, "history did not establish replay")
+	defer replay.Assessment.Close()
+	assert.Equal(t, replay.Complete, persistent)
+	assert.Equal(t, counts.Counts.OwnerPrepares, before)
+	if persistent {
+		execution := replay.Replay(t.Context(), manifest.DrainNone)
+		assert.Equal(t, execution, replay.Assessment)
+		assert.Equal(t, execution.Reads.Valid(), true)
+		assert.Equal(t, counts.Counts.OwnerPrepares, before)
+	}
 	normal := c.newExecution(owner.Named())
 	defer normal.run.Close()
 	inputs, err := normal.run.DataInputs(t.Context(), owner, normal.run.Data())
@@ -466,7 +491,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 		),
 	)
 	assert.Equal(t, resumed, true)
-	captured := fresh.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named())
+	captured := replay.Assessment.Reads.ReferenceFacts(input.Named(), nil, owner.Named())
 	expected := normal.run.Data().Lookup(input.Named())
 	assert.Diff(t, captured.Data.Snapshot(), expected.Data.Snapshot())
 	assert.Equal(t, captured.Data.KeysKnown(), expected.Data.KeysKnown())

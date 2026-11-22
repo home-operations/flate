@@ -75,6 +75,10 @@ func (c *admissionClosure) outputChanged(
 		return change.Comparison{}
 	}
 
+	if ref.BindsSource() && ref.ReadsSourceTree() && c.stableWorkingTreeBinding(ref.NamedResource) {
+		return change.Comparison{Known: true}
+	}
+
 	source := c.source(id)
 	_, _, paired := c.delta(source)
 	if !paired {
@@ -111,6 +115,27 @@ func (c *admissionClosure) outputChanged(
 		}
 	}
 	return c.proposal.Request.Changes.OutputChanged(c.context.Side, source, ref, obj)
+}
+
+// A stable working-tree binding supplies file deltas at each reader.
+func (c *admissionClosure) stableWorkingTreeBinding(source manifest.NamedResource) bool {
+	binding := c.boundSource(source)
+	base, head := binding.Snapshots[manifest.TreeBase], binding.Snapshots[manifest.TreeHead]
+	if !base.CheckoutView() || !head.CheckoutView() || binding.Input == nil {
+		return false
+	}
+	const material = store.ArtifactContent | store.ArtifactRevision
+	if !binding.Input.Reads.Valid() ||
+		binding.Input.Input(material) != binding.Snapshots[c.context.Side].Input(material) {
+		return false
+	}
+	declaration := binding.Declarations[manifest.TreeBase]
+	if declaration == nil || !manifest.Equal(declaration, binding.Declarations[manifest.TreeHead]) {
+		return false
+	}
+	bootstrap := c.boundSource(manifest.BootstrapSourceID).Snapshots
+	return (base == bootstrap[manifest.TreeBase] || base.Provider == store.ProviderAlias) &&
+		(head == bootstrap[manifest.TreeHead] || head.Provider == store.ProviderAlias)
 }
 
 func (c *admissionClosure) declarationChanged(
@@ -169,6 +194,9 @@ type affectedResult struct{ changed, settled bool }
 func (c *admissionClosure) deriveAffected(id manifest.NamedResource, obj manifest.BaseManifest) affectedResult {
 	if c.proposal.Request.Changes == nil {
 		return affectedResult{settled: true}
+	}
+	if c.entryDeclarationChanged(id, obj) {
+		return affectedResult{changed: true, settled: true}
 	}
 	record := c.contentRecord(id)
 	impact := c.affectedProductions(id, &record)
@@ -241,6 +269,20 @@ func (c *admissionClosure) affectedContentReads(
 		settled = settled && result.settled
 	}
 	return affectedResult{settled: settled}
+}
+
+func (c *admissionClosure) entryDeclarationChanged(id manifest.NamedResource, object manifest.BaseManifest) bool {
+	route := c.proposal.entry
+	if !c.session.entryComparisonComplete || route == nil || route.Producer == (manifest.NamedResource{}) {
+		return false
+	}
+	ref := manifest.Reference{NamedResource: id}
+	if !c.outputChanged(id, &ref, object).Changed {
+		return false
+	}
+	return slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
+		return p.Owner == route.Producer
+	})
 }
 
 type productionImpact struct{ direct, fileOwned bool }
@@ -397,7 +439,7 @@ func (c *admissionClosure) compareGeneratedRead(
 		return change.Comparison{}, false
 	}
 	evidence := c.boundSource(source)
-	if evidence.Input != nil && evidence.Input.Provider == store.ProviderAlias && !evidence.External {
+	if evidence.Input.CheckoutView() && evidence.Input.Provider == store.ProviderAlias && !evidence.External {
 		return change.Comparison{}, false
 	}
 	input := evidence.Input

@@ -66,7 +66,7 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	assert.Equal(t, c.materializerTargetsMatch(
 		owner.Named(),
 		&OccurrenceFacts{Catalog: owner, Targets: []manifest.ProducerTarget{{NamedResource: inputs[0]}}},
-		&materializerDemand{target: inputs[0]}, nil,
+		&materializerDemand{target: inputs[0]},
 	), true)
 	assert.Equal(t, len(c.ownerClaims), 0)
 	for _, id := range inputs {

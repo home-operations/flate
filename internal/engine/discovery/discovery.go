@@ -506,6 +506,7 @@ type Binding struct {
 	Entry                 *kustomize.EntryEvidence
 	Reads                 *store.ReadSet
 	support               *store.ReadSet
+	qualification         *entryQualification
 }
 
 // Projection borrows the immutable inventory for selection.

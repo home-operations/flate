@@ -202,7 +202,16 @@ func (d *Session) retainPackage(pkg *plannedPackage) {
 	d.prepared[owner.Named()] = frame
 }
 
+func (q *entryQualification) retireWait() {
+	if q.waiting != nil {
+		q.waiting.Retire()
+		q.waiting.ReleaseCapture()
+		q.waiting = nil
+	}
+}
+
 func (q *entryQualification) close() {
+	q.retireWait()
 	q.preparation.Retire()
 	*q = entryQualification{}
 }

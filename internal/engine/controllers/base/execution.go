@@ -34,6 +34,7 @@ type Execution struct {
 	ProbeLeft, ProbeRight *Execution
 	ProbeConsumed         bool
 	EntryReplay           bool
+	RetainPreparation     bool
 	probeStored           bool
 	probe                 bool
 	declaration           manifest.BaseManifest
@@ -150,10 +151,15 @@ func (e *Execution) Take(previous schedule.Result) {
 	e.AdmissionPreparation, prior.AdmissionPreparation = prior.AdmissionPreparation, nil
 	e.feedback, prior.feedback = prior.feedback, nil
 	e.childGeneration, prior.childGeneration = prior.childGeneration, nil
-	if !prior.matchesDeclaration(e.declaration) {
+	matches := prior.matchesDeclaration(e.declaration)
+	// A retained preparation may cross declarations because Prepare revalidates its render inputs.
+	if matches || prior.RetainPreparation {
+		e.preparation, prior.preparation = prior.preparation, nil
+		e.RetainPreparation, prior.RetainPreparation = prior.RetainPreparation, false
+	}
+	if !matches {
 		return
 	}
-	e.preparation, prior.preparation = prior.preparation, nil
 	e.generated, prior.generated = prior.generated, store.ChildDocuments{}
 	e.generationKnown, prior.generationKnown = prior.generationKnown, false
 	e.generationErr, prior.generationErr = prior.generationErr, nil
@@ -189,7 +195,7 @@ func (e *Execution) Retire() {
 	e.AdmissionPreparation = nil
 	e.generated, e.childGeneration = store.ChildDocuments{}, nil
 	e.generationErr, e.declaration = nil, nil
-	e.generationKnown = false
+	e.generationKnown, e.RetainPreparation = false, false
 	e.Store.Retire(&e.Reads)
 }
 
@@ -383,8 +389,8 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 ) {
 	id := e.Reads.ID()
 	defer e.recordPanic(id)
-	obj, ok := e.Reads.Get[T](id)
 	e.declaration = nil
+	obj, ok := e.Reads.Get[T](id)
 	if ok {
 		e.declaration = obj
 	}
@@ -580,6 +586,11 @@ func (e *Execution) AdmitQualification(possible bool) bool {
 		return true
 	}
 	return false
+}
+
+// QualifiedEntryReach borrows the discovery evidence for this execution.
+func (e *Execution) QualifiedEntryReach() func([]manifest.BaseManifest) bool {
+	return e.selection.QualifiedEntryReach(e.Reads.ID())
 }
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.

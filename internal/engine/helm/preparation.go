@@ -35,7 +35,7 @@ func (p *Preparation) Matches(client *Client, declaration *manifest.HelmRelease,
 	if p == nil || !p.complete && !p.chartPrepared {
 		return false
 	}
-	if p.client != client || declaration == nil || !manifest.Equal(p.declaration, declaration) {
+	if !p.matchesDeclaration(client, declaration) {
 		return false
 	}
 	if !p.complete {
@@ -45,6 +45,20 @@ func (p *Preparation) Matches(client *Client, declaration *manifest.HelmRelease,
 	binding.Policy.Options = request.Options
 	binding.Policy.Release = declaration.HistoryPolicy()
 	return p.binding.Equal(&binding, equalTemplatePolicy)
+}
+
+func (p *Preparation) matchesDeclaration(client *Client, declaration *manifest.HelmRelease) bool {
+	if p.client != client || declaration == nil || p.declaration == nil {
+		return false
+	}
+	if manifest.Equal(p.declaration, declaration) {
+		return true
+	}
+	if !p.complete || p.declaration.Named() != declaration.Named() || p.declaration.Chart != declaration.Chart {
+		return false
+	}
+	before, after := templateReleaseFor(p.declaration), templateReleaseFor(declaration)
+	return before.equal(&after)
 }
 
 func (p *Preparation) matchesValues(current map[string]any) bool {
@@ -210,7 +224,7 @@ func (p *Preparation) bindSource(hr *manifest.HelmRelease, artifact *store.Sourc
 			binding.Policy.Options.SkipKinds = slices.Clone(input.SkipKinds)
 		}
 	}
-	p.source = artifact
+	p.declaration, p.source = hr, artifact
 	p.loaded.artifact = *artifact
 	p.binding = binding
 	p.complete = true
@@ -244,7 +258,11 @@ func (c *Client) PrepareChart(
 	}()
 	p := input.Preparation
 	artifact := input.Sources.chartInput(hr)
-	sameInput := p.client == c && p.declaration != nil && manifest.Equal(p.declaration, hr) && p.source == artifact
+	read := store.ArtifactContent
+	if hr.TracksDigest() {
+		read |= store.ArtifactRevision
+	}
+	sameInput := p.matchesDeclaration(c, hr) && p.source.SameMaterial(artifact, read)
 	prepared := p.chartPrepared && (!p.complete || !p.loaded.remote)
 	if !sameInput || !prepared {
 		loaded, err := c.describeChart(ctx, hr, artifact)

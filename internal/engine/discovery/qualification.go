@@ -341,7 +341,7 @@ func (w *qualificationWalk) root(ctx context.Context, root *selection.Occurrence
 		}
 	}
 	if object == nil || root.Declaration != (selection.OccurrenceID{}) &&
-		w.reads.Policy(root.Identity).Origin != manifest.SuppliedDeclaration {
+		!w.reads.Policy(root.Identity).Supplied() {
 		object = w.q.loader.CatalogObject(root.Identity)
 	}
 	if object == nil && root.Declaration != (selection.OccurrenceID{}) && w.q.session != nil && !w.q.closed {

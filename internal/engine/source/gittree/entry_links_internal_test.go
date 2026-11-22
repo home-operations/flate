@@ -78,7 +78,7 @@ func testNewEntryPolicyUnknownModeVisibility(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	assert.Diff(t, names, []string{".rootfile", "target"})
+	assert.Diff(t, names, []string{".hidden", ".rootfile", "node_modules", "target"})
 }
 
 func testNewEntryPolicyLinkErrors(t *testing.T) {

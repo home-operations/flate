@@ -129,10 +129,10 @@ func clusterDiffForTest(t *testing.T, pair []Rendered) []byte {
 	assert.NoError(t, err)
 	comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
 		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-		Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
+		Unavailable: selected[0].Unavailable, Bindings: selected[0].Bindings,
 	}, Current: diff.Snapshot{
 		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-		Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
+		Unavailable: selected[1].Unavailable, Bindings: selected[1].Bindings,
 	}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
 	var comparisonOutput1 bytes.Buffer
 	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
@@ -426,10 +426,10 @@ func assertClusterUnavailablePair(t *testing.T, pair []Rendered, failedSide mani
 	assert.Equal(t, selectErr != nil, pair[0].ID.Cluster == "broken")
 	comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
 		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-		Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
+		Unavailable: selected[0].Unavailable, Bindings: selected[0].Bindings,
 	}, Current: diff.Snapshot{
 		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-		Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
+		Unavailable: selected[1].Unavailable, Bindings: selected[1].Bindings,
 	}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
 	var comparisonOutput2 bytes.Buffer
 	writeErr2 := comparison2.Write(&comparisonOutput2, nil)

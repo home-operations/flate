@@ -67,14 +67,14 @@ func (r *entryResolution) reusesSynthetic(candidate *entryResolution) bool {
 }
 
 func (r *entryResolution) usesUnfilteredInput(input, observed *store.SourceArtifact) bool {
-	if r.input != input || r.pinned ||
+	if r.pinned ||
 		!observed.SameMaterial(r.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 		return false
 	}
 	if r.artifact == input {
 		return true
 	}
-	return observed.InputAlias && r.unfiltered
+	return r.input == input && observed.InputAlias && r.unfiltered
 }
 
 func (r *entryResolution) ownsDeclaration(object manifest.BaseManifest) bool {
@@ -238,45 +238,6 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	return published, nil
 }
 
-func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
-	if d.resolvedSources != nil {
-		if input, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok &&
-			!input.SameMaterial(d.cfg.Input, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
-			d.cfg.Input = input
-		}
-	}
-	bootstrap := d.cfg.Input
-	if d.resolvedSources == nil {
-		admitted, err := d.admitBootstrapInput(ctx)
-		if err != nil {
-			return nil, err
-		}
-		bootstrap = admitted
-		d.resolvedSources = &entrySourcePublisher{
-			store: d.cfg.Store, root: admitted.LocalPath,
-			mutable: map[manifest.NamedResource]entryResolution{},
-		}
-	}
-	if d.cfg.Entry != nil {
-		// Generic aliases MUST be admitted from this store's declarations.
-		for id, resolution := range d.cfg.Entry.prepared.sources {
-			if !resolution.synthetic && (resolution.entry || resolution.projected || len(resolution.producers) != 0) {
-				d.resolvedSources.mutable[id] = resolution
-			}
-		}
-		d.publicOperands = d.cfg.Entry.prepared.publicOperands
-		d.cfg.Entry = nil
-	}
-	if previous, ok := d.resolvedSources.snapshot()[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
-		d.aliasViews = nil
-		if d.entryAdmission != nil {
-			d.entryAdmission.aliasViews = nil
-		}
-	}
-	d.resolvedSources.root = bootstrap.LocalPath
-	return bootstrap, nil
-}
-
 func (d *Session) entrySourceObject(
 	id manifest.NamedResource,
 	group *entrySourceGroup,
@@ -384,6 +345,10 @@ func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFro
 	// Parent-owned projections MUST wait for the parent emission.
 	projecting := d.finalized && candidate.projected && !projectedFromParent && d.cfg.Store.GetDeclaration(id) == nil
 	d.resolvedSources.publish(candidate, candidate.synthetic || replacing || projecting)
+	if id == manifest.BootstrapSourceID {
+		d.bindBootstrapArtifact(candidate)
+		return false
+	}
 	if candidate.viewKey != "" {
 		if d.entryAdmission.aliasViews == nil {
 			d.entryAdmission.aliasViews = map[string]*store.SourceArtifact{}
@@ -409,9 +374,19 @@ func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFro
 	return published
 }
 
+func (d *Session) bindBootstrapArtifact(candidate *entryResolution) {
+	d.cfg.Input = candidate.artifact
+	if len(candidate.object.Composition().Includes) == 0 {
+		return
+	}
+	if artifact := d.sourceMaterial(manifest.BootstrapSourceID, candidate.artifact); artifact != nil {
+		d.cfg.Input = artifact
+	}
+}
+
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	enclosingPackages  []string
+	generatorPackages  []string
 	privateInventories []*declarationRender
 	entryPreparation   kustomize.Preparation
 	packageRender      packagePreparation
@@ -438,6 +413,20 @@ type Admission struct {
 	session       *Session
 }
 
+func (a *Admission) bootstrapArtifact() *store.SourceArtifact {
+	selected := a.resolvedSources.snapshot()[manifest.BootstrapSourceID]
+	if selected.artifact == nil {
+		return a.input
+	}
+	if material, ok := a.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok &&
+		material.Reads.Valid() &&
+		(material.SameMaterial(selected.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ||
+			len(selected.object.Composition().Includes) != 0) {
+		return material
+	}
+	return selected.artifact
+}
+
 func (d *Session) admission() *Admission {
 	if d.entryAdmission != nil {
 		d.entryAdmission.entryDemand = d.requiresEntry()
@@ -458,7 +447,7 @@ func (d *Session) admission() *Admission {
 	}
 	admission := &Admission{
 		packageRender:     d.cfg.packagePreparation(),
-		enclosingPackages: d.enclosingPackages,
+		generatorPackages: d.generatorPackages,
 		input:             input,
 		path:              d.cfg.Path,
 		remotes:           maps.Clone(d.remotes),
@@ -524,6 +513,7 @@ func (a *Admission) Resolve(
 		captured.Warnings = append(slices.Clone(captured.Warnings), resolved.warnings...)
 		resolved.artifact = captured
 	}
+
 	return store.Child{Obj: resolved.object}, resolved.artifact, err
 }
 
@@ -589,7 +579,7 @@ func (a *Admission) resolve(
 		}
 	}
 	descriptor := candidate.git
-	if descriptor == nil || candidate.projected {
+	if id == manifest.BootstrapSourceID || descriptor == nil || candidate.projected {
 		candidate.pinned = false
 		artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
 		candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
@@ -649,6 +639,7 @@ func (a *Admission) entrySourceView(
 ) (*store.SourceArtifact, string, bool, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
+	id := candidate.object.Named()
 	ignore := ""
 	var sparse []string
 	recurse := false
@@ -657,6 +648,10 @@ func (a *Admission) entrySourceView(
 			ignore = *repo.Ignore
 		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
+	}
+	if id == manifest.BootstrapSourceID {
+		// The bootstrap MUST retain the admitted checkout's acquisition choices.
+		sparse, recurse = nil, false
 	}
 	mode := gittree.Source
 	if len(candidate.object.Composition().Includes) != 0 {
@@ -673,34 +668,48 @@ func (a *Admission) entrySourceView(
 	var input fs.FS
 	var identity string
 	var err error
+	if id == manifest.BootstrapSourceID {
+		current := a.resolvedSources.snapshot()[manifest.BootstrapSourceID]
+		if current.input == bootstrap && current.viewKey == viewKey && current.artifact != nil {
+			return current.artifact, viewKey, current.unfiltered, ctx.Err()
+		}
+	}
 	cached := a.aliasViews[viewKey]
 	if cached != nil {
 		input, identity, err = cached.FS, cached.Content, ctx.Err()
 	} else {
+		current, observed := a.loader.ProvisionalFS(bootstrap)
 		input, identity, err = gittree.New(
 			ctx,
 			nil,
 			plumbing.ZeroHash,
 			gittree.ViewOptions{
-				Mode:           mode,
-				Current:        bootstrap.FS,
-				CurrentContent: bootstrap.Content,
-				Ignore:         ignore,
-				Sparse:         sparse,
+				Mode:            mode,
+				Current:         current,
+				CurrentObserved: observed,
+				CurrentContent:  bootstrap.Content,
+				Ignore:          ignore,
+				Sparse:          sparse,
 			},
 		)
 	}
 	if err != nil {
 		return nil, "", candidate.unfiltered, err
 	}
-	id := candidate.object.Named()
 	artifact := bootstrap.WithReads(bootstrap.Reads)
+	if id == manifest.BootstrapSourceID {
+		artifact = bootstrap.WithSourceView(input)
+	}
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+repoRoot, input
 	artifact.ContentFingerprint = gittree.ContentFingerprint
 	artifact.InputAlias, artifact.Key, artifact.Content = true, "", identity
 	artifact.Warnings = nil
 	artifact.LocalPath = label
 	artifact.LocalRoot = repoRoot
+	if id == manifest.BootstrapSourceID {
+		artifact.InputAlias, artifact.Key, artifact.LocalPath = false, bootstrap.Key, bootstrap.LocalPath
+		artifact.LocalRoot = bootstrap.LocalRoot
+	}
 	unfiltered := mode == gittree.Source && ignore == "" && len(sparse) == 0 && !recurse
 	return artifact, viewKey, unfiltered, nil
 }

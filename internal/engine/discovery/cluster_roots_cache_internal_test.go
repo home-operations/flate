@@ -101,8 +101,9 @@ func TestPlan_TracksDisjointWorkloadsForMultipleRoots(t *testing.T) {
 	entries := clusterEntries(roots, session.cfg.Input, session.cfg.Path)
 	assert.FatalIf(t, len(entries) != 2, "entries = %+v", entries)
 	for i, name := range []string{"first", "second"} {
-		assert.Equal(t, roots[i].bootstrap, true)
-		assert.Diff(t, roots[i].Anchors, []string{"entry/" + name})
+		assert.Equal(t, len(roots[i].qualifying), 1)
+		assert.FatalIf(t, len(roots[i].anchors) != 1, "expected one anchor for %s", name)
+		assert.Equal(t, roots[i].anchors[0], bootstrapAnchor{target: "entry/" + name})
 		assert.Equal(t, slices.ContainsFunc(roots[i].Occurrences, func(o selection.OccurrenceFacts) bool {
 			return o.Declaration.File == "workload/object.yaml"
 		}), true)
@@ -139,7 +140,7 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 				}},
 			}
 			if tc.anchored {
-				planner.roots[0].Anchors = []string{"entry"}
+				planner.roots[0].anchors = []bootstrapAnchor{{target: "entry"}}
 			}
 			if tc.pin {
 				input = &store.SourceArtifact{LocalPath: filepath.Join(root, "pin"), LocalRoot: root, Content: "pinned"}

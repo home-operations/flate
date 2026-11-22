@@ -118,7 +118,6 @@ func testRenderRemoteSelectionTransitionCase(
 		eligible: &eligible, encoded: &realOutput, snapshot: &snap,
 		persisted: &persisted, url: &url, hits: &hits,
 	})
-	c.Close()
 	c.remoteInputs.Close()
 	c = newCache(c.owner)
 	{
@@ -147,7 +146,6 @@ func testRenderRemoteSelectionTransitionCase(
 			testRenderFrame(t, new(persisted), testRenderPayload(t, "REMOTE-SELECTION")),
 		)
 	}
-	c.Close()
 	c.remoteInputs.Close()
 	c = newCache(c.owner)
 	out, _, err = testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
@@ -167,7 +165,6 @@ func testRenderRemoteSelectionTransitionCase(
 		eligible,
 		witness,
 	)
-	c.Close()
 	c.remoteInputs.Close()
 	changed.Store(true)
 	c = newCache(c.owner)

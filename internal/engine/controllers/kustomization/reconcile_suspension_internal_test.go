@@ -460,7 +460,6 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	t.Cleanup(func() { _ = owner.Close() })
 	tasks := task.NewBounded(2)
 	trees := kustomize.NewTreeCache(owner, nil, tasks)
-	t.Cleanup(trees.Close)
 	c := New(s, tasks, trees)
 	c.Configure(Options{Cache: owner, Index: l.Index}, sourcecache.RetryConfig{})
 	reconcile := func(obj *manifest.Kustomization) error {

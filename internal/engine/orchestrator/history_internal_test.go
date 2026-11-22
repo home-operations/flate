@@ -700,7 +700,6 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 
 	assert.Equal(t, found, persistent)
 
-	o.ksc.Trees.Close()
 	reopened, err := sourcecache.New(t.Context(), (*testCaseInput.cacheDir))
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
@@ -789,8 +788,8 @@ data: {VALUE: rendered}
 	assert.NoError(t, err)
 	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	request := kustomize.RenderRequest{
-		Source:              source,
-		ApplyIgnore:         true,
+		Source: source,
+
 		SubPath:             prepared.Path,
 		Spec:                prepared,
 		StrictSubstitutions: true,

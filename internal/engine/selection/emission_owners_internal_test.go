@@ -49,6 +49,8 @@ func TestCollectEmissions_EmitterMembership(t *testing.T) {
 			t.Parallel()
 			authored := &manifest.Kustomization{Name: "authored", Namespace: "apps"}
 			generated := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+			driver := &manifest.ResourceSet{Name: "driver", Namespace: "apps"}
+			sync := &manifest.ResourceSet{Name: "sync", Namespace: "apps"}
 			st := store.New()
 			st.AddObject(authored)
 			identity := manifest.DocIdentity(documents[0])
@@ -65,21 +67,30 @@ func TestCollectEmissions_EmitterMembership(t *testing.T) {
 				return DocumentFact{Document: doc, Identity: identity, Child: identity, GeneratedOverlap: tc.overlap}
 			}
 			authoredFact, generatedFact := fact(authored), fact(generated)
-			emissions := []EmissionFacts{{Emitter: authored, Parent: authored, Documents: []DocumentFact{
-				{Document: documents[1], Identity: manifest.DocIdentity(documents[1])},
-				authoredFact,
-			}}}
+			tail := map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "tail", "namespace": "apps"},
+			}
+			tailID := manifest.DocIdentity(tail)
+			emissions := []EmissionFacts{
+				{Emitter: authored, Parent: authored, Documents: []DocumentFact{
+					{Document: documents[1], Identity: manifest.DocIdentity(documents[1])},
+					authoredFact,
+				}},
+				{Emitter: driver, Parent: authored, Documents: []DocumentFact{{Document: tail, Identity: tailID}}},
+			}
 			if tc.overlap {
 				st.AddObject(generated)
 				emissions = append(emissions, EmissionFacts{
-					Emitter: generated, Parent: generated, Documents: []DocumentFact{generatedFact},
+					Emitter: sync, Parent: generated, Documents: []DocumentFact{generatedFact},
 				})
 			}
 			snapshot := Snapshot{Store: st, Index: index, Complete: true, Emissions: emissions}
 			snapshot.CollectEmissions(nil)
 			if tc.overlap {
 				assert.Equal(t, len(snapshot.Manifests), 2)
-				assert.Diff(t, snapshot.Manifests[0].Documents, documents[1:])
+				assert.Diff(t, snapshot.Manifests[0].Documents, []map[string]any{documents[1], tail})
 				assert.Diff(t, snapshot.Manifests[1].Documents, []map[string]any{generatedFact.Document})
 			}
 			root := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}
@@ -102,6 +113,9 @@ func TestCollectEmissions_EmitterMembership(t *testing.T) {
 				want[0].Documents = append(want[0].Documents, authoredFact.Document)
 				want[0].Identities = append(want[0].Identities, identity)
 			}
+			driverPosition := len(want[0].Documents)
+			want[0].Documents = append(want[0].Documents, tail)
+			want[0].Identities = append(want[0].Identities, tailID)
 			assert.FatalIf(t, len(got[0].Manifests) != len(want), "unexpected batch count: %v", got[0].Manifests)
 			for i := range want {
 				batch := &got[0].Manifests[i]
@@ -109,6 +123,15 @@ func TestCollectEmissions_EmitterMembership(t *testing.T) {
 				assert.Diff(t, batch.Documents, want[i].Documents)
 				assert.Diff(t, batch.Identities, want[i].Identities)
 			}
+			wantProducers := map[int]map[int]manifest.DiagnosticIdentity{
+				0: {driverPosition: manifest.DiagnosticFor(driver.Named(), driver)},
+			}
+			if tc.wantWinner == generated.Name {
+				wantProducers[1] = map[int]manifest.DiagnosticIdentity{
+					0: manifest.DiagnosticFor(sync.Named(), sync),
+				}
+			}
+			assert.Diff(t, got[0].Producers, wantProducers)
 			assert.Equal(t, st.GetObject(identity), nil)
 			assert.Equal(t, len(snapshot.Emissions[0].Documents), 2)
 		})

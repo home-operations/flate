@@ -43,6 +43,9 @@ type revalidationBucket struct {
 func (b *revalidationBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	listing := b.listing.Load()
 	switch {
+	case strings.HasSuffix(r.URL.Path, "/.sourceignore"):
+		http.NotFound(w, r)
+		return
 	case r.URL.Query().Has("list-type"):
 		b.lists.Add(1)
 		page, _ := strconv.Atoi(r.URL.Query().Get("continuation-token"))

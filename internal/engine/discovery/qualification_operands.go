@@ -102,7 +102,7 @@ func (w *qualificationWalk) visitPublishedRoots(ctx context.Context) error {
 	if q.closed || !w.admission.entryDemand {
 		return nil
 	}
-	inventories, err := w.admission.enclosingInventories(ctx)
+	inventories, err := w.admission.generatorInventories(ctx)
 	if err != nil {
 		return err
 	}
@@ -116,11 +116,11 @@ func (w *qualificationWalk) visitPublishedRoots(ctx context.Context) error {
 	return nil
 }
 
-func (a *Admission) enclosingInventories(ctx context.Context) ([]*declarationRender, error) {
+func (a *Admission) generatorInventories(ctx context.Context) ([]*declarationRender, error) {
 	// An enclosing aggregate applies its transformations after the nested package builds.
-	for _, dir := range slices.Backward(a.enclosingPackages) {
+	for _, dir := range slices.Backward(a.generatorPackages) {
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, dir, manifest.NamedResource{})
-		frame, err := a.packageInventory(ctx, owner, inputprojection.Authored(a.input))
+		frame, err := a.packageInventory(ctx, owner, inputprojection.Authored(a.bootstrapArtifact()))
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -136,7 +136,7 @@ func (a *Admission) enclosingInventories(ctx context.Context) ([]*declarationRen
 		}
 		a.privateInventories = append(a.privateInventories, &declarationRender{owner: owner, children: generators})
 	}
-	a.enclosingPackages = nil
+	a.generatorPackages = nil
 	return a.privateInventories, ctx.Err()
 }
 

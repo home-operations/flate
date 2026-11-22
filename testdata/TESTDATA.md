@@ -34,6 +34,18 @@ The expectations retain the handwritten regression assertions and never derive f
 | `rootless-aggregate/ancestor-bootstrap-indexed-producer` | Retain the indexed producer and its reader when the enclosing application is blocked. The diff allows the missing input and shows the reader value change. |
 
 
+`flux-source-membership/` reproduces the source file audit through `cli.Run`.
+Each case compares stdout, stderr, and exit status with two workers.
+The second run reuses the private cache from the first run.
+
+| Case | Behavior |
+| --- | --- |
+| `flux-source-membership/specignore` | The owning GitRepository excludes `apps/a/` and the build renders ConfigMap `kept`. |
+| `flux-source-membership/f7-include-ignored` | The build fails when the source excludes a file that Kustomize references by name. |
+| `flux-source-membership/mini1` | A diff resolves the dependency declared under `crds/` and shows the ConfigMap edit. |
+| `flux-source-membership/templates` | The same diff resolves the dependency from `templates/`. |
+| `flux-source-membership/sourceignore` | The root `.sourceignore` excludes `apps/a/` and the build renders ConfigMap `kept`. |
+
 `custom-bootstrap-source/` covers a checkout whose bootstrap GitRepository is named `fleet`.
 The sync Kustomization targets the cluster directory.
 The infrastructure Kustomization reads a sibling directory and renders ConfigMap `default/podinfo`.
@@ -122,6 +134,33 @@ The Flux expectation retains the real HelmRelease reference edits.
 | `diff-generator-pairing/bare-configmap` | Reproduce the issue ConfigMap edit. |
 | `diff-generator-pairing/bare-secret` | Pair a synthetic Secret edit. |
 | `diff-generator-pairing/flux` | Retain generated values, local Helm output, and real reference edits. |
+
+`producer-moves/` covers diff output when a Flux object moves between producers.
+A producer is the Flux object that emits a document.
+The harness compares complete stdout, stderr, and exit codes through `cli.Run`.
+Each case runs twice with two workers and a fresh private cache at the start of each replay.
+
+| Case | Behavior |
+| --- | --- |
+| `producer-moves/resourceset` | Move the five podinfo kinds from ResourceSet `default/podinfo` to Kustomization `flux-system/podinfo`. The old reporting Kustomization is `flux-system/reporter`. |
+| `producer-moves/kustomizations` | Show one move in each format. Compare both a full directory diff and a changed-only Git diff. |
+| `producer-moves/content-edits` | Keep the Deployment replica count and unrelated label edits in both comparison modes. |
+| `producer-moves/clusters` | Move the shared identity only in `main` and retain an independent addition in `other`. |
+| `producer-moves/partial` | Keep the healthy move, the missing-path error, and the failing exit code. |
+| `producer-moves/competing` | Keep the conflict warning, winning producer, and winning content with the conflict on the current side. |
+| `producer-moves/competing-reverse` | Keep the same evidence with the conflict on the base side in changed-only mode. |
+
+The Owner decision in `plans/diff-pair-by-identity/request.md` governs these expectation changes.
+
+| Expectations | Reviewed change |
+| --- | --- |
+| `producer-moves/expect/` | Report each move once. Keep the spec and label edits, cluster boundaries, failures, and conflict warnings. |
+| `entry-membership/expect/membership-namespace-namespace-{forward,reverse}-diff.stdout` | Pair `apps/reachable-cm` across the two producers. Keep both one-sided identities in each namespace. |
+| `entry-membership/expect/selected-diff-owner-{added,removed,renamed}-{forward,reverse}-diff.stdout` | Report the new producer and preserve the ConfigMap value edit. Keep each distinct Kustomization declaration. |
+| `entry-membership/expect/selected-diff-owner-winner-changed-{forward,reverse}-diff.stdout` | Report the winning occurrence of each identity. Keep the winning ConfigMap's value edit and the one-sided declaration. |
+| `entry-packages-entry-prerequisite-{forward,reverse}/expect/*-diff.stdout` | Report the owner declaration once. Keep the dependency edit and changes to both ConfigMaps. |
+| `scope-selection-ownership-cycle/expect/ownership-cycle-diff.stdout` | Keep one change for the ConfigMap that both paths reach. |
+| `source-warnings/expect/bootstrap-submodule-aliases.stdout` | Keep one change for the ConfigMap from the two source aliases. Keep all three warnings. |
 
 `duplicate-producers/` covers complete duplicate attribution through `cli.Run`.
 Each aggregate lacks a parent `kustomization.yaml`, so rendering discovers its resources.
@@ -321,7 +360,6 @@ second-source collisions with dirty-byte controls, local chart archives,
 generators, components, ancestor-injected patches, owner/source/root/group moves,
 ignore flips, empty output and unavailable data/CRDs. Shallow and missing-tree
 controls assert baseline admission failure without claiming a completed render.
-Future ResourceSet output semantics remain explicitly pending freeze.
 
 ## Upstream attribution
 
@@ -723,6 +761,10 @@ The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U
 
 ### ResourceSet and CRD scenarios
 
+Within the requested scope, flate prints every object that a producer applies, with the producer's owner labels.
+A ResourceSet can apply a Flux Kustomization or HelmRelease.
+The declaration and its rendered workload are separate objects in build and diff output.
+
 `resourceset` follows `angelnu/k8s-gitops` at `872f8a1baebedfdcce40c580b509e038d0242ec1`.
 The source paths are `apps/paperless/app/resourceSet.yaml`.
 Authored static tenant expansion and generated-data controls. Keep the static input/template topology; replace workloads with ConfigMaps.
@@ -741,6 +783,16 @@ Its declared commands are `build ks app`.
 Its declared commands are `build ks app`.
 `resourceset/resource-set-generated-data-encrypted` covers resource set generated data encrypted.
 Its declared commands are `build ks app`.
+
+`resourceset-tenants/tenant-declarations` uses the supplied `f8` source tree.
+`build all` prints both tenant Kustomizations with the labels from `flux-system/tenants`.
+It also prints both tenant Namespaces and their ConfigMaps with the substituted replica counts.
+
+`resourceset-helm/applied-release` uses a local chart that renders a ConfigMap.
+`build all` prints the HelmRelease applied by `flux-system/releases` and its chart workload.
+The named release build prints its chart workload.
+`diff all` reports the stamped HelmRelease as removed when the ResourceSet disappears and as added when the two trees switch sides.
+Both trees retain the enclosing Kustomization.
 
 `resourceset-documents` follows `billimek/k8s-gitops` at `127e039d8c739d748e20415dd3fdcaff91b4cb2d`.
 The source paths are `kubernetes/kube-system/nfs-scalers/resourceset-nfs-scalers.yaml`.
@@ -1939,6 +1991,14 @@ These expectations are authored source changes, independent of actual test outpu
 
 The normalization-only ciphertext diff uses a separate complete expectation.
 Image and kind filters retain empty output.
+
+`multi-cluster/shared-instance` and `multi-cluster/shared-classic` use two nested sync targets. Each cluster applies one shared application through its own source. The cases compare the root build, each selected path, and independent edits from the same Git base. The FluxInstance case compares ancestor and direct sync builds, with complete expectations for each path. A shared workload change appears in both clusters.
+
+`multi-cluster/classic-native` adds a builder at the classic sync target. The root and selected builds retain the same output, and the diff stays empty. `multi-cluster/classic-generated-values` changes a component that uses values generated by the sync target.
+
+`multi-cluster/instance-subpackage` places the FluxInstance in a native package below its sync target. Both builds include the marker. `multi-cluster/instance-subpackage-values` modifies values that the generated sync patches into a child application.
+
+`multi-cluster/authored-parent` checks that two bootstrap targets referenced by one authored parent retain separate cluster output. `multi-cluster/shared-member` checks that shared application ownership preserves the other cluster and its private payload.
 
 ### Supplied and SOPS Secret collision
 

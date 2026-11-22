@@ -76,7 +76,17 @@ func testNewEntryPolicyShaping(t *testing.T) {
 		{
 			"remote",
 			ViewOptions{Mode: RemoteBase},
-			[]string{".rootfile", "alias", "crds/file", "dir/file", "target", "templates/file"},
+			[]string{
+				".hidden/file",
+				".hidden/link",
+				".rootfile",
+				"alias",
+				"crds/file",
+				"dir/file",
+				"node_modules/file",
+				"target",
+				"templates/file",
+			},
 		},
 	}
 	for index := range cases {
@@ -178,9 +188,7 @@ func testNewEntryPolicyShapingCase(t *testing.T, testCaseInput testNewEntryPolic
 	}))
 	assert.Diff(t, files, testCaseInput.tc.files)
 	omitted := []string{"escape", "missing", "directory"}
-	if testCaseInput.tc.opts.Mode == RemoteBase {
-		omitted = append(omitted, ".hidden", "node_modules")
-	} else {
+	if testCaseInput.tc.opts.Mode != RemoteBase {
 		omitted = append(omitted, "alias", ".hidden/link")
 	}
 	for _, name := range omitted {

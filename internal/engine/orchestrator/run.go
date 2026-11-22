@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"iter"
 	"maps"
 	"slices"
 
@@ -12,7 +11,6 @@ import (
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/loader"
-	"github.com/home-operations/flate/internal/engine/resourceset"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -284,21 +282,29 @@ func (o *Orchestrator) collectCompletedManifests(
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	for _, obj := range objects {
 		id := obj.Named()
-		parentAttributed := !manifest.KindOf(obj).Render
-		parent, eligible := o.collectionParent(obj, id, parentAttributed)
-		if !eligible {
-			continue
-		}
 		effective, _, attempt := o.store.GetEmission(id)
 		attempt.Finish()
-		if effective == nil {
+		if effective == nil || len(attempt.Manifests) == 0 {
 			continue
 		}
-		emission := selection.EmissionFacts{Emitter: obj, Parent: o.store.GetObject(parent)}
-		emission.Documents = slices.Collect(o.collectionDocuments(obj, parentAttributed, &attempt, overlaps[id]))
-		if len(emission.Documents) != 0 {
-			emissions = append(emissions, emission)
+		emission := selection.EmissionFacts{
+			Emitter: obj, Parent: obj, ParentAttributed: !manifest.KindOf(obj).Render,
 		}
+		if emission.ParentAttributed {
+			parent, recorded := o.store.Parent(id, o.index)
+			emission.Parent, emission.ParentRecorded = o.store.GetObject(parent), recorded
+		}
+		policy := obj.EmissionPolicy()
+		emission.Documents = make([]selection.DocumentFact, len(attempt.Manifests))
+		for i := range attempt.Manifests {
+			doc := attempt.Manifests[i].Document
+			child := attempt.DocumentChild(i)
+			_, shared := overlaps[id][child]
+			emission.Documents[i] = selection.DocumentFact{
+				Document: doc, Identity: policy.EmittedIdentity(doc), Child: child, GeneratedOverlap: shared,
+			}
+		}
+		emissions = append(emissions, emission)
 	}
 	snapshot := selection.Snapshot{
 		Store:     o.store,
@@ -307,111 +313,14 @@ func (o *Orchestrator) collectCompletedManifests(
 		Emissions: emissions,
 		Entry:     o.entryBinding.Projection(),
 	}
+	if o.loader != nil {
+		snapshot.Facts = o.loader.DetachCatalog()
+	}
 	snapshot.CollectEmissions(nil)
 	return snapshot.Manifests, emissions
 }
 
-func (o *Orchestrator) collectionDocuments(
-	obj manifest.BaseManifest,
-	parentAttributed bool,
-	attempt *store.Emission,
-	overlaps map[manifest.NamedResource]struct{},
-) iter.Seq[selection.DocumentFact] {
-	return func(yield func(selection.DocumentFact) bool) {
-		id := obj.Named()
-		policy := obj.EmissionPolicy()
-		filterOwnership := emissionOwnership(obj, parentAttributed)
-		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
-		o.collectionChildren(id, parentAttributed, attempt.Children, selected)
-		for i, occurrence := range attempt.Manifests {
-			doc := occurrence.Document
-			child := attempt.DocumentChild(i)
-			_, shared := overlaps[child]
-			eligibleOverlap := shared && (!parentAttributed || !child.KindInfo().Render)
-			target := resourceset.DedupKey(doc)
-			target, identifiable := collectionDocumentTarget(doc, target, id.Namespace, parentAttributed)
-			checkOwnership := filterOwnership && identifiable && !eligibleOverlap && !selected[target]
-			if checkOwnership && !o.collectionOwnershipAllows(target, parentAttributed) {
-				continue
-			}
-			fact := selection.DocumentFact{
-				Document: doc, Identity: policy.EmittedIdentity(doc), Child: child, GeneratedOverlap: shared,
-			}
-			if !yield(fact) {
-				return
-			}
-		}
-	}
-}
-
-func (o *Orchestrator) collectionOwnershipAllows(target manifest.NamedResource, parentAttributed bool) bool {
-	return !parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{})
-}
-
-func collectionDocumentTarget(
-	doc map[string]any,
-	target manifest.NamedResource,
-	namespace string,
-	parentAttributed bool,
-) (manifest.NamedResource, bool) {
-	apiVersion := manifest.DocAPIVersion(doc)
-	identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" &&
-		target.Group != manifest.KustomizeDomain
-	if parentAttributed && identifiable && target.Namespace == "" &&
-		manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
-		target.Namespace = namespace
-	}
-	return target, identifiable
-}
-
-func (o *Orchestrator) collectionChildren(
-	id manifest.NamedResource,
-	parentAttributed bool,
-	children []store.Child,
-	selected map[manifest.NamedResource]bool,
-) {
-	childValues := children
-	for childIndex := range childValues {
-		child := childValues[childIndex]
-		if child.Doc != nil {
-			target := child.Obj.Named()
-			selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) &&
-				o.store.EmissionOwner(target) == id
-		}
-	}
-}
-
-func (o *Orchestrator) collectionParent(
-	obj manifest.BaseManifest,
-	id manifest.NamedResource,
-	parentAttributed bool,
-) (manifest.NamedResource, bool) {
-	parent := id
-	if parentAttributed {
-		var ok bool
-		parent, ok = o.store.Parent(id, o.index)
-		if !ok {
-			if manifest.KindOf(obj).Parent {
-				return parent, false
-			}
-			parent = id
-		}
-		if o.store.GetObject(parent) == nil {
-			return parent, false
-		}
-	}
-	return parent, true
-}
-
-func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) bool {
-	if manifest.KindOf(obj).Parent {
-		return parentAttributed || obj.EmissionPolicy().DocumentScope
-	}
-	return parentAttributed
-}
-
 func (o *Orchestrator) stop() {
-	o.ksc.Trees.Close()
 	o.inputs.Close()
 	o.tasks.BlockTillDone()
 	o.sweepProbes(true)

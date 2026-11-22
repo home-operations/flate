@@ -355,7 +355,7 @@ func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 func scopeInputSnapshot(selected *selection.Result) diff.Snapshot {
 	return diff.Snapshot{
 		Subjects: selected.Subjects, Manifests: selected.Manifests,
-		ProducerKeys: selected.ProducerKeys, Unavailable: selected.Unavailable,
+		Bindings: selected.Bindings, Unavailable: selected.Unavailable,
 	}
 }
 

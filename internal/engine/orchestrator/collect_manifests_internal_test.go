@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -234,10 +235,37 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 	}
 }
 
+func TestCollectManifests_IndependentResourceSet(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	rs := &manifest.ResourceSet{Name: "resources", Namespace: "apps"}
+	st.AddObject(rs)
+	l := loader.New(st)
+	t.Cleanup(l.Close)
+	o := &Orchestrator{store: st, index: l.Index, loader: l}
+
+	child := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
+	doc := testutil.ObjectDocument(child)
+	st.RecordEmitted(rs.Named(), &store.Emission{
+		Children:  []store.Child{{Obj: child, Doc: doc}},
+		Manifests: testutil.DocumentOccurrences([]map[string]any{doc}),
+		Complete:  true,
+	}, nil)
+	manifests, emissions := o.collectCompletedManifests(nil)
+	expected := map[manifest.NamedResource][]map[string]any{rs.Named(): {doc}}
+	assert.Diff(t, outputByParent(manifests), expected)
+	runs := []Rendered{{Orchestrator: o, Result: &Result{
+		Manifests: manifests, emissions: emissions, catalog: l.DetachCatalog(),
+	}}}
+	results, failures := Select(runs, nil, []manifest.NamedResource{rs.Named()}, nil)
+	assert.NoError(t, failures.Selected)
+	assert.Diff(t, outputByParent(results[0].Manifests), expected)
+}
+
 func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 	t.Parallel()
 
-	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret, "ServiceAccount"} {
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret, "ServiceAccount", manifest.KindKustomization} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/reverse=%t", kind, reverse), func(t *testing.T) {
 				t.Parallel()
@@ -469,11 +497,17 @@ func testCollectManifestsResourceSetConflictingProducersCase(
 				"annotations": map[string]any{"value": owner.Name},
 			},
 		}
-		if (*testCaseInput.kind) == manifest.KindConfigMap {
+		switch *testCaseInput.kind {
+		case manifest.KindConfigMap:
 			doc["data"] = map[string]any{"value": owner.Name}
-		}
-		if (*testCaseInput.kind) == manifest.KindSecret {
+		case manifest.KindSecret:
 			doc["stringData"] = map[string]any{"value": owner.Name}
+		case manifest.KindKustomization:
+			doc["apiVersion"] = manifest.FluxKustomizeDomain + "/v1"
+			doc["spec"] = map[string]any{
+				"path":      "./" + owner.Name,
+				"sourceRef": map[string]any{"kind": "GitRepository", "name": "source"},
+			}
 		}
 		parseChildrenForTestResult6 := parseChildrenForTest(
 			owner.Named(),

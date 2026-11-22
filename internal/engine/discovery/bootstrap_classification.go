@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -88,16 +89,7 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	entry := request.entry || previous.entry && previous.input == a.input
 	candidate := entryResolution{object: request.object, input: a.input, entry: entry, producers: request.producers}
 	if id == manifest.BootstrapSourceID {
-		candidate.artifact = a.input
-		switch {
-		case candidate.object != nil:
-			return candidate
-		case previous.input == a.input:
-			return previous
-		}
-		candidate.object, _ = id.BindLocal(a.input.LocalPath)
-		candidate.synthetic = true
-		return candidate
+		return a.classifyBootstrap(&candidate, &previous)
 	}
 	var object manifest.BaseManifest
 	switch request.reads {
@@ -140,6 +132,34 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	}
 	candidate.git, candidate.pinned = descriptor, descriptor.BootstrapPinned()
 	return candidate
+}
+
+func (a *Admission) classifyBootstrap(candidate, previous *entryResolution) entryResolution {
+	id := manifest.BootstrapSourceID
+	if candidate.object == nil || previous.ownsDeclaration(candidate.object) {
+		if previous.input == a.input {
+			return *previous
+		}
+		candidate.object = a.store.GetDeclaration(id)
+	}
+	if candidate.object == nil {
+		candidate.object, _ = id.BindLocal(a.input.LocalPath)
+		candidate.synthetic = true
+	}
+	if previous.input == a.input && manifest.Equal(previous.object, candidate.object) {
+		previous.object = candidate.object
+		return *previous
+	}
+	if behavior, ok := candidate.object.(entrySource); ok {
+		_, candidate.git = behavior.BootstrapAlias(a.input.LocalPath)
+	}
+	_, native := a.input.FS.(*gittree.FS)
+	admitted := !native || gittree.PolicyKey(a.input.FS) != ""
+	customPolicy := candidate.git != nil && (candidate.git.Ignore != nil || len(candidate.git.SparseCheckout) != 0)
+	if admitted && !customPolicy && len(candidate.object.Composition().Includes) == 0 {
+		candidate.artifact = a.input
+	}
+	return *candidate
 }
 
 func (r *entryResolution) sameClassification(candidate *entryResolution) bool {

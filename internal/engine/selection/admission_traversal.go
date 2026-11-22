@@ -512,7 +512,7 @@ func (c *admissionClosure) hydrateDeclaration(
 		return obj, nil
 	}
 	if _, policy := c.objects.Lookup(id); c.objects.GetDeclaration(id) != nil &&
-		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.rootEvidence(id).Admitted) {
+		(policy.Root || policy.Supplied() && !c.rootEvidence(id).Admitted) {
 		return obj, nil
 	}
 	physical := *c.capturedRoot(id)

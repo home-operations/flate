@@ -23,6 +23,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/transport/file"
 	"github.com/go-git/go-git/v6/storage/memory"
 
+	"github.com/home-operations/flate/internal/engine/change"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/internal/engine/source/gitrepo"
@@ -36,7 +37,10 @@ import (
 
 func TestAutoResolve_LocalBaseMissingObjects(t *testing.T) {
 	t.Parallel()
-	for _, missing := range []string{"tree", "clean_candidate_blob", "policy_membership_missing_blob"} {
+	for _, missing := range []string{
+		"tree", "clean_candidate_blob", "policy_membership_missing_blob",
+		"policy_removal_missing_blob", "policy_only_removal_missing_blob",
+	} {
 		t.Run(missing, func(t *testing.T) {
 			t.Parallel()
 			testAutoResolveLocalBaseMissingObjectsCase(t, missing)
@@ -50,9 +54,16 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 	root, origin := t.TempDir(), t.TempDir()
 	pin := initRepoWithFile(t, root, "apps/file.yaml", "base")
 	headPath, headBody, currentBody := "apps/file.yaml", "head", "head"
-	if missing == "policy_membership_missing_blob" {
+	switch missing {
+	case "policy_membership_missing_blob":
 		pin = writeAndCommit(t, root, "apps/.sourceignore", ".sourceignore\nfile.yaml\n")
 		headPath, headBody, currentBody = "apps/.sourceignore", ".sourceignore\n", "base"
+	case "policy_removal_missing_blob":
+		// A mode-only change routes the unchanged bytes through the historical object reader.
+		assert.NoError(t, os.Chmod(filepath.Join(root, "apps", "file.yaml"), 0o700))
+		fallthrough
+	case "policy_only_removal_missing_blob":
+		headPath, headBody, currentBody = "apps/.sourceignore", ".sourceignore\nfile.yaml\n", "base"
 	}
 	repo := openHelper(t, root)
 	setRef(t, repo, plumbing.NewBranchReferenceName("selected"), pin)
@@ -152,7 +163,8 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 		assert.NoError(t, err)
 		assert.Equal(t, res.BaseInput.Revision, pin.String())
 		assert.Diff(t, res.Source.Metadata, map[string]string{"baseline-selection": "explicit base revision=selected"})
-		assert.Diff(t, res.Changes.Paths(), []string{"apps/file.yaml"})
+		selected, admitted := admittedChanges(t, res)
+		assert.Diff(t, selected.Paths(), []string{"apps/file.yaml"})
 		label := filepath.Join(root, ".flate-base", pin.String())
 		assert.Equal(t, res.Source.LocalPath, root)
 		assert.Equal(t, res.Source.LocalRoot, root)
@@ -172,12 +184,18 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 		before, err := fs.ReadFile(res.BaseInput.FS, "apps/file.yaml")
 		assert.NoError(t, err)
 		assert.Equal(t, string(before), "base")
-		assert.Equal(t, calls.Load(), resolvedCalls)
-		assert.Equal(t, calls.Load() > initialCalls, true)
-		after, err := fs.ReadFile(res.Source.FS, "apps/file.yaml")
-		assert.NoError(t, err)
+		reusedLocalBody := missing == "policy_membership_missing_blob" || missing == "policy_only_removal_missing_blob"
+		assert.Equal(t, resolvedCalls > initialCalls, !reusedLocalBody)
+		after, readErr := fs.ReadFile(res.Source.FS, "apps/file.yaml")
+		assert.NoError(t, readErr)
 		assert.Equal(t, string(after), currentBody)
-		if missing == "policy_membership_missing_blob" {
+		switch missing {
+		case "policy_removal_missing_blob", "policy_only_removal_missing_blob":
+			before, readErr := fs.ReadFile(admitted[manifest.TreeBase].FS, "apps/file.yaml")
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(before), "base")
+			assertPolicyRemoval(t, selected, admitted[manifest.TreeHead].FS)
+		case "policy_membership_missing_blob":
 			for _, mode := range []gittree.ViewMode{gittree.Direct, gittree.Source} {
 				derived, derivedIdentity, localErr := gittree.New(t.Context(), nil, plumbing.ZeroHash,
 					gittree.ViewOptions{Mode: mode, Current: res.BaseInput.FS})
@@ -195,10 +213,22 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 				}
 			}
 		}
+		assert.Equal(t, calls.Load(), resolvedCalls)
 		assert.Equal(t, errors.Is(repo.Storer.HasEncodedObject(absent), plumbing.ErrObjectNotFound), true)
 		_, err = os.Stat(objectPath)
 		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 	}
+}
+
+func assertPolicyRemoval(t *testing.T, selected *change.Set, current fs.FS) {
+	t.Helper()
+	const name = "apps/file.yaml"
+	_, err := fs.ReadFile(current, name)
+	assert.ErrorIf(t, !errors.Is(err, fs.ErrNotExist), "current view admitted excluded file: %v", err)
+	present, known := selected.Present(manifest.TreeBase, name)
+	assert.ErrorIf(t, !present || !known, "base membership: present=%t known=%t", present, known)
+	present, known = selected.Present(manifest.TreeHead, name)
+	assert.ErrorIf(t, present || !known, "current membership: present=%t known=%t", present, known)
 }
 
 func TestSelection_AcquireBodiesCacheKeys(t *testing.T) {

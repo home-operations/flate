@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
@@ -36,10 +37,30 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func missingBucketPolicy(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasSuffix(r.URL.Path, "/.sourceignore") {
+		return false
+	}
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = io.WriteString(w, "<Error><Code>NoSuchKey</Code></Error>")
+	return true
+}
+
+func bucketWithoutPolicy(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !missingBucketPolicy(w, r) {
+			handler(w, r)
+		}
+	}
+}
+
 func delayedBucket(tb testing.TB) (*minio.Client, *atomic.Int32) {
 	tb.Helper()
 	var active, peak atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 			for i := 15; i >= 0; i-- {
@@ -227,20 +248,70 @@ func TestWalkBucket_Faults(t *testing.T) {
 	}
 }
 
+func TestBucketChunk_BufferedReadFaults(t *testing.T) {
+	t.Parallel()
+	const content = "abcd"
+	readFailure := errors.New("chunk transport failed")
+	for _, tc := range []struct {
+		name    string
+		body    io.Reader
+		cause   error
+		wantErr string
+	}{
+		{
+			name: "truncated", body: strings.NewReader("ab"), cause: io.ErrUnexpectedEOF,
+			wantErr: "read bucket object chunk: unexpected EOF",
+		},
+		{
+			name:  "error with final bytes",
+			body:  iotest.DataErrReader(io.MultiReader(strings.NewReader(content), iotest.ErrReader(readFailure))),
+			cause: readFailure, wantErr: "read bucket object chunk: chunk transport failed",
+		},
+		{
+			name: "error after final bytes", body: io.MultiReader(strings.NewReader(content), iotest.ErrReader(readFailure)),
+			cause: readFailure, wantErr: "check bucket object chunk length: chunk transport failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			transport := bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+				resp := bucketReply(req, http.StatusOK, content)
+				resp.Header.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+				resp.Body = io.NopCloser(tc.body)
+				return resp, nil
+			})
+			client, err := minio.New("bucket.invalid", &minio.Options{
+				Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: transport,
+			})
+			assert.NoError(t, err)
+
+			chunk := bucketChunk{
+				object: &minio.ObjectInfo{Key: "file", Size: int64(len(content))},
+				size:   int64(len(content)),
+				ready:  make(chan io.Reader, 1),
+			}
+			err = chunk.fetch(t.Context(), client, "data")
+			assert.FatalIf(t, err == nil, "buffered read accepted a failed body")
+			assert.Equal(t, err.Error(), tc.wantErr)
+			assert.ErrorIf(t, !errors.Is(err, tc.cause), "error %v does not wrap %v", err, tc.cause)
+		})
+	}
+}
+
 func TestWalkBucket_ArchiveNames(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name, prefix, key, want string
 		invalid                 bool
 	}{
-		{name: "delimiter", prefix: "a", key: "a/x", want: "x"},
-		{name: "slash prefix", prefix: "a/", key: "a/x", want: "x"},
-		{name: "literal prefix", prefix: "a", key: "abc", want: "bc"},
-		{name: "exact key fallback", prefix: "a/x", key: "a/x", want: "x"},
+		{name: "delimiter", prefix: "a", key: "a/x", want: "a/x"},
+		{name: "slash prefix", prefix: "a/", key: "a/x", want: "a/x"},
+		{name: "literal prefix", prefix: "a", key: "abc", want: "abc"},
+		{name: "exact key fallback", prefix: "a/x", key: "a/x", want: "a/x"},
 		{name: "raw traversal laundered by prefix", prefix: "a/..", key: "a/../x", invalid: true},
 		{name: "file root", key: ".", invalid: true},
 		{name: "unmatched prefix", prefix: "a", key: "b/x", invalid: true},
-		{name: "invalid derived name", prefix: "ab", key: "ab../x", invalid: true},
+		{name: "valid full name", prefix: "ab", key: "ab../x", want: "ab../x"},
 		{name: "directory marker", key: "dir/"},
 	}
 	for _, tc := range cases {
@@ -256,6 +327,9 @@ func TestWalkBucket_RejectsNegativeListedSize(t *testing.T) {
 	t.Parallel()
 	var gets atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if r.URL.Query().Get("list-type") == "" {
 			gets.Add(1)
 			return
@@ -366,6 +440,15 @@ func TestWalkBucket_Ranges(t *testing.T) {
 	}
 }
 
+func missingBucketPolicyResponse(req *http.Request) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusNotFound,
+		Body:       io.NopCloser(strings.NewReader("<Error><Code>NoSuchKey</Code></Error>")),
+		Header:     make(http.Header),
+		Request:    req,
+	}
+}
+
 func timeoutBucketFetcher(t *testing.T, respond func(*http.Request) (*http.Response, error)) *Fetcher {
 	t.Helper()
 	t.Setenv("NO_PROXY", "*")
@@ -387,7 +470,10 @@ func timeoutBucketFetcher(t *testing.T, respond func(*http.Request) (*http.Respo
 				_, _ = io.Copy(io.Discard, server)
 				cancel()
 			})
-			response, err := respond(req.WithContext(ctx))
+			response := missingBucketPolicyResponse(req)
+			if !strings.HasSuffix(req.URL.Path, "/.sourceignore") {
+				response, err = respond(req.WithContext(ctx))
+			}
 			if err == nil {
 				defer response.Body.Close()
 				_ = response.Write(server)
@@ -586,6 +672,9 @@ func testWalkBucketChunkBoundCallback(
 	r *http.Request,
 	testCaseInput testWalkBucketChunkBoundCallbackInputs,
 ) {
+	if missingBucketPolicy(w, r) {
+		return
+	}
 	const size = 8388608
 	if r.URL.Query().Get("list-type") != "" {
 		_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
@@ -627,6 +716,9 @@ func testWalkBucketFaultsCaseCallback(
 	r *http.Request,
 	testCaseInput testWalkBucketFaultsCaseCallbackInputs,
 ) {
+	if missingBucketPolicy(w, r) {
+		return
+	}
 	listing := r.URL.Query().Get("list-type") != ""
 	if (*testCaseInput.tc).status != 0 &&
 		(listing && (*(*testCaseInput.route)) == "list" || !listing && strings.HasSuffix(r.URL.Path, "file05")) {

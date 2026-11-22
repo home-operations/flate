@@ -9,7 +9,7 @@
       "kubernetes/apps/main/flux-system/flux-operator.yaml",
       "kubernetes/apps/utility/flux-system/flux-operator.yaml"
     ],
-    "reductions": "Flatten the common kubernetes/clusters prefix to sibling main/test/utility entries. Retain colliding flux-system/shared identities and repository-relative app paths. Replace charts and applications with one local, identically named ConfigMap whose value identifies the cluster. Each entry contains a self-referential FluxInstance whose sync path names that entry. The root has no Kustomization and no cluster selector. The root scope test requires independent cluster stores and preserves complete reviewed output for both replays."
+    "reductions": "Flatten the common kubernetes/clusters prefix to sibling main/test/utility entries. Retain colliding flux-system/shared identities and repository-relative app paths. Replace charts and applications with one local, identically named ConfigMap whose value identifies the cluster. Each entry contains a self-referential FluxInstance whose sync path names that entry. The root has no Kustomization and no cluster selector. The root scope test requires independent cluster stores and preserves complete reviewed output for both replays. The shared application cases use the topology of angelnu/k8s-gitops at 872f8a1baebedfdcce40c580b509e038d0242ec1. The nested package cases reduce the owner reproductions to local configuration maps, one component, and one value substitution."
   },
   "repositories": [
     {
@@ -33,7 +33,123 @@
       ]
     }
   ],
-  "commits": [],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "multi-cluster-empty",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "shared-common",
+      "overlay": "shared-inputs",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "shared-instance-base",
+      "overlay": "shared-instance-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-common"
+      ],
+      "refs": [
+        "refs/heads/shared-instance-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "shared-classic-base",
+      "overlay": "shared-classic-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-common"
+      ],
+      "refs": [
+        "refs/heads/shared-classic-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "classic-native-base",
+      "overlay": "classic-native",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/classic-native-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "classic-generated-values-base",
+      "overlay": "classic-generated-values",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/classic-generated-values-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "instance-subpackage-base",
+      "overlay": "instance-subpackage",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/instance-subpackage-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "instance-subpackage-values-base",
+      "overlay": "instance-subpackage-values",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/instance-subpackage-values-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "authored-parent-base",
+      "overlay": "authored-parent",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "shared-member-base",
+      "overlay": "shared-member",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    }
+  ],
   "overlays": [
     {
       "name": "root-partition",
@@ -44,6 +160,66 @@
       "name": "one-sided-diff",
       "directory": "overlays/one-sided-diff",
       "operations": []
+    },
+    {
+      "name": "shared-inputs",
+      "directory": "overlays/shared-inputs"
+    },
+    {
+      "name": "shared-edit-main",
+      "directory": "overlays/shared-edit-main"
+    },
+    {
+      "name": "shared-edit-test",
+      "directory": "overlays/shared-edit-test"
+    },
+    {
+      "name": "shared-edit-payload",
+      "directory": "overlays/shared-edit-payload"
+    },
+    {
+      "name": "shared-instance-bootstrap",
+      "directory": "overlays/shared-instance-bootstrap"
+    },
+    {
+      "name": "shared-classic-bootstrap",
+      "directory": "overlays/shared-classic-bootstrap"
+    },
+    {
+      "name": "classic-native-edit",
+      "directory": "overlays/classic-native-edit"
+    },
+    {
+      "name": "classic-native",
+      "directory": "overlays/classic-native"
+    },
+    {
+      "name": "classic-generated-values-edit",
+      "directory": "overlays/classic-generated-values-edit"
+    },
+    {
+      "name": "classic-generated-values",
+      "directory": "overlays/classic-generated-values"
+    },
+    {
+      "name": "instance-subpackage",
+      "directory": "overlays/instance-subpackage"
+    },
+    {
+      "name": "instance-subpackage-values-edit",
+      "directory": "overlays/instance-subpackage-values-edit"
+    },
+    {
+      "name": "instance-subpackage-values",
+      "directory": "overlays/instance-subpackage-values"
+    },
+    {
+      "name": "authored-parent",
+      "directory": "overlays/authored-parent"
+    },
+    {
+      "name": "shared-member",
+      "directory": "overlays/shared-member"
     }
   ],
   "cases": [
@@ -51,6 +227,9 @@
       "name": "root-partition",
       "description": "Repository-root discovery retains three colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.",
       "setup": [
+        {
+          "commit": "multi-cluster-empty"
+        },
         {
           "overlay": "root-partition"
         }
@@ -264,6 +443,9 @@
       "description": "The diff removes the utility cluster and the reverse diff adds it. Both show only the main cluster change and leave the test cluster unchanged. Independent selected entries establish the payloads.",
       "setup": [
         {
+          "commit": "multi-cluster-empty"
+        },
+        {
           "overlay": "one-sided-diff"
         }
       ],
@@ -428,6 +610,792 @@
             "expect": {
               "stdout": "expect/one-sided-diff-selected-original-utility.stdout",
               "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-instance",
+      "description": "Two clusters reach the same runnable application through their own source. Explicit ancestor builds keep the workload scope, and direct sync targets include bootstrap output.",
+      "setup": [
+        {
+          "commit": "shared-instance-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-root.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-main",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-ancestor.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-main-sync-target",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/main/sync",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-main.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-test",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-ancestor.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-test-sync-target",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/test/sync",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-test.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-main",
+          "edit": {
+            "overlay": "shared-inputs"
+          }
+        },
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "shared-edit-main"
+          }
+        },
+        {
+          "id": "diff-main",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:shared-instance-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-diff-main.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-test",
+          "edit": {
+            "overlay": "shared-inputs"
+          }
+        },
+        {
+          "id": "edit-test",
+          "edit": {
+            "overlay": "shared-edit-test"
+          }
+        },
+        {
+          "id": "diff-test",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:shared-instance-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-diff-test.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-payload",
+          "edit": {
+            "overlay": "shared-inputs"
+          }
+        },
+        {
+          "id": "edit-payload",
+          "edit": {
+            "overlay": "shared-edit-payload"
+          }
+        },
+        {
+          "id": "diff-payload",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:shared-instance-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-diff-payload.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-classic",
+      "description": "Two clusters reach the same runnable application through their own source.",
+      "setup": [
+        {
+          "commit": "shared-classic-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-classic-root.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-main",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-classic-main.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-test",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-classic-test.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-main",
+          "edit": {
+            "overlay": "shared-inputs"
+          }
+        },
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "shared-edit-main"
+          }
+        },
+        {
+          "id": "diff-main",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:shared-classic-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-diff-main.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-test",
+          "edit": {
+            "overlay": "shared-inputs"
+          }
+        },
+        {
+          "id": "edit-test",
+          "edit": {
+            "overlay": "shared-edit-test"
+          }
+        },
+        {
+          "id": "diff-test",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:shared-classic-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-diff-test.stdout",
+              "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "classic-native",
+      "description": "A builder at a classic sync target preserves the ancestor build and creates no diff for unchanged output.",
+      "setup": [
+        {
+          "commit": "classic-native-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "add-builder",
+          "edit": {
+            "overlay": "classic-native-edit"
+          }
+        },
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/classic-native-build.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/x",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/classic-native-build.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:classic-native-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/classic-native-diff.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "classic-generated-values",
+      "description": "The root diff uses generated values from the classic bootstrap package when a component changes.",
+      "setup": [
+        {
+          "commit": "classic-generated-values-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-component",
+          "edit": {
+            "overlay": "classic-generated-values-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:classic-generated-values-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/classic-generated-values-diff.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "instance-subpackage",
+      "description": "A FluxInstance in a native package below its sync target renders from the repository and cluster paths.",
+      "setup": [
+        {
+          "commit": "instance-subpackage-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/instance-subpackage-build.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/x",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/instance-subpackage-build.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "instance-subpackage-values",
+      "description": "A nested FluxInstance sync patch adds substitution to its child before the root diff runs.",
+      "setup": [
+        {
+          "commit": "instance-subpackage-values-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-variables",
+          "edit": {
+            "overlay": "instance-subpackage-values-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:instance-subpackage-values-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/instance-subpackage-values-diff.stdout",
+              "stderr": "expect/shared-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "authored-parent",
+      "description": "Two bootstrap targets in one authored parent retain separate cluster output.",
+      "setup": [
+        {
+          "commit": "authored-parent-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/authored-parent.stdout",
+              "stderr": "expect/authored-parent.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-member",
+      "description": "Accepted reach into a shared member leaves the classic bootstrap and private payload of the other cluster intact.",
+      "setup": [
+        {
+          "commit": "shared-member-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-member.stdout",
+              "stderr": "expect/shared-member.stderr",
               "code": 0
             }
           }
@@ -814,6 +1782,635 @@
         "root-partition"
       ],
       "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/shared/kustomization.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/shared/workload.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/payload/kustomization.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/payload/value.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/main/sync/apps.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/main/sync/marker.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-edit-main/repo/main/sync/marker.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/test/sync/apps.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/test/sync/marker.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-edit-test/repo/test/sync/marker.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-edit-payload/repo/payload/value.yaml",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-root.stderr",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-selected.stderr",
+      "cases": [
+        "shared-instance",
+        "shared-classic",
+        "classic-native",
+        "classic-generated-values",
+        "instance-subpackage",
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-instance-bootstrap/repo/main/sync/flux-instance.yaml",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-instance-ancestor.stdout",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Complete ancestor output from the shared workload and its applying Kustomization."
+    },
+    {
+      "path": "expect/shared-instance-main.stdout",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-instance-bootstrap/repo/test/sync/flux-instance.yaml",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-instance-test.stdout",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-instance-root.stdout",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-diff-main.stdout",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-diff-test.stdout",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-diff-payload.stdout",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-classic-bootstrap/repo/main/sync/gotk-sync.yaml",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-classic-main.stdout",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-classic-bootstrap/repo/test/sync/gotk-sync.yaml",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-classic-test.stdout",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-classic-root.stdout",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-native-edit/repo/clusters/x/kustomization.yaml",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-native/repo/clusters/x/flux-system/kustomization.yaml",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-native/repo/clusters/x/flux-system/gotk-sync.yaml",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-native/repo/clusters/x/marker.yaml",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/classic-native-build.stdout",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/classic-native-diff.stdout",
+      "cases": [
+        "classic-native"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values-edit/repo/component/value.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/clusters/x/flux-system/kustomization.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/clusters/x/flux-system/gotk-sync.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/clusters/x/kustomization.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/clusters/x/apps.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/apps/kustomization.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/component/kustomization.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/component/value.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/classic-generated-values-diff.stdout",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage/repo/clusters/x/flux-system/kustomization.yaml",
+      "cases": [
+        "instance-subpackage"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage/repo/clusters/x/flux-system/flux-instance.yaml",
+      "cases": [
+        "instance-subpackage"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage/repo/clusters/x/marker.yaml",
+      "cases": [
+        "instance-subpackage"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/instance-subpackage-build.stdout",
+      "cases": [
+        "instance-subpackage"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values-edit/repo/clusters/x/cluster-vars.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/clusters/x/flux-system/kustomization.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/clusters/x/flux-system/flux-instance.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/clusters/x/apps.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/clusters/x/cluster-vars.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/apps/kustomization.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/instance-subpackage-values/repo/apps/service.yaml",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/instance-subpackage-values-diff.stdout",
+      "cases": [
+        "instance-subpackage-values"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/main/sync/app-source.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-instance-bootstrap/repo/main/sync/kustomization.yaml",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-classic-bootstrap/repo/main/sync/kustomization.yaml",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-inputs/repo/test/sync/app-source.yaml",
+      "cases": [
+        "shared-instance",
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-instance-bootstrap/repo/test/sync/kustomization.yaml",
+      "cases": [
+        "shared-instance"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-classic-bootstrap/repo/test/sync/kustomization.yaml",
+      "cases": [
+        "shared-classic"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/classic-generated-values/repo/apps/app.yaml",
+      "cases": [
+        "classic-generated-values"
+      ],
+      "purpose": "Unchanged application object for the component diff."
+    },
+    {
+      "path": "overlays/authored-parent/repo/kustomization.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/first/kustomization.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/first/source.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/first/sync.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/first/marker.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/second/kustomization.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/second/source.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/second/sync.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/authored-parent/repo/second/marker.yaml",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "expect/authored-parent.stdout",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Complete cluster output for the authored package topology."
+    },
+    {
+      "path": "expect/authored-parent.stderr",
+      "cases": [
+        "authored-parent"
+      ],
+      "purpose": "Complete cluster output for the authored package topology."
+    },
+    {
+      "path": "overlays/shared-member/repo/a/kustomization.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/a/source.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/a/sync.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/a/attach.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/b/kustomization.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/b/source.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/b/sync.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/b/shared/kustomization.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/b/shared/app.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/payload-shared/kustomization.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/payload-shared/marker.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/payload-b/kustomization.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "overlays/shared-member/repo/payload-b/marker.yaml",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Authored cluster, source, or workload declaration."
+    },
+    {
+      "path": "expect/shared-member.stdout",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Complete cluster output for the authored package topology."
+    },
+    {
+      "path": "expect/shared-member.stderr",
+      "cases": [
+        "shared-member"
+      ],
+      "purpose": "Complete cluster output for the authored package topology."
     }
   ]
 }

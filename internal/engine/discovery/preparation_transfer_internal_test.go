@@ -46,7 +46,6 @@ func TestResult_PreparationTransfer(t *testing.T) {
 	assert.NoError(t, err)
 	request := kustomize.RenderRequest{
 		Source: source, Spec: owner, SubPath: owner.Path,
-		ApplyIgnore: kustomize.ApplySourceIgnore(owner, source),
 	}
 	assert.Equal(t, slot.Matches(cfg.Trees, &request), true)
 	var destination base.Preparation[kustomize.Preparation]
@@ -119,7 +118,6 @@ func TestResult_AggregatePreparationTransfer(t *testing.T) {
 	defer execution.Close()
 	request := kustomize.RenderRequest{
 		Work: cfg.Work.RenderWork(), Source: input, Spec: owner, SubPath: owner.Path,
-		ApplyIgnore: kustomize.ApplySourceIgnore(owner, input),
 	}
 	request.Preparation = execution.Prepare(
 		&destination,
@@ -199,7 +197,7 @@ func TestResult_PlannedBootstrapPreparationTransfer(t *testing.T) {
 
 			cfg.Entry, cfg.Store = &entries[0], store.New()
 			cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
-			t.Cleanup(cfg.Trees.Close)
+
 			session, err := BeginTest(t.Context(), cfg)
 			assert.NoError(t, err)
 			t.Cleanup(session.Close)
@@ -217,7 +215,7 @@ func TestResult_PlannedBootstrapPreparationTransfer(t *testing.T) {
 			assert.FatalIf(t, result == nil, "construction did not freeze")
 			request := kustomize.RenderRequest{
 				Work: cfg.Work.RenderWork(), Source: input, Spec: frame.owner, SubPath: frame.owner.Path,
-				ApplyIgnore: true, Preparation: result.Preparation(id),
+				Preparation: result.Preparation(id),
 			}
 			assert.Equal(t, request.Preparation.Matches(cfg.Trees, &request), true)
 			docs, _, err := kustomize.Render(t.Context(), cfg.Trees, request, cfg.RemoteRetry)

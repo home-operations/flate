@@ -131,7 +131,7 @@ func testConfig(t *testing.T, cfg Config) Config {
 	cfg.PrepareDocuments = base.PrepareDocuments
 	cfg.Cache = cachetest.New(t, "", cache.New)
 	cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
-	t.Cleanup(cfg.Trees.Close)
+
 	return cfg
 }
 
@@ -153,7 +153,7 @@ func testReceiptTrees(t *testing.T, cacheDir string, persistent bool) receiptTre
 	trees := kustomize.NewTreeCache(owner, nil, task.NewBounded(2))
 	closeCache := func() {
 		t.Helper()
-		trees.Close()
+
 		assert.NoError(t, owner.Close())
 	}
 	t.Cleanup(closeCache)
@@ -187,8 +187,8 @@ func preparedRequest(
 	prepared, err := kustomize.Prepare(ks, nil)
 	assert.NoError(t, err)
 	return kustomize.RenderRequest{
-		Source:              source,
-		ApplyIgnore:         ks.SourceID() == manifest.BootstrapSourceID || source.InputAlias || source.Content == "",
+		Source: source,
+
 		SubPath:             prepared.Path,
 		Spec:                prepared,
 		StrictSubstitutions: cfg.StrictSubstitutions,

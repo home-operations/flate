@@ -112,7 +112,7 @@ func TestE2E_ReadyEntrySource(t *testing.T) {
 	t.Setenv("FLATE_CACHE_DIR", "")
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "clusters/prod/config/kustomization.yaml", "resources: [flux.yaml, apps.yaml]\n")
-	testutil.WriteFile(t, root, "clusters/prod/config/flux.yaml", `apiVersion: fluxcd.controlplane.io/v1
+	instance := `apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
 metadata: {name: flux, namespace: flux-system}
 spec:
@@ -122,7 +122,8 @@ spec:
     url: https://declared.invalid/cluster.git
     ref: refs/heads/main
     path: clusters/prod/config
-`)
+`
+	testutil.WriteFile(t, root, "clusters/prod/config/flux.yaml", instance)
 	testutil.WriteFile(
 		t,
 		root,
@@ -142,12 +143,13 @@ spec:
 		"entry",
 		&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
 	)
+	ancestor := filepath.Join(root, "clusters", "prod")
 	want := "\n  ✓  Kustomization  flux-system/cluster-apps\n  ✓  GitRepository  flux-system/cluster-repository\n\n  ✓ 2 passed   <DUR>\n"
 	for range 2 {
 		t.Setenv("XDG_CACHE_HOME", t.TempDir())
 		var stdout, stderr bytes.Buffer
 		code := cli.Run([]string{
-			"test", "all", "--path", filepath.Join(root, "clusters", "prod"),
+			"test", "all", "--path", ancestor,
 			"--concurrency=2", "--no-progress", "--log-level=error",
 		}, &stdout, &stderr, cli.RunConfig{})
 		got := entrySourceTestOutput(stdout.String())
@@ -156,6 +158,36 @@ spec:
 		assert.Equal(t, stderr.String(), "")
 		assert.Equal(t, strings.Count(stdout.String(), "✓  GitRepository  flux-system/cluster-repository\n"), 1)
 	}
+
+	t.Run("ancestor producer failure", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", t.TempDir())
+		producer := `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: sync-producer, namespace: flux-system}
+spec:
+  dependsOn:
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: helmreleases.helm.toolkit.fluxcd.io
+  resourcesTemplate: |
+    ` + strings.ReplaceAll(strings.TrimSuffix(instance, "\n"), "\n", "\n    ") + "\n"
+		testutil.WriteFile(t, root, "clusters/prod/config/flux.yaml", producer)
+		var stdout, stderr bytes.Buffer
+		code := cli.Run([]string{
+			"test", "all", "--path", ancestor, "--concurrency=2", "--no-progress", "--log-level=error",
+		}, &stdout, &stderr, cli.RunConfig{})
+		want := `
+  ✓  Kustomization  flux-system/cluster-apps
+  ✓  GitRepository  flux-system/cluster-repository
+  ⊘  ResourceSet    flux-system/sync-producer  blocked by helmreleases.helm.toolkit.fluxcd.io (not found)
+
+  ✗ 2 passed · 1 blocked   <DUR>
+`
+		assert.Equal(t, code, 1)
+		assert.Equal(t, entrySourceTestOutput(stdout.String()), want)
+		assert.Equal(t, stderr.String(), "")
+		assert.Equal(t, strings.Count(stdout.String(), "flux-system/sync-producer"), 1)
+	})
 }
 
 func TestE2E_ProducedEntrySource(t *testing.T) {

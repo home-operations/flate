@@ -7,7 +7,7 @@ import (
 
 type admissionReader interface {
 	SourceAdmission(manifest.NamedResource, manifest.NamedResource) bool
-	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
+	Lookup(manifest.NamedResource) (manifest.BaseManifest, store.DeclarationPolicy)
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact

@@ -369,6 +369,19 @@ func testMembershipFullBuildDelta(t *testing.T, scenario string) {
 	newDocs := newDocsSnapshot.documents
 	membershipFullBuildValues(t, scenario, oldDocsSnapshot, newDocsSnapshot)
 	want := membershipDelta(oldDocs, newDocs)
+	if scenario == "same identity different producers" {
+		if len(want) != 4 {
+			t.Fatalf("full-build delta must contain both producers: %+v", want)
+		}
+		for doc := range want {
+			if doc.Parent.Name != "second" {
+				delete(want, doc)
+			}
+		}
+		if len(want) != 2 {
+			t.Fatalf("full-build delta for the winning producer: %+v", want)
+		}
+	}
 	result := membershipDiff(t, after, append(flags, "--path-orig", before))
 	code := result.Code
 	if code != 0 {
@@ -388,6 +401,11 @@ func testMembershipFullBuildDelta(t *testing.T, scenario string) {
 	if !slices.Contains([]string{"addition", "deletion", "file move", "namespace move"}, scenario) {
 		return
 	}
+	testMembershipGitDelta(t, before, after, want)
+}
+
+func testMembershipGitDelta(t *testing.T, before, after string, want map[membershipDocument]int) {
+	t.Helper()
 	cold := t.TempDir()
 	repo := testutil.GitInit(t, cold)
 	testutil.CopyTree(t, before, cold)
@@ -403,8 +421,8 @@ func testMembershipFullBuildDelta(t *testing.T, scenario string) {
 		t.Fatal(err)
 	}
 	testutil.CopyTree(t, after, cold)
-	result = membershipDiff(t, cold, []string{"--base", "HEAD"})
-	code = result.Code
+	result := membershipDiff(t, cold, []string{"--base", "HEAD"})
+	code := result.Code
 	if code != 0 {
 		t.Errorf("cold Git diff exit=%d, want 0", code)
 	}

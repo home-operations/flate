@@ -155,7 +155,7 @@ spec:
 	}
 	cacheOwner := cachetest.New(t, "", cache.New)
 	trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
-	t.Cleanup(trees.Close)
+
 	input := &store.SourceArtifact{LocalPath: root, FS: files}
 	var recorder manifest.WorkRecorder
 	cfg := Config{
@@ -171,10 +171,10 @@ spec:
 	entries, err := session.Plan(t.Context())
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected one synthetic entry: %v", entries)
-	planned := entries[0].prepared.enclosing
+	planned := entries[0].prepared.generatorPackages
 	assert.Equal(t, len(planned) != 0, tc.want)
 	admission := session.admission()
-	admission.enclosingPackages = planned
+	admission.generatorPackages = planned
 	inventories := assertEnclosingInventoryReuse(t, admission, recorder.Scope(), planned)
 
 	generated := testutil.KustomizationID("flux-system", "flux-system")
@@ -229,12 +229,12 @@ func assertEnclosingInventoryReuse(
 	t *testing.T, admission *Admission, work manifest.WorkScope, planned []string,
 ) []*declarationRender {
 	t.Helper()
-	inventories, err := admission.enclosingInventories(t.Context())
+	inventories, err := admission.generatorInventories(t.Context())
 	assert.NoError(t, err)
 	assert.Equal(t, len(inventories), len(planned))
 	preparation := work.Source(manifest.BootstrapSourceID).RenderWork().Preparation()
 	assert.Equal(t, preparation.Counts.OwnerPrepares, uint64(len(planned)))
-	retained, err := admission.enclosingInventories(t.Context())
+	retained, err := admission.generatorInventories(t.Context())
 	assert.NoError(t, err)
 	assert.Equal(t, preparation.Counts.OwnerPrepares, uint64(len(planned)))
 	recorded := work.Snapshot(0)

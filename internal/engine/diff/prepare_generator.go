@@ -9,11 +9,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func refineGenerated(idx map[pairKey]int, entries []pair, docs [2][]Doc) {
+func refineGenerated(idx map[manifest.NamedResource]int, entries []pair, docs [2][]Doc) {
 	var eligible [2]bool
 	for k, entry := range idx {
 		p := &entries[entry]
-		if generatorOriginal(k.resource, p, docs) != nil {
+		if generatorOriginal(k, p, docs) != nil {
 			eligible[0] = eligible[0] || p.Old != nil
 			eligible[1] = eligible[1] || p.New != nil
 		}
@@ -26,37 +26,41 @@ func refineGenerated(idx map[pairKey]int, entries []pair, docs [2][]Doc) {
 		pairs [2]*pair
 		count [2]int
 	}
-	var groups map[pairKey]candidates
+	type generatorKey struct {
+		stem, producer manifest.NamedResource
+	}
+	var groups map[generatorKey]candidates
 	for k, entry := range idx {
 		p := &entries[entry]
-		original := generatorOriginal(k.resource, p, docs)
+		original := generatorOriginal(k, p, docs)
 		if original == nil {
 			continue
 		}
-		name := verifiedGeneratorName(original, k.resource.Name)
+		name := verifiedGeneratorName(original, k.Name)
 		if name == "" {
 			continue
 		}
 		if groups == nil {
-			groups = make(map[pairKey]candidates)
+			groups = make(map[generatorKey]candidates)
 		}
-		k.resource.Name = name
-		side := 0
+		k.Name = name
+		side, pos := 0, p.OldPos
 		if p.Old == nil {
-			side = 1
+			side, pos = 1, p.NewPos
 		}
-		group := groups[k]
+		key := generatorKey{stem: k, producer: docs[side][pos].producer().ID}
+		group := groups[key]
 		group.count[side]++
 		group.pairs[side] = p
-		groups[k] = group
+		groups[key] = group
 	}
-	for k, group := range groups {
+	for _, group := range groups {
 		if group.count != [2]int{1, 1} {
 			continue
 		}
 		old, current := group.pairs[0], group.pairs[1]
 		current.Old, current.OldChart, current.OldPos = old.Old, old.OldChart, old.OldPos
-		delete(idx, pairKey{parent: k.parent, resource: old.Resource})
+		delete(idx, old.Resource)
 	}
 }
 

@@ -11,6 +11,50 @@ import (
 func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 	t.Parallel()
 
+	for _, tc := range []struct {
+		name      string
+		sameInput bool
+	}{
+		{name: "supplied_replaces_construction"},
+		{name: "supplied_changes_authority_for_same_input", sameInput: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			provisional := &manifest.GitRepository{Name: "input", Namespace: "apps"}
+			provisional.URL = "https://fixture.invalid/provisional"
+			id := provisional.Named()
+			s.AddConstructionDeclaration(provisional, nil)
+			assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(provisional))
+			policy := s.Policy(id)
+			assert.Equal(t, policy.RootCandidate(), false)
+			assert.Equal(t, policy.Child(provisional).Policy(id), policy)
+			artifact := &SourceArtifact{Key: "provisional"}
+			s.SetArtifact(id, artifact)
+			s.UpdateStatus(id, StatusInfo{Status: StatusReady})
+			assert.Equal(t, s.GetArtifact(id, ArtifactContent), Artifact(artifact))
+			_, known := s.GetStatus(id)
+			assert.Equal(t, known, true)
+
+			supplied := provisional
+			if !tc.sameInput {
+				supplied = new(*provisional)
+				supplied.URL = "https://fixture.invalid/supplied"
+			}
+			s.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+			assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(supplied))
+			assert.Equal(t, s.Policy(id).Supplied(), true)
+			assert.Equal(t, s.Policy(id).RootCandidate(), true)
+			wantArtifact := Artifact(nil)
+			if tc.sameInput {
+				wantArtifact = artifact
+			}
+			assert.Equal(t, s.GetArtifact(id, ArtifactContent), wantArtifact)
+			_, known = s.GetStatus(id)
+			assert.Equal(t, known, tc.sameInput)
+		})
+	}
+
 	for _, namespace := range []string{"apps", ""} {
 		t.Run("authored_namespace="+namespace, func(t *testing.T) {
 			t.Parallel()

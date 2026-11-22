@@ -279,7 +279,7 @@ func (l *Loader) currentBuilt(
 				}) {
 			return nil, false
 		}
-		if current, policy := reads.Lookup(id); current != nil && policy.Origin == manifest.SuppliedDeclaration &&
+		if current, policy := reads.Lookup(id); current != nil && policy.Supplied() &&
 			reads.GetDeclaration(id) == current && current != record.Declaration {
 			continue
 		}

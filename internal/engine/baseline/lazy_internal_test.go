@@ -34,6 +34,22 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func admittedChanges(t *testing.T, result *Result) (*change.Set, [2]*store.SourceArtifact) {
+	t.Helper()
+	inputs := [2]*store.SourceArtifact{result.BaseInput, result.Source}
+	stores := [2]*store.Store{store.New(), store.New()}
+	for i, input := range inputs {
+		view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+			gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+		assert.NoError(t, err)
+		inputs[i] = input.WithSourceView(view)
+		stores[i].SetArtifact(manifest.BootstrapSourceID, inputs[i])
+	}
+	changes, err := change.Qualify(t.Context(), result.Changes, stores, manifest.WorkScope{})
+	assert.NoError(t, err)
+	return changes, inputs
+}
+
 func TestAutoResolve_LazyBaseReads(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -377,9 +393,10 @@ func testAutoResolvePolicyRoutesCase(t *testing.T, tc *policyRoutesCase) {
 		wantPaths = append(wantPaths, policy)
 		slices.Sort(wantPaths)
 	}
-	assert.Diff(t, res.Changes.Paths(), wantPaths)
+	selected, admitted := admittedChanges(t, res)
+	assert.Diff(t, selected.Paths(), wantPaths)
 	for _, config := range []change.DetectConfig{{}, {Candidates: map[string]bool{policy: false}}} {
-		compared, compareErr := change.Detect(t.Context(), res.BaseInput, res.Source, config)
+		compared, compareErr := change.Detect(t.Context(), admitted[0], admitted[1], config)
 		assert.NoError(t, compareErr)
 		assert.Diff(t, compared.Paths(), wantPaths)
 	}
@@ -387,7 +404,7 @@ func testAutoResolvePolicyRoutesCase(t *testing.T, tc *policyRoutesCase) {
 	for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
 		indexes[side] = testAutoResolvePolicyRouteInput(t, input, tc, side)
 	}
-	changes, err := res.Changes.WithReaders(t.Context(), indexes,
+	changes, err := selected.WithReaders(t.Context(), indexes,
 		[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
@@ -665,11 +682,12 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 		},
 	)
 	assert.NoError(t, err)
-	assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
+	selected, admitted := admittedChanges(t, res)
+	assert.Diff(t, selected.Paths(), []string{".sourceignore", "apps/b.yaml"})
 	for _, config := range []change.DetectConfig{{}, {Candidates: map[string]bool{".sourceignore": false}}} {
-		compared, compareErr := change.Detect(t.Context(), res.BaseInput, res.Source, config)
+		compared, compareErr := change.Detect(t.Context(), admitted[0], admitted[1], config)
 		assert.NoError(t, compareErr)
-		assert.Diff(t, compared.Paths(), res.Changes.Paths())
+		assert.Diff(t, compared.Paths(), selected.Paths())
 	}
 	testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
 	var indexes [2]*manifest.DiscoveryIndex
@@ -687,7 +705,7 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 		}
 		indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 	}
-	changes, err := res.Changes.WithReaders(
+	changes, err := selected.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
 			indexes[0],
 			indexes[1],

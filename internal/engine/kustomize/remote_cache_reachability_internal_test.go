@@ -180,7 +180,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 			!valid, "unchanged recorded graph: valid=%t, %v", valid, stillValidErr)
 	}
 	renderRequestSnapshot := request()
-	key := renderKey(&renderRequestSnapshot, root, nil)
+	key := renderKey(&renderRequestSnapshot, root, "")
 	if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 		snap = persisted
 		publishTestFrame(

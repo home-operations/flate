@@ -1,0 +1,7 @@
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
+  a: ✓ 0 failed
+
+  b: ✓ 0 failed

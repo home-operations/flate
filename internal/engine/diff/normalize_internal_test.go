@@ -279,3 +279,55 @@ func TestComparison_GeneratorNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestComparison_ProducerLabels(t *testing.T) {
+	t.Parallel()
+	left, right := ncm("greeting", "k", "before"), ncm("greeting", "k", "after")
+	right.Parent.Kind, right.Parent.Name = manifest.KindKustomization, "head"
+	left.Parent = right.Parent
+	left.Parent.Name = "base"
+	keys := []string{
+		"kustomize.toolkit.fluxcd.io/name", "kustomize.toolkit.fluxcd.io/namespace",
+		"resourceset.fluxcd.controlplane.io/name", "resourceset.fluxcd.controlplane.io/namespace",
+		"helm.toolkit.fluxcd.io/name", "helm.toolkit.fluxcd.io/namespace",
+	}
+	for i, doc := range []Doc{left, right} {
+		value := []string{"old", "new"}[i]
+		labels := map[string]any{"custom": value}
+		for _, key := range keys {
+			labels[key] = value
+		}
+		doc.Manifest["metadata"].(map[string]any)["labels"] = labels
+		doc.Manifest["spec"] = map[string]any{"template": map[string]any{
+			"metadata": map[string]any{"labels": map[string]any{keys[0]: value}},
+		}}
+	}
+	before, after := manifest.DeepCopyMap(left.Manifest), manifest.DeepCopyMap(right.Manifest)
+	for _, move := range []bool{true, false} {
+		name := "same producer"
+		if move {
+			name = "different producers"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			current := right
+			if !move {
+				current.Parent = left.Parent
+			}
+			changes := jsonChanges(t, []Doc{left}, []Doc{current}, &Options{})
+			assert.Equal(t, len(changes), 1)
+			change := changes[0]
+			assert.Equal(t, change.ProducerChange != nil, move)
+			for i, got := range []map[string]any{change.Old, change.New} {
+				want := []map[string]any{before, after}[i]
+				if move {
+					want = manifest.DeepCopyMap(want)
+					want["metadata"].(map[string]any)["labels"] = map[string]any{"custom": []string{"old", "new"}[i]}
+				}
+				assert.Diff(t, got, want)
+			}
+			assert.Diff(t, left.Manifest, before)
+			assert.Diff(t, right.Manifest, after)
+		})
+	}
+}

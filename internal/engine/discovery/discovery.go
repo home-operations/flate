@@ -4,6 +4,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -89,13 +90,14 @@ type Config struct {
 
 // Session retains invocation-local declaration construction until Freeze.
 type Session struct {
+	bootstrapInput         *store.SourceArtifact
 	entryBuilderInput      *store.SourceArtifact
 	entryBuilderPath       string
 	entryBuilder           bool
 	aggregate              bool
 	aggregateRequiresBuild bool
 	entryPackagesToQualify [][]selection.OccurrenceFacts
-	enclosingPackages      []string
+	generatorPackages      []string
 	publicOperands         []manifest.NamedResource
 	entryPackages          []*plannedPackage
 	planner                *entryPlanner
@@ -248,7 +250,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 		admission.qualification = nil
 	}
 	if admission.qualification != nil && d.cfg.Trees != nil && d.cfg.Selection.Changed && d.binding == (Binding{}) {
-		d.entryReceipt(ctx, admission, admission.input)
+		d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
 		if d.entryReceiptRequest != nil {
 			admission.entryDemand = true
 			admission.qualification.closed = false
@@ -332,25 +334,21 @@ func newDiscoverer(config *Config) *Session {
 	if input == nil {
 		return d
 	}
-	if !cfg.Entry.matches(input, cfg.Path) {
-		if input == cfg.Entry.Input && cfg.Path == cfg.Entry.Path {
-			d.entryPackagesToQualify = prepared.packagesToQualify
-			d.enclosingPackages = prepared.enclosing
-			d.cfg.Entry = cfg.Entry
-			d.aliasViews = maps.Clone(prepared.aliasViews)
-			if cfg.Projections == nil {
-				l.Options.Projections = prepared.projections
-			}
-			d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
-		}
+	matched := cfg.Entry.matches(input, cfg.Path)
+	if !matched && (input != cfg.Entry.Input || cfg.Path != cfg.Entry.Path) {
 		return d
 	}
-	l.Options.ParsedInputs = prepared.parsed
-	d.entryPackages = prepared.packages
+	if matched {
+		l.Options.ParsedInputs = prepared.parsed
+		d.entryPackages = prepared.packages
+	} else if cfg.Projections == nil {
+		l.Options.Projections = prepared.projections
+	}
 	d.aliasViews = maps.Clone(prepared.aliasViews)
 	d.entryPackagesToQualify = prepared.packagesToQualify
-	d.enclosingPackages = prepared.enclosing
+	d.generatorPackages = prepared.generatorPackages
 	d.cfg.Entry = cfg.Entry
+	d.cfg.Path = cmp.Or(cfg.Entry.target, cfg.Path)
 	d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 	return d
 }
@@ -527,7 +525,7 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 	if q := admission.qualification; q != nil && q.previous.Receipt == nil && d.cfg.Trees != nil {
 		needsHistory := d.hasEntryOperands() || d.entryReceiptRequest != nil || !d.hasEntryBuilder()
 		if needsHistory {
-			d.entryReceipt(ctx, admission, admission.input)
+			d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
 		}
 	}
 	for {
@@ -645,7 +643,8 @@ func (d *Session) entryCandidateReady(
 		return len(candidate.DependsOn) == 0
 	}
 	selected := d.resolvedSources.snapshot()[candidate.EffectiveSourceID()]
-	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact)
+	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact) ||
+		selected.usesUnfilteredInput(d.bootstrapInput, artifact)
 	// An independent bootstrap entry stays eligible even when its preparation fails.
 	if workingInput && !hasEntryPrerequisites(candidate) {
 		return true

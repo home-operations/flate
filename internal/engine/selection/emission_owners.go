@@ -8,13 +8,15 @@ import (
 )
 
 type documentOwner struct {
-	child, emitter manifest.NamedResource
+	child    manifest.NamedResource
+	producer *manifest.DiagnosticIdentity
+	peerOnly bool
 }
 
 type documentOwners map[int]documentOwner
 
 func (o *documentOwners) record(position int, owner *documentOwner) {
-	if owner.child == (manifest.NamedResource{}) {
+	if owner.child == (manifest.NamedResource{}) && owner.producer == nil && !owner.peerOnly {
 		return
 	}
 	if *o == nil {
@@ -35,13 +37,35 @@ func (o *batchOwners) set(parent manifest.NamedResource, owners documentOwners) 
 	(*o)[parent] = owners
 }
 
-func (o *batchOwners) record(parent, emitter manifest.NamedResource, position int, document *DocumentFact) {
-	if !document.GeneratedOverlap {
+func (o *batchOwners) record(parent manifest.NamedResource, position int, owner *documentOwner) {
+	if owner.child == (manifest.NamedResource{}) && owner.producer == nil && !owner.peerOnly {
 		return
 	}
 	owners := (*o)[parent]
-	owners.record(position, &documentOwner{child: document.Child, emitter: emitter})
+	owners.record(position, owner)
 	o.set(parent, owners)
+}
+
+func (o *batchOwners) producers(batches []manifest.DocumentBatch) map[int]map[int]manifest.DiagnosticIdentity {
+	if len(*o) == 0 {
+		return nil
+	}
+	var producers map[int]map[int]manifest.DiagnosticIdentity
+	for i, batch := range batches {
+		for position, owner := range (*o)[batch.Parent.Named()] {
+			if owner.producer == nil {
+				continue
+			}
+			if producers == nil {
+				producers = make(map[int]map[int]manifest.DiagnosticIdentity)
+			}
+			if producers[i] == nil {
+				producers[i] = make(map[int]manifest.DiagnosticIdentity)
+			}
+			producers[i][position] = *owner.producer
+		}
+	}
+	return producers
 }
 
 type selectedOccurrence struct {
@@ -58,22 +82,33 @@ func collapseOverlaps(
 	}
 	selected := make(map[manifest.NamedResource]selectedOccurrence)
 	for i, batch := range batches {
-		positions := owners[batch.Parent.Named()]
+		parent := batch.Parent.Named()
+		positions := owners[parent]
+		if len(positions) == 0 {
+			continue
+		}
 		for j := range batch.Documents {
-			owner, shared := positions[j]
-			if !shared {
+			owner := positions[j]
+			if owner.child == (manifest.NamedResource{}) {
 				continue
 			}
+			emitter := parent
+			if owner.producer != nil {
+				emitter = owner.producer.ID
+			}
 			winner, found := selected[owner.child]
-			if !found || store.PreferProducer(owner.emitter, winner.emitter) {
-				selected[owner.child] = selectedOccurrence{batch: i, position: j, emitter: owner.emitter}
+			if !found || store.PreferProducer(emitter, winner.emitter) {
+				selected[owner.child] = selectedOccurrence{batch: i, position: j, emitter: emitter}
 			}
 		}
+	}
+	if len(selected) == 0 {
+		return batches
 	}
 	for i := range batches {
 		batch := &batches[i]
 		if positions := owners[batch.Parent.Named()]; len(positions) != 0 {
-			dropOverlappingDocuments(batch, i, positions, selected)
+			owners[batch.Parent.Named()] = dropOverlappingDocuments(batch, i, positions, selected)
 		}
 	}
 	return slices.DeleteFunc(batches, func(batch manifest.DocumentBatch) bool { return len(batch.Documents) == 0 })
@@ -84,28 +119,37 @@ func dropOverlappingDocuments(
 	batchIndex int,
 	owners documentOwners,
 	selected map[manifest.NamedResource]selectedOccurrence,
-) {
+) documentOwners {
 	var documents []map[string]any
 	var identities []manifest.NamedResource
+	var kept documentOwners
 	filtered := false
 	for i, doc := range batch.Documents {
-		if owner, shared := owners[i]; shared {
+		owner := owners[i]
+		if owner.child != (manifest.NamedResource{}) {
 			winner := selected[owner.child]
 			if winner.batch != batchIndex || winner.position != i {
 				if !filtered {
 					documents = slices.Clone(batch.Documents[:i])
 					identities = slices.Clone(batch.Identities[:i])
+					for position := range i {
+						previous := owners[position]
+						kept.record(position, &previous)
+					}
 					filtered = true
 				}
 				continue
 			}
 		}
 		if filtered {
+			kept.record(len(documents), &owner)
 			documents = append(documents, doc)
 			identities = append(identities, batch.Identities[i])
 		}
 	}
 	if filtered {
 		batch.Documents, batch.Identities = documents, identities
+		return kept
 	}
+	return owners
 }

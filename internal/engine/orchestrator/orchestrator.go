@@ -294,8 +294,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		return err
 	}
 
-	_, o.cfg.Input, err = res.Admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
-	if err != nil {
+	if err := o.bindBootstrap(ctx, res.Admission); err != nil {
 		return err
 	}
 
@@ -348,12 +347,23 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 			break
 		}
 	}
-	_, o.cfg.Input, err = o.admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
-	if err != nil {
+	if err := o.bindBootstrap(ctx, o.admission); err != nil {
 		return err
 	}
 
 	o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
+	return nil
+}
+
+func (o *Orchestrator) bindBootstrap(ctx context.Context, admission *discovery.Admission) error {
+	_, input, err := admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
+	if err != nil {
+		return err
+	}
+	if o.cfg.Input != nil && o.cfg.BaseInput == o.cfg.Input {
+		o.cfg.BaseInput = input
+	}
+	o.cfg.Input = input
 	return nil
 }
 

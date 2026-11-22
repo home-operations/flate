@@ -3,7 +3,6 @@ package diff
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -41,16 +40,14 @@ func (s Snapshot) subject(key manifest.NamedResource) manifest.DiagnosticIdentit
 	if subject, ok := s.Subjects[key]; ok {
 		return subject
 	}
-	var subject manifest.DiagnosticIdentity
-	for id, comparison := range s.ProducerKeys {
-		if comparison == key && (subject.ID == (manifest.NamedResource{}) || id.Compare(subject.ID) < 0) {
-			subject = manifest.DiagnosticFor(id, nil)
-			if captured, ok := s.Subjects[id]; ok {
-				subject = captured
-			}
-		}
+	id, found := s.Bindings.Producer(key)
+	if !found {
+		return manifest.DiagnosticIdentity{}
 	}
-	return subject
+	if subject, ok := s.Subjects[id]; ok {
+		return subject
+	}
+	return manifest.DiagnosticFor(id, nil)
 }
 
 func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
@@ -129,28 +126,32 @@ func suppress(orig, current Snapshot) suppressionResult {
 	return suppressionResult{Orig: l, Current: r, Suppressed: suppressed}
 }
 
-func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side side) []manifest.DocumentBatch {
-	out := make([]manifest.DocumentBatch, 0, len(s.Manifests))
-	for _, batch := range s.Manifests {
-		if batch.Parent == nil {
-			out = append(out, batch)
-			continue
+func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side side) Snapshot {
+	if len(plans) == 0 {
+		return s
+	}
+	out := s
+	out.Manifests = make([]manifest.DocumentBatch, 0, len(s.Manifests))
+	out.Producers = nil
+	for i, batch := range s.Manifests {
+		if batch.Parent != nil {
+			key, _ := s.Bindings.Slot(batch.Parent.Named())
+			if plan, ok := plans[key]; ok {
+				plan.parent = objectParent(batch.Parent)
+				if plan.side == sideBoth || plan.side != side {
+					plan.count += len(batch.Documents)
+				}
+				plans[key] = plan
+				continue
+			}
 		}
-		id := batch.Parent.Named()
-		key := id
-		if comparison, ok := s.ProducerKeys[id]; ok {
-			key = comparison
+		if producers := s.Producers[i]; len(producers) != 0 {
+			if out.Producers == nil {
+				out.Producers = make(map[int]map[int]manifest.DiagnosticIdentity)
+			}
+			out.Producers[len(out.Manifests)] = producers
 		}
-		plan, ok := plans[key]
-		if !ok {
-			out = append(out, batch)
-			continue
-		}
-		plan.parent = objectParent(batch.Parent)
-		if plan.side == sideBoth || plan.side != side {
-			plan.count += len(batch.Documents)
-		}
-		plans[key] = plan
+		out.Manifests = append(out.Manifests, batch)
 	}
 	return out
 }
@@ -173,28 +174,10 @@ func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppre
 	if inputErr != nil {
 		return prepared{Subjects: options.subjects}, retained.Suppressed, inputErr
 	}
-	options.producerKeys = [2]map[manifest.NamedResource]manifest.NamedResource{
-		orig.pairingKeys(current.Manifests), current.pairingKeys(orig.Manifests),
-	}
-
 	return prepare(documents(retained.Orig), documents(retained.Current), &options), retained.Suppressed, nil
 }
 
-// A producer that also emits on the other side MUST pair under its own identity.
-func (s Snapshot) pairingKeys(other []manifest.DocumentBatch) map[manifest.NamedResource]manifest.NamedResource {
-	keys := s.ProducerKeys
-	for producer := range s.ProducerKeys {
-		if slices.ContainsFunc(other, func(batch manifest.DocumentBatch) bool {
-			return batch.Parent != nil && batch.Parent.Named() == producer
-		}) {
-			keys = maps.Clone(keys)
-			delete(keys, producer)
-		}
-	}
-	return keys
-}
-
 type suppressionResult struct {
-	Orig, Current []manifest.DocumentBatch
+	Orig, Current Snapshot
 	Suppressed    []Suppression
 }

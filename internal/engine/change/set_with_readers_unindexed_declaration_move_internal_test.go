@@ -528,8 +528,8 @@ func testDetectOneSidedInputIgnorePoliciesCase(
 	}
 	set, err := Detect(
 		t.Context(),
-		&store.SourceArtifact{FS: before},
-		&store.SourceArtifact{FS: after},
+		admitTestSource(t, &store.SourceArtifact{FS: before}),
+		admitTestSource(t, &store.SourceArtifact{FS: after}),
 		DetectConfig{},
 	)
 	assert.NoError(t, err)

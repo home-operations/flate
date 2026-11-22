@@ -158,7 +158,8 @@ func (q *requiredSelection) addOtherParents(other *selectionSide, id manifest.Na
 		if !ok {
 			break
 		}
-		actual := s.actualProducer(other.comparisonKey(parent))
+		key, _ := store.Bindings(other.run.Index).Slot(parent)
+		actual, _ := store.Bindings(s.run.Index).Producer(key)
 		q.add(actual)
 		if actual != parent {
 			break
@@ -666,25 +667,25 @@ type FailuresError struct{ Message string }
 func (e *FailuresError) Error() string { return e.Message }
 func (*FailuresError) Unwrap() error   { return manifest.ErrFlux }
 
-func (b *batchSelection) scopeIncludes(id manifest.NamedResource) (bool, error) {
+func (b *batchSelection) scopeIncludes(id manifest.NamedResource, member bool) bool {
 	s := b.collection.side
 	if id.KindInfo().Runnable && s.run.Facts != nil &&
 		manifest.DiagnosticFor(b.object.Named(), b.object).Resource == (manifest.NamedResource{}) {
 		facts := s.run.Facts.RootEvidence(id, nil)
 		if !facts.Scope.NativeOperand && Root(facts).InitialIndependent {
-			return false, nil
+			return false
 		}
 	}
 	if !s.run.Decision.restricted() {
-		return true, nil
+		return true
 	}
 	owner, owned := s.run.Store.Parent(id, s.run.Index)
 	object := s.run.Store.GetObject(owner)
 	if !owned || owner == b.object.Named() || object == nil || object.EmissionPolicy().DocumentScope {
-		return true, nil
+		return true
 	}
 	if s.run.Decision.Output(owner) {
-		return true, nil
+		return true
 	}
-	return b.selectedOutput(id)
+	return member
 }

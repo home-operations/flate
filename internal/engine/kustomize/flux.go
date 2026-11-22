@@ -10,10 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/go-git/go-git/v6/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
 	kustomizestate "github.com/home-operations/flate/internal/engine/kustomize/krusty"
@@ -36,8 +34,6 @@ type RenderRequest struct {
 	// Source.FS supplies content; nil Source or FS is unavailable.
 	// Empty Source.Content denotes mutable content validated on every cache hit.
 	Source *store.SourceArtifact `json:"Source"`
-	// ApplyIgnore selects source-controller exclusions for admitted local aliases.
-	ApplyIgnore bool `json:"ApplyIgnore"`
 	// Label mounts source content in kyaml; empty uses Source.LocalPath.
 	Label string `json:"Label"`
 	// SubPath selects the source directory to build.
@@ -110,7 +106,7 @@ type Preparation struct {
 	spec           *manifest.Kustomization
 	source         *store.SourceArtifact
 	label, subPath string
-	applyIgnore    bool
+	policyKey      string
 	complete       bool
 	lower          fs.FS
 	root, key      string
@@ -125,7 +121,10 @@ func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
 	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
 	policy := p.binding.Policy.Strict == request.StrictSubstitutions &&
 		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
-	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
+	location := p.label == request.Label && p.subPath == request.SubPath
+	if request.Source != nil {
+		location = location && p.policyKey == gittree.PolicyKey(request.Source.FS)
+	}
 	return cache != nil && p.cache == cache.owner && owner && policy && location
 }
 
@@ -154,16 +153,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		return renderRequest{}, err
 	}
 	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
-	var ignore any
-	if req.ApplyIgnore {
-		input, inputErr := c.sourceRootFor(ctx, req.Source, root)
-		if inputErr != nil {
-			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-			work.Finish(inputErr)
-			return renderRequest{}, inputErr
-		}
-		lower, ignore = input.fs, input.ignore
-	}
+	policyKey := gittree.PolicyKey(lower)
 	root, err = filepath.Abs(root)
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
@@ -171,20 +161,18 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
 	previous, key := req.Preparation, ""
-	if previous.Matches(c, req) && previous.root == root {
-		if previous.source.SameMaterial(
-			req.Source,
-			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
-		) {
+	if previous.Matches(c, req) && previous.root == root && previous.policyKey == policyKey {
+		if policyKey != "" && previous.source.Content == "" && req.Source.Content == "" ||
+			previous.source.SameMaterial(
+				req.Source,
+				store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+			) {
 			key = previous.key
 		}
 	}
-	if key != "" && req.ApplyIgnore && previous.lower != lower {
-		key = renderKey(req, root, ignore)
-		previous.lower = lower
-	}
 	if key != "" && key == previous.key {
 		req.Work.Fingerprint(key)
+		previous.lower = lower
 		previous.bindSource(req)
 		return renderRequest{Preparation: *previous}, nil
 	}
@@ -193,14 +181,14 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	}
 	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	if key == "" {
-		key = renderKey(req, root, ignore)
+		key = renderKey(req, root, policyKey)
 	}
 	req.Work.Fingerprint(key)
 	work.Finish(nil)
 	prepared := Preparation{
 		cache: c.owner, spec: req.Spec, label: req.Label, subPath: req.SubPath,
-		applyIgnore: req.ApplyIgnore,
-		lower:       lower, root: root, key: key,
+		policyKey: policyKey,
+		lower:     lower, root: root, key: key,
 	}
 	prepared.bindSource(req)
 	if req.Preparation != nil {
@@ -226,7 +214,7 @@ func (p *Preparation) bindSource(req *RenderRequest) {
 
 // Mutable files are validated by the read set; immutable generations are part
 // of the render content. Filesystem handles and retry/storage policy are never encoded.
-func renderKey(incoming *RenderRequest, root string, ignore any) string {
+func renderKey(incoming *RenderRequest, root, policyKey string) string {
 	req := *incoming
 	var immutable any
 	if req.Source.Content != "" {
@@ -237,54 +225,12 @@ func renderKey(incoming *RenderRequest, root string, ignore any) string {
 		spec = req.Spec.Content(nil, nil, false)
 	}
 	return manifest.Fingerprint(struct {
-		Spec        any    `json:"Spec"`
-		SourceRoot  string `json:"SourceRoot"`
-		SubPath     string `json:"SubPath"`
-		ApplyIgnore bool   `json:"ApplyIgnore"`
-		Ignore      any    `json:"Ignore"`
-		Immutable   any    `json:"Immutable"`
-	}{spec, root, req.SubPath, req.ApplyIgnore, ignore, immutable})
-}
-
-type sourceRoot struct {
-	fs     fs.FS
-	ignore any
-}
-
-// Source admission belongs to the run owner. Every reader of a source MUST use
-// the same view; the checkout MUST remain stable until all readers finish.
-func (c *TreeCache) sourceRootFor(
-	ctx context.Context,
-	artifact *store.SourceArtifact,
-	root string,
-) (*sourceRoot, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	key := struct {
-		source *store.SourceArtifact
-		root   string
-	}{artifact, root}
-	if cached, ok := c.sourceRoots.Load(key); ok {
-		//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
-		return cached.(func() (*sourceRoot, error))()
-	}
-	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
-	load := sync.OnceValues(func() (*sourceRoot, error) {
-		input, _, err := gittree.New(
-			context.Background(),
-			nil,
-			plumbing.ZeroHash,
-			gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS},
-		)
-		if err != nil {
-			return nil, err
-		}
-		return &sourceRoot{fs: input, ignore: input.PolicyEvidence()}, nil
-	})
-	actual, _ := c.sourceRoots.LoadOrStore(key, load)
-	//nolint:errcheck // This cache stores only the exact concrete type asserted at this boundary.
-	return actual.(func() (*sourceRoot, error))()
+		Spec       any    `json:"Spec"`
+		SourceRoot string `json:"SourceRoot"`
+		SubPath    string `json:"SubPath"`
+		Policy     string `json:"Policy"`
+		Immutable  any    `json:"Immutable"`
+	}{spec, root, req.SubPath, policyKey, immutable})
 }
 
 // RenderInputs returns source-relative observed paths and whether each read excludes descendants.

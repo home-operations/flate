@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/cli/output"
 	"github.com/home-operations/flate/internal/engine/diff"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -82,18 +83,8 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 		for i, group := range inv.groups {
 			orig, current := group.sides[0], group.sides[1]
 			imgs, suppressed, err := diff.CompareImages(
-				diff.Snapshot{
-					Subjects:     orig.Subjects,
-					Manifests:    orig.Manifests,
-					Unavailable:  orig.Unavailable,
-					ProducerKeys: orig.ProducerKeys,
-				},
-				diff.Snapshot{
-					Subjects:     current.Subjects,
-					Manifests:    current.Manifests,
-					Unavailable:  current.Unavailable,
-					ProducerKeys: current.ProducerKeys,
-				},
+				diffSnapshot(orig),
+				diffSnapshot(current),
 				nil,
 				includeRemoved,
 			)
@@ -138,18 +129,8 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 		orig, current := group.sides[0], group.sides[1]
 		groups[i] = diff.Group{
 			Cluster: group.cluster,
-			Orig: diff.Snapshot{
-				Subjects:     orig.Subjects,
-				Manifests:    orig.Manifests,
-				Unavailable:  orig.Unavailable,
-				ProducerKeys: orig.ProducerKeys,
-			},
-			Current: diff.Snapshot{
-				Subjects:     current.Subjects,
-				Manifests:    current.Manifests,
-				Unavailable:  current.Unavailable,
-				ProducerKeys: current.ProducerKeys,
-			},
+			Orig:    diffSnapshot(orig),
+			Current: diffSnapshot(current),
 			Added:   group.absent[manifest.TreeBase],
 			Removed: group.absent[manifest.TreeHead],
 		}
@@ -171,4 +152,14 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 	result.prepare = func(names []diff.Names) { preparedNames = names }
 	result.write = func() error { return comparison.Write(encoder.Writer, preparedNames) }
 	return result
+}
+
+func diffSnapshot(result *selection.Result) diff.Snapshot {
+	return diff.Snapshot{
+		Subjects:    result.Subjects,
+		Manifests:   result.Manifests,
+		Producers:   result.Producers,
+		Unavailable: result.Unavailable,
+		Bindings:    result.Bindings,
+	}
 }

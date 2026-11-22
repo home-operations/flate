@@ -33,6 +33,9 @@ func testWalkBucketArchiveNamesCase(t *testing.T, tc *struct {
 
 	var gets atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if r.URL.Query().Get("list-type") != "" {
 			if got := r.URL.Query().Get("prefix"); got != tc.prefix {
 				t.Errorf("listing prefix=%q, want %q", got, tc.prefix)

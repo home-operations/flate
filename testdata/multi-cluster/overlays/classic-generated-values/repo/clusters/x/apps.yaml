@@ -1,0 +1,26 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "apps",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "components": [
+      "../component"
+    ],
+    "path": "./apps",
+    "postBuild": {
+      "substituteFrom": [
+        {
+          "kind": "ConfigMap",
+          "name": "generated-vars"
+        }
+      ]
+    },
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system"
+    }
+  }
+}

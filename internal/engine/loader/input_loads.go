@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -161,12 +160,6 @@ func (l *cachedLoad) contains(name string) bool {
 	for _, root := range l.Domains {
 		if root != "." && name != root && !strings.HasPrefix(name, root+"/") {
 			continue
-		}
-		for parent := path.Dir(name); parent != "." && parent != root; parent = path.Dir(parent) {
-			if sourceignore.PruneDir(path.Base(parent), true) &&
-				!slices.ContainsFunc(l.Directories, func(d cachedDirectory) bool { return d.Path == parent }) {
-				return false
-			}
 		}
 		return true
 	}

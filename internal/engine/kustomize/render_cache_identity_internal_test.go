@@ -20,7 +20,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	})
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}
-	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "."}, root, nil)
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "."}, root, "")
 	publishTestFrame(
 		t,
 		cache.owner,
@@ -50,7 +50,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	bare.Spec = nil
 	assert.FatalIf(
 		t,
-		renderKey(&bare, root, nil) == renderKey(&req, root, nil),
+		renderKey(&bare, root, "") == renderKey(&req, root, ""),
 		"%s",
 		"bare and owned cache identities collide",
 	)

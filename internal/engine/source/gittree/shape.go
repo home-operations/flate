@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"maps"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/internal/engine/tree"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) error {
@@ -22,6 +22,7 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 	routed := g.commit != plumbing.ZeroHash && opts.Current != nil
 	if mutable || routed {
 		refresh := opts
+		refresh.CurrentObserved = false
 		refresh.policy = input.snapshot
 		refresh.Sparse, refresh.Changes = slices.Clone(opts.Sparse), slices.Clone(opts.Changes)
 		g.refresh = &refresh
@@ -43,6 +44,15 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 			}
 		}
 		input.policy = matcher
+		if err == nil && len(opts.Sparse) == 0 && matcher.UsesDefaults() {
+			input.policyKey = "default"
+		} else if err == nil {
+			input.policyKey = manifest.Fingerprint(struct {
+				Ignore string
+				Sparse []string
+				Files  any
+			}{opts.Ignore, opts.Sparse, input.PolicyEvidence()})
+		}
 	case RemoteBase:
 		links, err = g.resolveLinks(names)
 	}
@@ -53,55 +63,25 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 	if err != nil {
 		return err
 	}
-	maps.DeleteFunc(g.nodes, func(name string, _ *gitNode) bool { return !kept[name] })
-	g.list()
+	g.bindMembership(input, kept)
 	return nil
 }
 
-func directVisible(_ []string, _ string, mode fs.FileMode, _ *sourceignore.Matcher) bool {
-	return mode&fs.ModeSymlink == 0
+func (g *gitView) bindMembership(input *FS, kept map[string]bool) {
+	if len(kept) == len(g.nodes) && !g.pruned && input.sameFiles != nil {
+		if _, local := input.sameFiles.view.(*localView); local {
+			return
+		}
+	} else {
+		input.sameFiles = nil
+	}
+	maps.DeleteFunc(g.nodes, func(name string, _ *gitNode) bool { return !kept[name] })
+	g.list()
 }
 
-func checkoutVisible(sparse []string, name string, _ fs.FileMode, _ *sourceignore.Matcher) bool {
+func checkoutVisible(sparse []string, name string) bool {
 	return len(sparse) == 0 ||
 		slices.ContainsFunc(sparse, func(dir string) bool { return strings.HasPrefix(name, dir) })
-}
-
-func sourceVisible(match func(string, bool) bool) func([]string, string, fs.FileMode, *sourceignore.Matcher) bool {
-	directories := map[string]bool{}
-	matchDirectory := func(name string) bool {
-		excluded, known := directories[name]
-		if !known {
-			excluded = match(filepath.FromSlash(name), true)
-			directories[name] = excluded
-		}
-		return excluded
-	}
-	return func(sparse []string, name string, mode fs.FileMode, _ *sourceignore.Matcher) bool {
-		if mode.IsDir() {
-			for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-				if matchDirectory(parent) {
-					return false
-				}
-			}
-		}
-		if mode&fs.ModeSymlink != 0 || !checkoutVisible(sparse, name, mode, nil) {
-			return false
-		}
-		if mode.IsDir() {
-			return !matchDirectory(name)
-		}
-		return !match(filepath.FromSlash(name), false)
-	}
-}
-
-func visible(_ []string, name string, _ fs.FileMode, _ *sourceignore.Matcher) bool {
-	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-		if sourceignore.PruneDir(path.Base(parent), false) {
-			return false
-		}
-	}
-	return true
 }
 
 func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
@@ -133,23 +113,13 @@ func (g *FS) selectNodes(
 	links *tree.Builder,
 ) (map[string]bool, error) {
 	v := g.view.(*gitView) //nolint:errcheck // finishGitView selects nodes only after New constructs *gitView; corruption MUST panic.
-	selectVisible := visible
-	switch opts.Mode {
-	case Direct:
-		selectVisible = directVisible
-	case Checkout:
-		selectVisible = checkoutVisible
-	case Source:
-		selectVisible = sourceVisible(matcher.Match)
-	case RemoteBase:
-	}
 	kept := map[string]bool{".": true}
 	for _, name := range names {
 		node := v.nodes[name]
 		if node.mode.IsDir() && opts.Mode != Checkout && opts.Mode != Source {
 			continue
 		}
-		selected := !g.excludes(name) && selectVisible(opts.Sparse, name, node.mode, matcher)
+		selected := !g.excludes(name) && checkoutVisible(opts.Sparse, name)
 		var err error
 		if opts.Mode != Checkout {
 			selected, err = v.resolveSelectedNode(name, node, links, selected)
@@ -160,9 +130,7 @@ func (g *FS) selectNodes(
 		if !selected {
 			continue
 		}
-		for parent := name; parent != "." && !kept[parent]; parent = path.Dir(parent) {
-			kept[parent] = true
-		}
+		matcher.Admit(kept, name, node.mode.IsDir())
 	}
 	return kept, nil
 }
@@ -194,4 +162,15 @@ func (g *gitView) resolveSelectedNode(name string, node *gitNode, links *tree.Bu
 	}
 	g.nodes[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
 	return true, nil
+}
+
+func (o *ViewOptions) currentPolicy(ctx context.Context, current *FS) (*sourceignore.Matcher, error) {
+	matcher, err := current.SourcePolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if o.Ignore != "" {
+		matcher = matcher.WithExtra(o.Ignore)
+	}
+	return matcher, nil
 }

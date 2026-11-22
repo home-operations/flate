@@ -14,17 +14,19 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestComparison_ParentQualifiedMatching(t *testing.T) {
+func TestComparison_IdentityMatching(t *testing.T) {
 	t.Parallel()
 	left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")
 	left.Parent = Parent{NamedResource: testutil.HelmReleaseID("apps", "a")}
 	right.Parent = Parent{NamedResource: testutil.HelmReleaseID("apps", "b")}
+	left.Manifest["metadata"].(map[string]any)["labels"] = map[string]any{"helm.toolkit.fluxcd.io/name": "a"}
+	right.Manifest["metadata"].(map[string]any)["labels"] = map[string]any{"helm.toolkit.fluxcd.io/name": "b"}
 	for _, format := range []Format{FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea, FormatDiff, FormatHTML, FormatJSON, ""} {
 		t.Run(cmp.Or(string(format), "default"), func(t *testing.T) {
 			t.Parallel()
-			testComparisonParentQualifiedMatchingCase(
+			testComparisonIdentityMatchingCase(
 				t,
-				&testComparisonParentQualifiedMatchingCaseInputs{left: &left, right: &right, format: &format},
+				&testComparisonIdentityMatchingCaseInputs{left: &left, right: &right, format: &format},
 			)
 		},
 		)
@@ -32,9 +34,9 @@ func TestComparison_ParentQualifiedMatching(t *testing.T) {
 
 	t.Run("shared native label", func(t *testing.T) {
 		t.Parallel()
-		testComparisonParentQualifiedMatchingSharedNativeLabel(
+		testComparisonIdentityMatchingSharedNativeLabel(
 			t,
-			&testComparisonParentQualifiedMatchingSharedNativeLabelInputs{left: &left, right: &right},
+			&testComparisonIdentityMatchingSharedNativeLabelInputs{left: &left, right: &right},
 		)
 	},
 	)
@@ -154,15 +156,15 @@ func TestComparison_NativeDuplicateEdges(t *testing.T) {
 	}
 }
 
-type testComparisonParentQualifiedMatchingCaseInputs struct {
+type testComparisonIdentityMatchingCaseInputs struct {
 	left   *Doc
 	right  *Doc
 	format *Format
 }
 
-func testComparisonParentQualifiedMatchingCase(
+func testComparisonIdentityMatchingCase(
 	t *testing.T,
-	testCaseInput *testComparisonParentQualifiedMatchingCaseInputs,
+	testCaseInput *testComparisonIdentityMatchingCaseInputs,
 ) {
 	t.Helper()
 
@@ -171,80 +173,52 @@ func testComparisonParentQualifiedMatchingCase(
 		[]Doc{(*testCaseInput.left)},
 		[]Doc{(*testCaseInput.right)}, new(Options{Format: (*testCaseInput.format)}),
 	)
+	const move = "producer: HelmRelease apps/a -> HelmRelease apps/b"
 	switch *testCaseInput.format {
 	case FormatJSON:
-		changes := jsonChanges(t, []Doc{(*testCaseInput.left)}, []Doc{(*testCaseInput.right)}, new(Options{}))
-		assert.FatalIf(t, len(changes) != 2, "changes = %+v", changes)
-		assert.Equal(t, changes[0].Parent, testCaseInput.left.Parent)
-		assert.Equal(t, changes[0].Status, StatusRemoved)
-		assert.Diff(t, changes[0].Old, testCaseInput.left.Manifest)
-		assert.Equal(t, changes[1].Parent, testCaseInput.right.Parent)
-		assert.Equal(t, changes[1].Status, ChangeStatus("added"))
-		assert.Diff(t, changes[1].New, testCaseInput.right.Manifest)
-	case FormatBrief:
-		assert.FatalIf(t, !strings.Contains(out, "two changes detected"), "want two changes, got %q", out)
+		changes := jsonChanges(t, []Doc{*testCaseInput.left}, []Doc{*testCaseInput.right}, &Options{})
+		assert.FatalIf(t, len(changes) != 1, "changes = %+v", changes)
+		change := changes[0]
+		assert.Equal(t, change.Parent, testCaseInput.right.Parent)
+		assert.Equal(t, change.Status, ChangeStatus("changed"))
+		want := ncm("hello", "greeting", "same").Manifest
+		assert.Diff(t, change.Old, want)
+		assert.Diff(t, change.New, want)
+		assert.Diff(t, change.ProducerChange, &producerChange{
+			From: &testCaseInput.left.Parent, To: &testCaseInput.right.Parent,
+		})
 	case FormatHTML:
-		cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).
-			FindAllStringSubmatch(out, -1)
-		bodies := map[string]string{}
-		tags := regexp.MustCompile(`<[^>]*>`)
-		for _, cell := range cells {
-			bodies[cell[1]] += html.UnescapeString(tags.ReplaceAllString(cell[2], "")) + "\n"
-		}
-		const body = "apiVersion: v1\ndata:\n  greeting: same\nkind: ConfigMap\nmetadata:\n  name: hello\n  namespace: apps\n"
-		assert.Equal(t, bodies["del"], body)
-		assert.Equal(t, bodies["add"], body)
-		for _, want := range []string{"1 added", "1 removed", "status-removed", "status-added", "apiVersion", "ConfigMap", "namespace", "hello", "greeting", "same"} {
+		assert.Equal(t, strings.Count(html.UnescapeString(out), move), 1)
+		for _, want := range []string{"1 changed", "0 added", "0 removed", "status-changed", "ConfigMap", "apps/hello"} {
 			assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in %s", want, out)
 		}
-	case FormatHuman, FormatGitHub, FormatGitLab, FormatGitea, FormatDiff, "":
-		for _, want := range []string{"apiVersion: v1", "kind: ConfigMap", "name: hello", "namespace: apps", "greeting: same"} {
-			assert.ErrorIf(
-				t,
-				strings.Count(out, want) != 2,
-				"want two whole bodies containing %q, got:\n%s",
-				want,
-				out,
-			)
-		}
-		if (*testCaseInput.format) == FormatDiff {
-			assert.ErrorIf(
-				t,
-				!strings.Contains(out, "-apiVersion: v1") || !strings.Contains(out, "+apiVersion: v1"),
-				"missing removal/addition:\n%s",
-				out,
-			)
-		} else {
-			assert.ErrorIf(
-				t,
-				!strings.Contains(out, "removed") || !strings.Contains(out, "added"),
-				"missing removal/addition:\n%s",
-				out,
-			)
-		}
+		assert.Equal(t, strings.Count(out, `<td class="diff-code diff-add">`), 0)
+		assert.Equal(t, strings.Count(out, `<td class="diff-code diff-del">`), 0)
+	case FormatBrief, FormatHuman, FormatGitHub, FormatGitLab, FormatGitea, FormatDiff, "":
+		assert.Equal(t, out, "ConfigMap apps/hello "+move+"\n")
 	}
 }
 
-type testComparisonParentQualifiedMatchingSharedNativeLabelInputs struct {
+type testComparisonIdentityMatchingSharedNativeLabelInputs struct {
 	left  *Doc
 	right *Doc
 }
 
-func testComparisonParentQualifiedMatchingSharedNativeLabel(
+func testComparisonIdentityMatchingSharedNativeLabel(
 	t *testing.T,
-	testCaseInput *testComparisonParentQualifiedMatchingSharedNativeLabelInputs,
+	testCaseInput *testComparisonIdentityMatchingSharedNativeLabelInputs,
 ) {
 	t.Helper()
 
 	old, current := ncm("hello", "greeting", "old"), ncm("hello", "greeting", "new")
-	old.Parent, current.Parent = testCaseInput.left.Parent, testCaseInput.left.Parent
+	old.Parent, current.Parent = testCaseInput.right.Parent, testCaseInput.right.Parent
 	out := renderDiff(
 		t,
-		[]Doc{old, (*testCaseInput.right)},
-		[]Doc{current, (*testCaseInput.right)}, new(Options{Format: FormatGitHub}),
+		[]Doc{old, *testCaseInput.left},
+		[]Doc{*testCaseInput.left, current}, new(Options{Format: FormatGitHub}),
 	)
 	assert.FatalIf(t, strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") ||
-		!strings.Contains(out, "+ new"), "want only a's change, got:\n%s", out)
+		!strings.Contains(out, "+ new"), "want only the winning producer's change, got:\n%s", out)
 }
 
 func testComparisonNativeCanonicalEdgesNamespacePresence(t *testing.T) {
@@ -261,7 +235,8 @@ func testComparisonNativeCanonicalEdgesNamespacePresence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			left, right := ncm("hello", "greeting", "old"), ncm("hello", "greeting", "new")
-			for _, doc := range []Doc{left, right} {
+			documents := [2]*Doc{&left, &right}
+			for _, doc := range documents {
 				md := doc.Manifest["metadata"].(map[string]any)
 				delete(md, "namespace")
 				if tc.present {

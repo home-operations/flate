@@ -32,9 +32,11 @@ type DocumentFact struct {
 
 // EmissionFacts MUST retain actual emitter and reporting parent separately.
 type EmissionFacts struct {
-	Emitter   manifest.BaseManifest
-	Parent    manifest.BaseManifest
-	Documents []DocumentFact
+	Emitter          manifest.BaseManifest
+	Parent           manifest.BaseManifest
+	Documents        []DocumentFact
+	ParentAttributed bool
+	ParentRecorded   bool
 }
 
 // Snapshot borrows completed storage. Its owners MUST remain immutable through projection.
@@ -75,33 +77,109 @@ func (s *Snapshot) collectEmissions(other *Snapshot) {
 	s.Manifests = make([]manifest.DocumentBatch, 0, len(s.Emissions))
 	positions := make(map[manifest.NamedResource]int, len(s.Emissions))
 	scope := s.entryScope()
-	for _, emission := range s.Emissions {
-		id := emission.Emitter.Named()
-		var documentScope bool
-		if manifest.KindOf(emission.Emitter).Parent {
-			documentScope = emission.Emitter.EmissionPolicy().DocumentScope
-		}
-		output := s.outputsProducer(id, other)
-		for i := range emission.Documents {
-			document := &emission.Documents[i]
-			if scope != nil && !s.entryIncludesDocument(scope, id, document) {
-				continue
-			}
-			if !documentScope && !output && !s.Decision.Reconcile(document.Identity) {
-				continue
-			}
-			parent := emission.Parent.Named()
-			position, found := positions[parent]
-			if !found {
-				position = len(s.Manifests)
-				positions[parent] = position
-				s.Manifests = append(s.Manifests, manifest.DocumentBatch{Parent: emission.Parent})
-			}
-			s.owners.record(parent, id, len(s.Manifests[position].Documents), document)
-			s.Manifests[position].Documents = append(s.Manifests[position].Documents, document.Document)
-			s.Manifests[position].Identities = append(s.Manifests[position].Identities, document.Identity)
-		}
+	for i := range s.Emissions {
+		s.collectEmission(&s.Emissions[i], other, scope, positions)
 	}
+}
+
+func (s *Snapshot) emissionParent(emission *EmissionFacts) manifest.BaseManifest {
+	if !emission.ParentAttributed || emission.ParentRecorded || emission.Parent != nil {
+		return emission.Parent
+	}
+	if !manifest.KindOf(emission.Emitter).Parent {
+		return emission.Emitter
+	}
+	if s.Facts == nil || s.Index == nil {
+		return nil
+	}
+	id := emission.Emitter.Named()
+	var reads store.ReadSet
+	reads.Init(s.Store, id, nil)
+	defer reads.ReleaseCapture()
+	defer s.Store.Retire(&reads)
+	root := Root(CaptureRoot(s.Facts.RootEvidence(id, &reads), &reads, s.Index))
+	if root.Admitted && root.Independent {
+		return emission.Emitter
+	}
+	return nil
+}
+
+func (s *Snapshot) emissionDocumentScope(emission *EmissionFacts) bool {
+	return emission.Emitter.EmissionPolicy().DocumentScope ||
+		s.Entry.Descendant != "" && emission.Emitter.Named() == s.Entry.Producer
+}
+
+func (s *Snapshot) eligibleDocument(emission *EmissionFacts, doc *DocumentFact, scoped bool) bool {
+	if !emission.ParentAttributed && !scoped || doc.GeneratedOverlap {
+		return true
+	}
+	if doc.Child != (manifest.NamedResource{}) {
+		owner := s.Store.EmissionOwner(doc.Child)
+		emitter := emission.Emitter.Named()
+		return owner == emitter || doc.Child == emitter && owner == (manifest.NamedResource{})
+	}
+	id := doc.Identity
+	if id.Name == "" || id.Kind == "" || id.Group == manifest.KustomizeDomain ||
+		manifest.DocAPIVersion(doc.Document) == "" {
+		return true
+	}
+	return !emission.ParentAttributed && s.Store.EmissionOwner(id) == (manifest.NamedResource{})
+}
+
+func (s *Snapshot) collectEmission(
+	emission *EmissionFacts,
+	other *Snapshot,
+	scope map[manifest.NamedResource]bool,
+	positions map[manifest.NamedResource]int,
+) {
+	paired := s.pairsOutput(other)
+	parentObject := s.emissionParent(emission)
+	if parentObject == nil {
+		return
+	}
+	id, parent := emission.Emitter.Named(), parentObject.Named()
+	var producer *manifest.DiagnosticIdentity
+	if id != parent {
+		subject := manifest.DiagnosticFor(id, emission.Emitter)
+		producer = &subject
+	}
+	documentScope := s.emissionDocumentScope(emission)
+	output := s.outputsProducer(id, other)
+	reconciledEmitter := !output && other != nil && parent != id && s.Decision.Reconcile(id)
+	output = output || reconciledEmitter && s.outputsProducer(parent, other)
+	for i := range emission.Documents {
+		document := &emission.Documents[i]
+		if !s.eligibleDocument(emission, document, documentScope) ||
+			!s.entryIncludesDocument(scope, id, document) {
+			continue
+		}
+		peerOnly := !documentScope && !output && !s.Decision.Reconcile(document.Identity)
+		if peerOnly && (!paired || !s.Decision.Reconcile(id)) {
+			continue
+		}
+		position, found := positions[parent]
+		if !found {
+			position = len(s.Manifests)
+			positions[parent] = position
+			s.Manifests = append(s.Manifests, manifest.DocumentBatch{Parent: parentObject})
+		}
+		owner := documentOwner{producer: producer, peerOnly: peerOnly}
+		if document.GeneratedOverlap {
+			owner.child = document.Child
+		}
+		s.owners.record(parent, len(s.Manifests[position].Documents), &owner)
+		s.Manifests[position].Documents = append(s.Manifests[position].Documents, document.Document)
+		s.Manifests[position].Identities = append(s.Manifests[position].Identities, document.Identity)
+	}
+}
+
+func (s *Snapshot) pairsOutput(other *Snapshot) bool {
+	return s.presentAndComplete() && other.presentAndComplete() &&
+		(s.Decision.restricted() || other.Decision.restricted())
+}
+
+func (s *Snapshot) presentAndComplete() bool {
+	return s != nil && s.Complete && !s.Absent
 }
 
 func (s *Snapshot) entryScope() map[manifest.NamedResource]bool {
@@ -137,6 +215,9 @@ func (s *Snapshot) entryIncludesDocument(
 	emitter manifest.NamedResource,
 	doc *DocumentFact,
 ) bool {
+	if scope == nil {
+		return true
+	}
 	if emitter == s.Entry.Producer {
 		_, inEntry := s.Entry.Documents[doc.Identity]
 		return inEntry
@@ -150,13 +231,16 @@ func (s *Snapshot) entryDocumentChildren(scope map[manifest.NamedResource]bool) 
 		return nil
 	}
 	var children []manifest.NamedResource
-	docs := s.Emissions[i].Documents
-	for j := range docs {
-		doc := &docs[j]
+	emission := &s.Emissions[i]
+	scoped := s.emissionDocumentScope(emission)
+	for j := range emission.Documents {
+		doc := &emission.Documents[j]
 		child := doc.Child
 		_, inEntry := s.Entry.Documents[doc.Identity]
-		if inEntry && child != (manifest.NamedResource{}) && !scope[child] &&
-			s.Store.EmissionOwner(child) == s.Entry.Producer {
+		if !inEntry || child == (manifest.NamedResource{}) || scope[child] {
+			continue
+		}
+		if s.eligibleDocument(emission, doc, scoped) && s.Store.EmissionOwner(child) == s.Entry.Producer {
 			scope[child] = true
 			children = append(children, child)
 		}

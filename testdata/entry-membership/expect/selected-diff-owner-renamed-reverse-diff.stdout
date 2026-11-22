@@ -40,6 +40,22 @@
         "name": "old",
         "path": "app"
       },
+      "producerChange": {
+        "from": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "apps",
+          "name": "new",
+          "path": ""
+        },
+        "to": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "apps",
+          "name": "old",
+          "path": ""
+        }
+      },
       "apiVersion": "v1",
       "kind": "ConfigMap",
       "namespace": "apps",
@@ -52,10 +68,6 @@
         },
         "kind": "ConfigMap",
         "metadata": {
-          "labels": {
-            "kustomize.toolkit.fluxcd.io/name": "new",
-            "kustomize.toolkit.fluxcd.io/namespace": "apps"
-          },
           "name": "root-output",
           "namespace": "apps"
         }
@@ -67,10 +79,6 @@
         },
         "kind": "ConfigMap",
         "metadata": {
-          "labels": {
-            "kustomize.toolkit.fluxcd.io/name": "old",
-            "kustomize.toolkit.fluxcd.io/namespace": "apps"
-          },
           "name": "root-output",
           "namespace": "apps"
         }

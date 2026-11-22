@@ -8,6 +8,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-git/go-git/v6/plumbing"
+
+	"github.com/home-operations/flate/internal/engine/source/gittree"
+
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	kustomizationctrl "github.com/home-operations/flate/internal/engine/controllers/kustomization"
 	"github.com/home-operations/flate/internal/engine/kustomize"
@@ -300,6 +304,10 @@ func (c bindingLifecycleEntryController) ReconcileNode(
 
 func stageBindingLifecycleRoot(t *testing.T, o *Orchestrator, root string) {
 	t.Helper()
+	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: o.cfg.Input.FS})
+	assert.NoError(t, err)
+	o.cfg.Input = o.cfg.Input.WithSourceView(view)
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	o.store.AddObject(bootstrap)
 	o.store.SetArtifact(manifest.BootstrapSourceID, o.cfg.Input)

@@ -408,7 +408,7 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 		}
 
 		trees := source.NewHTTPInputs(c, side.cfg.Network, task.NewBounded(2))
-		t.Cleanup(trees.Close)
+
 		_, innerLocalErr := trees.Acquire(
 			t.Context(),
 			&source.HTTPRequest{
@@ -477,7 +477,7 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 		}
 	}
 	trees := source.NewHTTPInputs(c, next.cfg.Network, task.NewBounded(2))
-	t.Cleanup(trees.Close)
+
 	input, err := trees.Acquire(
 		t.Context(),
 		&source.HTTPRequest{URL: target + "/0", Retry: sourcecache.RetryConfig{}, HeldSlot: nil},

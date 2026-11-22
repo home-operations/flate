@@ -15,6 +15,7 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/plumbing/protocol"
 	"github.com/go-git/go-git/v6/plumbing/transport"
@@ -29,6 +30,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil"
@@ -39,9 +41,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+const authoredIncludeValue = "localx"
+
 type includeClosureCase struct {
 	name, prior, baseOutput, headOutput, baseValue, headValue, baseFile, headFile string
-	filtered                                                                      bool
+	filtered, overwrite                                                           bool
 }
 
 type includeClosureExpectation struct {
@@ -76,6 +80,16 @@ func TestChangedOnly_IndexedIncludeClosure(t *testing.T) {
 			for _, route := range []string{"path-orig", "base"} {
 				t.Run(route, func(t *testing.T) { testChangedOnlyIncludeClosure(t, &tc, route) })
 			}
+			if tc.name == "include-added" || tc.name == "include-removed" {
+				t.Run("bootstrap-overwrite", func(t *testing.T) {
+					testBootstrapOverwrite(t, &tc)
+				})
+				t.Run("overwrite", func(t *testing.T) {
+					overwrite := tc
+					overwrite.overwrite = true
+					testChangedOnlyIncludeClosure(t, &overwrite, "path-orig")
+				})
+			}
 		})
 	}
 }
@@ -100,6 +114,18 @@ func testChangedOnlyIncludeClosure(t *testing.T, tc *includeClosureCase, route s
 	}
 	root := fixture.Repo
 	original := fixture.Resolve(t, "@@baseline@@", "")
+	if tc.overwrite {
+		const component = "kubernetes/components/cnpg-common/"
+		const values = "apiVersion: v1\nkind: ConfigMap\n" +
+			"metadata: {name: backup-values, namespace: apps}\n" +
+			"data: {value: " + authoredIncludeValue + "}\n"
+		const builder = "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n" +
+			"resources: [db-default-values.yaml, backup-values.yaml]\n"
+		for _, repo := range []string{root, original} {
+			testutil.WriteFile(t, repo, component+"backup-values.yaml", values)
+			testutil.WriteFile(t, repo, component+"kustomization.yaml", builder)
+		}
+	}
 	trees := []Tree{
 		{
 			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
@@ -154,6 +180,99 @@ func testChangedOnlyIncludeClosure(t *testing.T, tc *includeClosureCase, route s
 	assert.Diff(t, includeSnapshot(t, original), beforeOriginal)
 }
 
+const (
+	bootstrapDeclaration = "source.yaml"
+	bootstrapCopy        = "apps/copied.yaml"
+)
+
+func testBootstrapOverwrite(t *testing.T, tc *includeClosureCase) {
+	t.Helper()
+	const bootstrapRef = "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
+	const copiedYAML = "apiVersion: v1\nkind: ConfigMap\n" +
+		"metadata: {name: backup-values, namespace: apps}\ndata: {value: %s}\n"
+	changes := detectChanges(t, []string{bootstrapDeclaration}, []string{bootstrapDeclaration})
+	assert.Diff(t, changes.Paths(), []string{bootstrapDeclaration})
+	owner := cachetest.New(t, "", cache.New)
+	trees := make([]Tree, 2)
+	for side := range trees {
+		treeSide := manifest.TreeSide(side)
+		included := tc.expectation(treeSide).value
+		files := fstest.MapFS{
+			"entry/consumer.yaml": {
+				Data: []byte(testutil.KustomizationYAML("consumer", "apps", "  path: ./apps\n"+bootstrapRef)),
+			},
+			"entry/unrelated.yaml": {
+				Data: []byte(testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"+bootstrapRef)),
+			},
+			"entry/kustomization.yaml": {
+				Data: []byte("resources: [consumer.yaml, unrelated.yaml]\n"),
+			},
+			"apps/kustomization.yaml":      {Data: []byte("resources: [copied.yaml]\n")},
+			bootstrapCopy:                  {Data: fmt.Appendf(nil, copiedYAML, authoredIncludeValue)},
+			"unrelated/kustomization.yaml": {Data: []byte("resources: [untouched.yaml]\n")},
+			"unrelated/untouched.yaml": {
+				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n"),
+			},
+		}
+		root := t.TempDir()
+		input := &store.SourceArtifact{LocalPath: root}
+		if included == "" {
+			view, identity, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{
+				Mode: gittree.Source, Current: files, CurrentContent: "plain",
+			})
+			assert.NoError(t, err)
+			input.FS, input.Content = view, identity
+		} else {
+			dependency := fstest.MapFS{"included.yaml": {Data: fmt.Appendf(nil, copiedYAML, included)}}
+			view, _, key, err := owner.Compose(t.Context(), cache.Composition{
+				Base:   cache.CompositionInput{FS: files, Content: "authored"},
+				Inputs: []cache.CompositionInput{{FS: dependency, Content: included}},
+				Copies: []cache.Copy{{Input: 0, From: "included.yaml", To: bootstrapCopy, Mode: cache.PlaceTree}},
+				Policy: "source",
+			}, &cache.Policy{})
+			assert.NoError(t, err)
+			input.FS, input.Content, input.Key = view, cache.AcquisitionIdentity(view), key
+		}
+		trees[side] = Tree{
+			ID: manifest.TreeID{Cluster: ".", Side: treeSide}, Input: input,
+			Path: filepath.Join(root, "entry"), RepoRoot: root, ExternalChanges: changes,
+		}
+	}
+	results, err := renderTreesForTest(t.Context(), t, trees, Config{
+		Cache: owner, Network: networktest.New(t), Concurrency: 2,
+		Selection: selection.Request{Changed: true}, missing: depwait.NewMissingPolicy(nil),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, len(results), len(trees))
+	for i := range results {
+		testBootstrapOverwriteResult(t, &results[i], tc.expectation(results[i].ID.Side).value)
+	}
+}
+
+func testBootstrapOverwriteResult(t *testing.T, result *Rendered, included string) {
+	t.Helper()
+	assert.NoError(t, result.Err)
+	assert.FatalIf(t, result.Result == nil, "missing rendered side %v", result.ID)
+	changes, artifacts, _ := result.cfg.ExternalChanges.ForSource(manifest.BootstrapSourceID)
+	assert.ErrorIf(t, !changes.Contains(bootstrapCopy),
+		"qualified bootstrap paths %v omit %s", changes.Paths(), bootstrapCopy)
+	assert.Equal(t, artifacts[0].Content != artifacts[1].Content, true)
+	input := artifacts[result.ID.Side]
+	assert.Equal(t, gittree.PolicyKey(input.FS) == "", included != "")
+	consumer := testutil.KustomizationID("apps", "consumer")
+	decision := result.selection.Snapshot()
+	assert.Equal(t, decision.Reconcile(consumer), true)
+	unrelated := testutil.KustomizationID("apps", "unrelated")
+	assert.ErrorIf(t, decision.Reconcile(unrelated), "selection reached %s", unrelated)
+	documents := outputByParent(result.Result.Manifests)[consumer]
+	assert.FatalIf(t, len(documents) != 1, "consumer emitted %d documents", len(documents))
+	value := included
+	if value == "" {
+		value = authoredIncludeValue
+	}
+	assert.Diff(t, documents[0]["data"], map[string]any{"value": value})
+}
+
 func testIncludeClosureResult(t *testing.T, fixture *testfixture.Fixture, tc *includeClosureCase, result *Rendered) {
 	t.Helper()
 	input := manifest.NamedResource{
@@ -193,8 +312,15 @@ func testIncludeClosureResult(t *testing.T, fixture *testfixture.Fixture, tc *in
 	assert.Equal(t, artifact.InputAlias, !hasInclude && !tc.filtered)
 	assert.Equal(t, artifact.Reads.Valid(), true)
 
-	value, selectedFile := expectation.value, expectation.selectedFile
-	selected := "kubernetes/components/cnpg-common/" + selectedFile
+	selected := "kubernetes/components/cnpg-common/" + expectation.selectedFile
+	if tc.overwrite {
+		changes, _, _ := result.cfg.ExternalChanges.ForSource(including)
+		assert.ErrorIf(t, !changes.Contains(selected), "changed paths %v omit %s", changes.Paths(), selected)
+		if !hasInclude {
+			expectation.value, expectation.output = authoredIncludeValue, "before"
+		}
+	}
+	value := expectation.value
 	path := filepath.Join(artifact.LocalPath, filepath.FromSlash(selected))
 	if hasInclude || tc.filtered {
 		assert.Equal(t, artifact.OriginPath(path), path)
@@ -242,8 +368,8 @@ func assertIncludeClosureDocuments(
 	if expected != "" {
 		expectedBytes = fixture.Read(t, "expect/"+expected+".stdout", "")
 	}
-	if value == "alternate" {
-		expectedBytes = strings.ReplaceAll(expectedBytes, "value: before", "value: alternate")
+	if value == "alternate" || value == authoredIncludeValue {
+		expectedBytes = strings.ReplaceAll(expectedBytes, "value: before", "value: "+value)
 	}
 	if selectedFile == "previous.yaml" {
 		expectedBytes = strings.ReplaceAll(
@@ -470,6 +596,14 @@ func testIncludeAdmissionSide(t *testing.T, tree *Tree, cfg *Config) {
 
 	o.cfg.Selection = selection.Request{Changed: true}
 	o.cfg.ExternalChanges = detectChanges(t, []string{"declarations/input.yaml"}, []string{"declarations/input.yaml"})
+	view, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: o.cfg.Input.FS},
+	)
+	assert.NoError(t, err)
+	o.cfg.Input = o.cfg.Input.WithSourceView(view)
 	o.store.SetArtifact(manifest.BootstrapSourceID, o.cfg.Input)
 	o.loader.SourceRoot = o.cfg.Input.LocalPath
 	session, err := selection.New(o.store, o.loader, o.cfg.Selection)

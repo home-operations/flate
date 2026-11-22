@@ -161,7 +161,7 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 	if !r.qualifiedRecord(side, record) {
 		return
 	}
-	peerID := r.pairedProducer(side, id)
+	peerID := store.Bindings(r.indexes[side]).Peer(id, store.Bindings(r.indexes[1-side]))
 	peer, indexed := r.indexes[1-side].Lookup(peerID)
 	present := indexed && r.qualifiedRecord(1-side, &peer)
 	key := comparisonKey{source: r.evidence.source, owner: id, input: id}
@@ -374,29 +374,13 @@ func (r *readerScope) routeInputReader(side int, name string, reader *manifest.F
 	if r.out.inputs == nil {
 		r.out.inputs = make(map[manifest.NamedResource]InputChange)
 	}
-	id := reader.Reader
-	if key, mapped := r.indexes[side].ProducerKeys[id]; mapped {
-		id = key
-	}
+	id, _ := store.Bindings(r.indexes[side]).Slot(reader.Reader)
 	input := r.out.inputs[id]
 	if input.File == "" || len(input.Declarations) == 0 && name < input.File {
 		input.File = name
 	}
 	input.Unbound = false
 	r.out.inputs[id] = input
-}
-
-func (r *readerScope) pairedProducer(side int, id manifest.NamedResource) manifest.NamedResource {
-	key, mapped := r.indexes[side].ProducerKeys[id]
-	if !mapped {
-		return id
-	}
-	for actual, comparison := range r.indexes[1-side].ProducerKeys {
-		if comparison == key {
-			return actual
-		}
-	}
-	return manifest.NamedResource{}
 }
 
 type readerRoute struct {
@@ -425,10 +409,7 @@ func (r *readerScope) routeRecord(
 	if r.out.inputs == nil {
 		r.out.inputs = map[manifest.NamedResource]InputChange{}
 	}
-	key := id
-	if comparison, mapped := r.indexes[side].ProducerKeys[id]; mapped {
-		key = comparison
-	}
+	key, _ := store.Bindings(r.indexes[side]).Slot(id)
 	input := r.out.inputs[key]
 	input.File, input.Unbound = route.input.File, false
 	input.Declarations = append(slices.Clone(input.Declarations), route.input.Declarations...)

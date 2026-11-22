@@ -137,7 +137,7 @@ func testConfig(t *testing.T, cfg discovery.Config) discovery.Config {
 	t.Helper()
 	cfg.Cache = cachetest.New(t, "", cache.New)
 	cfg.Trees = kustomize.NewTreeCache(cfg.Cache, nil, task.NewBounded(2))
-	t.Cleanup(cfg.Trees.Close)
+
 	return cfg
 }
 

@@ -35,11 +35,15 @@ func (p *pair) status() string {
 		return "added"
 	case p.New == nil:
 		return "removed"
-	case reflect.DeepEqual(p.Old, p.New):
+	case p.ProducerChange == nil && !p.contentChanged():
 		return ""
 	default:
 		return "changed"
 	}
+}
+
+func (p *pair) contentChanged() bool {
+	return !reflect.DeepEqual(p.Old, p.New)
 }
 
 func chartLabel(m map[string]any) string {

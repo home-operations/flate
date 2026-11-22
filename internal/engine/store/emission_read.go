@@ -56,7 +56,8 @@ func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedRe
 
 func (cv *capture) declaration() manifest.BaseManifest {
 	c := *cv
-	if c.independent || c.accepted || c.classified || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
+	accepted := c.independent || c.accepted || c.classified || c.owner != nil
+	if accepted || c.child.policy.reference() {
 		return c.child.Obj
 	}
 	return nil
@@ -868,7 +869,7 @@ func referenceRecords(index *manifest.DiscoveryIndex, id manifest.NamedResource)
 func (r *productionResult) captureReferenceLocked(sh *shard, id manifest.NamedResource) {
 	var view capture
 	sh.captureLocked(id, new(sh.cells[id]), &view)
-	if view.child.Origin.Policy(id, nil).Root {
+	if view.child.policy.Root {
 		r.data, _ = view.child.Obj.(manifest.Data)
 		r.warnings = view.child.Warnings
 	}

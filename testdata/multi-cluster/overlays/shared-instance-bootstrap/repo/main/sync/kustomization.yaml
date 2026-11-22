@@ -1,0 +1,1 @@
+resources: [flux-instance.yaml, apps.yaml, marker.yaml, app-source.yaml]

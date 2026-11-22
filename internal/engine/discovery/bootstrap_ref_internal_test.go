@@ -515,10 +515,12 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	side := bootstrap.LocalPath
 	d.cfg.Path = side
 	aliased, err := d.resolveTestSources(t.Context(), false)
-	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
+	selected := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	assert.FatalIf(t, selected.LocalPath != bootstrap.LocalPath ||
 		st.GetObject(
 			repository.Named(),
-		) != repository, "%v", "discovery replaced the bootstrap or authored source")
+		) != repository, "discovery replaced the bootstrap coordinate or authored source")
+	bootstrap = d.bootstrapInput
 	if testCaseInput.base != "" {
 		want := "A"
 		if testCaseInput.head {

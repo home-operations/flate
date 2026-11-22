@@ -70,6 +70,8 @@ type lineChange struct {
 	ParentPath       string
 	From, To         string
 	Status, Label    string
+	ProducerChange   *producerTransition
+	Move             string
 }
 
 // prepareLines collects serialization errors before any report is written.
@@ -88,12 +90,17 @@ func prepareLines(prepared prepared) ([]lineChange, error) {
 			}
 			sides[i] = string(raw)
 		}
-		if sides[0] == sides[1] {
+		if sides[0] == sides[1] && p.ProducerChange == nil {
 			continue
 		}
 		out = append(out, lineChange{
-			Resource: Subject{ID: p.Resource}, Parent: Subject{ID: p.Parent.NamedResource},
-			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.status(),
+			Resource:       Subject{ID: p.Resource},
+			Parent:         Subject{ID: p.Parent.NamedResource},
+			ParentPath:     p.Parent.Path,
+			From:           sides[0],
+			To:             sides[1],
+			Status:         p.status(),
+			ProducerChange: p.ProducerChange,
 		})
 	}
 	return out, nil
@@ -107,6 +114,9 @@ func lineInventory(changes []lineChange, format Format) GroupResult {
 		if format == FormatHTML {
 			inventory.Subjects = append(inventory.Subjects, c.Parent.ID)
 		}
+		if c.ProducerChange != nil {
+			inventory.Subjects = c.ProducerChange.appendSubjects(inventory.Subjects)
+		}
 	}
 	return inventory
 }
@@ -114,9 +124,12 @@ func lineInventory(changes []lineChange, format Format) GroupResult {
 func nameLines(changes []lineChange, names Names) {
 	for i := range changes {
 		c := &changes[i]
+		c.Label = names.resourceLabel(c.Resource.ID)
 		c.Resource = names.Subjects[c.Resource.ID]
 		c.Parent = names.Subjects[c.Parent.ID]
-		c.Label = names.Prefix + c.Resource.Kind + " " + c.Resource.ID.NamespacedName()
+		if c.ProducerChange != nil {
+			c.Move = c.ProducerChange.description(names)
+		}
 	}
 }
 
@@ -143,10 +156,31 @@ func (e encoder) lines(changes []lineChange) error {
 				return fmt.Errorf("write diff: %w", err)
 			}
 		}
+		if err := e.writeLineChange(&p, body); err != nil {
+			return err
+		}
+		separate = true
+	}
+	return nil
+}
+
+func (e encoder) writeLineChange(p *lineChange, body string) error {
+	if p.Move != "" {
+		if err := e.writeMove(p.Label, p.Move); err != nil {
+			return err
+		}
+	}
+	if body != "" {
 		if _, err := io.WriteString(e.Writer, body); err != nil {
 			return fmt.Errorf("write diff: %w", err)
 		}
-		separate = true
+	}
+	return nil
+}
+
+func (e encoder) writeMove(resource, move string) error {
+	if _, err := io.WriteString(e.Writer, resource+" "+move+"\n"); err != nil {
+		return fmt.Errorf("write producer change: %w", err)
 	}
 	return nil
 }

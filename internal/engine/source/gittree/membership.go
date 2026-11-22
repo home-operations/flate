@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/helper/chroot"
 	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/engine/source/gitrepo"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -20,8 +21,48 @@ import (
 
 type membership struct {
 	directory string
+	extra     []string
 	ignored   map[string]struct{}
 	captured  bool
+}
+
+func sourceOrigin(previous *FS, mode ViewMode, commit plumbing.Hash) *FS {
+	if previous == nil || mode != Source || commit != plumbing.ZeroHash {
+		return nil
+	}
+	switch prior := previous.view.(type) {
+	case *localView, *directView:
+		return cmp.Or(previous.sameFiles, previous)
+	case *gitView:
+		if prior.mode == Direct {
+			return previous
+		}
+	}
+	return nil
+}
+
+// PreservesFiles reports whether admission retained the same files at the same path.
+func PreservesFiles(before, after *store.SourceArtifact) bool {
+	if before == after {
+		return true
+	}
+	if before == nil || after == nil || before.LocalPath != after.LocalPath {
+		return false
+	}
+	view, native := after.FS.(*FS)
+	return native && view.sameFiles != nil && view.sameFiles == before.FS
+}
+
+// Callers MUST retain the listing's immutable backing when skipping Stat.
+func (g *gitView) OpenRegular(name string) (fs.File, error) {
+	if node := g.nodes[name]; node != nil && node.mode.IsRegular() && g.current != nil && !g.changes[name] {
+		if current, ok := g.current.(*FS); ok {
+			return current.OpenRegular(name)
+		}
+		//nolint:wrapcheck // OpenRegular retains the admitted current filesystem's path errors.
+		return g.current.Open(name)
+	}
+	return g.Open(name)
 }
 
 // ExcludeDirectory retains immutable source membership without the resolved active cache directory.
@@ -43,22 +84,24 @@ func ExcludeDirectory(input *store.SourceArtifact, directory string) *store.Sour
 		return input
 	}
 	rel = filepath.ToSlash(rel)
-	if native && rel == g.membership.directory {
+	if native && (rel == g.membership.directory || slices.Contains(g.membership.extra, rel)) {
 		return input
 	}
 	selected := &FS{snapshot: &localPolicy{}}
 	if native {
 		selected.view, selected.location = g.view, g.location
-		selected.policy, selected.Warnings = g.policy, g.Warnings
+		selected.policy, selected.policyKey, selected.Warnings = g.policy, g.policyKey, g.Warnings
 		selected.membership = g.membership
 	} else {
 		selected.view = &directView{input.FS}
 		selected.location = &gitrepo.Location{ContentRoot: root}
 	}
-	selected.membership.directory = rel
-	captured := *input
-	captured.FS = selected
-	return &captured
+	if selected.membership.directory == "" {
+		selected.membership.directory = rel
+	} else {
+		selected.membership.extra = append(slices.Clone(selected.membership.extra), rel)
+	}
+	return input.WithSourceView(selected)
 }
 
 func (g *FS) excludes(name string) bool {
@@ -72,6 +115,13 @@ func (g *FS) excludes(name string) bool {
 		}
 		return false
 	}
+	if inDirectory(name, directory) {
+		return true
+	}
+	return slices.ContainsFunc(g.membership.extra, func(dir string) bool { return inDirectory(name, dir) })
+}
+
+func inDirectory(name, directory string) bool {
 	rest, matched := strings.CutPrefix(name, directory)
 	return directory == "." || matched && (rest == "" || rest[0] == '/')
 }

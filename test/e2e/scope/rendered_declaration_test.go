@@ -42,6 +42,11 @@ func TestE2E_ParentRenderedDeclarationHelm(t *testing.T) {
 }
 
 //nolint:paralleltest // cli.Run changes process-global logging and environment.
+func TestE2E_ResourceSetRenderedDeclarationHelm(t *testing.T) {
+	testScopeCase(t, "resourceset-helm", "applied-release")
+}
+
+//nolint:paralleltest // cli.Run changes process-global logging and environment.
 func TestE2E_DeclarationReadiness(t *testing.T) {
 	for _, name := range []string{"secret", "secret-allowed", "secret-supplied", "prediction", "prediction-allowed", "source", "frontier-emitted", "frontier-native"} {
 		t.Run(name, func(t *testing.T) {

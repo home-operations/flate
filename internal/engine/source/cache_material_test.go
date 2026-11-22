@@ -45,9 +45,10 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 	var expected atomic.Pointer[testFetcherTransportMaterialAbsentFromCacheGeneration]
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g := expected.Load()
+		listing := r.URL.Path == "/data/" && r.URL.Query().Get("list-type") == "2"
+		policy := r.URL.Path == "/data/.sourceignore"
 		if r.Method != http.MethodGet || !r.URL.IsAbs() || r.URL.Scheme != "http" || r.URL.Host != "origin.invalid" ||
-			r.URL.Path != "/data/" ||
-			r.URL.Query().Get("list-type") != "2" {
+			!listing && !policy {
 			t.Error("unexpected proxy request target")
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -55,6 +56,10 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 		if g == nil || r.Header.Get("Proxy-Authorization") != g.authorization {
 			t.Error("proxy request did not carry the expected generation's credentials")
 			w.WriteHeader(http.StatusProxyAuthRequired)
+			return
+		}
+		if policy {
+			http.NotFound(w, r)
 			return
 		}
 		g.requests.Add(1)

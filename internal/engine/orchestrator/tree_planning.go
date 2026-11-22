@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -33,6 +35,11 @@ func (r *Invocation) prepareTrees(
 		for _, opposite := range trees {
 			if opposite.ID.Cluster == tree.ID.Cluster && opposite.ID.Side != tree.ID.Side {
 				tree.BaseInput = opposite.Input
+				root := cmp.Or(tree.Input.LocalRoot, tree.Input.LocalPath)
+				peer := cmp.Or(opposite.Input.LocalRoot, opposite.Input.LocalPath)
+				if root != peer {
+					tree.Input = gittree.ExcludeDirectory(tree.Input, peer)
+				}
 			}
 		}
 		if err := prepareTreeChanges(ctx, &tree, changes); err != nil {
@@ -99,12 +106,19 @@ func (r *Invocation) prepareTreeEntries(
 			entry := &entries[i][j]
 			current := tree
 			current.ID.Cluster = labels[tree.ID.Cluster][entry.ID]
-			current.Path, current.Input, current.entry = entry.Path, entry.Input, entry
+			current.bindEntry(entry)
 			expanded = append(expanded, current)
 		}
 	}
 	slices.SortFunc(expanded, func(a, b Tree) int { return a.ID.Compare(b.ID) })
 	return expanded, nil
+}
+
+func (tr *Tree) bindEntry(entry *discovery.Entry) {
+	if tr.Input == tr.BaseInput {
+		tr.BaseInput = entry.Input
+	}
+	tr.Path, tr.Input, tr.entry = entry.Path, entry.Input, entry
 }
 
 func (r *Invocation) planTree(
@@ -121,7 +135,6 @@ func (r *Invocation) planTree(
 	defer declarations.Close()
 	declarations.Options.Missing = cfg.missing
 	trees := kustomize.NewTreeCache(cfg.Cache, inputs, r.budget)
-	defer trees.Close()
 	session, err := discovery.Begin(ctx, discovery.Config{
 		Store: st, Cache: cfg.Cache, Loader: declarations, Trees: trees,
 		PrepareDocuments: base.PrepareDocuments,

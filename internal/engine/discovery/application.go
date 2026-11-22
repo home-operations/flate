@@ -66,7 +66,7 @@ func (a *Admission) captureApplication(
 		children = output.Children
 	}
 	request := a.entryRequest
-	request.Source, request.SubPath = a.input, a.entryPath()
+	request.Source, request.SubPath = a.bootstrapArtifact(), a.entryPath()
 	evidence, err := q.trees.ApplicationReceipt(ctx, request, kustomize.EntryEvidence{
 		Producer:    producer,
 		Application: owner.document,
@@ -443,7 +443,7 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 
 //nolint:nilnil // A directory without a builder supplies no literal entry.
 func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, error) {
-	input := a.input.FS
+	input := a.bootstrapArtifact().FS
 	if overlay, ok := input.(*inputprojection.Overlay); ok && !a.entryDemand {
 		input = overlay.Authored.FS
 	}
@@ -496,7 +496,7 @@ func (a *Admission) reuseEntry(
 		record, indexed := a.qualification.loader.Index.Lookup(candidate.Named())
 		direct := record.Builder == "" && record.Authored != candidate.Named() ||
 			record.Builder != "" && record.File == record.Builder
-		if indexed && reads.Policy(candidate.Named()).Origin != manifest.SuppliedDeclaration &&
+		if indexed && !reads.Policy(candidate.Named()).Supplied() &&
 			!selection.Root(
 				selection.CaptureRoot(
 					a.qualification.loader.RootEvidence(candidate.Named(), nil),
@@ -597,7 +597,6 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission, input *store.S
 	a.entryRequest = kustomize.RenderRequest{
 		Work:                d.cfg.Work.RenderWork(),
 		Source:              input,
-		ApplyIgnore:         kustomize.ApplySourceIgnore(root, input),
 		SubPath:             root.Path,
 		StrictSubstitutions: d.cfg.StrictSubstitutions,
 		SkipKinds:           d.cfg.SkipKinds,
@@ -681,7 +680,7 @@ func (w *qualificationWalk) ordinaryApplication(
 ) bool {
 	id := evidence.object.Named()
 	policy := w.reads.Policy(id)
-	if w.q.session != nil || !policy.Root || policy.Origin == manifest.SuppliedDeclaration ||
+	if w.q.session != nil || !policy.Root || policy.Supplied() ||
 		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.OrdinaryDemand(id) {
 		return false
 	}
@@ -750,7 +749,7 @@ func (a *Admission) acceptProducerKeys(producer, key manifest.NamedResource) {
 	if q := a.qualification; q != nil {
 		l = q.loader
 	}
-	if current, known := l.Index.ProducerKeys[producer]; !known || current != key {
+	if current, known := store.Bindings(l.Index).Slot(producer); !known || current != key {
 		index := *l.Index
 		index.ProducerKeys = nil
 		if producer != (manifest.NamedResource{}) {

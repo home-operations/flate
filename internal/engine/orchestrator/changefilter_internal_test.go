@@ -2,10 +2,10 @@ package orchestrator
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/engine/baseline"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -17,25 +17,19 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	before, after := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, before, ".sops.yaml", "old")
 	testutil.WriteFile(t, after, ".sops.yaml", "new")
-	input, _, err := baseline.AdmitDirectory(t.Context(), after, after, manifest.WorkScope{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	o, err := newTestOrchestrator(
-		t,
-		Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input},
-		Config{Concurrency: 2},
-	)
+	rendered, err := renderTreesForTest(t.Context(), t, []Tree{
+		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: before, RepoRoot: before},
+		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: after, RepoRoot: after},
+	}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	assert.NoError(t, o.bootstrap(t.Context()))
-	assert.Equal(t, (o.selection != nil), true)
-	warnings := o.store.Warnings()
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %v, want one", warnings)
+	for _, tree := range rendered {
+		warnings := slices.DeleteFunc(slices.Clone(tree.Result.Warnings), func(w manifest.Warning) bool {
+			return w.Category != manifest.WarnPathConfig
+		})
+		assert.FatalIf(t, len(warnings) != 1, "warnings = %v, want one", warnings)
+		assert.ErrorIf(t, !strings.Contains(warnings[0].Message, "Flux-excluded files do not count"),
+			"warning does not explain Flux exclusions: %q", warnings[0].Message)
 	}
-	assert.Equal(t, warnings[0].Category, manifest.WarnPathConfig)
-	assert.ErrorIf(t, !strings.Contains(warnings[0].Message, "Flux-excluded files do not count"),
-		"warning does not explain Flux exclusions: %q", warnings[0].Message)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

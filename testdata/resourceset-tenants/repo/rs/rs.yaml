@@ -1,0 +1,32 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tenants
+  namespace: flux-system
+spec:
+  inputs:
+  - tenant: frontend
+    replicas: "1"
+  - tenant: backend
+    replicas: "2"
+  resources:
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: << inputs.tenant >>
+  - apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata:
+      name: apps-<< inputs.tenant >>
+      namespace: << inputs.tenant >>
+    spec:
+      interval: 10m
+      path: ./tenants/<< inputs.tenant >>
+      prune: true
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+      postBuild:
+        substitute:
+          REPLICAS: << inputs.replicas | quote >>

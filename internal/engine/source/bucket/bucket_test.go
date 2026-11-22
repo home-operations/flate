@@ -137,7 +137,11 @@ func testFetcherTransientStatusRecoveryCase(t *testing.T, tc *struct {
 	t.Helper()
 
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/.sourceignore") {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/xml")
 		if calls.Add(1) == 1 {
 			w.WriteHeader(tc.status)
@@ -391,6 +395,10 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 		return nil
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/.sourceignore") {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Query().Get("list-type") == "" {
 			objects.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)

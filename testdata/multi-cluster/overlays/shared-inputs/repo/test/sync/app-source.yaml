@@ -1,0 +1,12 @@
+{
+  "apiVersion": "source.toolkit.fluxcd.io/v1",
+  "kind": "GitRepository",
+  "metadata": {
+    "name": "cluster-repository",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "interval": "1m",
+    "url": "https://example.invalid/cluster.git"
+  }
+}

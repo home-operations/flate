@@ -17,17 +17,22 @@ import (
 )
 
 type clusterRoot struct {
-	Path               string
-	Occurrences        []selection.OccurrenceFacts
-	Anchors            []string
-	pinned             manifest.DiscoveryIndex
-	sources            map[manifest.NamedResource]entryResolution
-	views              map[string]*store.SourceArtifact
-	parsed             *loader.ParsedInputs
-	seeds              []selection.OccurrenceFacts
-	packageBuild       *plannedPackage
-	bootstrap          bool
-	sourceDeclarations []selection.OccurrenceID
+	Path         string
+	Occurrences  []selection.OccurrenceFacts
+	anchors      []bootstrapAnchor
+	pinned       manifest.DiscoveryIndex
+	sources      map[manifest.NamedResource]entryResolution
+	views        map[string]*store.SourceArtifact
+	parsed       *loader.ParsedInputs
+	seeds        []selection.OccurrenceFacts
+	packageBuild *plannedPackage
+	qualifying   []selection.OccurrenceID
+	reached      map[selection.OccurrenceID]struct{}
+}
+
+type bootstrapAnchor struct {
+	target string
+	source manifest.NamedResource
 }
 
 type occurrenceProjection struct {
@@ -72,6 +77,12 @@ func (d *Session) clusterRoots(ctx context.Context) ([]clusterRoot, error) {
 		}
 		if err := planner.reach(ctx, root); err != nil {
 			return nil, err
+		}
+		if len(root.anchors) > 1 {
+			split := root.partitionAnchors(d.cfg.Input)
+			planner.roots = slices.Replace(planner.roots, planner.index, planner.index+1, split...)
+			planner.started = false
+			continue
 		}
 		if planner.parsed == nil {
 			planner.parsed = d.loader.ParsedInputs()
@@ -213,12 +224,13 @@ func (p *entryPlanner) reach(ctx context.Context, root *clusterRoot) error {
 	for p.head < len(p.queue) {
 		visit := p.queue[p.head]
 		key := occurrenceIdentity(visit.occurrence)
+		_, _, hasPath := visit.occurrence.SourcePath()
+		p.recordReach(root, &visit, hasPath)
 		if p.seen[key] {
 			p.queue[p.head] = rootVisit{}
 			p.head++
 			continue
 		}
-		_, _, hasPath := visit.occurrence.SourcePath()
 		if visit.occurrence.RequiresBuild || !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
 			root.Occurrences = append(root.Occurrences, *visit.occurrence)
 			p.seen[key] = true
@@ -250,8 +262,17 @@ func (p *entryPlanner) reach(ctx context.Context, root *clusterRoot) error {
 		p.head++
 		p.queue = append(p.queue, children...)
 	}
-	slices.Sort(root.Anchors)
 	return nil
+}
+
+func (p *entryPlanner) recordReach(root *clusterRoot, visit *rootVisit, hasPath bool) {
+	if len(p.roots) < 2 || visit.scope.parent == nil || !hasPath || visit.occurrence.RequiresBuild {
+		return
+	}
+	if root.reached == nil {
+		root.reached = map[selection.OccurrenceID]struct{}{}
+	}
+	root.reached[physicalDeclaration(visit.occurrence)] = struct{}{}
 }
 
 func (p *entryPlanner) follow(
@@ -273,11 +294,12 @@ func (p *entryPlanner) follow(
 		return nil, err
 	}
 	application.Path = filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(application.Path)))
-	if seed {
-		root.bootstrap = root.bootstrap || p.bootstrapRoot(root, &occurrence.Declaration, input, &application)
-	}
+	qualifies := seed && p.bootstrapRoot(root, &occurrence.Declaration, input, &application)
 	absolute, local := p.followTarget(root, input, application.Path, seed)
 	if absolute == "" {
+		if qualifies {
+			root.qualifying = append(root.qualifying, physicalDeclaration(occurrence))
+		}
 		return nil, nil
 	}
 	total := 0
@@ -303,18 +325,34 @@ func (p *entryPlanner) follow(
 	}
 	if local && seed && slices.ContainsFunc(children, func(o selection.OccurrenceFacts) bool {
 		return o.Declaration == occurrence.Declaration
-	}) && !slices.Contains(root.Anchors, application.Path) {
-		root.Anchors = append(root.Anchors, application.Path)
+	}) {
+		root.recordAnchor(application.Path, &reference)
 	}
 	scope := &rootScope{occurrences: children, parent: visit.scope}
 	if err := p.prepareScope(ctx, scope); err != nil {
 		return nil, err
+	}
+	if qualifies {
+		root.qualifying = append(root.qualifying, physicalDeclaration(occurrence))
 	}
 	next := make([]rootVisit, len(scope.occurrences))
 	for i := range scope.occurrences {
 		next[i] = rootVisit{occurrence: &scope.occurrences[i], scope: scope}
 	}
 	return next, nil
+}
+
+func (r *clusterRoot) recordAnchor(target string, reference *manifest.Reference) {
+	var source manifest.NamedResource
+	if reference.BindsSource() {
+		source = reference.NamedResource
+	}
+	i := slices.IndexFunc(r.anchors, func(anchor bootstrapAnchor) bool { return anchor.target == target })
+	if i < 0 {
+		r.anchors = append(r.anchors, bootstrapAnchor{target: target, source: source})
+	} else if r.anchors[i].source == (manifest.NamedResource{}) {
+		r.anchors[i].source = source
+	}
 }
 
 func (p *entryPlanner) followOutput(
@@ -371,7 +409,7 @@ func (p *entryPlanner) followTarget(
 }
 
 func (p *entryPlanner) singleAnchoredRoot(root *clusterRoot) bool {
-	return len(p.roots) == 1 && len(root.Anchors) != 0
+	return len(p.roots) == 1 && len(root.anchors) != 0
 }
 
 func (p *entryPlanner) bootstrapRoot(
@@ -458,12 +496,6 @@ func (p *entryPlanner) source(
 		return nil, nil //nolint:nilnil // Unprepared predictions MUST NOT supply source material.
 	}
 
-	if application.Source == id && selected != nil {
-		if !slices.Contains(root.sourceDeclarations, selected.Declaration) {
-			root.sourceDeclarations = append(root.sourceDeclarations, selected.Declaration)
-		}
-	}
-
 	group := entrySourceGroup{
 		scoped: true, required: true, reference: *reference, producers: producers,
 	}
@@ -515,6 +547,12 @@ func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
 		occurrence.RequiresBuild,
 		occurrence.Mounted,
 	}
+}
+
+func physicalDeclaration(occurrence *selection.OccurrenceFacts) selection.OccurrenceID {
+	declaration := occurrence.Declaration
+	declaration.Source = occurrence.Mounted.OriginPath(declaration.Source)
+	return declaration
 }
 
 func occurrenceObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifest {

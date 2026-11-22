@@ -15,6 +15,36 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (o *Orchestrator) qualifyDeclarationPair(ctx context.Context, other *Orchestrator) error {
+	base, head := o.store, (*store.Store)(nil)
+	if other != nil {
+		head = other.store
+	}
+	if o.cfg.ID.Side == manifest.TreeHead {
+		base, head = head, base
+	}
+	stores := [2]*store.Store{base, head}
+	work := o.cfg.work.Scope()
+	changes := o.cfg.ExternalChanges
+	if o.hasComparison(other, changes) {
+		var err error
+		pair := change.SourcePair{Stores: stores, Indexes: o.readerInputs(other, o.cfg.ID.Side).indexes}
+		changes, err = change.Qualify(ctx, changes, pair, work)
+		if err != nil {
+			return err
+		}
+	}
+	prepared := o.declarationChildren(other, base, head)
+	changes, err := changes.WithDeclarations(
+		ctx,
+		change.DeclarationInputs{Stores: stores, Prepared: prepared, Work: work},
+	)
+	if err != nil {
+		return err
+	}
+	return o.bindDeclaredReaders(ctx, other, changes)
+}
+
 func (o *Orchestrator) prepareInvocation(ctx context.Context) error {
 	prepared := false
 	defer func() {
@@ -169,7 +199,7 @@ func (o *Orchestrator) appendHistoryQuery(
 	for _, input := range inputs {
 		if input != nil && input.FS != nil && input.Reads.Valid() {
 			for _, file := range paths {
-				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(), Path: file})
 			}
 			found = true
 		}
@@ -177,7 +207,7 @@ func (o *Orchestrator) appendHistoryQuery(
 	if !found && source == manifest.BootstrapSourceID {
 		if input := o.cfg.Input; input != nil && input.FS != nil && input.Reads.Valid() {
 			for _, file := range paths {
-				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+				query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(), Path: file})
 			}
 		}
 	}

@@ -554,14 +554,17 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 		for _, object := range []manifest.BaseManifest{source, producer, consumer} {
 			st.AddObject(object)
 		}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: roots[i], FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: roots[i], FS: fstest.MapFS{}},
+		)
 		mounted := filepath.Join(roots[i], ".mount")
 		st.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
-				LocalPath:  mounted,
-				LocalRoot:  filepath.Join(roots[i], "subtree"),
-				InputAlias: true,
+				LocalPath: mounted,
+				LocalRoot: filepath.Join(roots[i], "subtree"),
+				Provider:  store.ProviderAlias,
 				FS: fstest.MapFS{
 					"data/kustomization.yaml": {
 						Data: []byte(

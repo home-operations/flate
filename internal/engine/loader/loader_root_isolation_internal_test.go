@@ -203,7 +203,10 @@ func testLoaderIndependentRootsAdmittedMembership(t *testing.T) {
 	assert.NoError(t, err)
 	testutil.WriteFile(t, root, "second.yaml", testutil.KustomizationYAML("second", "apps", "  {path: ./apps}\n"))
 	s := store.New()
-	s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	s.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(s)
 	n, err := loadForTest(t.Context(), t, l, root)
 	assert.NoError(t, err)

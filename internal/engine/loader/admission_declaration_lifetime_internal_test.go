@@ -16,18 +16,21 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./app}\n",
-			),
-		},
-		"readonly.yaml": {
-			Data: []byte(
-				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: readonly, namespace: apps}\nspec: {url: https://fixture.invalid/charts}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./app}\n",
+				),
+			},
+			"readonly.yaml": {
+				Data: []byte(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: readonly, namespace: apps}\nspec: {url: https://fixture.invalid/charts}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -197,19 +200,22 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"child.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child, namespace: apps}\nspec: {path: ./workload}\n",
-			),
-		},
-		"owner.yaml": {
-			Data: []byte(
-				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: kustomize.toolkit.fluxcd.io/v1\n    kind: Kustomization\n    metadata: {name: child, namespace: apps}\n    spec: {path: ./workload}\n",
-			),
-		},
-		"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"child.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child, namespace: apps}\nspec: {path: ./workload}\n",
+				),
+			},
+			"owner.yaml": {
+				Data: []byte(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: kustomize.toolkit.fluxcd.io/v1\n    kind: Kustomization\n    metadata: {name: child, namespace: apps}\n    spec: {path: ./workload}\n",
+				),
+			},
+			"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})

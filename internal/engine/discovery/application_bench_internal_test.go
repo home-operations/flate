@@ -13,7 +13,7 @@ func BenchmarkBindEntry_Evidence(b *testing.B) {
 	for _, name := range []string{"publication", "equal_publication", "accepted_history"} {
 		b.Run(name, func(b *testing.B) {
 			const repo = "/virtual/entry-evidence-benchmark"
-			input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: repo, FS: fstest.MapFS{}}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: "./entry"}

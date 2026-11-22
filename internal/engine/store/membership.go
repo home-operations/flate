@@ -7,26 +7,27 @@ import (
 )
 
 func (c *objectCell) ordinaryDemand() bool {
-	return c.ordinary || !c.included && !c.excluded
+	return c.ordinary || c.inclusion == inclusionUnset
 }
 
 type capture struct {
 	capturePayload
 
-	composed    bool
-	excluded    bool
-	accepted    bool
-	independent bool
-	classified  bool
-	ordinary    bool
-	bound       bool
-	binding     *Input
-	support     *Input
-	preflight   string
-	owner       *producerSlot
-	revision    uint64
-	generation  uint64
-	position    int
+	composed       bool
+	excluded       bool
+	accepted       bool
+	independent    bool
+	classified     bool
+	ordinary       bool
+	bound          bool
+	preflightCycle bool
+	binding        *Input
+	support        *Input
+	preflight      string
+	owner          *producerSlot
+	revision       uint64
+	generation     uint64
+	position       int
 }
 
 type capturePayload struct {
@@ -57,17 +58,18 @@ func (sh *shard) captureLocked(
 	cell := *cellValue
 	if view != nil {
 		*view = capture{
-			composed:    cell.composed,
-			classified:  cell.classified && !cell.retired && cell.bound(),
-			ordinary:    cell.ordinaryDemand(),
-			independent: cell.independent,
-			accepted:    cell.rooted,
-			generation:  cell.generation,
-			excluded:    cell.excluded,
-			preflight:   cell.preflight,
-			binding:     cell.binding,
-			support:     cell.support,
-			reference:   cell.reference,
+			composed:       cell.composed,
+			classified:     cell.classified && !cell.retired && cell.bound(),
+			ordinary:       cell.ordinaryDemand(),
+			independent:    cell.independent,
+			accepted:       cell.rooted,
+			generation:     cell.generation,
+			excluded:       cell.inclusion == inclusionExcluded,
+			preflight:      cell.preflight,
+			preflightCycle: cell.preflightCycle,
+			binding:        cell.binding,
+			support:        cell.support,
+			reference:      cell.reference,
 		}
 	}
 	var child Child

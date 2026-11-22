@@ -334,8 +334,7 @@ func (c *admissionClosure) comparisonInputLocal(evidence *SourceFacts, delta *ch
 	local := false
 	for _, origin := range origins {
 		local = local ||
-			origin != nil &&
-				(origin.LocalPath == c.context.Root || origin.LocalRoot == c.context.Root)
+			origin.WorkingTree() && origin.OriginPath(origin.LocalPath) == c.context.Root
 	}
 	if (origins[0] != nil || origins[1] != nil) && !local {
 		return false
@@ -353,7 +352,7 @@ func (c *admissionClosure) inputSourceMatches(id, consumer, source manifest.Name
 	}
 	if source == manifest.BootstrapSourceID {
 		_, artifact, paired := c.delta(readerSource)
-		if !paired && artifact != nil && artifact.OriginPath(artifact.LocalPath) == c.context.Root {
+		if !paired && artifact.WorkingTree() && artifact.OriginPath(artifact.LocalPath) == c.context.Root {
 			return true
 		}
 	}

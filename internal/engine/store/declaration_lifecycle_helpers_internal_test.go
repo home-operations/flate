@@ -124,7 +124,7 @@ func testRecordEmittedIndependencePublicationCaseCompletion(
 	fact := cell.independent
 	(*scope.sh).mu.RUnlock()
 	if (*(*scope.testCaseInput).route) == "metadata" {
-		assert.Equal(t, cell.excluded, true)
+		assert.Equal(t, cell.inclusion, inclusionExcluded)
 		assert.Equal(t, cell.preflight, "preflight")
 	}
 	assert.Equal(t, fact, (*(*scope.testCaseInput).independent))

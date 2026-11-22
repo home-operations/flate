@@ -729,7 +729,7 @@ spec:
 kind: FluxInstance
 metadata: {name: flux, namespace: apps}
 spec:
-  sync: {name: self, kind: GitRepository, url: `+url+", ref: main, path: ./entry}\n",
+  sync: {name: self, kind: GitRepository, url: `+url+", ref: refs/heads/main, path: ./entry}\n",
 		)
 		testutil.WriteFile(
 			t,

@@ -308,7 +308,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			s.AddObject(owner)
 			art := &store.SourceArtifact{LocalRoot: local, LocalPath: local, FS: input}
 			if mode == "alias" {
-				art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
+				art.Provider, art.LocalRoot = store.ProviderAlias, filepath.Join(root, "subtree")
 			}
 			if mode == "pinned" {
 				art.Key, art.Content = "pinned", "pinned"

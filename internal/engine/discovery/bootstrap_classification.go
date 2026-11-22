@@ -3,15 +3,11 @@ package discovery
 import (
 	"cmp"
 	"context"
-	"net/url"
+	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/go-git/go-git/v6/plumbing/transport"
-
-	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
-	"github.com/home-operations/flate/internal/engine/source/gittree"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -86,141 +82,328 @@ func (r *sourceRequest) generatedDocument(id manifest.NamedResource, candidate, 
 
 func (a *Admission) classifySource(id manifest.NamedResource, request *sourceRequest) entryResolution {
 	previous := a.resolvedSources.snapshot()[id]
-	entry := request.entry || previous.entry && previous.input == a.input
-	candidate := entryResolution{object: request.object, input: a.input, entry: entry, producers: request.producers}
-	if id == manifest.BootstrapSourceID {
-		return a.classifyBootstrap(&candidate, &previous)
+	candidate := entryResolution{
+		object: request.object, input: a.input, entry: request.entry, producers: request.producers,
 	}
-	var object manifest.BaseManifest
-	switch request.reads {
-	case nil:
-		object = a.store.GetDeclaration(id)
-	default:
-		object = request.reads.GetDeclaration(id)
-		candidate.object = cmp.Or(candidate.object, request.reads.GetObject(id), previous.object)
-	}
-	switch {
-	case !request.scoped && object != nil && !previous.ownsDeclaration(object):
-		candidate.object = object
-	case candidate.object == nil && !request.scoped && a.loader != nil && a.loader.IsFileIndexed(id):
-		candidate.object = a.loader.CatalogObject(id)
-	}
-	if candidate.object == nil && !request.scoped && previous.projected {
-		candidate.object = previous.object
-	}
-	matchesRequest := request.projected && candidate.object == request.object
-	matchesPrevious := previous.projected && candidate.object == previous.object
-	candidate.projected = matchesRequest || matchesPrevious || request.generatedDocument(id, candidate.object, object)
-	behavior, ok := candidate.object.(entrySource)
-	switch {
-	case candidate.projected && !ok:
-		candidate.entry = false
+	authored := candidate.selectDeclaration(a, id, request, &previous)
+	candidate.inheritEntry(&previous, request.scoped)
+	if candidate.synthetic {
 		return candidate
-	case previous.ownsDeclaration(candidate.object):
-		previous.entry = candidate.entry
-		return a.classifyMissingSource(id, request, &candidate, &previous)
-	case previous.reuseClassification(&candidate, request, a.loaderIndex()):
+	}
+	if candidate.projected && !authored && previous.reusesProjection(&candidate) {
+		if !request.projected && a.projectedProvider(id, request) == store.ProviderAbsent {
+			return entryResolution{input: a.input, producers: previous.producers, provider: store.ProviderAbsent}
+		}
 		return previous
-	case candidate.object == nil:
+	}
+	// A pending projection without a checkout descriptor MUST wait for its producer.
+	pending := candidate.projected && !authored && (request.scoped || len(request.producers) == 0)
+	source, hasDescriptor := candidate.object.(entrySource)
+	eligible := manifest.BootstrapSourceEligible(
+		candidate.object,
+		candidate.entry && (!pending || hasDescriptor),
+		a.remotes,
+	)
+	if pending && !eligible {
+		candidate.provider, candidate.entry = a.projectedProvider(id, request), false
+		return candidate
+	}
+	switch {
+	case previous.ownsDeclaration(candidate.object), candidate.object == nil:
 		return a.classifyMissingSource(id, request, &candidate, &previous)
-	case !ok:
+	case previous.reuseClassification(&candidate, request, a):
+		return previous
+	}
+	if !eligible {
 		return candidate
 	}
-	_, descriptor := behavior.BootstrapAlias(a.input.LocalPath)
-	if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match && !candidate.entry {
-		return candidate
+	candidate.provider = store.ProviderAlias
+	if hasDescriptor {
+		_, candidate.git = source.BootstrapAlias(candidate.input.LocalPath)
+		if candidate.git.BootstrapPinned() {
+			candidate.provider = store.ProviderCommit
+		}
 	}
-	candidate.git, candidate.pinned = descriptor, descriptor.BootstrapPinned()
 	return candidate
 }
 
-func (a *Admission) classifyBootstrap(candidate, previous *entryResolution) entryResolution {
-	id := manifest.BootstrapSourceID
-	if candidate.object == nil || previous.ownsDeclaration(candidate.object) {
-		if previous.input == a.input {
-			return *previous
+func (a *Admission) projectedProvider(id manifest.NamedResource, request *sourceRequest) store.SourceProvider {
+	if provider, known := a.sourceProduction(id, request, a.loaderIndex()); known {
+		return provider
+	}
+	return store.ProviderGenerator
+}
+
+func (r *entryResolution) inheritEntry(previous *entryResolution, scoped bool) {
+	if scoped || !previous.sameDeclaration(r) {
+		return
+	}
+	if previous.entryScoped {
+		r.entryScoped, r.entry = true, previous.entry
+		return
+	}
+	r.entry = r.entry || previous.entry && (!previous.projected || previous.provider != store.ProviderFetch)
+}
+
+func (r *entryResolution) sameDeclaration(candidate *entryResolution) bool {
+	return r.input == candidate.input && r.object == candidate.object
+}
+
+func (r *entryResolution) reusesProjection(candidate *entryResolution) bool {
+	return r.input == candidate.input && r.artifact != nil &&
+		len(r.producers) != 0 && r.sameClassification(candidate)
+}
+
+func (r *entryResolution) selectDeclaration(
+	a *Admission, id manifest.NamedResource, request *sourceRequest, previous *entryResolution,
+) bool {
+	var bootstrap manifest.BaseManifest
+	if a.resolvedSources != nil {
+		bootstrap = a.resolvedSources.bootstrap
+	}
+	object := r.authoredSource(a, id, request, previous)
+	if r.object == bootstrap || previous.ownsDeclaration(r.object) {
+		r.object = nil
+	}
+	if object == bootstrap {
+		object = nil
+	}
+	// An unscoped declaration MUST establish authority before replacing a synthetic binding.
+	unscoped := !request.scoped && !request.projected && !r.entry
+	challengesSynthetic := previous.synthetic && object == nil && r.object != nil && unscoped
+	if challengesSynthetic && !manifest.BootstrapSourceEligible(r.object, false, a.remotes) {
+		r.object = nil
+	}
+	undeclared := r.object == nil && object == nil
+	if id == manifest.BootstrapSourceID && undeclared && !previous.projected && len(r.producers) == 0 {
+		r.bindCheckout(bootstrap, previous, request.scoped)
+		return false
+	}
+	if request.reads != nil {
+		observed := request.reads.GetObject(id)
+		if observed == bootstrap || previous.ownsDeclaration(observed) {
+			observed = nil
 		}
-		candidate.object = a.store.GetDeclaration(id)
+		r.object = cmp.Or(r.object, observed, previous.object)
 	}
-	if candidate.object == nil {
-		candidate.object, _ = id.BindLocal(a.input.LocalPath)
-		candidate.synthetic = true
+	switch {
+	case !request.scoped && object != nil:
+		r.object = object
+	case r.object == nil && !request.scoped && a.loader != nil && a.loader.IsFileIndexed(id):
+		r.object = a.loader.CatalogObject(id)
 	}
-	if previous.input == a.input && manifest.Equal(previous.object, candidate.object) {
-		previous.object = candidate.object
-		return *previous
+	if r.object == nil && !request.scoped && previous.projected {
+		r.object = previous.object
 	}
-	if behavior, ok := candidate.object.(entrySource); ok {
-		_, candidate.git = behavior.BootstrapAlias(a.input.LocalPath)
+	r.projected = r.isProjected(id, request, previous, object)
+	return object != nil
+}
+
+func (r *entryResolution) bindCheckout(
+	bootstrap manifest.BaseManifest, previous *entryResolution, scoped bool,
+) {
+	if !scoped && previous.input == r.input && previous.object != nil && !previous.projected {
+		*r = *previous
+		return
 	}
-	_, native := a.input.FS.(*gittree.FS)
-	admitted := !native || gittree.PolicyKey(a.input.FS) != ""
-	customPolicy := candidate.git != nil && (candidate.git.Ignore != nil || len(candidate.git.SparseCheckout) != 0)
-	if admitted && !customPolicy && len(candidate.object.Composition().Includes) == 0 {
-		candidate.artifact = a.input
+	r.object = bootstrap
+	r.synthetic, r.provider, r.artifact = true, store.ProviderInput, r.input
+}
+
+func (r *entryResolution) authoredSource(
+	a *Admission, id manifest.NamedResource, request *sourceRequest, previous *entryResolution,
+) manifest.BaseManifest {
+	var object manifest.BaseManifest
+	if request.reads == nil {
+		object = a.store.GetDeclaration(id)
+	} else {
+		object = request.reads.GetDeclaration(id)
 	}
-	return *candidate
+	if !previous.ownsDeclaration(object) {
+		return object
+	}
+	r.placeholder = previous.placeholder
+	if r.placeholder == nil && r.object != nil && !previous.ownsDeclaration(r.object) {
+		r.placeholder = new(object)
+	}
+	return nil
+}
+
+func (r *entryResolution) isProjected(
+	id manifest.NamedResource, request *sourceRequest, previous *entryResolution, authored manifest.BaseManifest,
+) bool {
+	projectedRequest := request.projected && r.object == request.object
+	projectedDeclaration := previous.projected && r.object == previous.object
+	return projectedRequest || projectedDeclaration || request.generatedDocument(id, r.object, authored)
 }
 
 func (r *entryResolution) sameClassification(candidate *entryResolution) bool {
-	return r.object == candidate.object && r.entry == candidate.entry && r.projected == candidate.projected
+	return r.object == candidate.object && r.entry == candidate.entry &&
+		r.entryScoped == candidate.entryScoped && r.projected == candidate.projected
 }
 
-func (a *Admission) appliesEntry(application *manifest.EntryApplication) bool {
-	return a.appliesEntryAt(application, a.path)
+type entryScope uint8
+
+const (
+	entryUnscoped entryScope = iota
+	entryRejected
+	entryAccepted
+)
+
+func (p *entryPlanner) scopedEntry(
+	id manifest.NamedResource, source manifest.BaseManifest, scope *rootScope,
+) entryScope {
+	if !manifest.BootstrapSourceEligible(source, true, nil) {
+		return entryUnscoped
+	}
+	admission := p.session.admission()
+	var target string
+	for occurrence := range scope.objects() {
+		candidate := admission.scopedCheckoutTarget(occurrence)
+		if candidate.application.Source == id && len(candidate.path) > len(target) {
+			target = candidate.path
+		}
+	}
+	if target == "" {
+		return entryUnscoped
+	}
+	// A broader target MUST NOT displace a narrower self-applying entry.
+	for occurrence := range scope.objects() {
+		candidate := admission.scopedCheckoutTarget(occurrence)
+		other := candidate.application
+		observed := admission.entryOrigin(&other, nil)
+		current := cmp.Or(observed, candidate.path)
+		if other.Source == id || current == "" || !safepath.Contains(target, current) {
+			continue
+		}
+		narrower := current != target
+		if !narrower && manifest.BootstrapSourceEligible(source, false, admission.remotes) {
+			continue
+		}
+		if observed != "" {
+			return entryRejected
+		}
+		selected, _ := scope.source(other.Source)
+		if selected != nil && !selected.RequiresBuild &&
+			manifest.BootstrapSourceEligible(occurrenceObject(selected), narrower, admission.remotes) {
+			return entryRejected
+		}
+	}
+	return entryAccepted
 }
 
-func (a *Admission) appliesEntryAt(application *manifest.EntryApplication, path string) bool {
-	if a.input == nil || path == "" || a.store == nil || !application.Source.CanBindLocal() {
+type scopedEntryTarget struct {
+	application manifest.EntryApplication
+	path        string
+}
+
+func (a *Admission) scopedCheckoutTarget(occurrence *selection.OccurrenceFacts) scopedEntryTarget {
+	object := occurrenceObject(occurrence)
+	application, valid := runnableApplication(object)
+	if !valid || !object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
+		return scopedEntryTarget{}
+	}
+	return scopedEntryTarget{application: application, path: a.checkoutTarget(&application, occurrence)}
+}
+
+func (a *Admission) reachesEntry(
+	application *manifest.EntryApplication, occurrence *selection.OccurrenceFacts,
+) bool {
+	if a.input == nil || a.path == "" {
 		return false
 	}
-	artifact, _ := a.store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
-	resolved := entryResolution{object: a.store.GetDeclaration(application.Source), artifact: artifact}
-	return a.applicationApplies(application, &resolved, path)
-}
-
-func (a *Admission) applicationApplies(
-	application *manifest.EntryApplication,
-	resolved *entryResolution,
-	path string,
-) bool {
-	target := a.applicationEntryOrigin(application, resolved)
-	return target != "" && target == a.input.OriginPath(path)
-}
-
-func (a *Admission) applicationEntryOrigin(application *manifest.EntryApplication, resolved *entryResolution) string {
-	selected := a.resolvedSources.snapshot()[application.Source]
-	if selected.input == a.input && selected.artifact != nil {
-		resolved = &selected
+	entry := a.input.OriginPath(a.path)
+	if a.entryOrigin(application, nil) == entry {
+		return true
 	}
-	return loader.ApplicationEntryOrigin(resolved, application, a.input)
+	return occurrence != nil && a.checkoutTarget(application, occurrence) == entry
+}
+
+func (a *Admission) checkoutTarget(
+	application *manifest.EntryApplication, occurrence *selection.OccurrenceFacts,
+) string {
+	if a.input == nil || occurrence.RequiresBuild || occurrence.Declaration.File == "" {
+		return ""
+	}
+	if object := occurrenceObject(occurrence); object == nil ||
+		!object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
+		return ""
+	}
+	target := a.input.ApplicationOrigin(application.Path)
+	if target == "" || application.Path == "" && target != a.input.OriginPath(a.path) {
+		return ""
+	}
+	mount := occurrence.Mounted
+	if occurrence.Declaration.Source == a.input.LocalPath {
+		mount = a.input
+	}
+	if !mount.WorkingTree() || mount.LocalPath != occurrence.Declaration.Source {
+		return ""
+	}
+	declaration := mount.OriginPath(filepath.Join(mount.LocalPath, occurrence.Declaration.File))
+	if !safepath.Contains(target, declaration) {
+		return ""
+	}
+	return target
+}
+
+func (a *Admission) entryOrigin(application *manifest.EntryApplication, observed *store.SourceArtifact) string {
+	if application.Source == (manifest.NamedResource{}) {
+		return ""
+	}
+	if observed == nil && a.store != nil {
+		observed, _ = a.store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
+	}
+	if observed == nil || !observed.Reads.Valid() {
+		selected := a.resolvedSources.snapshot()[application.Source]
+		if selected.input == a.input {
+			observed = selected.artifact
+		}
+	}
+	return observed.ApplicationOrigin(application.Path)
 }
 
 // A source MUST NOT replace its construction input with its own rendered declaration.
 func (r *entryResolution) reuseClassification(
 	candidate *entryResolution,
 	request *sourceRequest,
-	index *manifest.DiscoveryIndex,
+	a *Admission,
 ) bool {
 	if candidate.object != nil && r.sameClassification(candidate) {
 		switch {
 		case r.input == candidate.input:
 			return true
-		case r.artifact != nil && r.artifact.InputAlias:
+		case r.artifact.WorkingTree():
 			r.input, r.artifact = candidate.input, nil
 			return true
 		}
 	}
-	if request.reads == nil || r.entry != candidate.entry || r.projected != candidate.projected {
+	if request.scoped || r.synthetic || r.artifact == nil {
 		return false
 	}
-	if r.synthetic || r.artifact == nil || r.input != candidate.input || r.sameClassification(candidate) {
+	if r.input != candidate.input || r.object == candidate.object {
 		return false
 	}
 	id := r.object.Named()
-	return slices.ContainsFunc(request.reads.Productions(id, index), func(production manifest.Production) bool {
-		return production.Source == id && production.Owner != (manifest.NamedResource{})
-	})
+	index := a.loaderIndex()
+	owner := a.store.EmissionOwner(id)
+	if owner == (manifest.NamedResource{}) {
+		record, _ := index.Lookup(id)
+		if record.Builder == "" || record.Declaration != candidate.object {
+			return false
+		}
+		owner = record.BuilderOwner
+	}
+	if owner == (manifest.NamedResource{}) {
+		return false
+	}
+	ownsInput := func(production manifest.Production) bool {
+		return production.Source == id && production.Owner == owner
+	}
+	if request.reads != nil {
+		return slices.ContainsFunc(request.reads.Productions(id, index), ownsInput)
+	}
+	return slices.ContainsFunc(a.store.Productions(id, index), ownsInput)
 }
 
 func (a *Admission) classifyMissingSource(
@@ -229,63 +412,158 @@ func (a *Admission) classifyMissingSource(
 	candidate *entryResolution,
 	previous *entryResolution,
 ) entryResolution {
-	*candidate = entryResolution{input: a.input, producers: candidate.producers}
-	if request.reference.RequiresDeclaration {
-		return *candidate
-	}
-	if !request.scoped && previous.input == a.input {
+	*candidate = entryResolution{input: a.input, producers: candidate.producers, provider: store.ProviderAbsent}
+	if !request.scoped && previous.input == a.input && len(candidate.producers) == 0 {
 		candidate.producers = previous.producers
 	}
-	var artifact store.Artifact
-	if request.reads != nil && request.reads.ID() != id {
-		artifact = request.reads.GetArtifact(id, store.ArtifactContent)
+	var observed store.Artifact
+	if request.reads != nil && request.reads.ID() != id && id != manifest.BootstrapSourceID {
+		observed = request.reads.GetArtifact(id, store.ArtifactContent)
 	} else {
-		artifact = a.store.GetArtifact(id, store.ArtifactContent)
+		observed = a.store.GetArtifact(id, store.ArtifactContent)
 	}
-	owned, _ := artifact.(*store.SourceArtifact)
-	if artifact != nil &&
+	if owned, ok := observed.(*store.SourceArtifact); ok && owned.Reads.Valid() &&
 		!owned.SameMaterial(previous.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
-		owned.Reads.Valid() {
+		owned.Provider != store.ProviderInput {
+		candidate.provider = owned.Provider
 		return *candidate
 	}
-	if a.sourceProduced(id, request) || len(candidate.producers) != 0 {
+	if provider, known := a.sourceProduction(id, request, a.loaderIndex()); known {
+		candidate.provider = provider
 		return *candidate
 	}
-	if previous.synthetic {
+	for i := range candidate.producers {
+		if a.sourceOutput(candidate.producers[i].identity, nil) == nil {
+			candidate.provider = store.ProviderGenerator
+			return *candidate
+		}
+	}
+	switch {
+	case len(candidate.producers) != 0, request.reference.RequiresDeclaration:
+		return *candidate
+	case id == manifest.BootstrapSourceID:
+		candidate.bindCheckout(a.resolvedSources.bootstrap, previous, request.scoped)
+		return *candidate
+	case previous.synthetic:
 		if previous.input != a.input {
 			previous.input, previous.artifact = a.input, nil
 		}
 		return *previous
+	case request.reference.ReadsSourceTree() && id.CanBindLocal():
+		candidate.synthetic, candidate.provider = true, store.ProviderAlias
 	}
-	candidate.synthetic = request.reference.ReadsSourceTree() && id.CanBindLocal()
 	return *candidate
 }
 
-func (a *Admission) sourceProduced(id manifest.NamedResource, request *sourceRequest) bool {
+// Provider captures the same source decision for diagnostics before material exists.
+func (a *Admission) Provider(
+	id manifest.NamedResource,
+	reads *store.ReadSet,
+	index *manifest.DiscoveryIndex,
+) store.SourceProvider {
+	var objects interface {
+		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
+		GetDeclaration(manifest.NamedResource) manifest.BaseManifest
+	} = reads
+	if reads == nil {
+		objects = a.store
+	}
+	artifact, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	resolution, accepted := a.resolvedSources.snapshot()[id]
+	composes := resolution.object != nil && len(resolution.object.Composition().Includes) != 0
+	if artifact.Available() && (!composes || artifact.Extent == store.ExtentComposed) {
+		return artifact.Provider
+	}
+	// A local checkout can supply the base of a Git include, but acquisition supplies the composed source.
+	if composes {
+		return store.ProviderFetch
+	}
+	if accepted && resolution.object != nil {
+		return resolution.provider
+	}
+	declaration := objects.GetDeclaration(id)
+	indexed, _ := index.Lookup(id)
+	if id.KindInfo().Runnable && (declaration != nil || indexed.Declaration != nil) {
+		return store.ProviderFetch
+	}
+	if provider, known := a.sourceProduction(id, &sourceRequest{reads: reads, scoped: true}, index); known {
+		return provider
+	}
+	if accepted {
+		return resolution.provider
+	}
+	if id == manifest.BootstrapSourceID && declaration == nil {
+		return store.ProviderInput
+	}
+	if declaration != nil || id.KindInfo().SourceArtifact {
+		return store.ProviderFetch
+	}
+	return store.ProviderAbsent
+}
+
+func (a *Admission) sourceProduction(
+	id manifest.NamedResource,
+	request *sourceRequest,
+	index *manifest.DiscoveryIndex,
+) (store.SourceProvider, bool) {
 	var productions []manifest.Production
 	if request.reads != nil {
-		productions = request.reads.Productions(id, a.loaderIndex())
+		productions = request.reads.Productions(id, index)
 	} else {
-		productions = a.store.Productions(id, a.loaderIndex())
+		productions = a.store.Productions(id, index)
 	}
+	local := func(p manifest.Production) bool {
+		return p.Declaration != id &&
+			(p.Declaration != (manifest.NamedResource{}) || p.Owner != (manifest.NamedResource{}))
+	}
+	produced := false
 	for i := range productions {
 		production := &productions[i]
-		if production.Declaration != id &&
-			(production.Declaration != (manifest.NamedResource{}) || production.Owner != (manifest.NamedResource{})) {
-			return true
+		if !local(*production) {
+			continue
+		}
+		produced = true
+		owner := production.Owner
+		if production.Declaration.KindInfo().Runnable {
+			owner = production.Declaration
+		}
+		output := a.sourceOutput(owner, request.reads)
+		if output == nil ||
+			slices.ContainsFunc(output.Children, func(child store.Child) bool {
+				return child.Obj != nil && child.Obj.Named() == id
+			}) {
+			return store.ProviderGenerator, true
 		}
 	}
-	if a.loader == nil || request.scoped {
-		return false
+	if record, _ := index.Lookup(id); produced || slices.ContainsFunc(record.Productions, local) {
+		return store.ProviderAbsent, true
 	}
-	for _, projection := range a.loader.SourceFacts(manifest.BootstrapSourceID, request.reads).Context.TemplateProjections {
-		for _, target := range projection.Targets {
-			if target.NamedResource == id {
-				return true
-			}
+	if request.scoped || a.loader == nil {
+		return store.ProviderAbsent, false
+	}
+	projections := a.loader.SourceFacts(manifest.BootstrapSourceID, request.reads).Context.TemplateProjections
+	for i := range projections {
+		if slices.ContainsFunc(projections[i].Targets, func(target manifest.ProducerTarget) bool {
+			return target.NamedResource == id
+		}) {
+			return store.ProviderGenerator, true
 		}
 	}
-	return false
+	return store.ProviderAbsent, false
+}
+
+func (a *Admission) sourceOutput(owner manifest.NamedResource, reads *store.ReadSet) *store.Emission {
+	var observed store.Artifact
+	if reads == nil {
+		observed = a.store.GetArtifact(owner, store.ArtifactContent)
+	} else {
+		observed = reads.GetArtifact(owner, store.ArtifactContent)
+	}
+	output, _ := observed.(*store.Emission)
+	if output == nil || !output.Complete || !output.OutputReads.Valid() {
+		return nil
+	}
+	return output
 }
 
 func (a *Admission) loaderIndex() *manifest.DiscoveryIndex {
@@ -314,7 +592,7 @@ func (d *Session) entrySourceGroups(
 			continue
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-			if _, ok := obj.(entrySource); ok {
+			if obj.Named().CanBindLocal() {
 				addEntrySource(groups, obj.Named(), manifest.NamedResource{}, nil)
 			}
 		}
@@ -322,7 +600,7 @@ func (d *Session) entrySourceGroups(
 	if d.loader != nil {
 		for id := range d.loader.Index.Files() {
 			application, valid := manifest.ApplicationFor(d.loader.CatalogObject(id))
-			if valid && d.admission().appliesEntry(&application) {
+			if valid && d.admission().reachesEntry(&application, nil) {
 				entrySourceGroupFor(groups, application.Source).entry = true
 			}
 		}
@@ -351,10 +629,14 @@ func (d *Session) addLoadedSources(
 		if evidence.Occurrence.RequiresBuild && evidence.Record.Builder == "" {
 			continue
 		}
+		root := selection.Root(evidence)
+		if root.Owner != (manifest.NamedResource{}) && d.resolvedSources.snapshot()[id].synthetic &&
+			d.cfg.Store.GetDeclaration(id) == nil {
+			continue
+		}
 		group := entrySourceGroupFor(groups, id)
 		group.object, group.document = child.Obj, child.Doc
 		group.projectedFromParent = false
-		root := selection.Root(evidence)
 		group.projected = !root.Admitted && evidence.Occurrence.Declaration == (selection.OccurrenceID{}) &&
 			evidence.Record.Builder == "" && d.cfg.Store.GetDeclaration(id) == nil
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
@@ -419,7 +701,7 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 		object := occurrenceObject(child)
 		if !child.Identity.KindInfo().Runnable {
 			if _, applies := manifest.ApplicationFor(object); applies {
-				if err := d.addGenerationSources(groups, object); err != nil {
+				if err := d.addGenerationSources(groups, object, child); err != nil {
 					return err
 				}
 			}
@@ -429,7 +711,7 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 		application, valid := manifest.ApplicationFor(object)
 		if valid {
 			group := entrySourceGroupFor(groups, application.Source)
-			group.entry = group.entry || d.admission().appliesEntry(&application)
+			group.entry = group.entry || d.occurrenceReachesEntry(&application, child)
 		}
 		ref, _, _ := child.SourcePath()
 		group := groups[ref]
@@ -444,6 +726,7 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 
 func (d *Session) addGenerationSources(
 	groups map[manifest.NamedResource]*entrySourceGroup, object manifest.BaseManifest,
+	occurrence *selection.OccurrenceFacts,
 ) error {
 	output, err := d.admission().prepareGeneration(object, d.cfg.Work.Source(object.Named()))
 	if err != nil {
@@ -465,40 +748,29 @@ func (d *Session) addGenerationSources(
 		group.required = true
 		for j := range output.Children {
 			if application, valid := runnableApplication(output.Children[j].Obj); valid && application.Source == id {
-				group.entry = group.entry || d.admission().appliesEntry(&application)
+				group.entry = group.entry || d.occurrenceReachesEntry(&application, occurrence)
 			}
 		}
 	}
 	return nil
 }
 
-func normalizeGitURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	endpoint, err := transport.ParseURL(raw)
-	if err != nil {
-		return ""
+func (d *Session) occurrenceReachesEntry(
+	application *manifest.EntryApplication, occurrence *selection.OccurrenceFacts,
+) bool {
+	admission := d.admission()
+	// An occurrence outside a planned scope MUST belong to an entry package.
+	if !d.hasEntryBuilder() {
+		return admission.reachesEntry(application, nil)
 	}
-	switch strings.ToLower(endpoint.Scheme) {
-	case "http", "https", "ssh", "git":
-	default:
-		return ""
-	}
-	host, remotePath := strings.Trim(endpoint.Host, "[]"), endpoint.Path
-	if strings.Contains(raw, "://") {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return ""
+	if occurrence.Declaration == (selection.OccurrenceID{}) {
+		evidence := d.loader.RootEvidence(occurrence.Identity, nil)
+		occurrence = &evidence.Occurrence
+		if evidence.Record.Builder != "" && evidence.PreparedRoot != "" {
+			prepared := *occurrence
+			prepared.RequiresBuild = false
+			occurrence = &prepared
 		}
-		host, remotePath = parsed.Hostname(), parsed.Path
 	}
-	if host == "" || strings.ContainsAny(host, "/\\") || remotePath == "" {
-		return ""
-	}
-	remotePath = strings.TrimSuffix(remotePath, "/")
-	remotePath = strings.TrimSuffix(remotePath, ".git")
-	remotePath = strings.TrimPrefix(remotePath, "/")
-	if remotePath == "" {
-		return ""
-	}
-	return strings.ToLower(host + "/" + remotePath)
+	return admission.reachesEntry(application, occurrence)
 }

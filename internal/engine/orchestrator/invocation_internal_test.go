@@ -52,7 +52,13 @@ func testInvocationLazySelectionLifetime(t *testing.T, stage string) {
 			return sourcecache.ProducerResult{}, writeErr
 		})
 	assert.NoError(t, err)
-	artifact := &store.SourceArtifact{FS: input, LocalPath: root, LocalRoot: root, Content: identity}
+	artifact := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		FS:        input,
+		LocalPath: root,
+		LocalRoot: root,
+		Content:   identity,
+	}
 	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: artifact, Path: root}
 	if stage == "preparation_failure" {
 		tree.Input = nil

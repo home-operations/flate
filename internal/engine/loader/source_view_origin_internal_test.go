@@ -48,22 +48,24 @@ func testSourceViewInputOriginCase(t *testing.T, testCaseInput *struct {
 	repoRoot := t.TempDir()
 	mount := filepath.Join(repoRoot, ".inputs", "source")
 	art := &store.SourceArtifact{
-		LocalPath:  mount,
-		LocalRoot:  repoRoot,
-		Key:        "derived",
-		InputAlias: testCaseInput.alias,
-		FS:         fstest.MapFS{},
+		LocalPath: mount,
+		LocalRoot: repoRoot,
+		Key:       "derived",
+		Provider:  store.ProviderInput,
+		FS:        fstest.MapFS{},
 	}
 	if testCaseInput.pinned {
-		art.Content = art.Key
+		art.Provider, art.Content = store.ProviderCommit, art.Key
 	}
 	if testCaseInput.identity {
 		mount, art.LocalPath, art.Key = repoRoot, repoRoot, ""
 	}
 	if testCaseInput.alias {
+		art.Provider = store.ProviderAlias
 		art.LocalRoot = filepath.Join(repoRoot, "subtree")
 	}
 	if testCaseInput.external {
+		art.Provider = store.ProviderFetch
 		art.Content = art.Key
 		art.LocalRoot = t.TempDir()
 	}

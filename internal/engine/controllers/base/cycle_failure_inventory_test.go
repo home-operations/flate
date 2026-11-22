@@ -46,8 +46,8 @@ func TestExecution_PreflightDuringFailureInventory(t *testing.T) {
 	const message = "dependency cycle detected: a → b → a"
 	tasks.Go(t.Context(), "publish-cycle", func(context.Context) {
 		tasks.YieldSlot(func() { <-publishing })
-		st.SetPreflight(peer.Named(), message)
-		st.SetPreflight(own.Named(), message)
+		st.SetPreflight(peer.Named(), store.PreflightFailure{Message: message, DependencyCycle: true})
+		st.SetPreflight(own.Named(), store.PreflightFailure{Message: message, DependencyCycle: true})
 		close(published)
 	})
 	var crossed atomic.Bool
@@ -76,7 +76,7 @@ func TestExecution_PreflightDuringFailureInventory(t *testing.T) {
 				level,
 				e,
 				func(e *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
-					assert.Equal(t, e.Reads.Preflight(), "")
+					assert.Equal(t, e.Reads.Preflight(e.Reads.ID()).Message, "")
 					return e.Require(ctx, []manifest.DependencyRef{{NamedResource: peer.Named()}}, level)
 				},
 			)

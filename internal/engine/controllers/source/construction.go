@@ -37,7 +37,7 @@ func (c *Controller) construct(ctx context.Context, id manifest.NamedResource, c
 	facts := obj.(sourceFacts) //nolint:errcheck // Local source admission MUST return sourceFacts; a mismatched manifest intentionally panics.
 	// Composition gates MUST recapture the admitted declaration before reading input artifacts.
 	if len(facts.Composition().Includes) != 0 && ex.run.Reads.GetDeclaration(id) == nil {
-		ex.run.Reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+		ex.run.Reads.AdmitConstructed(&child)
 		return nil
 	}
 	if err := ex.completeFetch(ctx, facts, fetchCompletion{artifact: selected, level: manifest.DrainNone}); err != nil {

@@ -103,14 +103,14 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 		t,
 		chart,
 		"fixture/templates/application.yaml",
-		"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./entry}\n",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: refs/heads/main, path: ./entry}\n",
 	)
 	if (*testCaseInput) == "templated_group" {
 		testutil.WriteFile(
 			t,
 			chart,
 			"fixture/templates/application.yaml",
-			"apiVersion: '{{ printf \"%s.%s\" \"fluxcd\" \"controlplane.io/v1\" }}'\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./entry}\n",
+			"apiVersion: '{{ printf \"%s.%s\" \"fluxcd\" \"controlplane.io/v1\" }}'\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: refs/heads/main, path: ./entry}\n",
 		)
 	}
 	var charts map[manifest.NamedResource]string
@@ -132,7 +132,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 			t,
 			child,
 			"fixture/templates/application.yaml",
-			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: '{{ .Values.applier }}', namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./entry}\n",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: '{{ .Values.applier }}', namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: refs/heads/main, path: ./entry}\n",
 		)
 		testutil.WriteFile(
 			t,
@@ -479,7 +479,7 @@ func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) entryAp
 			t,
 			(*i.chart),
 			"fixture/templates/application.yaml",
-			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: changed-applier, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+i.url+", ref: main, path: ./entry}\n",
+			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: changed-applier, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+i.url+", ref: refs/heads/main, path: ./entry}\n",
 		)
 	}
 	if (*(*i.testCaseInput)) == "nested_chart" && run == 1 {
@@ -597,7 +597,7 @@ data: {value: side-%d}
 kind: FluxInstance
 metadata: {name: applies-entry, namespace: apps}
 spec:
-  sync: {name: self, kind: GitRepository, url: ` + url + ", ref: main, path: {{ .Values.entry | quote }}}\n"
+  sync: {name: self, kind: GitRepository, url: ` + url + ", ref: refs/heads/main, path: {{ .Values.entry | quote }}}\n"
 			if level+1 < depth {
 				application = fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

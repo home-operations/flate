@@ -91,7 +91,7 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 		c.Configure(base.Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	}
 	if (*testCaseInput) == "preflight" {
-		st.SetPreflight(id, "cycle")
+		st.SetPreflight(id, store.PreflightFailure{Message: "cycle", DependencyCycle: true})
 	}
 	ran := false
 	execution := controllertest.NewExecution(c, id)

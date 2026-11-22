@@ -421,22 +421,22 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		st.AddObject(src)
 		source = src.Named()
 		art := &store.SourceArtifact{
-			FS:         os.DirFS(root),
-			LocalPath:  filepath.Join(root, ".inputs", "source"),
-			LocalRoot:  filepath.Join(root, "subtree"),
-			InputAlias: true,
-			Key:        "derived-alias",
+			FS:        os.DirFS(root),
+			LocalPath: filepath.Join(root, ".inputs", "source"),
+			LocalRoot: filepath.Join(root, "subtree"),
+			Provider:  store.ProviderAlias,
+			Key:       "derived-alias",
 		}
 		changed = "subtree/apps/config.yaml"
 		if (*testCaseInput) == "pinned" || (*testCaseInput) == "paired_pinned" {
-			art.InputAlias = false
+			art.Provider = store.ProviderFetch
 			art.Key, art.Content = "pin", "pin"
 			art.LocalRoot = root
 			changed = ".inputs/source/apps/config.yaml"
 		}
 		if (*testCaseInput) == "external" {
 			art.LocalRoot = filepath.Dir(root)
-			art.InputAlias = false
+			art.Provider = store.ProviderFetch
 			changed = "apps/config.yaml"
 		}
 		st.SetArtifact(source, art)
@@ -463,7 +463,10 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		}
 		testutil.WriteFile(t, root, "apps/app/kustomization.yaml", "resources: []\n")
 		testutil.WriteFile(t, root, "components/common/kustomization.yaml", "kind: Component\n")
-		st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+		st.SetArtifact(
+			source,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+		)
 	}
 	changes := detectChanges(t, []string{changed}, []string{changed})
 	if (*testCaseInput) == "paired_pinned" || (*testCaseInput) == "paired_alias" {
@@ -511,17 +514,17 @@ func testFilterProductionReadersSourceCoordinatesCase(
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	st.AddObject(source)
 	art := &store.SourceArtifact{
-		FS:         os.DirFS(root),
-		LocalPath:  filepath.Join(root, ".mount"),
-		LocalRoot:  filepath.Join(root, "subtree"),
-		InputAlias: true,
+		FS:        os.DirFS(root),
+		LocalPath: filepath.Join(root, ".mount"),
+		LocalRoot: filepath.Join(root, "subtree"),
+		Provider:  store.ProviderAlias,
 	}
 	if (*testCaseInput) == "pinned" || (*testCaseInput) == "pinned_reader" ||
 		(*testCaseInput) == "index_only_pinned" {
-		art.LocalRoot, art.InputAlias, art.Key, art.Content = root, false, "pin", "pin"
+		art.LocalRoot, art.Provider, art.Key, art.Content = root, store.ProviderFetch, "pin", "pin"
 	}
 	if (*testCaseInput) == "external" || (*testCaseInput) == "index_only_external" {
-		art.LocalRoot, art.InputAlias = filepath.Dir(root), false
+		art.LocalRoot, art.Provider = filepath.Dir(root), store.ProviderFetch
 		if (*testCaseInput) == "index_only_external" {
 			art.Key, art.Content = "external", "external"
 		}

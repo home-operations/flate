@@ -238,6 +238,7 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
+	writeBaselineGit((*t), path, "https://example.test/cluster.git")
 	testutil.WriteFile((*t), path, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
 	testutil.WriteFile((*t), path, "charts/demo/templates/configmap.yaml", `apiVersion: v1
 kind: ConfigMap

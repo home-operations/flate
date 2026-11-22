@@ -26,7 +26,10 @@ func TestAdmission_NativeConstructionReachExpires(t *testing.T) {
 			for _, frozen := range []bool{false, true} {
 				st := store.New()
 				root := t.TempDir()
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+				)
 				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
 				id := entry.Named()
 				session := newSolverSession(

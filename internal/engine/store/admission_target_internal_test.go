@@ -22,7 +22,7 @@ func TestReadSet_AdmissionTarget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := New()
-			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "source"})
 			previous, next := emissionChild("input", "previous"), emissionChild("input", "next")
 			id := next.Obj.Named()
 			if tc.seed {

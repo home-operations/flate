@@ -186,7 +186,7 @@ func (c *admissionClosure) bootstrapInputRequired(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) bool {
-	if owner.Object == nil || record.Parent != owner.Identity && !c.coversDeclaration(owner, id) {
+	if owner.Object == nil {
 		return false
 	}
 	for ref := range manifest.References(owner.Object, manifest.ReferenceRelations) {
@@ -194,18 +194,18 @@ func (c *admissionClosure) bootstrapInputRequired(
 			continue
 		}
 		if ref.NamedResource == id {
-			return true
+			return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
 		}
 		input := c.record(ref.NamedResource)
 		productions := c.productions(ref.NamedResource)
 		if len(input.Productions) == 0 && len(productions) == 0 && input.Parent == id {
-			return true
+			return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
 		}
 		for i := range productions {
 			production := &productions[i]
 			if (production.Materializer(ref.NamedResource) == id || production.Declaration == id) &&
 				c.bootstrapProductionCurrent(ref.NamedResource, production) {
-				return true
+				return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
 			}
 		}
 	}
@@ -597,19 +597,24 @@ func (c *admissionClosure) declarationStable(
 
 // Declaration authority MUST precede the choice of a preparation owner.
 type declarationEvidence struct {
-	child           store.Child
-	owner           manifest.NamedResource
-	authored, built bool
-	accepted        bool
-	qualification   bool
-	independent     bool
+	child               store.Child
+	owner               manifest.NamedResource
+	authored, built     bool
+	accepted            bool
+	awaitingPublication bool
+	qualification       bool
+	independent         bool
 }
 
 func (e *declarationEvidence) known() bool { return e.child.Obj != nil || e.authored }
 
 func (e *declarationEvidence) allowsOwner(owner manifest.NamedResource) bool {
-	return (!e.authored && !e.accepted || !owner.ReportHidden()) && (!e.accepted || owner != e.owner) &&
-		(!e.built || !e.qualification || owner != e.owner)
+	materialized := e.accepted && !e.awaitingPublication
+	authored := e.authored && !e.awaitingPublication
+	hidden := (authored || materialized) && owner.ReportHidden()
+	published := materialized && owner == e.owner
+	qualifiedBuild := e.built && e.qualification && owner == e.owner
+	return !hidden && !published && !qualifiedBuild
 }
 
 func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declarationEvidence {
@@ -629,6 +634,8 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 		c.acceptedDeclaration(id, evidence.owner, record.Declaration) {
 		evidence.child.Obj = record.Declaration
 		evidence.accepted, evidence.authored = true, true
+		// A frozen index MUST NOT substitute historical equality for a producer's publication.
+		evidence.awaitingPublication = c.context.Frozen
 	}
 	if record.Builder == "" {
 		if evidence.child.Obj == nil {

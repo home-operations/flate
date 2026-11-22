@@ -16,6 +16,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// DefaultSourcePolicyKey lets discovery reuse a view without reapplying the default exclusions.
+const DefaultSourcePolicyKey = "default"
+
 func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) error {
 	opts := *optsValue
 	mutable := g.identity == "" && (opts.Current != nil || opts.Worktree != nil)
@@ -45,7 +48,7 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 		}
 		input.policy = matcher
 		if err == nil && len(opts.Sparse) == 0 && matcher.UsesDefaults() {
-			input.policyKey = "default"
+			input.policyKey = DefaultSourcePolicyKey
 		} else if err == nil {
 			input.policyKey = manifest.Fingerprint(struct {
 				Ignore string

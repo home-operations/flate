@@ -15,7 +15,7 @@ import (
 func TestRun_AnonymousAdmissionPreparation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
 		"entry/release.yaml": {
 			Data: []byte(
 				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec:\n  interval: 1h\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",

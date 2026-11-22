@@ -75,7 +75,7 @@ func TestRecordRender_CapturedEmission(t *testing.T) {
 			acceptance := sourcecache.RenderAcceptance{
 				Owner:   owner.Named(),
 				Content: content,
-				Source:  request.Source.HistoryIdentity(manifest.BootstrapSourceID),
+				Source:  request.Source.HistoryIdentity(),
 			}
 			parsed := first.run.ParseChildren(owner, docs, manifest.ParseDocOptions{})
 			initial := store.Emission{
@@ -107,7 +107,7 @@ func TestRecordRender_CapturedEmission(t *testing.T) {
 			current.run.Reads.GetObject(owner.Named())
 			request.Source = current.run.Reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin).(*store.SourceArtifact)
 			docs, receipt, err = kustomize.Render(t.Context(), c.Trees, request, sourcecache.RetryConfig{})
-			acceptance.Source = request.Source.HistoryIdentity(manifest.BootstrapSourceID)
+			acceptance.Source = request.Source.HistoryIdentity()
 			assert.NoError(t, err)
 			attempt := store.Emission{Render: receipt}
 			if tc.branch == "deduplication" {

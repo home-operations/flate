@@ -65,6 +65,7 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 	root := t.TempDir()
 	st := store.New()
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS: fstest.MapFS{
 			"entry/literal.yaml": {

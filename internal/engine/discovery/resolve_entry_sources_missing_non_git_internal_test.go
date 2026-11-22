@@ -40,6 +40,7 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			bootstrap := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				LocalRoot: root,
 				FS: fstest.MapFS{
@@ -73,7 +74,7 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 				assert.Equal(t, count, 1)
 				assert.Equal(t, st.GetObject(id).Named(), id)
 				assert.Equal(t, artifact == st.GetArtifact(id, store.ArtifactContent), true)
-				assert.Equal(t, artifact.InputAlias, true)
+				assert.Equal(t, (artifact.Provider == store.ProviderAlias), true)
 				assert.Equal(t, artifact.Key, "")
 				body, readErr := fs.ReadFile(artifact.FS, "apps/file")
 				assert.NoError(t, readErr)
@@ -135,7 +136,7 @@ func TestResolveEntrySources_Content(t *testing.T) {
 		assert.Equal(t, warnings[0].Resource, declared.Named())
 		artifact, ok := st.GetArtifact(consumer.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
 		assert.Equal(t, ok, true)
-		assert.Equal(t, artifact.InputAlias, true)
+		assert.Equal(t, (artifact.Provider == store.ProviderAlias), true)
 		body, err := fs.ReadFile(artifact.FS, "apps/file")
 		assert.NoError(t, err)
 		assert.Equal(t, string(body), "shallow input")
@@ -300,13 +301,13 @@ type testResolveEntrySourcesContentCaseInputs struct {
 func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveEntrySourcesContentCaseInputs) {
 	t.Helper()
 
-	d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
+	d := Admission{aliasViews: sourceViews{}}
 	selected := *testCaseInput.candidate
-	first, key, _, err := d.entrySourceView(t.Context(), &selected)
+	first, key, err := d.entrySourceView(t.Context(), &selected)
 
 	assert.FatalIf(t, err != nil, "%v", err)
 
-	d.aliasViews[key] = first
+	d.aliasViews.remember(key, first)
 	cloned := *(*testCaseInput.bootstrap)
 	selected.input = &cloned
 	switch *testCaseInput.phase {
@@ -322,7 +323,7 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 		cloned.Key = ""
 		cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
 	}
-	got, _, _, err := d.entrySourceView(t.Context(), &selected)
+	got, _, err := d.entrySourceView(t.Context(), &selected)
 
 	assert.FatalIf(t, err != nil, "%v", err)
 

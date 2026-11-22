@@ -64,7 +64,7 @@ func TestConstructTrees_CancellationDuringRound(t *testing.T) {
 				ID:       id,
 				Path:     filepath.Join(root, "flux"),
 				RepoRoot: root,
-				Input:    &store.SourceArtifact{LocalPath: root, FS: input},
+				Input:    &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 				ExternalChanges: detectChanges(
 					t,
 					[]string{"peer/cm.yaml", "peer/child.yaml"},
@@ -118,7 +118,7 @@ func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
 	}}
 	results, err := renderTreesForTest(t.Context(), t, []Tree{{
 		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root,
-		Input: &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
 	}}, Config{Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(results), 1)
@@ -230,7 +230,10 @@ func TestWithReaders_PreservesSideEvidence(t *testing.T) {
 			local := &manifest.Kustomization{Name: to.Name, Namespace: to.Namespace}
 			st.AddObject(local)
 			root := t.TempDir()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{Changes: paired, Index: &manifest.DiscoveryIndex{}, Inventory: st, Root: root},
@@ -364,7 +367,7 @@ func testQualifyReadersCompletionFailure(t *testing.T, phase, cancellation strin
 		id := manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}
 		o, err := newTestOrchestrator(t, Tree{
 			ID: id, Path: filepath.Join(root, "entry"), RepoRoot: root,
-			Input: &store.SourceArtifact{LocalPath: root, FS: input},
+			Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 		}, Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true, Selection: selection.Request{Changed: true}})
 		assert.NoError(t, err)
 		t.Cleanup(o.stop)
@@ -549,8 +552,16 @@ func prepareCompletionHealthyPairs(t *testing.T, r *Invocation) [2]completionHea
 			}
 			id := manifest.TreeID{Cluster: cluster, Side: manifest.TreeSide(side)}
 			o, setupErr := newTestOrchestrator(t, Tree{
-				ID: id, Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url},
-				Input: &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+				ID:       id,
+				Path:     filepath.Join(root, "entry"),
+				RepoRoot: root,
+				SelfURLs: []string{url},
+				Input: &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        files,
+				},
 			}, Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true, Selection: selection.Request{Changed: true}})
 			assert.NoError(t, setupErr)
 			t.Cleanup(o.stop)

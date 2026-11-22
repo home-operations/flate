@@ -179,6 +179,7 @@ spec:
 					Path:     filepath.Join(roots[0], "flux"),
 					RepoRoot: roots[0],
 					Input: &store.SourceArtifact{
+						Provider:  store.ProviderInput,
 						LocalPath: roots[0],
 						LocalRoot: roots[0],
 						FS:        inputs[0],
@@ -190,6 +191,7 @@ spec:
 					Path:     filepath.Join(roots[1], "flux"),
 					RepoRoot: roots[1],
 					Input: &store.SourceArtifact{
+						Provider:  store.ProviderInput,
 						LocalPath: roots[1],
 						LocalRoot: roots[1],
 						FS:        inputs[1],

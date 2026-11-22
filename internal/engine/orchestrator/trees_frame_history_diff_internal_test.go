@@ -317,7 +317,12 @@ patches:
       value: ./consumer
 `)
 		st := store.New()
-		input := &store.SourceArtifact{LocalPath: root, Content: "transformed", FS: os.DirFS(root)}
+		input := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: root,
+			Content:   "transformed",
+			FS:        os.DirFS(root),
+		}
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := loader.New(st)
 		l.SourceRoot = root

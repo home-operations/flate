@@ -1,0 +1,5 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: coredns}
+spec:
+  url: oci://registry.example.invalid/charts/coredns

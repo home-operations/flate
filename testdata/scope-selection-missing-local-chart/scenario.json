@@ -15,7 +15,7 @@
       "remotes": [
         {
           "name": "origin",
-          "url": "https://example.test/cluster.git"
+          "url": "https://fixture.invalid/cluster.git"
         }
       ]
     },
@@ -25,7 +25,7 @@
       "remotes": [
         {
           "name": "origin",
-          "url": "https://example.test/cluster.git"
+          "url": "https://fixture.invalid/cluster.git"
         }
       ]
     }

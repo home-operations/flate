@@ -20,7 +20,10 @@ func TestAdmission_ChangedPromotionsInvalidatePreparation(t *testing.T) {
 	for _, object := range []manifest.BaseManifest{source, parent} {
 		st.AddObject(object)
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	session := newSolverSession(
 		t,
 		st,

@@ -107,14 +107,15 @@ func (r *localResolver) resolve(
 	if resolution.err != nil {
 		return nil, localError(resolution.err)
 	}
-	if resolution.hash == r.head && (r.sideRevision == "" || r.sideRevision == resolution.hash.String()) {
+	if resolution.hash == r.head && !repository.BootstrapPinned() &&
+		(r.sideRevision == "" || r.sideRevision == resolution.hash.String()) {
 		return r.directory(ctx, repository, resolution.hash)
 	}
 	if repository.RecurseSubmodules {
 		if _, err := readCommit(r.repo, resolution.hash); err != nil {
 			return nil, localError(err)
 		}
-		return nil, nil //nolint:nilnil // Non-HEAD submodule sources require remote acquisition.
+		return nil, nil //nolint:nilnil // Recursive submodules require normal acquisition.
 	}
 	return r.committed(ctx, repository, resolution.hash, selected)
 }
@@ -158,7 +159,7 @@ func (r *localResolver) directory(
 	}
 	return &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: r.root, Revision: hash.String(),
-		FS: r.local, ContentFingerprint: gittree.ContentFingerprint,
+		FS: r.local, ContentFingerprint: gittree.ContentFingerprint, Provider: store.ProviderInput,
 	}, nil
 }
 
@@ -198,6 +199,8 @@ func (r *localResolver) committed(
 	label, _ := gittree.Label(gittree.LabelOptions{Root: r.root, Mode: gittree.Source, Key: key})
 	return &store.SourceArtifact{
 		Kind:               manifest.KindGitRepository,
+		Provider:           store.ProviderCommit,
+		Extent:             store.ExtentFiltered,
 		URL:                repository.URL,
 		LocalPath:          label,
 		Revision:           hash.String(),

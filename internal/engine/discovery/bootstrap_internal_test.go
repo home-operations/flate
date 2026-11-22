@@ -24,6 +24,99 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestEntrySourceView_FilteredCheckoutDeclaration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, declaration        string
+		ignore, sourceIgnore     string
+		entry, visible, checkout bool
+	}{
+		{
+			name: "declaration visible", declaration: "flux/source.yaml",
+			ignore: "/excluded.txt", entry: true, visible: true, checkout: true,
+		},
+		{
+			name: "spec ignore excludes declaration", declaration: "flux/source.yaml",
+			ignore: "/flux/source.yaml", entry: true,
+		},
+		{
+			name: "repository ignore excludes declaration", declaration: "flux/source.yaml",
+			sourceIgnore: "/flux/source.yaml", entry: true,
+		},
+		{
+			name: "repository ignore excludes entry", declaration: "sources/source.yaml",
+			sourceIgnore: "/flux/", visible: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			files := fstest.MapFS{
+				tc.declaration:    {Data: []byte("source")},
+				"flux/other.yaml": {Data: []byte("entry")},
+				"excluded.txt":    {Data: []byte("other")},
+			}
+			if tc.sourceIgnore != "" {
+				files[".sourceignore"] = &fstest.MapFile{Data: []byte(tc.sourceIgnore + "\n")}
+			}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
+			id := manifest.BootstrapSourceID
+			source := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace}
+			if tc.ignore != "" {
+				source.Ignore = &tc.ignore
+			}
+			l := loader.New(store.New())
+			l.Index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: tc.declaration}}
+			a := Admission{input: input, path: filepath.Join(root, "flux"), loader: l}
+			candidate := entryResolution{object: source, input: input, git: source, provider: store.ProviderAlias}
+			view, key, err := a.entrySourceView(t.Context(), &candidate)
+			assert.NoError(t, err)
+			assert.Equal(t, view.LocalPath == root, tc.checkout)
+			assert.Equal(t, view.OriginPath(view.LocalPath), root)
+			assert.Equal(t, view.Extent, store.ExtentFiltered)
+			_, err = fs.Stat(view.FS, tc.declaration)
+			assert.Equal(t, err == nil, tc.visible)
+			_, err = fs.Stat(view.FS, "flux")
+			assert.Equal(t, err == nil, tc.entry)
+
+			a.aliasViews = sourceViews{}
+			a.aliasViews.remember(key, view)
+			cached, _, err := a.entrySourceView(t.Context(), &candidate)
+			assert.NoError(t, err)
+			assert.Equal(t, cached, view)
+		})
+	}
+}
+
+func TestBegin_RepositoryIgnoreExcludesBootstrapDeclaration(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const declaration = "flux/source.yaml"
+	const url = "https://example.test/cluster"
+	const source = `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.test/cluster
+  ref: {branch: main}
+`
+	testutil.WriteFile(t, root, declaration, source)
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml]\n")
+	testutil.WriteFile(t, root, ".sourceignore", "/flux/source.yaml\n")
+	d, err := Begin(t.Context(), Config{
+		Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(), SelfURLs: []string{url},
+	})
+	assert.NoError(t, err)
+	t.Cleanup(d.Close)
+
+	raw, err := fs.ReadFile(d.admission().Input().FS, declaration)
+	assert.NoError(t, err)
+	assert.Equal(t, string(raw), source)
+	view := d.resolvedSources.snapshot()[manifest.BootstrapSourceID].artifact
+	_, err = fs.Stat(view.FS, declaration)
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+}
+
 func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -102,7 +195,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 
 	assert.FatalIf(
 		t,
-		!ok || !after.InputAlias || after.LocalRoot != before.LocalRoot || after.LocalPath != before.LocalPath ||
+		!ok || (after.Provider != store.ProviderAlias) || after.LocalRoot != before.LocalRoot || after.LocalPath != before.LocalPath ||
 			st.GetObject(id) != nil,
 		"loader evidence lost source identity: %+v",
 		after,
@@ -240,6 +333,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID,
 			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS:        fstest.MapFS{"apps/file": {Data: []byte("input")}},
 			})
@@ -443,7 +537,7 @@ spec:
 
 	assert.FatalIf(
 		t, testCaseInput.
-			want && (!ok || !artifact.InputAlias || st.GetObject(source).Named() != source) ||
+			want && (!ok || (artifact.Provider != store.ProviderAlias) || st.GetObject(source).Named() != source) ||
 			!testCaseInput.want && (ok || st.GetObject(source) != nil), "indexed alias = %+v",
 		artifact,
 	)
@@ -580,6 +674,7 @@ func testResolveEntrySourcesIdentityCase(t *testing.T, testCaseInput *struct {
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			LocalPath: root,
 			LocalRoot: root,
 			FS:        fstest.MapFS{"apps/file": {Data: []byte("input")}},
@@ -621,7 +716,12 @@ func testResolveEntrySourcesIdentityCase2(t *testing.T, testCaseInput *struct {
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {}}},
+		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        fstest.MapFS{"file": {}},
+		},
 	)
 	st.AddObject(testCaseInput.obj)
 	d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
@@ -660,11 +760,13 @@ func testResolveEntrySourcesIdentityCase3(t *testing.T, testCaseInput *string,
 	seedRoot := filepath.Join(t.TempDir(), "preseeded")
 	st := store.New()
 	supplied := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		LocalRoot: root,
 		FS:        fstest.MapFS{"file": {Data: []byte("supplied")}},
 	}
 	preseeded := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: seedRoot,
 		LocalRoot: seedRoot,
 		FS:        fstest.MapFS{"file": {Data: []byte("preseeded")}},

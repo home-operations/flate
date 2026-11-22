@@ -65,7 +65,9 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 		{"key", func(r *RenderRequest) { r.Source.Key = "foreign" }},
 		{"revision", func(r *RenderRequest) { r.Source.Revision = "foreign" }},
 		{"digest", func(r *RenderRequest) { r.Source.Digest = "foreign" }},
-		{"alias", func(r *RenderRequest) { r.Source.InputAlias = !r.Source.InputAlias }},
+		{"alias", func(r *RenderRequest) {
+			r.Source.Provider = store.ProviderAlias
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -137,8 +137,7 @@ func (w *qualificationWalk) captureSyncGeneration(
 func (p *entryPlanner) scopeGeneration(
 	occurrence *selection.OccurrenceFacts, object manifest.BaseManifest,
 ) ([]selection.OccurrenceFacts, error) {
-	_, applies := manifest.ApplicationFor(object)
-	if !applies || manifest.KindOf(object).Runnable || occurrence.RequiresBuild {
+	if !generatesEntry(occurrence) || occurrence.RequiresBuild {
 		return nil, nil
 	}
 	output, err := p.session.admission().prepareGeneration(object, p.session.cfg.Work.Source(occurrence.Identity))

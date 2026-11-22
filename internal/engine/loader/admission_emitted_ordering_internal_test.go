@@ -64,7 +64,7 @@ func testAdmissionOrderingEmittedPathProofCase(
 
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/consumer.yaml": {
 			Data: []byte(
 				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./consumer, dependsOn: [{name: target, namespace: infra}]}\n",
@@ -146,13 +146,16 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"entry/consumer.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./consumer, dependsOn: [{name: target}]}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"entry/consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: ./consumer, dependsOn: [{name: target}]}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 

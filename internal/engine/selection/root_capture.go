@@ -204,8 +204,7 @@ func captureOwnerClaims(owners []RootCoveringOwner, index *manifest.DiscoveryInd
 		if err != nil || !filepath.IsLocal(base) {
 			continue
 		}
-		pinned := owner.Source != manifest.BootstrapSourceID && owner.Input.LocalPath != root
-		pinned = pinned && owner.Input.Content != "" && !owner.Input.InputAlias
+		pinned := owner.Input.Provider == store.ProviderCommit
 		inputs = append(inputs, manifest.ClaimInput{
 			Declaration: owner.Object,
 			Base:        filepath.ToSlash(base), Root: owner.Root, IndexRoot: root,
@@ -251,7 +250,7 @@ func claimContains(
 	subject manifest.NamedResource,
 	owner *RootCoveringOwner,
 ) bool {
-	for group := range index.ClaimOwners(coordinate, owner.Source, subject, nil) {
+	for group := range index.ClaimOwners(coordinate, owner.Input.ClaimSource(owner.Source), subject, nil) {
 		if slices.Contains(group, owner.Identity) {
 			return true
 		}

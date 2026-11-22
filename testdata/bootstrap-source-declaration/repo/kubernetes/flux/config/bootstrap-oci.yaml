@@ -1,0 +1,14 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: flux-manifests, namespace: flux-system}
+spec:
+  url: oci://registry.invalid/flux-manifests
+  interval: 10m
+  ref: {tag: stable}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: flux, namespace: flux-system}
+spec:
+  path: ./
+  sourceRef: {kind: OCIRepository, name: flux-manifests}

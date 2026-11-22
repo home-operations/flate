@@ -61,6 +61,19 @@ The expected streams follow the authored resources and the output format.
 | `custom-bootstrap-source/canonical` | Build from the cluster directory with the canonical source name. |
 | `custom-bootstrap-source/diff` | Report the version edit without an external-source warning on either snapshot. |
 
+`bootstrap-namespace-patch/` covers the nested ConfigMap change from issue #1626.
+The `bootstrap-local-artifact/` scenario covers the local ArtifactGenerator from the same issue.
+Both scenarios run twice through `cli.Run` with two workers and a private cache.
+
+| Case | Behavior |
+| --- | --- |
+| `bootstrap-namespace-patch/patched` | Show the complete nested ConfigMap diff after a Namespace patch. |
+| `bootstrap-namespace-patch/unpatched` | Show the same diff without the patch. |
+| `bootstrap-source-declaration/mirror-url` | Render the checkout and OCI workloads. Report the source interval edit under its parent when the Git URL differs from the checkout remote. |
+| `bootstrap-sibling-sources/ssh-origin` | Render each HelmRepository from its sibling cluster and the workload from a separate Git source. Render one edited workload in changed-only mode. |
+| `bootstrap-local-artifact/local-generator` | Omit external source warnings before any change. Show the generated ConfigMap diff after an input change. |
+
+
 `discovery-entry-reuse-nil-source/` covers issue #1588 through `cli.Run`.
 Two committed cluster trees use origin `https://github.com/example/cluster.git`.
 The offline external repository contains tags `6.5.0` and `6.5.1` with different Deployment images.
@@ -733,7 +746,7 @@ Both sequence replays start with empty caches.
 | `artifact-reach/artifact-generator--copied-whole-source` | One `@git/` copy without a pattern: full build and both diff commands in both directions. Directory comparisons use a shallow baseline. Committed comparisons retain both revisions. | Each sequence runs twice at concurrency 2. The first build resets the cache. Later commands reuse it before and after the payload reset. |
 | `artifact-reach/artifact-generator--copied-whole-source-reverse-committed` | Both diff commands compare the whole-source before checkout against the after commit. | Two sequences retain the cache at concurrency 2. |
 | `artifact-reach/artifact-generator--copied-renamed-destination` | Renamed artifact destination: both diffs retain the copied input relationship. | Each sequence runs twice at concurrency 2 and retains the cache. |
-| `artifact-reach/artifact-generator--copied-unrelated-path` | Unrelated same-named Git path: both diffs stay empty. | Each sequence runs twice at concurrency 2 and retains the cache. |
+| `artifact-reach/artifact-generator--copied-unrelated-path` | An unrelated Git path matches the artifact destination name. Both diffs stay empty and report no external source. | Each sequence runs twice at concurrency 2 and retains the cache. |
 | `artifact-reach/artifact-generator--copied-consumer-edit` | Consumer-only label edit: both sides execute the required generator. | Each sequence runs twice at concurrency 2 and retains the cache. |
 | `artifact-reach/artifact-generator--copied-reverse-committed` | Reverse diff uses the committed after input from the before checkout. | Two replays retain the cache at concurrency 2. |
 | `artifact-convergence/artifact-generator--consumed-input-convergence` | `build all`: entry patches replace the raw generator input and UID. The final consumer and ExternalArtifact appear once with the current metadata. | Two invocations share the default cache. Replays retain caches. |
@@ -1945,6 +1958,7 @@ Both cases compare complete test and build output twice with fresh caches and tw
 | --- | --- |
 | `declaration-readiness-frontier/frontier-emitted` | A blocked emitted Kustomization does not admit its predicted children. |
 | `declaration-readiness-frontier/frontier-native` | A failed native entry retains its passing peer and direct blockers. |
+| `declaration-readiness-frontier/frontier-source` | A blocked Kustomization leaves its OCIRepository in the test and build diagnostics. |
 
 
 ## GitRepository artifact composition

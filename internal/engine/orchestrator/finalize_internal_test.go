@@ -19,7 +19,6 @@ import (
 	controllerbase "github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/controllers/helmrelease"
 	"github.com/home-operations/flate/internal/engine/depwait"
-	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -70,14 +69,14 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 			}
 			st.UpdateStatus(entry, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
 			st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
-			o := &Orchestrator{store: st, index: index}
+			o := &Orchestrator{store: st, index: index, admission: discoveryAdmissionForTest(t, st, t.TempDir())}
 			index = o.reportingIndex()
 			all := index.Claims
 			localClaims := map[string][]manifest.NamedResource{}
 			for prefix, ids := range all {
 				ids = slices.DeleteFunc(slices.Clone(ids), func(id manifest.NamedResource) bool {
 					source, _, _ := index.Records[id].Declaration.SourcePath()
-					return loader.SourceView(st, source, o.repoRoot).External
+					return o.admission.Provider(source, nil, index) == store.ProviderFetch
 				})
 				if len(ids) != 0 {
 					localClaims[prefix] = ids
@@ -344,7 +343,7 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "apps"}
 	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
-	local := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
+	local := &store.SourceArtifact{Provider: store.ProviderAlias, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
 	base := "apps"
 	if testCaseInput.name == "source contents replacement" {
 		base = "components"
@@ -378,11 +377,12 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 	claims := map[string][]manifest.NamedResource{"startup/": slices.Clone(index.Claims["startup/"])}
 	readers := map[string][]manifest.FileReader{"unrelated.yaml": slices.Clone(index.Readers["unrelated.yaml"])}
 	o := &Orchestrator{
-		store:    st,
-		repoRoot: root,
-		index:    index,
-		tasks:    task.NewBounded(2),
-		cfg:      treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+		store:     st,
+		admission: discoveryAdmissionForTest(t, st, root),
+		repoRoot:  root,
+		index:     index,
+		tasks:     task.NewBounded(2),
+		cfg:       treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
 	}
 	o.controllers = controllerbase.Controllers{
 		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions, nil),
@@ -406,18 +406,23 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 			case "source replacement":
 				st.SetArtifact(
 					source.Named(),
-					&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+					&store.SourceArtifact{Provider: store.ProviderFetch, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
 				)
 			case "source withdrawal":
 				st.SetArtifact(source.Named(), nil)
 			case "source contents replacement":
 				st.SetArtifact(
 					source.Named(),
-					&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-						"apps/kustomization.yaml": &fstest.MapFile{
-							Data: []byte("components:\n- ../components\n"),
+					&store.SourceArtifact{
+						Provider:  store.ProviderAlias,
+						LocalPath: root,
+						LocalRoot: root,
+						FS: fstest.MapFS{
+							"apps/kustomization.yaml": &fstest.MapFile{
+								Data: []byte("components:\n- ../components\n"),
+							},
 						},
-					}},
+					},
 				)
 			}
 		}
@@ -431,7 +436,7 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 				manifest.NamedResource{},
 				func(id manifest.NamedResource) bool {
 					source, _, _ := current.Records[id].Declaration.SourcePath()
-					return !loader.SourceView(st, source, root).External
+					return o.admission.Provider(source, nil, current) != store.ProviderFetch
 				},
 			),
 		)

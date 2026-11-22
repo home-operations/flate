@@ -188,7 +188,7 @@ func testStoreReferenceFactsWarningOnlyReplacement(t *testing.T, mode string) {
 	st := New()
 	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	st.AddObject(owner)
-	st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+	st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "source"})
 	data := &manifest.Secret{Name: "input", Namespace: "apps"}
 	warning := manifest.Warning{
 		Resource: data.Named(),
@@ -260,7 +260,7 @@ func TestReferenceFacts_MetadataKeepsCapturedKeys(t *testing.T) {
 			st := New()
 			owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			st.AddObject(owner)
-			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "source"})
 			id := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
 			var metadata manifest.BaseManifest = &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace}
 			if kind == manifest.KindSecret {

@@ -1,18 +1,4 @@
-<PERSISTENCE:
-  ⚠ warnings (6)
-    [ExternalSource] orig snapshot: Kustomization default/alpha: external source ExternalArtifact.source.toolkit.fluxcd.io/default/alpha is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/alpha: external source ExternalArtifact.source.toolkit.fluxcd.io/default/alpha is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-|
-  ⚠ warnings (7)
+<PERSISTENCE:|
+  ⚠ warnings (1)
     [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
-    [ExternalSource] orig snapshot: Kustomization default/alpha: external source ExternalArtifact.source.toolkit.fluxcd.io/default/alpha is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/alpha: external source ExternalArtifact.source.toolkit.fluxcd.io/default/alpha is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
 >

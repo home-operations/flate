@@ -74,7 +74,13 @@ func readerForTest(root string) documentReader {
 func admitForTest(s *store.Store, root string) {
 	s.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			Kind:      manifest.KindGitRepository,
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        os.DirFS(root),
+		},
 	)
 }
 

@@ -97,12 +97,15 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"plain/unreadable/kustomization.yaml": {Mode: fs.ModeDir | 0o755},
-		"plain/unreadable/ks.yaml": {
-			Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n")),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"plain/unreadable/kustomization.yaml": {Mode: fs.ModeDir | 0o755},
+			"plain/unreadable/ks.yaml": {
+				Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n")),
+			},
+		}},
+	)
 	l := New(st)
 	l.mountSources()
 	dir := filepath.Join(root, "plain", "unreadable")
@@ -157,7 +160,7 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 			probe := new(reader).input(filepath.Join(root, ".krmignore"))
 			_, err := fs.ReadFile(probe.fs, probe.name)
 			assert.Equal(t, errors.Is(err, errSourceUnavailable), true)
-			artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			artifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"kustomization.yaml": {Data: []byte("namespace: authoritative\n")},
 				".krmignore":         {Data: []byte("ignored.yaml\n")},
 			}}
@@ -193,16 +196,19 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			if included {
 				resources = "namespace: apps\nresources: [owner.yaml]\n"
 			}
-			l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"app/kustomization.yaml": {Data: []byte(resources)},
-				"app/owner.yaml": {
-					Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./target\n")),
-				},
-				"target/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-				"target/cm.yaml": {
-					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n"),
-				},
-			}})
+			l.Store.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"app/kustomization.yaml": {Data: []byte(resources)},
+					"app/owner.yaml": {
+						Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./target\n")),
+					},
+					"target/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+					"target/cm.yaml": {
+						Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n"),
+					},
+				}},
+			)
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.Admit(t.Context(), root))
@@ -224,18 +230,21 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 	previousCandidates := map[manifest.NamedResource]manifest.BaseManifest{}
 	previousPublished := map[manifest.NamedResource]manifest.BaseManifest{}
 	for _, version := range []string{"first", "second"} {
-		l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [objects.yaml]\n")},
-			"objects.yaml": {
-				Data: []byte(
-					testutil.KustomizationYAML(
-						"child",
-						"",
-						"  path: ./"+version+"\n",
-					) + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/" + version + "}\n",
-				),
-			},
-		}})
+		l.Store.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [objects.yaml]\n")},
+				"objects.yaml": {
+					Data: []byte(
+						testutil.KustomizationYAML(
+							"child",
+							"",
+							"  path: ./"+version+"\n",
+						) + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/" + version + "}\n",
+					),
+				},
+			}},
+		)
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.Admit(t.Context(), root))
@@ -275,7 +284,11 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 	root := t.TempDir()
 	l := New(store.New())
 	reader := l.documents
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"probe": {Data: []byte("shared")}}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		FS:        fstest.MapFS{"probe": {Data: []byte("shared")}},
+	}
 	reader.setSources(map[string]*store.SourceArtifact{root: input})
 	inputFile := new(l.documents).input(filepath.Join(root, "probe"))
 	view, name := inputFile.fs, inputFile.name
@@ -289,18 +302,19 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 	)
 	for _, tc := range []struct {
 		name, origin, content, want string
-		alias                       bool
+		provider                    store.SourceProvider
+		extent                      store.SourceExtent
 	}{
-		{name: "mutable", origin: root, want: ".."},
-		{name: "alias", origin: root, content: "complete", want: "..", alias: true},
+		{name: "mutable", origin: root, want: "..", provider: store.ProviderInput},
+		{name: "alias", origin: root, content: "complete", want: "..", provider: store.ProviderAlias},
 		{name: "copied_content", origin: root, content: "complete", want: "."},
-		{name: "completed_source", origin: filepath.Join(root, "copied"), content: "complete", want: "../copied"},
+		{name: "completed_source", origin: filepath.Join(root, "copied"), content: "complete", want: "../copied", extent: store.ExtentComposed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			artifact := &store.SourceArtifact{
 				LocalPath: filepath.Join(root, "copied"), LocalRoot: tc.origin,
-				Content: tc.content, InputAlias: tc.alias, FS: input.FS,
+				Content: tc.content, Provider: tc.provider, Extent: tc.extent, FS: input.FS,
 			}
 			copied := documentReader{}
 			copied.setSources(map[string]*store.SourceArtifact{artifact.LocalPath: artifact})

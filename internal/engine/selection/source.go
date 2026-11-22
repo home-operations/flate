@@ -81,6 +81,7 @@ type SourceFacts struct {
 	Files                []SourceFile
 	Paired, InitialKnown bool
 	Pinned, External     bool
+	PendingGeneration    bool
 	Derived              bool
 }
 

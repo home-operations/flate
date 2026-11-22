@@ -238,7 +238,7 @@ func TestFinalizeIndex_AuthoredSourceScan(t *testing.T) {
 			st := store.New()
 			admitForTest(st, root)
 			source := *st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-			source.Content, source.InputAlias = tc.content, tc.alias
+			source.Content, source.Provider = tc.content, map[bool]store.SourceProvider{true: store.ProviderAlias, false: store.ProviderInput}[tc.alias]
 			st.SetArtifact(manifest.BootstrapSourceID, &source)
 			l := New(st)
 			l.SourceRoot = root

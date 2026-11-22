@@ -1,0 +1,9 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: flux-system}
+spec:
+  sources:
+    - {alias: repo, kind: GitRepository, name: fleet}
+  artifacts:
+    - name: generated
+      copy: [{from: '@repo/app/', to: '@artifact/app/'}]

@@ -72,7 +72,7 @@ data:
 	)
 	o, err := newTestOrchestrator(
 		t,
-		Tree{Path: dir, RepoRoot: dir},
+		Tree{Path: dir, RepoRoot: dir, SelfURLs: []string{"https://example.test/cluster.git"}},
 		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)

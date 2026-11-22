@@ -4,7 +4,8 @@
     "revision": "d5f77eac528960264c8706e735a5e0cb90e8d46c",
     "paths": [
       "m00nwtchr/homelab-cluster",
-      "ionfury/homelab"
+      "ionfury/homelab",
+      "jfroy/flatops"
     ],
     "reductions": "Synthetic inputs retain the blocked publication boundary and a readable peer after native entry failure."
   },
@@ -16,6 +17,10 @@
     {
       "name": "repo",
       "directory": "native"
+    },
+    {
+      "name": "blocked",
+      "directory": "blocked"
     }
   ],
   "commits": [],
@@ -144,6 +149,68 @@
         }
       ],
       "directory": "@@repo@@"
+    },
+    {
+      "name": "frontier-source",
+      "description": "Report a source that its blocked Kustomization would publish.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/../blocked/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/source-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            },
+            "cache": {
+              "reset": true
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/../blocked/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/source-build.stderr",
+              "code": 1
+            },
+            "cache": {
+              "reset": true
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@/../blocked"
     }
   ],
   "files": [
@@ -223,7 +290,8 @@
       "path": "expect/empty.stderr",
       "cases": [
         "frontier-emitted",
-        "frontier-native"
+        "frontier-native",
+        "frontier-source"
       ],
       "purpose": "Synthetic declaration or independently authored complete expected output."
     },
@@ -231,7 +299,8 @@
       "path": "expect/empty.stdout",
       "cases": [
         "frontier-emitted",
-        "frontier-native"
+        "frontier-native",
+        "frontier-source"
       ],
       "purpose": "Synthetic declaration or independently authored complete expected output."
     },
@@ -328,6 +397,55 @@
         "frontier-native"
       ],
       "purpose": "A passing peer emits an unselected Namespace while blocked descendants emit no ConfigMap."
+    },
+    {
+      "path": "blocked/cluster/ks.yaml",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Source or application in the blocked production chain."
+    },
+    {
+      "path": "blocked/apps/kustomization.yaml",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Source or application in the blocked production chain."
+    },
+    {
+      "path": "blocked/apps/coredns.yaml",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Source or application in the blocked production chain."
+    },
+    {
+      "path": "blocked/coredns/kustomization.yaml",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Source or application in the blocked production chain."
+    },
+    {
+      "path": "blocked/coredns/source.yaml",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Source or application in the blocked production chain."
+    },
+    {
+      "path": "expect/source-test.stdout",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Complete expected output for the blocked source."
+    },
+    {
+      "path": "expect/source-build.stderr",
+      "cases": [
+        "frontier-source"
+      ],
+      "purpose": "Complete expected output for the blocked source."
     }
   ]
 }

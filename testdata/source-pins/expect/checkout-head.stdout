@@ -1,7 +1,7 @@
 ---
 apiVersion: v1
 data:
-  value: dirty
+  value: v2.0.0
 kind: ConfigMap
 metadata:
   labels:

@@ -6,6 +6,7 @@ import (
 	"iter"
 	"path/filepath"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -31,6 +32,7 @@ type StaticFile struct {
 // StaticContribution retains source identity even when owners share physical visits.
 type StaticContribution struct {
 	Owner, Source            manifest.NamedResource
+	ClaimSource              manifest.NamedResource
 	Visits                   int
 	Unshared, MembershipOnly bool
 }
@@ -213,7 +215,7 @@ func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, er
 		}
 		state := RootEligible
 		coordinate := scope.Coordinate(file)
-		for range scope.SelectionIndex().ClaimOwners(coordinate, manifest.BootstrapSourceID, manifest.NamedResource{}, func(id manifest.NamedResource) bool {
+		for range scope.SelectionIndex().ClaimOwners(coordinate, store.CheckoutClaimSource(), manifest.NamedResource{}, func(id manifest.NamedResource) bool {
 			owner, _ := scope.Owner(id)
 			return owner != file
 		}) {
@@ -229,7 +231,7 @@ func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, er
 func contributionClaims[S staticScope](scope S, i int) (bool, bool) {
 	claimed, enabled := false, false
 	dir := scope.Visit(i, 0).Dir + "/"
-	for owners := range scope.SelectionIndex().ClaimOwners(dir, scope.Contribution(i).Source, manifest.NamedResource{}, nil) {
+	for owners := range scope.SelectionIndex().ClaimOwners(dir, scope.Contribution(i).ClaimSource, manifest.NamedResource{}, nil) {
 		for _, id := range owners {
 			owner, _ := scope.Owner(id)
 			claimed = true

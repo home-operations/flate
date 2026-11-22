@@ -92,7 +92,7 @@ func testEmittedCycleSelection(t *testing.T, changedOnly, cycle bool) {
 				e,
 				func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
 					if id == a.Named() && early.CompareAndSwap(false, true) {
-						assert.Equal(t, e.Reads.Preflight(), "")
+						assert.Equal(t, e.Reads.Preflight(e.Reads.ID()).Message, "")
 						close(captured)
 						tasks.YieldSlot(func() { <-peerSettled })
 						assert.Equal(t, cycle && e.Valid(), false)

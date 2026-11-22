@@ -164,7 +164,7 @@ func TestDataInputs_PreflightPrecedesCapture(t *testing.T) {
 		},
 	}}
 	st.AddObject(owner)
-	st.SetPreflight(owner.Named(), "captured admission failure")
+	st.SetPreflight(owner.Named(), store.PreflightFailure{Message: "captured admission failure"})
 	var e Execution
 	e.Init(New(st, nil), owner.Named())
 	defer e.Close()

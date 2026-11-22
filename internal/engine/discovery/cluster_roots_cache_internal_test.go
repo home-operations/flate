@@ -38,6 +38,7 @@ func TestPlan_LocalWorkloadTracing(t *testing.T) {
 				"workload/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\n")},
 			}
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS:        entryReadFS{FS: files, reads: map[string]*atomic.Int64{"workload/object.yaml": &reads}},
 			}
@@ -75,6 +76,7 @@ func TestPlan_TracksDisjointWorkloadsForMultipleRoots(t *testing.T) {
 	var reads atomic.Int64
 	session, err := Begin(t.Context(), testConfig(t, Config{
 		Input: &store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			LocalPath: root,
 			FS:        entryReadFS{FS: files, reads: map[string]*atomic.Int64{"workload/object.yaml": &reads}},
 		},
@@ -132,7 +134,7 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			input := &store.SourceArtifact{LocalPath: root}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root}
 			planner := entryPlanner{
 				roots: []clusterRoot{{Path: "entry/sync"}},
 				session: &Session{cfg: Config{
@@ -143,7 +145,12 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 				planner.roots[0].anchors = []bootstrapAnchor{{target: "entry"}}
 			}
 			if tc.pin {
-				input = &store.SourceArtifact{LocalPath: filepath.Join(root, "pin"), LocalRoot: root, Content: "pinned"}
+				input = &store.SourceArtifact{
+					Provider:  store.ProviderCommit,
+					LocalPath: filepath.Join(root, "pin"),
+					LocalRoot: root,
+					Content:   "pinned",
+				}
 			}
 			want, local := filepath.Join(input.LocalPath, tc.path), !tc.pin
 			if tc.deferWorkload {
@@ -159,7 +166,7 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 func TestPlan_CatalogSourceScope(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
 	t.Cleanup(d.Close)
 	planner := entryPlanner{
@@ -192,7 +199,7 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 func TestPlan_CatalogNamespaceProjection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [owner.yaml]\n")},
 		"owner.yaml":         {Data: []byte(testutil.KustomizationYAML("owner", "", "  path: ./leaf\n"))},
 	}}
@@ -222,6 +229,7 @@ metadata: {name: producer, namespace: apps}
 spec: {}
 `)}}
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        entryReadFS{FS: files, reads: map[string]*atomic.Int64{"producer.yaml": &reads}},
 	}
@@ -268,6 +276,7 @@ spec: {}
 	assert.Equal(t, len(planner.objects), 2)
 	assert.Equal(t, planner.parsed == nil, true)
 	replaced := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS: fstest.MapFS{"producer.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet

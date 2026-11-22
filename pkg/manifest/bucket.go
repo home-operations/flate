@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"strings"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -118,3 +119,7 @@ func (b *Bucket) references(yield func(Reference) bool) {
 }
 
 func (b *Bucket) kind() KindInfo { return kindTable[kindBucket].KindInfo }
+
+func (b *Bucket) bootstrapSourceEligible(entry bool, _ []string) bool {
+	return entry && b.BucketName != "" && !strings.Contains(b.BucketName, "/")
+}

@@ -14,19 +14,22 @@ func TestAdmission_OwnUnreadableInput(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"owner.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec:\n  interval: 1m\n  path: ./app\n  postBuild:\n    substituteFrom: [{kind: Secret, name: vars}]\n",
-			),
-		},
-		"app/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
-		"app/secret.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: Secret\nmetadata: {name: vars, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"owner.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec:\n  interval: 1m\n  path: ./app\n  postBuild:\n    substituteFrom: [{kind: Secret, name: vars}]\n",
+				),
+			},
+			"app/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
+			"app/secret.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: Secret\nmetadata: {name: vars, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 

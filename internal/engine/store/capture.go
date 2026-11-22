@@ -568,13 +568,15 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool, 
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	cell := sh.cells[id]
-	if !included && (cell.included || cell.excluded) {
+	if !included && cell.inclusion != inclusionUnset {
 		sh.mu.Unlock()
 		return
 	}
 	var condition authority
 	var reset bool
+	next := inclusionExcluded
 	if included {
+		next = inclusionIncluded
 		record := sh.conditions[id]
 		info, _ := record.statusInfo()
 		reset = info.Outcome() == OutcomeUnchanged
@@ -583,15 +585,15 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool, 
 		}
 	}
 	promoted := ordinary && !cell.ordinaryDemand()
-	if cell.included && !reset && !promoted {
+	if cell.inclusion == inclusionIncluded && !reset && !promoted {
 		sh.mu.Unlock()
 		return
 	}
-	if cell.excluded == included || reset {
+	if (cell.inclusion == inclusionExcluded) == included || reset {
 		sh.requireCapacityLocked(cell.authority, condition)
 		cell.authority = sh.advanceLocked(cell.current())
 	}
-	cell.excluded, cell.included, cell.ordinary = !included, included, cell.ordinary || ordinary
+	cell.inclusion, cell.ordinary = next, cell.ordinary || ordinary
 	if cell.links != nil {
 		cell.links.ordinary.Store(cell.ordinaryDemand())
 		sh.queue(cell.links)
@@ -612,16 +614,16 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool, 
 }
 
 // SetPreflight publishes a changed structural admission decision.
-func (s *Store) SetPreflight(id manifest.NamedResource, message string) {
+func (s *Store) SetPreflight(id manifest.NamedResource, failure PreflightFailure) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	cell := sh.cells[id]
-	if cell.preflight == message {
+	if cell.preflight == failure.Message && cell.preflightCycle == failure.DependencyCycle {
 		sh.mu.Unlock()
 		return
 	}
 	sh.requireCapacityLocked(cell.authority)
-	cell.preflight = message
+	cell.preflight, cell.preflightCycle = failure.Message, failure.DependencyCycle
 	cell.authority = sh.advanceLocked(cell.current())
 	sh.cells[id] = cell
 	sh.mu.Unlock()
@@ -631,68 +633,8 @@ func (u *objectUpdate) consumeTarget() {
 	if u.target != nil {
 		u.target.consumed.Store(true)
 	}
-}
-
-// Admit binds raw-file admission to the captured source that supplied its bytes.
-//
-//nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
-func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
-	r.admit(child, source, owner, false)
-}
-
-// AdmitOperand retains physical support under the captured source while an emission supplies the value.
-func (r *ReadSet) AdmitOperand(obj manifest.BaseManifest, source manifest.NamedResource) {
-	r.admit(Child{Obj: obj}, source, manifest.NamedResource{}, true)
-}
-
-//nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
-func (r *ReadSet) admit(child Child, source, owner manifest.NamedResource, operand bool) {
-	if child.SourceSupport != (manifest.NamedResource{}) &&
-		(child.SourceSupport != source || !r.Valid() || !r.SourceAdmission(child.Obj.Named(), source)) {
-		return
-	}
-	r.GetArtifact(source, ArtifactContent)
-	index := r.store.index.Load()
-	record, _ := index.Lookup(child.Obj.Named())
-	prepared := preparedDeclaration(&record, child.Obj) && !rawDeclarationAuthority(index, child.Obj.Named(), true)
-	if prepared {
-		owner = record.Parent
-	}
-	var support *Input
-	if owner != (manifest.NamedResource{}) && owner != child.Obj.Named() {
-		if prepared {
-			r.GetDeclaration(owner)
-			r.bindAuthority(r.input(owner), objectFacet, objectFacet)
-		}
-		support = r.bindAuthority(r.input(owner), producerFacet, producerFacet)
-	}
-	update := objectUpdate{
-		obj: child.Obj, document: child.Doc, explicit: child.Doc != nil,
-		binding: r.bindAuthority(r.input(source), contentFacet, originFacet), support: support, reads: r,
-		classified: child.SourceSupport != (manifest.NamedResource{}), warnings: child.Warnings, operand: operand,
-	}
-	if child.VisibleGeneration {
-		update.generated = new(child)
-	}
-	id := child.Obj.Named()
-	refresh := false
-	for input := r.inputs; input != nil; input = input.next {
-		switch {
-		case input.Ref.NamedResource == id && input.object.head != nil && input.view.declaration() == nil:
-			update.target = &input.object
-			refresh = input.gate
-		case input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}):
-			update.collection = input.cell(bucketFacet)
-		case input.Ref.NamedResource == (manifest.NamedResource{}):
-			details := input.details.Load()
-			if details != nil && details.inventory != nil {
-				update.inventory = &details.inventory[kindShardIndex(id.Kind)]
-			}
-		}
-	}
-	r.store.addObject(&update)
-	if refresh && update.target.consumed.Load() {
-		r.invalid.Store(true)
+	if u.production != nil {
+		u.production.consumed.Store(true)
 	}
 }
 

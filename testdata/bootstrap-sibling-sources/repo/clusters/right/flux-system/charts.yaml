@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: charts, namespace: flux-system}
+spec:
+  interval: 1h
+  type: oci
+  url: oci://charts.example.invalid/right
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress, namespace: flux-system}
+spec: {podSelector: {}, ingress: []}

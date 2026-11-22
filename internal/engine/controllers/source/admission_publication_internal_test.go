@@ -3,13 +3,16 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	src "github.com/home-operations/flate/internal/engine/source"
@@ -20,6 +23,74 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestSource_PublishCheckoutReads(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		extent  store.SourceExtent
+		current bool
+	}{
+		{name: "fleet", current: true},
+		{name: "flux-system", current: true},
+		{name: "composed", extent: store.ExtentComposed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			const remote = "https://fixture.invalid/source"
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [gotk-sync.yaml]\n")
+			testutil.WriteFile(t, root, "gotk-sync.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: %[1]s, namespace: flux-system}
+spec: {url: %[2]s, interval: 1m}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: sync, namespace: flux-system}
+spec:
+  path: ./
+  prune: false
+  interval: 1m
+  sourceRef: {kind: GitRepository, name: %[1]s}
+`, tc.name, remote))
+			discovered := store.New()
+			source := &manifest.GitRepository{Name: tc.name, Namespace: "flux-system", URL: remote}
+			discovered.AddObject(source)
+			result, err := runDiscovery(
+				t.Context(), discovery.Config{Path: root, Store: discovered, SelfURLs: []string{remote}},
+			)
+			assert.NoError(t, err)
+			t.Cleanup(result.Close)
+			id := source.Named()
+			assert.Equal(t, result.Admission.CheckoutEntry(id), true)
+			st := store.New()
+			st.AddObject(source)
+			entry := manifest.NewEntryKustomization(id, "./", manifest.NamedResource{})
+			st.AddObject(entry)
+			c := execution{Controller: &Controller{
+				Controller: &base.Controller{Store: st}, admission: result.Admission,
+			}}
+			c.run.Reads.Init(st, id, nil)
+			defer c.run.Reads.Retire()
+			assert.Equal(t, c.run.Reads.GetDeclaration(id), manifest.BaseManifest(source))
+			assert.Equal(t, c.run.Reads.GetObject(entry.Named()), manifest.BaseManifest(entry))
+			c.publish(&store.SourceArtifact{Provider: store.ProviderAlias, Extent: tc.extent, FS: fstest.MapFS{}})
+			view := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, view.Reads.Valid(), true)
+			applied := *source
+			applied.Labels = map[string]string{"applied": "true"}
+			st.RecordEmitted(
+				entry.Named(),
+				&store.Emission{Children: []store.Child{{Obj: &applied}}, Complete: true},
+				nil,
+			)
+			assert.Equal(t, st.GetObject(id), manifest.BaseManifest(&applied))
+			assert.Equal(t, c.run.Reads.Valid(), false)
+			assert.Equal(t, view.Reads.Valid(), tc.current)
+		})
+	}
+}
 
 func TestAdmission_SelfSourceConstructionAndRuntime(t *testing.T) {
 	t.Parallel()

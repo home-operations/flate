@@ -23,7 +23,7 @@ func TestCommit_ProposalLifetime(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
 			)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)

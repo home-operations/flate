@@ -30,7 +30,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			var sources [2]*store.SourceArtifact
 			for side := range sources {
 				sources[side] = &store.SourceArtifact{
-					LocalPath: "/mounted", LocalRoot: origin, InputAlias: true,
+					LocalPath: "/mounted", LocalRoot: origin, Provider: store.ProviderAlias,
 					FS: fstest.MapFS{file: {Data: fmt.Appendf(nil, "%d", side)}},
 				}
 			}
@@ -87,7 +87,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 		t.Parallel()
 		source := manifest.BootstrapSourceID
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", InputAlias: true}
+		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", Provider: store.ProviderAlias}
 		facts := &solverFacts{sources: map[manifest.NamedResource]SourceFacts{
 			source: {
 				Source: source,
@@ -113,7 +113,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 		}}
 		c := solverClosure(t, store.New(), facts)
 		c.context.Root = "/workspace"
-		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", InputAlias: true}
+		input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: "relative", Provider: store.ProviderAlias}
 		changed := c.comparisonRecordChanged(
 			dependency,
 			change.InputChange{File: "input.yaml", Unbound: true},
@@ -139,7 +139,11 @@ func TestAdmission_SourceCoordinateClaims(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			input := &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: !tc.pinned}
+			input := &store.SourceArtifact{
+				LocalPath: "/mounted",
+				LocalRoot: tc.origin,
+				Provider:  map[bool]store.SourceProvider{true: store.ProviderAlias}[!tc.pinned],
+			}
 			if tc.pinned {
 				input.Content = "pinned"
 			}
@@ -284,8 +288,13 @@ func TestAdmission_DeclarationMountSource(t *testing.T) {
 		t.Run(strconv.FormatBool(aliasMounted), func(t *testing.T) {
 			t.Parallel()
 			root := "/workspace"
-			bootstrap := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
-			alias := &store.SourceArtifact{LocalPath: "/alias", LocalRoot: root, InputAlias: true, FS: fstest.MapFS{}}
+			bootstrap := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+			alias := &store.SourceArtifact{
+				LocalPath: "/alias",
+				LocalRoot: root,
+				Provider:  store.ProviderAlias,
+				FS:        fstest.MapFS{},
+			}
 			source := (&manifest.GitRepository{Name: "self", Namespace: "flux-system"}).Named()
 			id := (&manifest.Kustomization{Name: "cluster", Namespace: "flux-system"}).Named()
 			mounted, want := bootstrap, manifest.BootstrapSourceID
@@ -352,8 +361,16 @@ func TestAdmission_DeclarationMountLifetime(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			bootstrap := &store.SourceArtifact{LocalPath: "/workspace", FS: fstest.MapFS{}}
-			alias := &store.SourceArtifact{LocalPath: "/alias", InputAlias: !tc.committed, FS: fstest.MapFS{}}
+			bootstrap := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: "/workspace",
+				FS:        fstest.MapFS{},
+			}
+			alias := &store.SourceArtifact{
+				LocalPath: "/alias",
+				Provider:  map[bool]store.SourceProvider{true: store.ProviderAlias}[!tc.committed],
+				FS:        fstest.MapFS{},
+			}
 			mounted, want := bootstrap, manifest.BootstrapSourceID
 			if tc.aliasMounted {
 				mounted, want = alias, source

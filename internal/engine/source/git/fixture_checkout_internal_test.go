@@ -44,7 +44,7 @@ func TestResolveLocal_FixturePreservesCheckout(t *testing.T) {
 			case "semver":
 				ref = &sourcev1.GitRepositoryRef{SemVer: "<2.0.0"}
 			case "head":
-				ref, want = &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, "dirty"
+				ref, want = &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, "v2.0.0"
 			case "no-ref":
 				ref, want = nil, "dirty"
 			}

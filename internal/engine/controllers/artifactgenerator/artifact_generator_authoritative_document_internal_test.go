@@ -398,9 +398,9 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	assert.Equal(t, initial.Content, initial.Digest)
 	assert.Equal(t, initial.Content, peer.Content)
 	assert.Equal(t, initial.SameMaterial(peer, store.ArtifactContent), false)
-	history := initial.HistoryIdentity(target)
+	history := initial.HistoryIdentity()
 	assert.Equal(t, history, manifest.SourceIdentity{Kind: manifest.KindExternalArtifact, Key: target.NamespacedName()})
-	assert.Equal(t, history == peer.HistoryIdentity(peerID), false)
+	assert.Equal(t, history == peer.HistoryIdentity(), false)
 	metadata := metadataFixture{c: c, obj: obj, repo: repo, target: target, selected: stable}
 	metadata.assertFacets(t, initial)
 	var replaced atomic.Bool
@@ -470,7 +470,7 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	next := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, next.Content, next.Digest)
 	assert.Equal(t, next.Content == initial.Content, false)
-	assert.Equal(t, next.HistoryIdentity(target), history)
+	assert.Equal(t, next.HistoryIdentity(), history)
 }
 
 func (f *metadataFixture) assertFacets(t *testing.T, initial *store.SourceArtifact) {
@@ -505,7 +505,7 @@ func (f *metadataFixture) assertFacets(t *testing.T, initial *store.SourceArtifa
 	assert.Equal(t, next.SameMaterial(initial, store.ArtifactContent), true)
 	assert.Equal(t, next.Revision, "other-revision")
 	assert.Equal(t, next.Metadata["org.opencontainers.image.revision"], "other-origin")
-	assert.Equal(t, next.HistoryIdentity(target), initial.HistoryIdentity(target))
+	assert.Equal(t, next.HistoryIdentity(), initial.HistoryIdentity())
 }
 
 func TestArtifactGenerator_MutableInput(t *testing.T) {

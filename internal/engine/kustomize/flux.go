@@ -14,6 +14,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/resmap"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	kustomizestate "github.com/home-operations/flate/internal/engine/kustomize/krusty"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
@@ -124,7 +125,7 @@ func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
 		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
 	location := p.label == request.Label && p.subPath == request.SubPath
 	if request.Source != nil {
-		location = location && p.policyKey == gittree.PolicyKey(request.Source.FS)
+		location = location && p.policyKey == gittree.PolicyKey(inputprojection.Authored(request.Source).FS)
 	}
 	return cache != nil && p.cache == cache.owner && owner && policy && location
 }
@@ -155,7 +156,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	}
 	lower := req.Source.FS
 	root, err := renderRoot(req)
-	policyKey := gittree.PolicyKey(lower)
+	policyKey := gittree.PolicyKey(inputprojection.Authored(req.Source).FS)
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
@@ -225,6 +226,9 @@ func (p *Preparation) bindSource(req *RenderRequest) {
 // of the render content. Filesystem handles and retry/storage policy are never encoded.
 func renderKey(incoming *RenderRequest, root, policyKey string) string {
 	req := *incoming
+	if req.Label == "" && req.Source.WorkingTree() && req.Source.Extent == store.ExtentInput {
+		root = req.Source.OriginPath(root)
+	}
 	var immutable any
 	if req.Source.Content != "" {
 		immutable = req.Source.Input(store.ArtifactContent)
@@ -401,11 +405,17 @@ func (r *renderRequest) buildDocuments(
 	}()
 	work.Finish(cleanedAbsErr)
 	if cleanedAbsErr != nil {
-		built := manifest.NewError(
-			manifest.ErrFlux,
-			fmt.Errorf("kustomize build %s: %w", subPath, cleanedAbsErr),
-			"",
-		)
+		cause := fmt.Errorf("kustomize build %s: %w", subPath, cleanedAbsErr)
+		message := ""
+		source := r.request.Source
+		if origin := source.OriginPath(source.LocalPath); source.LocalPath != "" && origin != source.LocalPath {
+			message = strings.ReplaceAll(
+				cause.Error(),
+				source.LocalPath+string(filepath.Separator),
+				origin+string(filepath.Separator),
+			)
+		}
+		built := manifest.NewError(manifest.ErrFlux, cause, message)
 		// Kustomize API v0.21.2 resmap/reswrangler.go Append returns an untyped formatted duplicate-ID error.
 		if !strings.Contains(cleanedAbsErr.Error(), "already registered id") {
 			return nil, built

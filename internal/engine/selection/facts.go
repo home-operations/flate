@@ -101,6 +101,7 @@ type RootScopeFacts struct {
 	EntryKustomize    bool
 	Application       bool
 	LocalApplication  bool
+	InputApplication  bool
 	SameEntryOrigin   bool
 	Prepared          bool
 	Candidate         bool

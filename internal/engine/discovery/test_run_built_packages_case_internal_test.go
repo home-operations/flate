@@ -78,7 +78,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		testReceiptTreesResult1 := testReceiptTrees(t, dir, persistent)
 		cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 		st := store.New()
-		source := &store.SourceArtifact{LocalPath: root, FS: input}
+		source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 		st.SetArtifact(manifest.BootstrapSourceID, source)
 		d := newDiscoverer(
 			&Config{

@@ -27,7 +27,7 @@ func TestSessionBindEntry_CancellationDuringRound(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	files := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
-	input := &store.SourceArtifact{LocalPath: root, FS: files}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 	st := store.New()
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
@@ -160,7 +160,7 @@ func TestBindEntry_HistoryAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			const repo = "/virtual/entry-evidence-benchmark"
-			input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: repo, FS: fstest.MapFS{}}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: "./entry"}
@@ -217,7 +217,7 @@ func entryHistoryFixture(tb testing.TB, st *store.Store, accepted bool) manifest
 func TestBindEntry_ReemittedPublication(t *testing.T) {
 	t.Parallel()
 	const repo = "/virtual/reemitted-publication"
-	input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: repo, FS: fstest.MapFS{}}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(input.LocalPath)
@@ -279,7 +279,7 @@ func TestRun_EntryPackage(t *testing.T) {
 			result, err := Run(
 				t.Context(),
 				testConfig(t, Config{
-					Input: &store.SourceArtifact{LocalPath: root, FS: observed},
+					Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: observed},
 					Path:  root,
 					Store: st,
 				}),
@@ -300,7 +300,7 @@ func TestBindEntry_PackageReadFailure(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, FS: unreadableEntryFS{fstest.MapFS{}}},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: unreadableEntryFS{fstest.MapFS{}}},
 	)
 	d := newDiscoverer(&Config{Path: root, Store: st})
 	_, err := d.bindEntry(t.Context(), root)
@@ -392,7 +392,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	session, err := beginTest(
 		t.Context(),
 		Config{
-			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
+			Input:     &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:      filepath.Join(root, "flux"),
 			Store:     st,
 			Loader:    l,
@@ -445,13 +445,13 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 	addEntryApplicationFixture(input, testCaseInput)
 	if testCaseInput.admitted {
 		artifact := &store.SourceArtifact{
-			LocalPath:  "/virtual/application-alias",
-			LocalRoot:  root,
-			InputAlias: true,
-			FS:         observed,
+			LocalPath: "/virtual/application-alias",
+			LocalRoot: root,
+			Provider:  store.ProviderAlias,
+			FS:        observed,
 		}
 		if testCaseInput.pinned {
-			artifact.InputAlias, artifact.Content, artifact.Key = false, "committed", "committed"
+			artifact.Provider, artifact.Content, artifact.Key = store.ProviderFetch, "committed", "committed"
 		}
 		st.SetArtifact(source, artifact)
 	}
@@ -465,7 +465,7 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 	d := newDiscoverer(
 		new(testConfig(t, Config{
 			Declarations: declarations,
-			Input:        &store.SourceArtifact{LocalPath: root, FS: observed},
+			Input:        &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: observed},
 			Path:         root,
 			Store:        st,
 			SelfURLs:     []string{"https://fixture.invalid/self"},
@@ -537,7 +537,7 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 ) {
 	t.Helper()
 	const repo = "/virtual/evidence-authority"
-	input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: repo, FS: fstest.MapFS{
 		"entry/literal.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
 	}}
 	st := store.New()
@@ -692,7 +692,7 @@ func addEntryApplicationFixture(input fstest.MapFS, testCaseInput *entryApplicat
 		input["owner.yaml"] = &fstest.MapFile{
 			Data: []byte(
 				fmt.Sprintf(
-					"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: %s, url: '%s', ref: main, path: ./}\n",
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: %s, url: '%s', ref: refs/heads/main, path: ./}\n",
 					testCaseInput.kind,
 					testCaseInput.url,
 				),
@@ -739,7 +739,7 @@ kind: FluxInstance
 metadata: {name: instance, namespace: apps}
 spec:
   distribution: {version: %s}
-  sync: {name: self, kind: %s, url: '%sbefore.fixture.invalid', ref: main, path: ./}
+  sync: {name: self, kind: %s, url: '%sbefore.fixture.invalid', ref: refs/heads/main, path: ./}
   kustomize:
     patches:
       - patch: |-
@@ -754,10 +754,16 @@ spec:
 				Group: manifest.SourceDomain, Kind: version.kind, Namespace: "apps", Name: "self",
 			}
 			st.SetArtifact(source, &store.SourceArtifact{
-				LocalPath: "/virtual/entry-version-alias", LocalRoot: root, InputAlias: true, FS: files,
+				LocalPath: "/virtual/entry-version-alias", LocalRoot: root, Provider: store.ProviderAlias, FS: files,
 			})
 			cfg := testConfig(t, Config{
-				Input: &store.SourceArtifact{LocalPath: root, FS: files}, Path: root, Store: st,
+				Input: &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					FS:        files,
+				},
+				Path:  root,
+				Store: st,
 			})
 			d := newDiscoverer(&cfg)
 			_, err := d.resolveTestSources(t.Context(), false)

@@ -1,0 +1,235 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "testdata/custom-bootstrap-source"
+    ],
+    "reductions": "Synthetic reproduction of the Namespace patch and nested ConfigMap change in issue #1626."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "unpatched",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "patched",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "unpatched"
+      ],
+      "overlay": "patch"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "patch",
+      "directory": "overlays/patch"
+    },
+    {
+      "name": "edit",
+      "directory": "overlays/edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "patched",
+      "description": "Show a nested ConfigMap edit below an entry with a Namespace patch.",
+      "setup": [
+        {
+          "commit": "patched"
+        },
+        {
+          "overlay": "edit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/clusters/c1/flux-system",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unpatched",
+      "description": "Show the same nested edit below the unpatched entry.",
+      "setup": [
+        {
+          "commit": "unpatched"
+        },
+        {
+          "overlay": "edit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/clusters/c1/flux-system",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "overlays/edit/repo/apps/demo/cm.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "overlays/patch/repo/clusters/c1/flux-system/kustomization.yaml",
+      "cases": [
+        "patched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/apps/demo/cm.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/apps/demo/kustomization.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/bundles/apps.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/bundles/apps/demo.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/bundles/kustomization.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/clusters/c1/flux-system/gotk-sync.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/clusters/c1/flux-system/kustomization.yaml",
+      "cases": [
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/clusters/c1/flux-system/namespace.yaml",
+      "cases": [
+        "patched",
+        "unpatched"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    }
+  ]
+}

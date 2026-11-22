@@ -262,7 +262,7 @@ spec:
 		testutil.KustomizationYAML(
 			"private-app",
 			"default",
-			"  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n",
+			"  interval: 5m\n  path: ./app\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n",
 		),
 	)
 
@@ -489,7 +489,7 @@ spec:
 	)
 
 	input := &countedProducerFS{FS: os.DirFS(dir)}
-	artifact := &store.SourceArtifact{FS: input, LocalPath: dir, Key: "fixture-pin"}
+	artifact := &store.SourceArtifact{Provider: store.ProviderInput, FS: input, LocalPath: dir, Key: "fixture-pin"}
 	cacheDir := t.TempDir()
 	prime, err := newTestOrchestrator(
 		t,

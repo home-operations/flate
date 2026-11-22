@@ -23,7 +23,7 @@ import (
 func TestEntryQualification_NativePrerequisites(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, sibling.yaml]\n")},
 		"entry/owner.yaml": {
 			Data: []byte(
@@ -121,7 +121,7 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	st := store.New()
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
@@ -324,7 +324,7 @@ func TestEntryQualification_CoverageRequiresExactRead(t *testing.T) {
 func TestEntryQualification_ChangedOnlyPreparesOrderedCandidates(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"hint/kustomization.yaml": {Data: []byte("resources: [producer.yaml]\n")},
 		"hint/producer.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

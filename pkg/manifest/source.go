@@ -2,9 +2,13 @@ package manifest
 
 import (
 	"cmp"
+	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-git/v6/plumbing/transport"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -425,4 +429,59 @@ func operationTimeout(timeout *metav1.Duration) time.Duration {
 		return timeout.Duration
 	}
 	return time.Minute
+}
+
+// BootstrapSourceEligible reports whether an authored source can use an accepted root or matching checkout remote.
+func BootstrapSourceEligible(object BaseManifest, entry bool, remotes []string) bool {
+	source, ok := object.(interface{ bootstrapSourceEligible(bool, []string) bool })
+	return ok && source.bootstrapSourceEligible(entry, remotes)
+}
+
+func (g *GitRepository) bootstrapSourceEligible(entry bool, remotes []string) bool {
+	if entry {
+		return true
+	}
+	identity := normalizeGitURL(g.URL)
+	return identity != "" && slices.ContainsFunc(remotes, func(remote string) bool {
+		return identity == normalizeGitURL(remote)
+	})
+}
+
+func (o *OCIRepository) bootstrapSourceEligible(entry bool, _ []string) bool {
+	if !entry || !strings.HasPrefix(o.URL, "oci://") {
+		return false
+	}
+	ref := o.Reference
+	return ref == nil || ref.Digest == "" && ref.SemVer == "" && !strings.ContainsAny(ref.Tag, ":/@")
+}
+
+func normalizeGitURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	endpoint, err := transport.ParseURL(raw)
+	if err != nil {
+		return ""
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "http", "https", "ssh", "git":
+	default:
+		return ""
+	}
+	host, remotePath := strings.Trim(endpoint.Host, "[]"), endpoint.Path
+	if strings.Contains(raw, "://") {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		host, remotePath = parsed.Hostname(), parsed.Path
+	}
+	if host == "" || strings.ContainsAny(host, "/\\") || remotePath == "" {
+		return ""
+	}
+	remotePath = strings.TrimSuffix(remotePath, "/")
+	remotePath = strings.TrimSuffix(remotePath, ".git")
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	if remotePath == "" {
+		return ""
+	}
+	return strings.ToLower(host + "/" + remotePath)
 }

@@ -29,7 +29,10 @@ type countedAdmissionFacts struct {
 func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(parent)
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{parent.Named()}})
@@ -98,7 +101,10 @@ func (f *countedAdmissionFacts) RootEvidence(
 func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	st.AddObject(parent)
@@ -154,7 +160,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
 			)
 			object := &manifest.Kustomization{Name: "app", Namespace: "apps", Path: "app"}
 			st.AddObject(object)
@@ -237,7 +243,10 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 func TestAdmission_RootSnapshotRetainsCurrentDemand(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "child", Namespace: "apps"}
 	facts := &solverFacts{store: st, roots: map[manifest.NamedResource]RootEvidence{
 		id: {Identity: id, Captured: true, Scope: RootScopeFacts{NamespaceEligible: true, Candidate: true}},
@@ -255,7 +264,10 @@ func TestAdmission_RootSnapshotRetainsCurrentDemand(t *testing.T) {
 func TestAdmission_InvocationSeesNewObjects(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
 	st.AddObject(first)
 	session := newSolverSession(t, st, nil, Request{Changed: true})
@@ -298,7 +310,7 @@ func TestAdmission_IncomingDeclarationKeepsAcceptedProducer(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
 			)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "app"}
@@ -356,7 +368,10 @@ func (f *countedAdmissionFacts) SourceFacts(id manifest.NamedResource, reads *st
 func TestAdmission_FrozenCatalogSharedAcrossEmits(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(parent)
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{parent.Named()}})
@@ -412,7 +427,7 @@ func TestAdmission_QualificationPromotionPreservesInputChange(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
 			)
 			source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
 			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
@@ -449,7 +464,7 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 	t.Parallel()
 	session := newPublicationSession(t)
 	st := session.store
-	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	producer := &manifest.HelmRelease{Name: "generator", Namespace: "apps"}
 	st.AddObject(producer)
@@ -469,7 +484,7 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 		t.Context(), previous, PrepareRequest{
 			Invocation: true, Changes: detectChanges(t, nil, nil),
 			HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{
-				producer.Named(): {{Source: input.HistoryIdentity(manifest.BootstrapSourceID)}},
+				producer.Named(): {{Source: input.HistoryIdentity()}},
 			},
 		},
 	)
@@ -486,7 +501,12 @@ func TestAdmission_EntrySourceRefreshPrecedesMaterialization(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, Content: "chart", FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				Content:   "chart",
+				FS:        fstest.MapFS{},
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
 			producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}

@@ -483,7 +483,7 @@ func testChildFootprintMatchesEmissionCase(t *testing.T, testCaseInput *string) 
 		assert.Diff(t, next.SourcePaths(), sources)
 	}
 	input := manifest.SourceEvidence{
-		Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(source),
+		Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(),
 		Path:   "settings.yaml",
 	}
 	assert.Equal(t, slices.Contains(sources, input), (*testCaseInput) == "retained" || (*testCaseInput) == "superseded")

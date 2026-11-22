@@ -61,7 +61,7 @@ spec:
       kind: FluxInstance
       metadata: {name: flux, namespace: apps}
       spec:
-        sync: {name: self, kind: GitRepository, url: '%s', ref: main, path: %s}
+        sync: {name: self, kind: GitRepository, url: '%s', ref: refs/heads/main, path: %s}
 `, producer.name, url, producer.path),
 			)
 		}

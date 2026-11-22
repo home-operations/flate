@@ -59,7 +59,10 @@ func runRegisteredDependencyGraph(
 	)
 	if testCaseInput.tc.name == "cycle" {
 		for _, obj := range objects {
-			st.SetPreflight(obj.Named(), "dependency cycle detected")
+			st.SetPreflight(obj.Named(), store.PreflightFailure{
+				Message:         "dependency cycle detected",
+				DependencyCycle: true,
+			})
 		}
 	}
 	assertRegisteredGraphResults(

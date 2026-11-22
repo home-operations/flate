@@ -1,0 +1,284 @@
+{
+  "source": {
+    "repository": "jahanson/theshire",
+    "revision": "c501645fb13e4b6a53e60f65ed99d872790603ad",
+    "paths": [
+      "kubernetes/flux/config/cluster.yaml",
+      "kubernetes/flux/config/bootstrap-oci.yaml",
+      "kubernetes/flux/cluster-apps.yaml"
+    ],
+    "reductions": "Keep the self-sourcing Git entry, competing OCI application, and Git ignore rules. Each source supplies a distinct workload."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://origin.example.invalid/theshire.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "interval",
+      "directory": "overlays/interval"
+    }
+  ],
+  "cases": [
+    {
+      "name": "mirror-url",
+      "description": "Build both workloads and report the source interval edit under its parent.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "interval"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "kubernetes/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "kubernetes/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--output",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Record the complete source diff and its parent."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Require a clean diagnostic stream."
+    },
+    {
+      "path": "repo/kubernetes/flux/config/cluster.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Declare the checkout source and its parent application."
+    },
+    {
+      "path": "overlays/interval/repo/kubernetes/flux/config/cluster.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Change only the source interval."
+    },
+    {
+      "path": "repo/kubernetes/flux/config/kustomization.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Include the bootstrap declarations."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Record both complete workload manifests."
+    },
+    {
+      "path": "repo/kubernetes/flux/config/bootstrap-oci.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Declare the competing application and its OCI source."
+    },
+    {
+      "path": "repo/kubernetes/apps/workload.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Identify content from the checkout."
+    },
+    {
+      "path": "inputs/config.json",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Provide OCI artifact configuration."
+    },
+    {
+      "path": "inputs/layer.data",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Provide the archived OCI workload."
+    },
+    {
+      "path": "inputs/manifest.json",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Describe the fixture OCI artifact."
+    },
+    {
+      "path": "repo/kubernetes/flux/cluster-apps.yaml",
+      "cases": [
+        "mirror-url"
+      ],
+      "purpose": "Read checkout content through the second Git consumer."
+    }
+  ],
+  "transport": [
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-manifests/manifests/stable",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-manifests/manifests/sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-manifests/blobs/sha256:dfea8fc5b16bf7ace1ea525dc5a6da5cff3716e8ce7c67390247d2046479738f",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:dfea8fc5b16bf7ace1ea525dc5a6da5cff3716e8ce7c67390247d2046479738f"
+      },
+      "body": "inputs/layer.data"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "HEAD",
+      "path": "/v2/flux-manifests/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/config.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-manifests/manifests/stable",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-manifests/manifests/sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:59b208b2b16287f430c57a0321b90c874c2c19f7cd2dde99c8d0ce0eacb35672"
+      },
+      "body": "inputs/manifest.json"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-manifests/blobs/sha256:dfea8fc5b16bf7ace1ea525dc5a6da5cff3716e8ce7c67390247d2046479738f",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:dfea8fc5b16bf7ace1ea525dc5a6da5cff3716e8ce7c67390247d2046479738f"
+      },
+      "body": "inputs/layer.data"
+    },
+    {
+      "host": "registry.invalid",
+      "method": "GET",
+      "path": "/v2/flux-manifests/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/config.json"
+    }
+  ]
+}

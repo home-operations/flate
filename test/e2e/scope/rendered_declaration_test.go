@@ -48,7 +48,7 @@ func TestE2E_ResourceSetRenderedDeclarationHelm(t *testing.T) {
 
 //nolint:paralleltest // cli.Run changes process-global logging and environment.
 func TestE2E_DeclarationReadiness(t *testing.T) {
-	for _, name := range []string{"secret", "secret-allowed", "secret-supplied", "prediction", "prediction-allowed", "source", "frontier-emitted", "frontier-native"} {
+	for _, name := range []string{"secret", "secret-allowed", "secret-supplied", "prediction", "prediction-allowed", "source", "frontier-emitted", "frontier-native", "frontier-source"} {
 		t.Run(name, func(t *testing.T) {
 			scenario, _, _ := strings.Cut(name, "-")
 			fixture := harness.Open(t, "declaration-readiness-"+scenario, name)

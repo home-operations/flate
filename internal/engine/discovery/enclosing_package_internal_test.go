@@ -155,8 +155,7 @@ spec:
 	}
 	cacheOwner := cachetest.New(t, "", cache.New)
 	trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
-
-	input := &store.SourceArtifact{LocalPath: root, FS: files}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 	var recorder manifest.WorkRecorder
 	cfg := Config{
 		Store: store.New(), PrepareDocuments: base.PrepareDocuments,
@@ -296,7 +295,7 @@ func assertPrivatePreparationError(t *testing.T, walk *qualificationWalk, invent
 func testEnclosingPackageSourceIncludes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	source := &manifest.GitRepository{
 		Name: "self", Namespace: "apps", URL: "https://github.com/example/fleet.git",
 		Include: []sourcev1.GitRepositoryInclude{{GitRepositoryRef: manifest.LocalObjectReference{Name: "included"}}},

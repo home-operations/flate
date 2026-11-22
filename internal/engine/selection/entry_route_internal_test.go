@@ -15,7 +15,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			t.Parallel()
 			session := newPublicationSession(t)
 			st := session.store
-			input := &store.SourceArtifact{LocalPath: t.TempDir()}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir()}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "application", Namespace: "apps", Path: "entry"}
 			st.AddObject(owner)
@@ -67,7 +67,10 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 				case "source":
 					st.SetArtifact(
 						manifest.BootstrapSourceID,
-						&store.SourceArtifact{LocalPath: input.LocalPath + "-replacement"},
+						&store.SourceArtifact{
+							Provider:  store.ProviderInput,
+							LocalPath: input.LocalPath + "-replacement",
+						},
 					)
 				case "declaration", "retired-declaration":
 					replacement := *owner

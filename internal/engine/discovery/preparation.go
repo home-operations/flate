@@ -139,7 +139,7 @@ func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	}
 	application := manifest.EntryApplication{Source: ks.EffectiveSourceID(), Path: ks.Path}
 	// Entry self-appliers MUST resolve referenced values through ordinary execution.
-	if d.admission().appliesEntry(&application) {
+	if d.admission().reachesEntry(&application, nil) {
 		return false
 	}
 	ready := true

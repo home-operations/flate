@@ -309,7 +309,14 @@ func testIncludeClosureResult(t *testing.T, fixture *testfixture.Fixture, tc *in
 	assert.Equal(t, decision.Reconcile(unrelated), false)
 	artifact, ok := result.store.GetArtifact(including, store.ArtifactContent).(*store.SourceArtifact)
 	assert.FatalIf(t, !ok, "missing completed source %v", including)
-	assert.Equal(t, artifact.InputAlias, !hasInclude && !tc.filtered)
+	if artifact.ComposedFrom != nil {
+		assert.Equal(t, artifact.Provider, artifact.ComposedFrom.Provider)
+	}
+	assert.Equal(
+		t,
+		artifact.Provider == store.ProviderAlias && artifact.Extent != store.ExtentComposed,
+		!hasInclude && !tc.filtered,
+	)
 	assert.Equal(t, artifact.Reads.Valid(), true)
 
 	selected := "kubernetes/components/cnpg-common/" + expectation.selectedFile
@@ -419,7 +426,7 @@ func assertIncludeAcceptedHistory(
 	result.store.RecordEmitted(consumer, &history, nil)
 	assert.Equal(t, history.Footprint() != nil, true)
 	paths := slices.Clone(history.SourcePaths())
-	family := artifact.HistoryIdentity(including)
+	family := artifact.HistoryIdentity()
 	assert.Equal(
 		t,
 		slices.ContainsFunc(
@@ -428,6 +435,9 @@ func assertIncludeAcceptedHistory(
 		),
 		true,
 	)
+	// The history replay needs the accepted provider after RenderTrees closes the loader.
+	result.loader.SourceProvider = result.admission.Provider
+	defer func() { result.loader.SourceProvider = nil }()
 	previousInput := result.store.GetArtifact(input, store.ArtifactContent).(*store.SourceArtifact)
 	replacement := *previousInput
 	replacement.Content += "-input-generation"
@@ -446,7 +456,7 @@ func assertIncludeAcceptedHistory(
 	defer refreshed.Close()
 	next := result.store.GetArtifact(including, store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, next.Key == artifact.Key, false)
-	assert.Equal(t, next.HistoryIdentity(including), family)
+	assert.Equal(t, next.HistoryIdentity(), family)
 	assert.Equal(t, history.SourcePaths() == nil, true)
 	var rerendered *base.Execution
 	result.tasks.Go(t.Context(), "refresh consumer", func(ctx context.Context) {
@@ -666,7 +676,7 @@ func TestConstruction_RequiredDeclarationPromotion(t *testing.T) {
 			Store:    st,
 			Path:     root,
 			RepoRoot: root,
-			Input:    &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}},
+			Input:    &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
 		},
 	)
 	assert.NoError(t, err)

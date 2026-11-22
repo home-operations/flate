@@ -468,7 +468,7 @@ func testDocumentReaderSourceViewsAndReuseLoadMissingMountedChild(
 	child := filepath.Join((*testCaseInput), "child")
 	testutil.WriteFile(t, child, "ks.yaml", testutil.KustomizationYAML("decoy", "", "  {path: ./apps}\n"))
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: (*testCaseInput), FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: (*testCaseInput), FS: fstest.MapFS{
 		"Kustomization": {Data: []byte("namespace: committed\n")},
 	}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -572,9 +572,12 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	st.AddObject(wrongArtifact)
 	st.RecordEmitted(wrongArtifact.Named(), &store.Emission{}, nil)
 	bootstrapPath := filepath.Join(root, "bootstrap")
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: bootstrapPath, FS: fstest.MapFS{
-		"Kustomization": {Data: []byte("namespace: bootstrap\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: bootstrapPath, FS: fstest.MapFS{
+			"Kustomization": {Data: []byte("namespace: bootstrap\n")},
+		}},
+	)
 	assert.Equal(t, st.GetObject(manifest.BootstrapSourceID) == nil, true)
 	mounted = append(mounted, bootstrapPath)
 	slices.Sort(mounted)

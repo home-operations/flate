@@ -240,9 +240,6 @@ func (c *admissionClosure) coveredDeclarations(
 		return c.facts.SelectionIndex().Files()
 	}
 	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		if source.Name == "" {
-			source = manifest.BootstrapSourceID
-		}
 		delta, input, _ := c.delta(source)
 		if input == nil {
 			return

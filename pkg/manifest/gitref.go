@@ -20,8 +20,17 @@ type GitReference struct {
 
 // BootstrapPinned keeps branch-only previews on admitted files unless submodules require checkout.
 func (g *GitRepository) BootstrapPinned() bool {
-	kind := (*GitRepositoryRef)(g.Reference).Effective().Kind
-	return kind != "" && (kind != branchKey || g.RecurseSubmodules)
+	ref := (*GitRepositoryRef)(g.Reference).Effective()
+	switch ref.Kind {
+	case "":
+		return false
+	case branchKey:
+		return g.RecurseSubmodules
+	case nameKey:
+		return g.RecurseSubmodules || !plumbing.ReferenceName(ref.Value).IsBranch()
+	default:
+		return true
+	}
 }
 
 // Effective returns the selected reference or an empty HEAD selection.
@@ -32,10 +41,10 @@ func (r *GitRepositoryRef) Effective() GitReference {
 			return GitReference{Kind: commitKey, Value: r.Commit}
 		case r.Name != "":
 			return GitReference{Kind: nameKey, Value: r.Name}
-		case r.SemVer != "":
-			return GitReference{Kind: semverKey, Value: r.SemVer}
 		case r.Tag != "":
 			return GitReference{Kind: tagKey, Value: r.Tag}
+		case r.SemVer != "":
+			return GitReference{Kind: semverKey, Value: r.SemVer}
 		case r.Branch != "":
 			return GitReference{Kind: branchKey, Value: r.Branch}
 		}

@@ -182,7 +182,7 @@ func (c *execution) render(
 	acceptance := cache.RenderAcceptance{
 		Work:    request.Work,
 		Owner:   id,
-		Source:  source.HistoryIdentity(request.Spec.EffectiveSourceID()),
+		Source:  source.HistoryIdentity(),
 		Content: content,
 	}
 	fingerprintDedupResult2, fingerprintDedupResult2Err := c.run.FingerprintDedup(ctx, id, content, &attempt)

@@ -172,7 +172,10 @@ func TestEmission_EffectiveSource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := New()
-			st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&SourceArtifact{Provider: ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+			)
 			st.AddObject(tc.owner)
 			child := &manifest.ConfigMap{Name: "child", Namespace: "apps"}
 			_, _, output := st.GetEmission(tc.owner.Named())

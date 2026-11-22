@@ -308,7 +308,9 @@ func (l *Loader) retainRootApplication(id manifest.NamedResource, file string, s
 	if doc.rootApplications == nil {
 		doc.rootApplications = map[manifest.NamedResource]rootApplication{}
 	}
-	doc.rootApplications[id] = rootApplication{local: scope.LocalApplication, sameOrigin: scope.SameEntryOrigin}
+	doc.rootApplications[id] = rootApplication{
+		local: scope.LocalApplication, input: scope.InputApplication, sameOrigin: scope.SameEntryOrigin,
+	}
 	l.documents.cache[file] = doc
 }
 
@@ -326,18 +328,20 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 	}
 	if selection.Root(rf.loader.roots.get(id).view()).Independent {
 		input := rf.loader.documents.artifacts[new(rf.loader.documents).mountedRoot(r.Path)]
+		matchesRecord := func(p *manifest.Production) bool {
+			return p.File == r.File || p.Path != "" && p.Path == r.Path
+		}
 		for i := range r.Productions {
 			p := &r.Productions[i]
 			bound, _ := rf.loader.Store.GetArtifact(p.Source, store.ArtifactContent).(*store.SourceArtifact)
-			if p.Source != manifest.BootstrapSourceID && input != nil && bound == input && p.Owner != id &&
-				(p.File == r.File || p.Path != "" && p.Path == r.Path) {
+			sameMount := input != nil && bound == input && bound.Provider != store.ProviderInput
+			if sameMount && p.Owner != id && matchesRecord(p) {
 				p.Owner, p.Declaration = manifest.NamedResource{}, manifest.NamedResource{}
 				p.Authored, p.Path, p.File = r.Authored, r.Path, r.File
 			}
 		}
 		r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Owner != id &&
-				(p.File == r.File || p.Path != "" && p.Path == r.Path)
+			return p.Owner != (manifest.NamedResource{}) && p.Owner != id && matchesRecord(&p)
 		})
 	}
 	if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {

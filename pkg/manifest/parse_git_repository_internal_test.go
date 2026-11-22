@@ -84,12 +84,12 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      "refs/heads/release",
 			label:      "name:refs/heads/release",
 			spec:       "+refs/heads/release:refs/heads/release",
-			bootstrap:  [2]bool{true, true},
+			bootstrap:  [2]bool{false, true},
 			normalized: sourcev1.GitRepositoryRef{Name: "refs/heads/release"},
 		},
 		{
 			name:       "semver",
-			ref:        &GitRepositoryRef{Branch: "bad branch", Tag: "bad tag", SemVer: ">=1.0"},
+			ref:        &GitRepositoryRef{Branch: "bad branch", SemVer: ">=1.0"},
 			kind:       "semver",
 			value:      ">=1.0",
 			label:      "semver:>=1.0",
@@ -109,7 +109,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 		},
 		{
 			name:       "tag",
-			ref:        &GitRepositoryRef{Tag: "v1.2.3", Branch: "bad branch"},
+			ref:        &GitRepositoryRef{Tag: "v1.2.3", SemVer: "<1.2.0", Branch: "bad branch"},
 			kind:       "tag",
 			value:      "v1.2.3",
 			label:      "tag:v1.2.3",

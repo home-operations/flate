@@ -271,6 +271,7 @@ func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 		},
 	}
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: t.TempDir(),
 		FS:        &joinedTreeFS{acquire: func() error { return failure }},
 		Warnings:  warnings,

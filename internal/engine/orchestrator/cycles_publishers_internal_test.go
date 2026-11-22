@@ -168,7 +168,7 @@ func TestSyncPreflightFailures_StaleWritesAfterClear(t *testing.T) {
 		cleared, _ := capturedPreflight(o.store, id)
 		assert.Equal(t, cleared, "")
 		// This store-phase injection represents old writes after the newer clear.
-		o.store.SetPreflight(id, message)
+		o.store.SetPreflight(id, store.PreflightFailure{Message: message})
 	}
 	close(barrier.release[1])
 	<-olderDone
@@ -214,7 +214,7 @@ func testOverlappingPreflightPublishers(t *testing.T, introduction, olderFirst, 
 	for _, object := range []manifest.BaseManifest{a, b, entry, extra} {
 		o.store.AddObject(object)
 	}
-	o.store.SetPreflight(extra.Named(), "unrelated acyclic failure")
+	o.store.SetPreflight(extra.Named(), store.PreflightFailure{Message: "unrelated acyclic failure"})
 	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	unsub := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), id))

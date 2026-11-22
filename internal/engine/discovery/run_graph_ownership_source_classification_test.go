@@ -395,7 +395,7 @@ data: {value: fixture}
 		testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: source, namespace: flux-system}
-spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavailable}}
+spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/tags/unavailable}}
 `)
 	}
 	res, err := discovery.Run(t.Context(), cfg)
@@ -430,7 +430,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 		artifact, ok := cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		assert.FatalIf(
 			t,
-			!ok || !artifact.InputAlias || cfg.Store.GetObject(id) == nil,
+			!ok || (artifact.Provider != store.ProviderAlias) || cfg.Store.GetObject(id) == nil,
 			"tree source was not aliased: %v",
 			id,
 		)

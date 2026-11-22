@@ -352,13 +352,10 @@ func (s *Session) guardCurrent(a *Admission) bool {
 }
 
 func (a *Admission) admitObjects(ctx context.Context, session *Session) bool {
-	if !a.reused {
-		for i := range a.Objects {
-			if ctx.Err() != nil || !a.reads.Valid() || !session.guardCurrent(a) {
-				return false
-			}
-			a.reads.Admit(a.Objects[i], a.sources[i], manifest.NamedResource{})
-		}
+	if !a.reused && len(a.Objects) != 0 {
+		return a.reads.AdmitSelection(ctx, a.Objects, a.sources, func() bool {
+			return session.guardCurrent(a)
+		})
 	}
 	return ctx.Err() == nil && a.reads.Valid() && session.guardCurrent(a)
 }

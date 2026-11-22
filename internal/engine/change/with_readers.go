@@ -52,8 +52,7 @@ func (s *Set) withReaders(
 }
 
 func (r *readerScope) initialize() {
-	_, bootstrap, _ := r.bindings.ForSource(manifest.BootstrapSourceID)
-	for side, input := range bootstrap {
+	for side, input := range r.bindings.origins {
 		if input != nil {
 			r.roots[side] = input.LocalPath
 		}
@@ -79,8 +78,8 @@ func (r *readerScope) qualifiedSource(side int, actual manifest.NamedResource) b
 	}
 	_, admitted, _ := r.bindings.ForSource(actual)
 	left, right := r.evidence.artifacts[side], admitted[side]
-	known := r.usable[side] && right != nil && right.FS != nil && right.Reads.Valid() &&
-		(left.InputAlias || right.InputAlias || r.origins[side] == r.roots[side]) &&
+	workingTrees := right.WorkingTree() && left.WorkingTree()
+	known := r.usable[side] && workingTrees && right.Available() &&
 		r.origins[side] == right.OriginPath(right.LocalPath)
 	if r.qualified[side] == nil {
 		r.qualified[side] = map[manifest.NamedResource]bool{}

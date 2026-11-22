@@ -70,7 +70,7 @@ func TestFinishInitialAdmission_CancellationDuringRound(t *testing.T) {
 	request := selection.Request{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "owner")}}
 	o, err := newTestOrchestrator(t, Tree{
 		Path: filepath.Join(root, "flux"), RepoRoot: root,
-		Input: &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)},
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)},
 	}, Config{Concurrency: 2, Selection: request})
 	assert.NoError(t, err)
 	t.Cleanup(o.stop)
@@ -109,7 +109,7 @@ func TestConstructDiscovery_CancellationDuringRound(t *testing.T) {
 	l.Options.Session = full
 	session, err := discovery.Begin(t.Context(), discovery.Config{
 		Store: st, Loader: l, Path: filepath.Join(root, "flux"),
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"flux/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
 				"  path: ./work\n  sourceRef: {kind: OCIRepository, name: missing}\n"))},
 		}},
@@ -160,7 +160,7 @@ func TestBeginDiscovery_CancellationDuringRound(t *testing.T) {
 	defer unsubscribe()
 	err = o.beginDiscovery(ctx, &discovery.Config{
 		Store: st, Loader: l, Selection: request, Path: filepath.Join(root, "flux"),
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"flux/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
 				"  path: ./work\n  sourceRef: {kind: OCIRepository, name: missing}\n"))},
 		}},
@@ -210,6 +210,8 @@ func constructDiscoveredSource(
 
 type panickingConstructionSources struct{}
 
+func (panickingConstructionSources) CheckoutEntry(manifest.NamedResource) bool { return false }
+
 func (panickingConstructionSources) Resolve(
 	context.Context,
 	manifest.NamedResource,
@@ -254,7 +256,7 @@ func TestConstructDiscovery_UnrestrictedPendingSources(t *testing.T) {
 	})
 	session, err := discovery.Begin(t.Context(), discovery.Config{
 		Store: st, Cache: owner, Loader: l, Path: root, SelfURLs: []string{including.URL},
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"input.txt": {Data: []byte("included")},
 			"cm.yaml":   {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: eager, namespace: apps}\n")},
 		}},

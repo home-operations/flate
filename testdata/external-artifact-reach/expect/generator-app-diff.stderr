@@ -1,14 +1,4 @@
-<PERSISTENCE:
-  ⚠ warnings (4)
-    [ExternalSource] orig snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-|
-  ⚠ warnings (5)
+<PERSISTENCE:|
+  ⚠ warnings (1)
     [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
-    [ExternalSource] orig snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] orig snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/beta: external source ExternalArtifact.source.toolkit.fluxcd.io/default/beta is outside the local tree; not rendered
-    [ExternalSource] current snapshot: Kustomization default/gamma: external source ExternalArtifact.source.toolkit.fluxcd.io/default/gamma is outside the local tree; not rendered
 >

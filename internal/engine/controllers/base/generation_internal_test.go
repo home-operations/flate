@@ -184,7 +184,7 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 			case "excluded":
 				s.SetIncluded(object.Named(), false, false)
 			case "preflight":
-				s.SetPreflight(object.Named(), "cycle")
+				s.SetPreflight(object.Named(), store.PreflightFailure{Message: "cycle", DependencyCycle: true})
 			}
 			next := newExecution(c, object.Named())
 			defer next.Close()

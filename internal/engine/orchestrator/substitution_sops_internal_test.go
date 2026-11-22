@@ -222,7 +222,10 @@ spec:
 			)
 
 			renderedSingleton1, err := renderTreesForTest(t.Context(), t,
-				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+				[]Tree{{
+					Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+					SelfURLs: []string{"https://example.test/cluster.git"},
+				}},
 				Config{
 					CacheDir: t.TempDir(), Concurrency: 2,
 					Supply: tt.sources,

@@ -106,6 +106,7 @@ func TestAdmission_HistoryContentAvailability(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		external    bool
+		generating  bool
 		declaration bool
 		content     bool
 		root        string
@@ -114,6 +115,7 @@ func TestAdmission_HistoryContentAvailability(t *testing.T) {
 	}{
 		{name: "unpublished source", external: true, root: "payload", complete: true, resolved: "payload"},
 		{name: "declared source without content", external: true, declaration: true, root: "payload", complete: true, resolved: "payload"},
+		{name: "pending local generator", generating: true, root: "payload", complete: true, resolved: "payload"},
 		{name: "readable source unresolved", external: true, declaration: true, content: true, root: "payload", resolved: "payload"},
 		{name: "local source unresolved", root: "payload", resolved: "payload"},
 		{name: "unresolved parent traversal", external: true, root: "payload/../other", resolved: "."},
@@ -129,7 +131,7 @@ func TestAdmission_HistoryContentAvailability(t *testing.T) {
 				st.SetArtifact(source.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
 			}
 			facts := &solverFacts{store: st, sources: map[manifest.NamedResource]SourceFacts{
-				source.Named(): {External: tc.external},
+				source.Named(): {External: tc.external, PendingGeneration: tc.generating},
 			}}
 			c := solverClosure(t, st, facts)
 			owner := testutil.KustomizationID("apps", "owner")

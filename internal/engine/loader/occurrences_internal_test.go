@@ -26,7 +26,14 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	st.AddObject(source)
 	st.SetArtifact(
 		source.Named(),
-		&store.SourceArtifact{LocalPath: pin, LocalRoot: root, Key: "committed", Content: "committed", FS: input},
+		&store.SourceArtifact{
+			Provider:  store.ProviderCommit,
+			LocalPath: pin,
+			LocalRoot: root,
+			Key:       "committed",
+			Content:   "committed",
+			FS:        input,
+		},
 	)
 	st.AddObject(&manifest.Kustomization{Name: "stored", Namespace: "apps", Path: "unrelated"})
 	for _, side := range []string{"one", "two"} {
@@ -48,7 +55,10 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 		)
 		input[side+"/owners.yaml"] = &fstest.MapFile{Data: []byte(body)}
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -139,7 +149,10 @@ func TestPackages_ScanProvenance(t *testing.T) {
 		}
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -268,7 +281,10 @@ spec: {ingress: []}
 ` + tc.extraObject)},
 			}
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+			)
 			l := New(st)
 			t.Cleanup(l.Close)
 			l.SourceRoot = root
@@ -406,13 +422,16 @@ func TestEntryFailure_ChangedUnownedResource(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"input.yaml": {
-					Data: []byte(
-						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
-					),
-				},
-			}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"input.yaml": {
+						Data: []byte(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
+						),
+					},
+				}},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
@@ -439,7 +458,10 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 		},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -609,7 +631,10 @@ func TestEntryFailure_NamedSelectionDoesNotTraverse(t *testing.T) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
 		)},
 	}}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	var work manifest.WorkRecorder
 	st.SetWorkTree(manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}, work.Scope())
 	l := New(st)

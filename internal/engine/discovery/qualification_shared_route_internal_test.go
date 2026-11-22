@@ -20,7 +20,7 @@ func TestEntryQualification_SharedRouteWithdrawal(t *testing.T) {
 	st := store.New()
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	first := &manifest.ResourceSet{Name: "first", Namespace: "apps"}
 	later := &manifest.ResourceSet{Name: "later", Namespace: "apps"}

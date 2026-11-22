@@ -41,6 +41,7 @@ func TestAdmit_PublicationRetryDiscardsRejectedOwnerHistory(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: t.TempDir(), Content: "source", FS: fstest.MapFS{},
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -82,7 +83,7 @@ func TestAdmit_PublicationRetryDiscardsRejectedOwnerHistory(t *testing.T) {
 					Generation: []store.Child{{Obj: trigger, Entry: &manifest.EntryApplication{}}},
 					History:    borrowed,
 					HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{owner.Named(): {{
-						Source: input.HistoryIdentity(manifest.BootstrapSourceID), Path: "old/child.yaml",
+						Source: input.HistoryIdentity(), Path: "old/child.yaml",
 					}}},
 					ReadHistory: func(
 						_ context.Context,

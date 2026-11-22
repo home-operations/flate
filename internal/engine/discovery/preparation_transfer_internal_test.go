@@ -92,7 +92,7 @@ func TestResult_AggregatePreparationTransfer(t *testing.T) {
 	root := t.TempDir()
 	cfg := testConfig(t, Config{
 		Path: root, Work: recorder.Scope(),
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"package/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 			"package/cm.yaml": {
 				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: package}\n"),
@@ -160,7 +160,7 @@ func TestResult_PlannedBootstrapPreparationTransfer(t *testing.T) {
 			}
 			patch := "resources: [cluster.yaml, cm.yaml]\npatches:\n- target: {kind: " + kind +
 				"}\n  patch: |-\n    - op: replace\n      path: " + patchPath + "\n      value: " + value + "\n"
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"entry/kustomization.yaml": {Data: []byte(patch)},
 				"entry/cluster.yaml": {Data: []byte(testutil.KustomizationYAML("cluster", "apps",
 					"  path: "+tc.target+"\n  prune: false\n"))},

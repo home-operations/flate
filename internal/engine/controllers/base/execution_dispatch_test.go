@@ -66,7 +66,7 @@ func TestExecution_Dispatch(t *testing.T) {
 		Namespace: "ns",
 	}
 	s.AddObject(pfHR)
-	s.SetPreflight(pfHR.Named(), "synthetic cycle")
+	s.SetPreflight(pfHR.Named(), store.PreflightFailure{Message: "synthetic cycle", DependencyCycle: true})
 	dispatch(pfHR.Named())
 	{
 		info, _ := s.GetStatus(pfHR.Named())
@@ -243,7 +243,7 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	fp, _, _ := fingerprintDedupResult9.Fingerprint, fingerprintDedupResult9.Reused, fingerprintDedupResult9Err
 	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
-	s.SetPreflight(id, "cycle detected")
+	s.SetPreflight(id, store.PreflightFailure{Message: "cycle detected", DependencyCycle: true})
 	fingerprintDedupResult10, fingerprintDedupResult10Err := controllertest.NewExecution(c, id).
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	_, handled, err := fingerprintDedupResult10.Fingerprint, fingerprintDedupResult10.Reused, fingerprintDedupResult10Err
@@ -442,7 +442,7 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 		opts.Session, opts.Loader = admissionLoader1.Options.Session, admissionLoader1
 	}
 	if testCaseInput.preflight {
-		st.SetPreflight(id, "cycle")
+		st.SetPreflight(id, store.PreflightFailure{Message: "cycle", DependencyCycle: true})
 	}
 	c.Configure(opts)
 	c.StartLifecycle()

@@ -73,6 +73,7 @@ func selectChanges(ctx context.Context, s *selection) (*gittree.FS, *change.Set,
 		Content:  identity,
 		Revision: s.base.Hash.String(),
 		Kind:     manifest.KindGitRepository,
+		Provider: store.ProviderInput,
 	}
 	if location := s.current.Location(); location != nil {
 		original.LocalPath, _ = gittree.Label(

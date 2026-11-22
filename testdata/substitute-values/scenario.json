@@ -14,7 +14,7 @@
       "remotes": [
         {
           "name": "origin",
-          "url": "https://local.invalid/cluster"
+          "url": "https://example.test/cluster.git"
         }
       ]
     }

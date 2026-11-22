@@ -80,11 +80,11 @@ spec:
 		l.Store.SetArtifact(
 			id,
 			&store.SourceArtifact{
-				Kind:       id.Kind,
-				LocalRoot:  root,
-				LocalPath:  filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name),
-				InputAlias: true,
-				FS:         view,
+				Kind:      id.Kind,
+				LocalRoot: root,
+				LocalPath: filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name),
+				Provider:  store.ProviderAlias,
+				FS:        view,
 			},
 		)
 	}
@@ -94,7 +94,12 @@ spec:
 			l.Store.AddObject(source)
 			l.Store.SetArtifact(
 				source.Named(),
-				&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        os.DirFS(root),
+				},
 			)
 		}
 	}
@@ -110,6 +115,7 @@ spec:
 				Name:      "cluster",
 			},
 			&store.SourceArtifact{
+				Provider:  store.ProviderCommit,
 				LocalRoot: root,
 				Key:       "pinned",
 				Content:   "pinned",
@@ -302,7 +308,12 @@ func loadProjectionScans(t *testing.T, l *Loader, root string, testCaseInput *st
 			l.Store.AddObject(source)
 			l.Store.SetArtifact(
 				source.Named(),
-				&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        os.DirFS(root),
+				},
 			)
 		}
 	}

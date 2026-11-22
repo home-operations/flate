@@ -59,6 +59,8 @@ type Loader struct {
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
 	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
+	// SourceProvider supplies the accepted decision to source comparisons and the detached catalog.
+	SourceProvider func(manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex) store.SourceProvider
 
 	// Index records static discovery facts and is initialized by New. Caller
 	// replacements MUST initialize Records before Load. Mutable until FinalizeIndex returns.
@@ -127,10 +129,22 @@ func New(s *store.Store) *Loader {
 	})
 	state.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
 	state.Loader = Loader{
-		work:  s.WorkScope().Traversal(manifest.BootstrapSourceID),
-		Store: s, Options: options{Work: s.WorkScope(), Missing: &state.missing},
+		work:      s.WorkScope().Traversal(manifest.BootstrapSourceID),
+		Store:     s,
+		Options:   options{Work: s.WorkScope(), Missing: &state.missing},
 		Index:     &state.index,
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
+		SourceProvider: func(id manifest.NamedResource, reads *store.ReadSet, _ *manifest.DiscoveryIndex) store.SourceProvider {
+			var objects sourceStore = s
+			if reads != nil {
+				objects = reads
+			}
+			input, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+			if input.Available() {
+				return input.Provider
+			}
+			return store.ProviderAbsent
+		},
 	}
 	return &state.Loader
 }
@@ -426,7 +440,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 		return true
 	}
 	artifact, _ := l.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	if artifact == nil || !artifact.InputAlias {
+	if artifact == nil || artifact.Provider != store.ProviderAlias {
 		return false
 	}
 	l.Store.DeleteObject(id)

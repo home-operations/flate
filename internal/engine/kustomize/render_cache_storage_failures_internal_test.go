@@ -68,14 +68,12 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		assert.Equal(t, len(emission.Children), 1)
 		assert.Equal(t, records != nil && sources != nil, true)
 		return cache.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
-			Owner:   spec.Named(),
-			Receipt: receipt,
-			Records: records,
-			Sources: sources,
-			Content: content,
-			Source: req.Source.HistoryIdentity(
-				spec.EffectiveSourceID(),
-			),
+			Owner:       spec.Named(),
+			Receipt:     receipt,
+			Records:     records,
+			Sources:     sources,
+			Content:     content,
+			Source:      req.Source.HistoryIdentity(),
 			Reads:       emission.Reads,
 			OutputReads: emission.OutputReads,
 		})

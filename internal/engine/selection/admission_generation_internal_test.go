@@ -16,7 +16,10 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(parent)
 	changes := detectChanges(t, nil, nil)
@@ -76,6 +79,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 				guard.RequireData(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "late"})
 			case "new source":
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root, FS: fstest.MapFS{}, Key: "replacement", Content: "replacement",
 				})
 			}

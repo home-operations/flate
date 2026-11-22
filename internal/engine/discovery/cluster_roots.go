@@ -22,7 +22,7 @@ type clusterRoot struct {
 	anchors      []bootstrapAnchor
 	pinned       manifest.DiscoveryIndex
 	sources      map[manifest.NamedResource]entryResolution
-	views        map[string]*store.SourceArtifact
+	views        sourceViews
 	parsed       *loader.ParsedInputs
 	seeds        []selection.OccurrenceFacts
 	packageBuild *plannedPackage
@@ -296,6 +296,7 @@ func (p *entryPlanner) follow(
 	application.Path = filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(application.Path)))
 	qualifies := seed && p.bootstrapRoot(root, &occurrence.Declaration, input, &application)
 	absolute, local := p.followTarget(root, input, application.Path, seed)
+
 	if absolute == "" {
 		if qualifies {
 			root.qualifying = append(root.qualifying, physicalDeclaration(occurrence))
@@ -323,8 +324,9 @@ func (p *entryPlanner) follow(
 	if err != nil {
 		return nil, err
 	}
+	declaration := physicalDeclaration(occurrence)
 	if local && seed && slices.ContainsFunc(children, func(o selection.OccurrenceFacts) bool {
-		return o.Declaration == occurrence.Declaration
+		return physicalDeclaration(&o) == declaration
 	}) {
 		root.recordAnchor(application.Path, &reference)
 	}
@@ -397,7 +399,7 @@ func (p *entryPlanner) followTarget(
 		return "", false
 	}
 	cfg := &p.session.cfg
-	local := input == cfg.Input || input.InputAlias && input.LocalRoot == cfg.Input.LocalPath
+	local := input.WorkingTree()
 	if !seed && local && cfg.Changes != nil && p.singleAnchoredRoot(root) {
 		scan, target := cfg.Input.OriginPath(cfg.Path), input.OriginPath(absolute)
 		// An anchored single entry has no cluster membership to learn from disjoint workloads.
@@ -488,9 +490,11 @@ func (p *entryPlanner) source(
 	id := reference.NamedResource
 	object := occurrenceObject(visit.occurrence)
 	application, _ := manifest.ApplicationFor(object)
-	selected, producers := visit.scope.source(id)
+	scope := visit.scope
+	selected, producers := scope.source(id)
 	if selected == nil && len(producers) == 0 {
 		selected, producers = p.catalogSource(id)
+		scope = &p.catalogView
 	}
 	if selected != nil && selected.RequiresBuild {
 		return nil, nil //nolint:nilnil // Unprepared predictions MUST NOT supply source material.
@@ -518,14 +522,20 @@ func (p *entryPlanner) source(
 			group.producers = append(group.producers, occurrenceIdentity(selected))
 		}
 	}
-	group.entry = application.Source == id && p.appliesEntry(&application, group.object)
 	admission := p.session.admission()
 	before := p.session.resolvedSources.snapshot()[id]
+	entry := entryUnscoped
+	if application.Source == id {
+		entry = p.scopedEntry(id, group.object, scope)
+	}
+	priorEntry := before.entry && before.object == group.object && before.input == admission.input
+	group.entry = entry == entryAccepted || entry == entryUnscoped && priorEntry
 	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
 		return nil, err
 	}
 	binding := p.session.resolvedSources.snapshot()[id]
 	binding.producers = producers
+	binding.entryScoped = entry != entryUnscoped
 	return p.recordSource(root, id, &binding, before.artifact), nil
 }
 
@@ -644,45 +654,6 @@ func (p *entryPlanner) catalogSource(
 	return nil, nil
 }
 
-func (p *entryPlanner) appliesEntry(application *manifest.EntryApplication, source manifest.BaseManifest) bool {
-	admission := p.session.admission()
-	if admission.appliesEntry(application) {
-		return true
-	}
-	if _, capable := source.(entrySource); !capable {
-		return false
-	}
-	input := admission.input
-	self := false
-	for candidate := range p.scope.objects() {
-		other, valid := runnableApplication(occurrenceObject(candidate))
-		if !valid {
-			continue
-		}
-		competing := other.Source != application.Source
-		if competing && admission.appliesEntry(&other) {
-			return false
-		}
-		if candidate.RequiresBuild || candidate.Declaration.Source != input.LocalPath {
-			continue
-		}
-		target := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(other.Path))
-		declaration := filepath.Join(candidate.Declaration.Source, candidate.Declaration.File)
-		if (other.Path == "" && target != admission.path) || !safepath.Contains(input.LocalPath, target) ||
-			!safepath.Contains(input.OriginPath(target), input.OriginPath(declaration)) {
-			continue
-		}
-		if competing {
-			if admission.appliesEntryAt(&other, target) {
-				return false
-			}
-			continue
-		}
-		self = true
-	}
-	return self
-}
-
 func (p *entryPlanner) occurrences(
 	ctx context.Context,
 	input *store.SourceArtifact,
@@ -724,7 +695,7 @@ func (p *entryPlanner) recordSource(
 	if binding.artifact != nil {
 		p.inputs[binding.artifact.LocalPath] = binding.artifact
 	}
-	if binding.viewKey == "" && !binding.projected && len(binding.producers) == 0 {
+	if binding.viewKey.mount == "" && !binding.entryScoped && !binding.projected && len(binding.producers) == 0 {
 		return p.session.sourceMaterial(id, binding.artifact)
 	}
 	if root.sources == nil {
@@ -733,13 +704,13 @@ func (p *entryPlanner) recordSource(
 	previous := root.sources[id]
 	previous.merge(binding)
 	root.sources[id] = previous
-	if binding.viewKey == "" {
+	if binding.viewKey.mount == "" {
 		return p.session.sourceMaterial(id, binding.artifact)
 	}
 	if root.views == nil {
-		root.views = map[string]*store.SourceArtifact{}
+		root.views = sourceViews{}
 	}
-	root.views[binding.viewKey] = binding.artifact
+	root.views.remember(binding.viewKey, binding.artifact)
 	return p.session.sourceMaterial(id, binding.artifact)
 }
 
@@ -780,7 +751,7 @@ func (p *entryPlanner) prepareRoot(ctx context.Context, root *clusterRoot) error
 		key.input = input
 		p.objects[key] = *child
 		result = append(result, facts)
-		if register || !rootPreparationProducer(facts.Identity) {
+		if register || !rootPreparationProducer(&facts) {
 			continue
 		}
 		remaining--
@@ -789,7 +760,15 @@ func (p *entryPlanner) prepareRoot(ctx context.Context, root *clusterRoot) error
 			continue
 		}
 		raw, err := p.object(ctx, original)
+		application, applies := manifest.ApplicationFor(child.Obj)
+		// A downstream application still needs its built declaration to expand.
 		register = err != nil || !manifest.Equal(raw.Obj, child.Obj)
+		if !register && original.RequiresBuild && applies {
+			register = !safepath.Contains(
+				filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(application.Path)),
+				filepath.Join(input.LocalPath, root.Path),
+			)
+		}
 	}
 	root.seeds = result
 	root.packageBuild = &plannedPackage{render: prepared.declarationRender, register: register || remaining != 0}
@@ -805,8 +784,15 @@ func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.S
 		if !occurrence.RequiresBuild {
 			continue
 		}
-		if p.directoryInventory && rootPreparationProducer(occurrence.Identity) {
-			return true
+		if p.directoryInventory && rootPreparationProducer(occurrence) {
+			if !generatesEntry(occurrence) {
+				return true
+			}
+			_, path, _ := occurrence.SourcePath()
+			name := filepath.ToSlash(filepath.Join(".", manifest.NormalizeClaimBase(path)))
+			if info, err := fs.Stat(input.FS, name); err == nil && info.IsDir() {
+				return true
+			}
 		}
 		application, valid := manifest.ApplicationFor(occurrenceObject(occurrence))
 		if !valid {
@@ -824,14 +810,19 @@ func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.S
 func rootProducerCount(occurrences []selection.OccurrenceFacts) int {
 	count := 0
 	for i := range occurrences {
-		if rootPreparationProducer(occurrences[i].Identity) {
+		if rootPreparationProducer(&occurrences[i]) {
 			count++
 		}
 	}
 	return count
 }
 
-func rootPreparationProducer(id manifest.NamedResource) bool {
-	kind := id.KindInfo()
-	return kind.Parent || kind.IsSource()
+func rootPreparationProducer(occurrence *selection.OccurrenceFacts) bool {
+	kind := occurrence.Identity.KindInfo()
+	return kind.Parent || kind.IsSource() || generatesEntry(occurrence)
+}
+
+func generatesEntry(occurrence *selection.OccurrenceFacts) bool {
+	_, _, applies := occurrence.SourcePath()
+	return applies && !occurrence.Identity.KindInfo().Runnable
 }

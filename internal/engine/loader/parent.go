@@ -17,7 +17,9 @@ import (
 )
 
 // Claims captures source-qualified claim evidence without publishing declarations.
-func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) *manifest.DiscoveryIndex {
+func Claims(
+	s *store.Store, repoRoot string, candidates []*manifest.Kustomization, indexed *manifest.DiscoveryIndex,
+) *manifest.DiscoveryIndex {
 	candidates = slices.DeleteFunc(
 		candidates,
 		func(ks *manifest.Kustomization) bool { return !s.Policy(ks.Named()).Root },
@@ -38,7 +40,14 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 		Components: new(reader).claimComponentIndex(),
 	}
 	for i, owner := range candidates {
-		index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
+		id := owner.Named()
+		record, _ := indexed.Lookup(id)
+		record.Declaration = owner
+		index.Records[id] = record
+		source := owner.EffectiveSourceID()
+		if evidence, ok := indexed.Lookup(source); ok {
+			index.Records[source] = evidence
+		}
 		for _, claims := range [2][]manifest.KSClaim{built[i].claims, built[i].aliases} {
 			for _, claim := range claims {
 				index.Claims[claim.Prefix] = appendUniqueProducer(index.Claims[claim.Prefix], claim.ID)
@@ -278,49 +287,38 @@ type SourceLocation struct {
 	Pinned, External bool
 }
 
-// SourceView classifies an admitted source coordinate, committed pin and external ownership.
-// Unavailable sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
+// SourceView projects the accepted material into loader coordinates.
 func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) SourceLocation {
-	if ref.Name == "" || ref == manifest.BootstrapSourceID {
-		return SourceLocation{Path: repoRoot, Pinned: false, External: false}
-	}
 	art, _ := s.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
-	return sourceView(ref, repoRoot, art, s.GetObject(ref))
+	if art != nil && art.FS != nil {
+		return sourceLocation(art, repoRoot, false)
+	}
+	declared := s.GetObject(ref) != nil
+	return sourceLocation(nil, repoRoot, declared || ref != manifest.BootstrapSourceID && ref.KindInfo().SourceArtifact)
 }
 
-func sourceView(
-	ref manifest.NamedResource,
-	repoRoot string,
-	art *store.SourceArtifact,
-	object manifest.BaseManifest,
-) SourceLocation {
+func sourceLocation(art *store.SourceArtifact, repoRoot string, declared bool) SourceLocation {
 	if art != nil && art.FS != nil {
-		if art.LocalPath == repoRoot {
-			return SourceLocation{Path: repoRoot, Pinned: false, External: false}
+		path := art.LocalPath
+		if art.Provider == store.ProviderInput && repoRoot != "" && safepath.Contains(path, repoRoot) {
+			path = repoRoot
 		}
-		admitted := art.LocalRoot == repoRoot || art.LocalRoot == art.LocalPath
-		alias := art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)
-		if art.LocalRoot != "" && (admitted || alias) {
-			// Derived input keys pin selected bootstrap bytes, never authored refs.
-			return SourceLocation{Path: art.LocalPath, Pinned: art.Content != "" && !art.InputAlias, External: false}
+		return SourceLocation{
+			Path:     path,
+			Pinned:   art.Provider == store.ProviderCommit,
+			External: art.Provider == store.ProviderFetch,
 		}
-		return SourceLocation{Path: art.LocalPath, External: true}
 	}
-	if object != nil || ref.KindInfo().SourceArtifact {
+	if declared {
 		return SourceLocation{External: true}
 	}
 	return SourceLocation{Path: repoRoot}
 }
 
-// Completed source coordinates MUST NOT project copied content onto physical input files.
 func (r *documentReader) localBase(root, repoRoot string) string {
 	dr := *r
 	artifact := dr.artifacts[root]
-	if origin := artifact.OriginPath(root); origin != root {
-		base, _ := artifact.IndexPath(repoRoot, ".")
-		return base
-	}
-	if artifact != nil && artifact.LocalRoot == root && artifact.Content != "" && !artifact.InputAlias {
+	if artifact != nil && (artifact.OriginPath(root) != root || artifact.Extent == store.ExtentComposed) {
 		base, _ := artifact.IndexPath(repoRoot, ".")
 		return base
 	}
@@ -330,49 +328,4 @@ func (r *documentReader) localBase(root, repoRoot string) string {
 func (r *documentReader) localPath(file string) string {
 	dr := *r
 	return dr.artifacts[new(dr).mountedRoot(file)].OriginPath(file)
-}
-
-// AppliesToEntry reports whether a resolved application reads the admitted entry.
-func AppliesToEntry(
-	s sourceStore,
-	application *manifest.EntryApplication,
-	input *store.SourceArtifact,
-	entry string,
-) bool {
-	target := ApplicationEntryOrigin(s, application, input)
-	return target != "" && target == input.OriginPath(entry)
-}
-
-// ApplicationEntryOrigin resolves the target in the admitted source's origin coordinates.
-func ApplicationEntryOrigin(
-	s sourceStore,
-	application *manifest.EntryApplication,
-	input *store.SourceArtifact,
-) string {
-	if input == nil {
-		return ""
-	}
-	source, _ := s.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
-	if source == nil {
-		return ""
-	}
-	location2 := SourceView(s, application.Source, input.LocalPath)
-	if location2.Pinned || location2.External {
-		return ""
-	}
-	target := filepath.Join(location2.Path, manifest.NormalizeClaimBase(application.Path))
-	if !safepath.Contains(location2.Path, target) {
-		return ""
-	}
-	return source.OriginPath(target)
-}
-
-func sameOriginPath(input, source *store.SourceArtifact, entry, target string) bool {
-	if input != nil {
-		entry = input.OriginPath(entry)
-	}
-	if source != nil {
-		target = source.OriginPath(target)
-	}
-	return entry == target
 }

@@ -53,6 +53,7 @@ func TestDetect_PhysicalScaleWork(t *testing.T) {
 					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unchanged}\n",
 				)
 				inputs[side] = &store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					Key:       fmt.Sprintf("side-%d", side),
 					LocalPath: root,
 					FS:        os.DirFS(root),

@@ -34,6 +34,7 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID,
 				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root,
 					FS:        fstest.MapFS{"objects.yaml": {Data: []byte(body)}},
 				})
@@ -104,7 +105,10 @@ func TestParsedInputs_DeclarationKindsAndRoles(t *testing.T) {
 			root := t.TempDir()
 			input := &declarationReadFS{FS: fstest.MapFS{tc.name: {Data: []byte(tc.body)}}}
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+			)
 			l := New(st)
 			t.Cleanup(l.Close)
 			l.SourceRoot = root
@@ -130,11 +134,14 @@ func TestParsedInputs_DeclarationKindsAndRoles(t *testing.T) {
 	}
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"kustomization.yaml": {Data: []byte("resources: [resource]\n")},
-		"resource":           {Data: []byte(custom)},
-		"script.sh":          {Data: []byte(resource)},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: [resource]\n")},
+			"resource":           {Data: []byte(custom)},
+			"script.sh":          {Data: []byte(resource)},
+		}},
+	)
 	l := New(st)
 	t.Cleanup(l.Close)
 	l.SourceRoot = root
@@ -170,7 +177,7 @@ func TestCompleteDeclarations_RequiredFileRoles(t *testing.T) {
 			if mode == "replaced" {
 				input = &declarationReadFS{FS: input.FS}
 				l.Store.SetArtifact(manifest.BootstrapSourceID,
-					&store.SourceArtifact{LocalPath: l.SourceRoot, FS: input})
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: input})
 			}
 			current := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			changes, err := change.Detect(t.Context(), &store.SourceArtifact{FS: fstest.MapFS{}}, current,
@@ -200,7 +207,7 @@ func TestCompleteDeclarations_PreservesInventorySnapshots(t *testing.T) {
 		t.Run(content, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			reader := readerForTest(root)
 			reader.artifacts = map[string]*store.SourceArtifact{root: input}
 			id := manifest.NamedResource{Kind: "ConfigMap", Name: "work"}

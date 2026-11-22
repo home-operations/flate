@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [PathConfig] orig snapshot: no changes detected between current and base inputs; output is empty; Flux-excluded files do not count
+    [PathConfig] current snapshot: no changes detected between current and base inputs; output is empty; Flux-excluded files do not count

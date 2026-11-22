@@ -48,7 +48,7 @@ func TestRegisterBuilt_KeepsCheckoutScope(t *testing.T) {
 
 	st := store.New()
 	admitForTest(st, root)
-	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)}
+	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, Provider: store.ProviderAlias, FS: os.DirFS(root)}
 	st.SetArtifact(source, alias)
 	l := New(st)
 	t.Cleanup(l.Close)
@@ -100,7 +100,7 @@ func TestAdmitBuiltRoot_MountScopeWithoutOwnerPath(t *testing.T) {
 	admitForTest(st, root)
 	repo := &manifest.GitRepository{Name: "fleet", Namespace: "flux-system"}
 	st.AddObject(repo)
-	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)}
+	alias := &store.SourceArtifact{LocalPath: mount, LocalRoot: root, Provider: store.ProviderAlias, FS: os.DirFS(root)}
 	st.SetArtifact(repo.Named(), alias)
 	l := New(st)
 	t.Cleanup(l.Close)

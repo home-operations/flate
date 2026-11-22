@@ -6,5 +6,5 @@ metadata:
 spec:
   interval: 10m
   ref:
-    tag: v1.0.0
+    branch: master
   url: git://fixture.invalid/cluster

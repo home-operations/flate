@@ -1,0 +1,188 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "testdata/custom-bootstrap-source"
+    ],
+    "reductions": "Synthetic reproduction of the local ArtifactGenerator warning in issue #1626."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "edit",
+      "directory": "overlays/edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "local-generator",
+      "description": "The unchanged diff emits no warning. A changed generator input appears in the rendered diff.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "unchanged",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/unchanged.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change-input",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "expect/unchanged.stderr",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Complete authored command output."
+    },
+    {
+      "path": "overlays/edit/repo/app/cm.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/app/cm.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/flux/consumer.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/flux/generator.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/flux/kustomization.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "repo/flux/source.yaml",
+      "cases": [
+        "local-generator"
+      ],
+      "purpose": "Authored input for the bootstrap regression."
+    }
+  ]
+}

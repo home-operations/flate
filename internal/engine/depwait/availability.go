@@ -32,7 +32,7 @@ type availability struct {
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer would share caller-owned policy fields.
 func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manifest.DrainLevel) availability {
-	if message := w.Store.Preflight(); message != "" {
+	if message := w.Store.Preflight(w.Parent).Message; message != "" {
 		return availability{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
 	request := values.ResolveRequest{Reference: dep.Reference, Facts: dep.Input, Permission: w.Missing}

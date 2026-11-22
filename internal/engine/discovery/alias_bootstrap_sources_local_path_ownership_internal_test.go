@@ -80,25 +80,20 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	st.AddObject(repository)
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 
-	{
+	for range 2 {
 		_, err := d.resolveTestSources(t.Context(), false)
-		assert.FatalIf(t, err != nil, "%v", err)
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		assert.Equal(t, st.GetArtifact(repository.Named(), store.ArtifactContent) == nil, true)
+		assert.Equal(t, st.GetObject(repository.Named()), manifest.BaseManifest(repository))
+		assert.Equal(t, d.admission().Input().LocalPath, root)
 	}
 
-	{
-		_, err := d.resolveTestSources(t.Context(), false)
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-
-	artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
-
-	assert.FatalIf(
-		t,
-		artifact.LocalPath != root || st.GetObject(repository.Named()) != repository,
-		"canonical bootstrap or authored object changed: %+v",
-		artifact,
-	)
-
+	root = t.TempDir()
+	st = store.New()
+	d = Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+	repository.Reference = nil
+	_, err := d.resolveTestSources(t.Context(), false)
+	assert.NoError(t, err)
 	t.Run("mutable alias refresh", func(t *testing.T) {
 		t.Parallel()
 		testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
@@ -384,6 +379,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 	root := t.TempDir()
 	st := store.New()
 	bootstrap := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		Kind:      manifest.KindGitRepository,
 		LocalPath: root,
 		LocalRoot: root,
@@ -430,8 +426,8 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 		t,
 		first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root ||
 			second.LocalRoot != root ||
-			!first.InputAlias ||
-			!second.InputAlias,
+			(first.Provider != store.ProviderAlias) ||
+			(second.Provider != store.ProviderAlias),
 		"alias view/ownership = %+v, %+v",
 		first,
 		second,
@@ -504,7 +500,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 
 	assert.FatalIf(
 		t,
-		art.Key != "" || !art.InputAlias || art.LocalRoot != (*testCaseInput.root) ||
+		art.Key != "" || (art.Provider != store.ProviderAlias) || art.LocalRoot != (*testCaseInput.root) ||
 			art.LocalPath == (*testCaseInput.root),
 		"alias coordinates: %+v",
 		art,
@@ -610,11 +606,16 @@ func testEntrySourceViewWarningEvidenceCase(t *testing.T, testCaseInput *bool,
 	}
 	input.Warnings = []manifest.Warning{raw}
 	invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
-	bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
+	bootstrap := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		FS:        input,
+		Warnings:  []manifest.Warning{invocation},
+	}
 	obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
-	d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
+	d := &Admission{aliasViews: sourceViews{}}
 	for range 2 {
-		artifact, _, _, err := d.entrySourceView(
+		artifact, _, err := d.entrySourceView(
 			t.Context(),
 			&entryResolution{object: obj, input: bootstrap, git: obj},
 		)

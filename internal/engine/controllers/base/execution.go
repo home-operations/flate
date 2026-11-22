@@ -382,20 +382,12 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	reconcile func(S, context.Context, T, manifest.DrainLevel) error,
 ) {
 	id := e.Reads.ID()
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			subject := manifest.DiagnosticFor(id, e.Reads.GetObject(id))
-			e.Reads.Retire()
-			slog.Error("base: panic during reconcile", "id", subject.String(), "panic", recovered)
-			e.Store.UpdateStatus(
-				id,
-				store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)},
-			)
-			panic(recovered)
-		}
-	}()
+	defer e.recordPanic(id)
 	obj, ok := e.Reads.Get[T](id)
-	e.declaration = obj
+	e.declaration = nil
+	if ok {
+		e.declaration = obj
+	}
 	policy := e.Reads.Policy(id)
 	if ok && !e.selection.Snapshot().Output(manifest.NamedResource{}) {
 		if _, err := e.KeepEmitted(
@@ -484,6 +476,21 @@ func (e *Execution) replayConstruction(ctx context.Context, id manifest.NamedRes
 	e.Disposition = store.AssessmentReused
 	e.finish(ctx, e.Emit(ctx, id, &attempt, nil))
 	return true
+}
+
+func (e *Execution) recordPanic(id manifest.NamedResource) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	subject := manifest.DiagnosticFor(id, e.Reads.GetObject(id))
+	e.Reads.Retire()
+	slog.Error("base: panic during reconcile", "id", subject.String(), "panic", recovered)
+	e.Store.UpdateStatus(
+		id,
+		store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)},
+	)
+	panic(recovered)
 }
 
 func (e *Execution) acceptReads(ctx context.Context) {

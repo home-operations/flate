@@ -48,7 +48,7 @@ func TestPlanTree_CancellationDuringRound(t *testing.T) {
 	defer inputs.Close()
 	entries, err := r.planTree(ctx, &Tree{
 		Path: filepath.Join(root, "flux"), RepoRoot: root,
-		Input: &store.SourceArtifact{LocalPath: root, FS: files},
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
 	}, &inputs)
 	assert.Equal(t, files.cancel == nil, true)
 	assert.Equal(t, entries == nil, true)

@@ -15,7 +15,7 @@ func TestAdmission_OwnershipReadCapture(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	source := &manifest.GitRepository{Name: "local", Namespace: "sources"}
 	st.AddObject(source)

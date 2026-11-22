@@ -43,8 +43,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot st
 		if !d.pinnedWorkingTreeFile(repoRoot, &index, id, &record) {
 			continue
 		}
-		d.cfg.Store.DeleteObject(id)
-		delete(d.loader.Index.Records, id)
+		d.loader.DiscardOccurrence(id)
 	}
 	return nil
 }
@@ -94,15 +93,16 @@ func (d *Session) pinnedWorkingTreeFile(
 	}
 	file := record.File
 	if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
+		var mount *store.SourceArtifact
 		for source := range d.resolvedSources.snapshot() {
-			root, ok := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			if ok && root.InputAlias && safepath.Contains(root.LocalPath, record.Path) {
-				rel, _ := filepath.Rel(root.LocalPath, record.Path)
-				file, _ = filepath.Rel(repoRoot, filepath.Join(root.LocalRoot, rel))
-				file = filepath.ToSlash(file)
-				break
+			root, _ := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if root.WorkingTree() && safepath.Contains(root.LocalPath, record.Path) &&
+				(mount == nil || len(root.LocalPath) > len(mount.LocalPath)) {
+				mount = root
 			}
 		}
+		file, _ = filepath.Rel(repoRoot, mount.OriginPath(record.Path))
+		file = filepath.ToSlash(file)
 		if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
 			return false
 		}
@@ -180,21 +180,22 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.admission().input = bootstrap
+	admission := d.admission()
+	admission.input = bootstrap
 	group, err := d.bootstrapDeclaration(ctx, bootstrap)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := d.resolveEntrySource(
 		ctx,
-		d.admission(),
+		admission,
 		manifest.BootstrapSourceID,
 		group,
 	); err != nil &&
 		!errors.Is(err, errPendingSources) {
 		return nil, err
 	}
-	d.loader.BindProvisionalInput(d.admission().bootstrapArtifact())
+	d.loader.BindProvisionalInput(d.admission().Input())
 
 	complete = true
 	return d, nil
@@ -229,7 +230,7 @@ func (d *Session) load(ctx context.Context) error {
 	}
 	admission := d.admission()
 	if d.cfg.Selection.Changed && d.cfg.Trees != nil && !d.hasEntryBuilder() {
-		d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
+		d.entryReceipt(ctx, admission, admission.Input())
 	}
 	return nil
 }
@@ -375,7 +376,7 @@ func (d *Session) observeRequiredObjects(
 		if child.Obj != nil && absent < len(admission.Absent) && admission.Absent[absent] == child.Obj.Named() {
 			absent++
 			_, _, hasPath := child.Obj.SourcePath()
-			_, source := child.Obj.(entrySource)
+			source := child.Obj.Named().KindInfo().IsSource()
 			changed = changed || hasPath || source || child.Entry != nil
 			refresh = refresh || hasPath || source
 		}

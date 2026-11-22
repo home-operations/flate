@@ -23,7 +23,10 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	first := &manifest.Kustomization{Name: "first", Namespace: "apps", Path: "first"}
 	second := &manifest.Kustomization{
 		Name:      "second",
@@ -110,7 +113,10 @@ func TestAdmission_AuthoredDeclarationChangeOverridesOutput(t *testing.T) {
 	object := &manifest.ConfigMap{Name: "input", Namespace: "apps"}
 	id := object.Named()
 	for side, st := range stores {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+		)
 		document := testutil.ObjectDocument(object)
 		document["untracked"] = side
 		fingerprint := manifest.Fingerprint(document)

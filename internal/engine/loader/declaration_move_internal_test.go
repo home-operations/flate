@@ -66,7 +66,10 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					}}
 					root := fmt.Sprintf("/virtual/declaration-reuse/%d", side)
 					st := store.New()
-					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+					st.SetArtifact(
+						manifest.BootstrapSourceID,
+						&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+					)
 					l := New(st)
 					l.SourceRoot = root
 					configureSelection(t, l, selection.Request{Changed: true})
@@ -148,7 +151,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	for side := range loaders {
 		root := declarationMoveFiles(t, scenario, side)
 		st := store.New()
-		inputs[side] = &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+		inputs[side] = &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 		l := New(st)
 		l.SourceRoot = root

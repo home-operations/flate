@@ -317,7 +317,7 @@ func assertBootstrapAuthoritySide(t *testing.T, pair *[2]Rendered, transition st
 	assert.FatalIf(t, artifact == nil, "side %d lost source", side)
 	input := artifact.(*store.SourceArtifact)
 	declared := transition != "application removed" && originalSide == 1
-	assert.Equal(t, input.InputAlias, !declared)
+	assert.Equal(t, (input.Provider == store.ProviderAlias), !declared)
 	docs := outputByParent(rendered.Result.Manifests)[consumer]
 	assert.Equal(t, len(docs), 1)
 	value := "local"

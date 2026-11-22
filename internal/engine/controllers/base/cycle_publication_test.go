@@ -34,7 +34,7 @@ func TestExecution_DelayedPreflightPublication(t *testing.T) {
 			})
 			<-captured
 			for _, id := range ids {
-				st.SetPreflight(id, message)
+				st.SetPreflight(id, store.PreflightFailure{Message: message, DependencyCycle: true})
 			}
 			peerDone := make(chan struct{})
 			tasks.Go(t.Context(), "peer", func(ctx context.Context) {
@@ -52,8 +52,14 @@ func TestExecution_DelayedPreflightPublication(t *testing.T) {
 			delayed.Reads.Require(manifest.DependencyRef{NamedResource: ids[first]})
 			delayed.Settle(t.Context(), manifest.DrainForce)
 			info, _ := st.GetStatus(ids[1-first])
-			t.Logf("delayed=%s preflight=%q valid=%t outcome=%s message=%s",
-				ids[1-first], delayed.Reads.Preflight(), delayed.Valid(), info.Outcome(), info.String())
+			t.Logf(
+				"delayed=%s preflight=%q valid=%t outcome=%s message=%s",
+				ids[1-first],
+				delayed.Reads.Preflight(delayed.Reads.ID()).Message,
+				delayed.Valid(),
+				info.Outcome(),
+				info.String(),
+			)
 			assert.Equal(t, info.Outcome(), store.OutcomeFailed)
 			assert.Equal(t, info.String(), message)
 		})
@@ -74,8 +80,8 @@ func TestExecution_CapturedBeforeCyclePublication(t *testing.T) {
 			c := base.New(st, nil)
 			early := controllertest.NewExecution(c, ids[1-first])
 			defer early.Close()
-			assert.Equal(t, early.Reads.Preflight(), "")
-			st.SetPreflight(ids[first], message)
+			assert.Equal(t, early.Reads.Preflight(early.Reads.ID()).Message, "")
+			st.SetPreflight(ids[first], store.PreflightFailure{Message: message, DependencyCycle: true})
 			peer := controllertest.NewExecution(c, ids[first])
 			peer.Reads.Require(manifest.DependencyRef{NamedResource: ids[1-first]})
 			peer.Settle(t.Context(), manifest.DrainForce)
@@ -84,7 +90,7 @@ func TestExecution_CapturedBeforeCyclePublication(t *testing.T) {
 			early.Settle(t.Context(), manifest.DrainForce)
 			before, _ := st.GetStatus(ids[1-first])
 			assert.Equal(t, before.Outcome(), store.OutcomeBlocked)
-			st.SetPreflight(ids[1-first], message)
+			st.SetPreflight(ids[1-first], store.PreflightFailure{Message: message, DependencyCycle: true})
 			assert.Equal(t, early.Valid(), false)
 			fresh := controllertest.NewExecution(c, ids[1-first])
 			defer fresh.Close()

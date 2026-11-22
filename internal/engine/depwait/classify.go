@@ -57,7 +57,7 @@ func failedClassification(
 //
 //nolint:gocritic // DependencyRef remains a value in the SDK so callers retain ownership.
 func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
-	if message := w.Store.Preflight(); message != "" {
+	if message := w.Store.Preflight(w.Parent).Message; message != "" {
 		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
 	existence := w.Existence

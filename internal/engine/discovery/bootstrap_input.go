@@ -20,17 +20,16 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 			return nil, err
 		}
 		bootstrap, d.bootstrapInput = admitted, admitted
-		d.resolvedSources = &entrySourcePublisher{
-			store: d.cfg.Store, root: admitted.LocalPath,
-			mutable: map[manifest.NamedResource]entryResolution{},
-		}
+		d.initBootstrapPublisher(admitted)
 	} else {
 		bootstrap = d.refreshConstructionInput()
 	}
 	if d.cfg.Entry != nil {
 		// Generic aliases MUST be admitted from this store's declarations.
-		for id, resolution := range d.cfg.Entry.prepared.sources {
-			prepared := resolution.entry || resolution.projected || len(resolution.producers) != 0
+		for id := range d.cfg.Entry.prepared.sources {
+			resolution := d.cfg.Entry.prepared.sources[id]
+			prepared := resolution.entryScoped || resolution.entry || resolution.projected ||
+				len(resolution.producers) != 0
 			if id == manifest.BootstrapSourceID || !resolution.synthetic && prepared {
 				d.resolvedSources.mutable[id] = resolution
 			}
@@ -48,12 +47,27 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 	return bootstrap, nil
 }
 
+func (d *Session) initBootstrapPublisher(admitted *store.SourceArtifact) {
+	id := manifest.BootstrapSourceID
+	object, _ := id.BindLocal(admitted.LocalPath)
+	if d.cfg.Store.GetArtifact(id, store.ArtifactContent) == admitted {
+		if existing := d.cfg.Store.GetDeclaration(id); manifest.Equal(existing, object) {
+			object = existing
+		}
+	}
+	d.resolvedSources = &entrySourcePublisher{
+		bootstrap: object, store: d.cfg.Store, root: admitted.LocalPath,
+		mutable: map[manifest.NamedResource]entryResolution{},
+	}
+}
+
 func (d *Session) refreshConstructionInput() *store.SourceArtifact {
 	id := manifest.BootstrapSourceID
 	input, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	binding := d.resolvedSources.snapshot()[id]
 	material := store.ArtifactContent | store.ArtifactRevision | store.ArtifactOrigin
-	if input == nil || input.SameMaterial(d.cfg.Input, material) || input.SameMaterial(d.bootstrapInput, material) {
+	if input == nil || input.Provider != store.ProviderInput ||
+		input.SameMaterial(d.cfg.Input, material) || input.SameMaterial(d.bootstrapInput, material) {
 		return d.bootstrapInput
 	}
 	if binding.object != nil && len(binding.object.Composition().Includes) != 0 &&
@@ -65,7 +79,7 @@ func (d *Session) refreshConstructionInput() *store.SourceArtifact {
 }
 
 func (d *Session) admitConstructionInput(ctx context.Context) (*store.SourceArtifact, error) {
-	if d.cfg.Entry != nil && d.cfg.Entry.Input == d.cfg.Input {
+	if d.cfg.Entry != nil && !d.cfg.Entry.aggregate && d.cfg.Entry.Input == d.cfg.Input {
 		if input := d.cfg.Entry.prepared.sources[manifest.BootstrapSourceID].input; input != nil {
 			d.cfg.Input = input
 		}
@@ -77,6 +91,7 @@ func (d *Session) bootstrapDeclaration(ctx context.Context, input *store.SourceA
 	id := manifest.BootstrapSourceID
 	group := &entrySourceGroup{required: true}
 	if supplied := d.cfg.Store.GetDeclaration(id); supplied != nil {
+		group.entry = true
 		if len(supplied.Composition().Includes) == 0 {
 			return group, nil
 		}
@@ -91,7 +106,6 @@ func (d *Session) bootstrapDeclaration(ctx context.Context, input *store.SourceA
 	index := d.loader
 	previousOpts, previousIgnore := index.Options, index.IgnoreFile
 	index.Options.Cache, index.Options.Changes = nil, nil
-	index.Options.ParsedInputs = nil
 	defer func() {
 		index.Options, index.IgnoreFile = previousOpts, previousIgnore
 	}()
@@ -121,11 +135,15 @@ func (d *Session) retainBootstrapProbe(ctx context.Context, group *entrySourceGr
 			return err
 		}
 	}
-	if group.object != nil && len(group.object.Composition().Includes) != 0 {
+	if group.object == nil {
+		return nil
+	}
+	if len(group.object.Composition().Includes) != 0 {
 		if err := d.bootstrapIncludes(ctx, index, group.object); err != nil {
 			return err
 		}
 	}
+	group.entry = true
 	return nil
 }
 

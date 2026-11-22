@@ -102,7 +102,7 @@ func testSelectSingleRunOmitsExternalDisclosuresCase(
 	if testCaseInput.local {
 		run.store.SetArtifact(
 			source,
-			&store.SourceArtifact{LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}},
+			&store.SourceArtifact{Provider: store.ProviderAlias, LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}},
 		)
 	}
 	if testCaseInput.inferred {
@@ -126,6 +126,8 @@ func testSelectSingleRunOmitsExternalDisclosuresCase(
 		run.loader = loader.New(run.store)
 	}
 	run.loader.Index, run.loader.SourceRoot = run.index, run.repoRoot
+	run.admission = discoveryAdmissionForTest(t, run.store, run.repoRoot)
+	run.loader.SourceProvider = run.admission.Provider
 	run.Result.catalog = run.loader.DetachCatalog()
 	var labels map[string]string
 	if testCaseInput.labels {

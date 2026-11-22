@@ -10,11 +10,23 @@
   "repositories": [
     {
       "name": "repo",
-      "directory": "repo"
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
     },
     {
       "name": "baseline",
-      "directory": "repo"
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
     }
   ],
   "commits": [

@@ -19,20 +19,23 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: consumer, namespace: apps}\n" +
-			"spec:\n" +
-			"  path: ./app\n" +
-			"  postBuild:\n" +
-			"    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n")},
-		"open.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
-			"metadata: {name: open, namespace: apps}\n" +
-			"spec: {resources: []}\n")},
-		"index.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" + "kind: HelmRepository\n" +
-			"metadata: {name: index, namespace: apps}\n" +
-			"spec: {url: https://fixture.invalid/charts}\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: consumer, namespace: apps}\n" +
+				"spec:\n" +
+				"  path: ./app\n" +
+				"  postBuild:\n" +
+				"    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n")},
+			"open.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
+				"metadata: {name: open, namespace: apps}\n" +
+				"spec: {resources: []}\n")},
+			"index.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" + "kind: HelmRepository\n" +
+				"metadata: {name: index, namespace: apps}\n" +
+				"spec: {url: https://fixture.invalid/charts}\n")},
+		}},
+	)
 	consumer := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
 		Kind:      manifest.KindKustomization,
@@ -205,7 +208,10 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 	for _, object := range []manifest.BaseManifest{source, parent} {
 		st.AddObject(object)
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{parent.Named()}})
 	missing := &solverMissingPolicy{}
@@ -278,7 +284,10 @@ func TestAdmission_NewGenerationUsesCurrentProducer(t *testing.T) {
 			for _, object := range []manifest.BaseManifest{previous, selected} {
 				st.AddObject(object)
 			}
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 
 			changes := detectChanges(t, nil, nil)
 			session := newSolverSession(t, st, changes, Request{Changed: true})
@@ -318,20 +327,23 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: consumer, namespace: apps}\n" +
-			"spec:\n" +
-			"  path: ./app\n" +
-			"  postBuild:\n" +
-			"    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n")},
-		"open.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
-			"metadata: {name: open, namespace: apps}\n" +
-			"spec: {resources: []}\n")},
-		"index.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" + "kind: HelmRepository\n" +
-			"metadata: {name: index, namespace: apps}\n" +
-			"spec: {url: https://fixture.invalid/charts}\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: consumer, namespace: apps}\n" +
+				"spec:\n" +
+				"  path: ./app\n" +
+				"  postBuild:\n" +
+				"    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n")},
+			"open.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
+				"metadata: {name: open, namespace: apps}\n" +
+				"spec: {resources: []}\n")},
+			"index.yaml": {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" + "kind: HelmRepository\n" +
+				"metadata: {name: index, namespace: apps}\n" +
+				"spec: {url: https://fixture.invalid/charts}\n")},
+		}},
+	)
 	consumer := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
 		Kind:      manifest.KindKustomization,

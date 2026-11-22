@@ -198,7 +198,7 @@ func testInput(root string) *store.SourceArtifact {
 	if root == "" {
 		return nil
 	}
-	return &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	return &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 }
 
 func TestDetect_MissingInputsWrapInput(t *testing.T) {
@@ -801,7 +801,10 @@ func TestSet_Present(t *testing.T) {
 	inputs := [2]*digestReadFS{}
 	for side, st := range stores {
 		inputs[side] = &digestReadFS{FS: fstest.MapFS{"same.yaml": {Data: []byte("same")}}}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: inputs[side]})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: inputs[side]},
+		)
 	}
 	qualified, err := Qualify(t.Context(), requested, SourcePair{Stores: stores}, manifest.WorkScope{})
 	assert.NoError(t, err)

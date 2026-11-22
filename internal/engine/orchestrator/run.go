@@ -164,7 +164,7 @@ func (e *orchestratorExistence) promoteAdmission(
 			return false, nil
 		}
 		if e.construction {
-			reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+			reads.AdmitConstructed(&child)
 			return e.o.store.GetDeclaration(id) != nil, nil
 		}
 		request.Generation = slices.Collect(selection.Declarations([]store.Child{child}))

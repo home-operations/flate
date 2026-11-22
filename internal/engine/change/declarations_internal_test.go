@@ -80,7 +80,10 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	owners := [2]*manifest.HelmRelease{}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
 	for side, st := range stores {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+		)
 		owners[side] = &manifest.HelmRelease{
 			Name: "app", Namespace: "apps",
 			ValuesFrom: []manifest.ValuesReference{{Kind: input.Kind, Name: input.Name, ValuesKey: "chosen"}},
@@ -174,7 +177,10 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 		Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent",
 	}
 	for _, st := range stores {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+		)
 		st.SetDiscoveryIndex(&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				child.Named(): {Productions: []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID}}},
@@ -309,7 +315,10 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 			child.Name = "child"
 			for side, st := range stores {
 				input := fstest.MapFS{}
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: input},
+				)
 				spec := map[string]any{"path": "./app", "timeout": []string{"1m", "2m"}[side]}
 				if tc.output && side == 1 {
 					spec["path"] = "./other"
@@ -408,7 +417,10 @@ func newDeclarationInputFixture(t *testing.T, scenario string) declarationInputF
 	inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for side, st := range f.stores {
 		input := fstest.MapFS{"app/kustomization.yaml": {Data: []byte("resources: []\n")}}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: input},
+		)
 		f.owners[side] = &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: "./app"}
 		f.owners[side].PostBuild = &kustomizev1.PostBuild{
 			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: inputID.Kind, Name: inputID.Name}},
@@ -484,7 +496,10 @@ func testWithDeclarationsOneSidedInputCase(t *testing.T, testCaseInput *struct {
 			})
 			st.AddObject(input)
 		}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: files},
+		)
 	}
 	paths := map[string][2]filePresence{}
 	if testCaseInput.changed {
@@ -543,6 +558,7 @@ func testWithDeclarationsPreparedProductionCase(
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
 			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: t.TempDir(),
 				FS:        fstest.MapFS{"app/kustomization.yaml": {Data: []byte("resources: []\n")}},
 			},

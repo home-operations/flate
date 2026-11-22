@@ -1,0 +1,10 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: release, namespace: flux-system}
+spec:
+  interval: 1h
+  suspend: true
+  chart:
+    spec:
+      chart: witness
+      sourceRef: {kind: HelmRepository, name: charts}

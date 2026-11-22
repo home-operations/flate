@@ -60,9 +60,13 @@ func TestResolveLocal_References(t *testing.T) {
 		{"semver", sourcev1.GitRepositoryRef{SemVer: "<2.0.0"}, a, false},
 		{"commit-over-name", sourcev1.GitRepositoryRef{Commit: a.String(), Name: "bad name", SemVer: "invalid", Tag: "v2.0.0"}, a, false},
 		{"name-over-semver", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head", SemVer: "invalid", Tag: "v2.0.0", Branch: "bad branch"}, a, false},
-		{"semver-over-tag", sourcev1.GitRepositoryRef{SemVer: "<2.0.0", Tag: "bad tag", Branch: "bad branch"}, a, false},
+		{"tag-over-semver", sourcev1.GitRepositoryRef{SemVer: ">=2.0.0", Tag: "v1.0.0", Branch: "bad branch"}, a, false},
 		{"tag-over-branch", sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}, a, false},
-		{"head", sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, b, false},
+		{"head tag", sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, b, false},
+		{"head named tag", sourcev1.GitRepositoryRef{Name: "refs/tags/v2.0.0"}, b, false},
+		{"head commit", sourcev1.GitRepositoryRef{Commit: b.String()}, b, false},
+		{"head branch", sourcev1.GitRepositoryRef{Branch: "master"}, b, false},
+		{"head named branch", sourcev1.GitRepositoryRef{Name: "refs/heads/master"}, b, false},
 		{"commit-branch-reachable", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"}, a, false},
 		{"commit-branch-unreachable", sourcev1.GitRepositoryRef{Commit: b.String(), Branch: "pinned"}, plumbing.ZeroHash, true},
 		{"commit-branch-missing", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "missing"}, plumbing.ZeroHash, false},
@@ -88,6 +92,35 @@ func TestResolveLocal_References(t *testing.T) {
 			testResolveLocalReferencesCase2(t, &metadata)
 		},
 		)
+	}
+}
+
+func TestResolveLocal_TagAtDirtyHEAD(t *testing.T) {
+	t.Parallel()
+	fixture := localFixture(t)
+	testutil.WriteFile(t, fixture.root, "untracked.txt", "untracked")
+	_, err := fixture.repo.CreateTag("annotated-head", fixture.head, &git.CreateTagOptions{
+		Tagger:  &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
+		Message: "pin",
+	})
+	assert.NoError(t, err)
+
+	for _, tag := range []string{"v2.0.0", "annotated-head"} {
+		t.Run(tag, func(t *testing.T) {
+			t.Parallel()
+			repository := localSource(&sourcev1.GitRepositoryRef{Tag: tag})
+			got, err := ResolveLocal(t.Context(), localLocation(t, fixture.root),
+				[]*manifest.GitRepository{repository}, LocalOptions{})
+			assert.NoError(t, err)
+			artifact := got[repository.Named()]
+			assert.FatalIf(t, artifact == nil, "tag %q did not resolve", tag)
+			assert.Equal(t, artifact.Revision, fixture.head.String())
+			data, err := fs.ReadFile(artifact.FS, "value.txt")
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "B")
+			_, err = fs.Stat(artifact.FS, "untracked.txt")
+			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		})
 	}
 }
 
@@ -165,6 +198,19 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 		LocalOptions{Revision: ""},
 	)
 	assert.FatalIf(t, err != nil || len(got) != 0, "incomplete history did not fall back: %v, %v", got, err)
+
+	tag := plumbing.NewTagReferenceName("shallow-head")
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(tag, hash)))
+	repository.Reference = &sourcev1.GitRepositoryRef{Tag: tag.Short()}
+	got, err = ResolveLocal(t.Context(), localLocation(t, root),
+		[]*manifest.GitRepository{repository}, LocalOptions{})
+	assert.NoError(t, err)
+	artifact := got[repository.Named()]
+	assert.FatalIf(t, artifact == nil, "tag at shallow HEAD did not resolve")
+	assert.Equal(t, artifact.Revision, hash.String())
+	data, err := fs.ReadFile(artifact.FS, "value.txt")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "B")
 }
 
 //nolint:paralleltest // testing.AllocsPerRun changes process-wide allocation accounting.
@@ -338,7 +384,8 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 		[]*manifest.GitRepository{first},
 		LocalOptions{Revision: ""},
 	)
-	if err != nil || moved[first.Named()].LocalPath != root || moved[first.Named()].Revision != b.String() {
+	if err != nil || moved[first.Named()] == nil || moved[first.Named()].Key == key ||
+		moved[first.Named()].LocalPath == root || moved[first.Named()].Revision != b.String() {
 		t.Fatalf("moved tag used stale resolution: %v, %v", moved, err)
 	}
 }

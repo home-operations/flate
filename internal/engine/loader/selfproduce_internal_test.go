@@ -26,7 +26,7 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	bootstrap := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	bootstrap := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"a/kustomization.yaml": {
 			Data: []byte("resources: [../target, ../missing]\ntransformers: [../configuration]\n"),
 		},

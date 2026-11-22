@@ -10,7 +10,13 @@
   "repositories": [
     {
       "name": "repo",
-      "directory": "repo"
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/repo.git"
+        }
+      ]
     },
     {
       "name": "baseline",

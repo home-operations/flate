@@ -26,7 +26,10 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	owner := &countedRootOwner{Kustomization: &manifest.Kustomization{
 		Name: "owner", Namespace: "apps", Path: ".",
 	}}
@@ -94,7 +97,10 @@ func TestAdmission_OwnerClaimsReuse(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	owner.Path = "."
 	facts := &solverFacts{

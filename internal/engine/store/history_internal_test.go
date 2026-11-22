@@ -18,21 +18,24 @@ func TestRecordEmitted_SourceHistorySurvivesAcquisition(t *testing.T) {
 	s := New()
 	source := projectionSource(t, s, "source")
 	root := projectionOwner(s, "root", manifest.BootstrapSourceID)
-	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{LocalPath: "/input", FS: fstest.MapFS{}})
+	s.SetArtifact(
+		manifest.BootstrapSourceID,
+		&SourceArtifact{Provider: ProviderInput, LocalPath: "/input", FS: fstest.MapFS{}},
+	)
 	input := &manifest.ConfigMap{Name: "authority", Data: map[string]any{"value": "initial"}}
 	s.AddObject(input)
 	var alias ReadSet
 	alias.Init(s, source, nil)
 	defer alias.Retire()
 	alias.GetObject(input.Named())
-	artifact := (&SourceArtifact{InputAlias: true, LocalPath: "/input", FS: fstest.MapFS{}}).WithReads(&alias)
+	artifact := (&SourceArtifact{Provider: ProviderAlias, LocalPath: "/input", FS: fstest.MapFS{}}).WithReads(&alias)
 	s.SetArtifact(source, artifact)
 	workload := &manifest.Kustomization{
 		Name: "workload", Namespace: "apps", Path: "workload",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name},
 	}
 	children := []Child{{Obj: workload}}
-	expected := manifest.SourceEvidence{Source: artifact.HistoryIdentity(source), Path: "workload", Subtree: true}
+	expected := manifest.SourceEvidence{Source: artifact.HistoryIdentity(), Path: "workload", Subtree: true}
 	assert.Equal(t, slices.Contains(s.ChildSourcePaths(root.Named(), children, nil), expected), true)
 	var reads ReadSet
 	reads.Init(s, root.Named(), nil)
@@ -57,7 +60,7 @@ func TestRecordEmitted_SourceHistorySurvivesAcquisition(t *testing.T) {
 	assert.Equal(t, output.accepted, true)
 	assert.Equal(t, reads.Valid(), true)
 	assert.Equal(t, alias.Valid(), false)
-	assert.Equal(t, artifact.HistoryIdentity(source), manifest.SourceIdentity{})
+	assert.Equal(t, artifact.HistoryIdentity(), manifest.SourceIdentity{})
 	assert.Equal(t, slices.Contains(output.SourcePaths(), expected), true)
 	acquired := &SourceArtifact{
 		Kind:    source.Kind,
@@ -76,7 +79,7 @@ func TestRecordEmitted_SourceHistorySurvivesAcquisition(t *testing.T) {
 	next.Children, next.Complete = children, true
 	s.RecordEmitted(root.Named(), &next, nil)
 	assert.Equal(t, next.accepted, true)
-	current := manifest.SourceEvidence{Source: acquired.HistoryIdentity(source), Path: "workload", Subtree: true}
+	current := manifest.SourceEvidence{Source: acquired.HistoryIdentity(), Path: "workload", Subtree: true}
 	assert.Equal(t, slices.Contains(next.SourcePaths(), current), true)
 	assert.Equal(t, slices.Contains(next.SourcePaths(), expected), false)
 	assert.Equal(t, slices.Contains(output.SourcePaths(), expected), true)

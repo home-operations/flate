@@ -292,7 +292,7 @@ func BenchmarkCompleteDeclarations_LargeFile(b *testing.B) {
 			256*1024,
 		)+"\n",
 	)
-	input := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	set, err := change.Detect(b.Context(), &store.SourceArtifact{FS: fstest.MapFS{}}, input,
 		change.DetectConfig{Candidates: map[string]bool{"input.yaml": false}})
 	if err != nil {

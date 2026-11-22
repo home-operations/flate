@@ -95,6 +95,7 @@ const (
 //
 //nolint:recvcheck // SecureJoin consumes Lstat and Readlink from values alongside pointer-only cache updates.
 type documentReader struct {
+	configured  *store.SourceArtifact
 	projections *manifest.ProducerProjections
 	cache       map[string]document
 	// Views MUST stay shared when discovery copies a reader.
@@ -169,8 +170,12 @@ func (r *documentReader) mountSources(
 	}
 	artifact := s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	mountSource(mounted, artifact)
-	if bootstrap, ok := artifact.(*store.SourceArtifact); ok {
+	if bootstrap, ok := artifact.(*store.SourceArtifact); ok && bootstrap.Provider == store.ProviderInput {
 		r.bootstrap = bootstrap.LocalPath
+	}
+	if r.configured != nil && mounted[r.configured.LocalPath] == nil {
+		mountSource(mounted, r.configured)
+		r.bootstrap = r.configured.LocalPath
 	}
 	if input != nil {
 		mountSource(mounted, input)
@@ -251,6 +256,7 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 		inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}
+	l.documents.configured = l.Options.ConfiguredInput
 	changed := l.documents.mountSources(l.Store, input, l.Index)
 	if len(changed) == 0 {
 		return
@@ -296,10 +302,7 @@ func (l *Loader) mountSources() {
 		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
-				delete(l.Index.Records, id)
-				delete(l.candidates, id)
-				delete(l.locations, id)
-				l.Store.DeleteObject(id)
+				l.DiscardOccurrence(id)
 			}
 		}
 	}
@@ -488,4 +491,12 @@ func isManifestFile(path string) bool {
 		return true
 	}
 	return false
+}
+
+// DiscardOccurrence retires a physical declaration and its published identity.
+func (l *Loader) DiscardOccurrence(id manifest.NamedResource) {
+	delete(l.Index.Records, id)
+	delete(l.candidates, id)
+	delete(l.locations, id)
+	l.Store.DeleteObject(id)
 }

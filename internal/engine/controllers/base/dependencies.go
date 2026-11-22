@@ -69,7 +69,7 @@ func (e *Execution) Checkpoint() error {
 	if obj := e.Reads.GetObject(e.Reads.ID()); obj != nil && e.preGate(obj) {
 		return errSuspended
 	}
-	if message := e.Reads.Preflight(); message != "" {
+	if message := e.Reads.Preflight(e.Reads.ID()).Message; message != "" {
 		return manifest.NewError(manifest.ErrInput, nil, message)
 	}
 	return nil
@@ -136,7 +136,7 @@ func (e *Execution) DataInputs(
 	obj manifest.BaseManifest,
 	provider dataLookup,
 ) ([]depwait.DataDependency, error) {
-	if message := e.Reads.Preflight(); message != "" {
+	if message := e.Reads.Preflight(e.Reads.ID()).Message; message != "" {
 		return nil, manifest.NewError(manifest.ErrInput, nil, message)
 	}
 	if obj.ReferenceCapacity().DataInputs == 0 {

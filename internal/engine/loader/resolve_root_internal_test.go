@@ -49,7 +49,12 @@ func TestResolveRoot_ConfinedCapturedSource(t *testing.T) {
 			assert.NoError(t, os.Symlink("../outside", filepath.Join(root, "escape")))
 			st := store.New()
 			source := (&manifest.GitRepository{Name: "source", Namespace: "apps"}).Named()
-			input := &store.SourceArtifact{LocalPath: root, Content: "captured", FS: os.DirFS(root)}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				Content:   "captured",
+				FS:        os.DirFS(root),
+			}
 			if tc.name != "unavailable source" {
 				st.SetArtifact(source, input)
 			}

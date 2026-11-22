@@ -15,7 +15,10 @@ import (
 func TestRootOwners_RelativeSourceBoundary(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: ".", FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: ".", FS: fstest.MapFS{}},
+	)
 	owner := &manifest.Kustomization{Namespace: "apps", Name: "owner", Path: "."}
 	factory := (&manifest.ResourceSet{Namespace: "apps", Name: "factory"}).Named()
 	st.AddObject(owner)
@@ -64,24 +67,29 @@ func TestRootOwners_NativeComponent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"app/kustomization.yaml": {Data: []byte("resources: []\ncomponents: [../components]\n")},
-		"components/kustomization.yaml": {
-			Data: []byte("apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [child.yaml]\n"),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"app/kustomization.yaml": {Data: []byte("resources: []\ncomponents: [../components]\n")},
+			"components/kustomization.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [child.yaml]\n",
+				),
+			},
+		}},
+	)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "app"}
 	factory := &manifest.ResourceSet{Name: "factory", Namespace: "apps"}
 	st.AddObject(factory)
 	st.AddObject(owner)
 	st.RecordEmitted(factory.Named(), &store.Emission{Children: []store.Child{{Obj: owner}}, Complete: true}, nil)
-	index := Claims(st, root, []*manifest.Kustomization{owner})
+	index := Claims(st, root, []*manifest.Kustomization{owner}, nil)
 	id := manifest.NamedResource{
 		Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child",
 	}
 	file := "components/child.yaml"
 	index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(root, file), File: file}
-	assert.Diff(t, slices.Collect(index.ClaimOwners(file, manifest.BootstrapSourceID, id, nil)),
+	assert.Diff(t, slices.Collect(index.ClaimOwners(file, store.CheckoutClaimSource(), id, nil)),
 		[][]manifest.NamedResource{{owner.Named()}})
 	captured := selection.CaptureRoot(selection.RootEvidence{
 		Identity: id,

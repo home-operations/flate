@@ -363,7 +363,10 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 		}
 	}
 	barrier := promotionBarrier{FS: makeFS("old"), opened: make(chan struct{}), release: make(chan struct{})}
-	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "old", LocalPath: root, FS: barrier})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Provider: store.ProviderInput, Key: "old", LocalPath: root, FS: barrier},
+	)
 	var first store.ReadSet
 	first.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options := PromoteOptions{
@@ -383,7 +386,10 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 		done <- promoted
 	}()
 	<-barrier.opened
-	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "new", LocalPath: root, FS: makeFS("new")})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Provider: store.ProviderInput, Key: "new", LocalPath: root, FS: makeFS("new")},
+	)
 	close(barrier.release)
 	assert.FatalIf(
 		t,
@@ -402,7 +408,10 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	if got, _ := second.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "new" || !second.Valid() {
 		t.Fatalf("current promotion = %+v, valid=%t", got, second.Valid())
 	}
-	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "third", LocalPath: root, FS: makeFS("third")})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Provider: store.ProviderInput, Key: "third", LocalPath: root, FS: makeFS("third")},
+	)
 	assert.FatalIf(
 		t,
 		st.GetObject(id) != nil || second.Valid(),
@@ -584,7 +593,14 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 	repoRoot := t.TempDir()
 	st.SetArtifact(
 		source.Named(),
-		&store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", Content: "pinned", FS: input},
+		&store.SourceArtifact{
+			Provider:  store.ProviderCommit,
+			LocalRoot: repoRoot,
+			LocalPath: dir,
+			Key:       "pinned",
+			Content:   "pinned",
+			FS:        input,
+		},
 	)
 	foreign := &manifest.RawObject{
 		APIVersion: "foreign.example/v1",

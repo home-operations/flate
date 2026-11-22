@@ -113,7 +113,7 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 		t.Run(availability, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			input := &store.SourceArtifact{Content: "before"}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, Content: "before"}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "before"}
 			st.AddObject(owner)
@@ -226,7 +226,12 @@ func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	input := &store.SourceArtifact{Content: "before", LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		Content:   "before",
+		LocalPath: root,
+		FS:        fstest.MapFS{},
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "app"}
 	record := manifest.DiscoveryRecord{File: "owner.yaml", Path: filepath.Join(root, "owner.yaml"), Declaration: owner}

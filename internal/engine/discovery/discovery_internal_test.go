@@ -11,8 +11,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/internal/engine/selection"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -35,7 +33,7 @@ func TestLoadManifests_CancellationDuringRound(t *testing.T) {
 	var work manifest.WorkRecorder
 	d, err := Begin(t.Context(), Config{
 		Path: filepath.Join(root, "flux"), Store: st, Work: work.Scope(),
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"flux/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
 				"  path: ./work\n  sourceRef: {kind: OCIRepository, name: missing}\n"))},
 			"work/kustomization.yaml": {Data: []byte("resources: []\n")},
@@ -226,7 +224,7 @@ func TestRun_BuiltEntryFixedPoint(t *testing.T) {
 	result, err := Run(
 		t.Context(),
 		testConfig(t, Config{
-			Input:    &store.SourceArtifact{LocalPath: root, FS: input},
+			Input:    &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:     root + "/app",
 			Store:    st,
 			SelfURLs: []string{"https://fixture.invalid/self"},
@@ -273,7 +271,13 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t *testing.
 	testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty}\n")
 	st := store.New()
 	repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
-	artifact := &store.SourceArtifact{LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned", Content: "pinned"}
+	artifact := &store.SourceArtifact{
+		Provider:  store.ProviderCommit,
+		LocalRoot: root,
+		LocalPath: t.TempDir(),
+		Key:       "pinned",
+		Content:   "pinned",
+	}
 	artifact.FS = os.DirFS(artifact.LocalPath)
 	st.AddObject(repository)
 	st.SetArtifact(repository.Named(), artifact)
@@ -329,6 +333,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesCase(
 	}
 	cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
 	artifact := &store.SourceArtifact{
+		Provider:  store.ProviderCommit,
 		Kind:      manifest.KindGitRepository,
 		LocalRoot: root,
 		LocalPath: t.TempDir(),
@@ -461,7 +466,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryMountedSymlink(t *testing.T) {
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input})
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
 		st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact),
@@ -530,7 +535,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryCase(
 				Kind:  manifest.KindGitRepository,
 				Name:  "source",
 			},
-			&store.SourceArtifact{LocalPath: root, FS: input},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 		)
 	}
 	total := 0
@@ -565,10 +570,10 @@ func testRunSelectedEntryAdmissionCase(t *testing.T, testCaseInput *string,
 	case "alias", "alias ignored", "alias sparse", "pinned":
 		source := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://fixture.invalid/self"}
 		artifact := &store.SourceArtifact{
-			LocalPath:  "/virtual/alias",
-			LocalRoot:  root,
-			InputAlias: true,
-			FS:         input,
+			LocalPath: "/virtual/alias",
+			LocalRoot: root,
+			Provider:  store.ProviderAlias,
+			FS:        input,
 		}
 		if (*testCaseInput) == "alias ignored" || (*testCaseInput) == "alias sparse" {
 			if (*testCaseInput) == "alias ignored" {
@@ -581,7 +586,7 @@ func testRunSelectedEntryAdmissionCase(t *testing.T, testCaseInput *string,
 		}
 		st.AddObject(source)
 		if (*testCaseInput) == "pinned" {
-			artifact.InputAlias = false
+			artifact.Provider = store.ProviderCommit
 			artifact.Key = "pinned"
 			artifact.Content = "pinned"
 		}
@@ -635,10 +640,15 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 	testReceiptTreesResult1 := testReceiptTrees(t, (*tailCaseInput.cacheDir), persistent)
 	cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
 	cfg := Config{
-		Cache: cacheOwner, Trees: trees,
+		Cache: cacheOwner,
+		Trees: trees,
 		Store: (*tailCaseInput.st),
-		Input: &store.SourceArtifact{LocalPath: tailCaseInput.root, FS: (*tailCaseInput.input)},
-		Path:  tailCaseInput.root + "/app",
+		Input: &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: tailCaseInput.root,
+			FS:        (*tailCaseInput.input),
+		},
+		Path: tailCaseInput.root + "/app",
 	}
 	result, err := Run(t.Context(), cfg)
 	assert.NoError(t, err)
@@ -738,93 +748,4 @@ type testRunSelectedEntryAdmissionCaseTailInputs struct {
 
 	authored **manifest.
 			Kustomization
-}
-
-func TestBegin_OrdinarySupplierCensus(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	testutil.GitInit(t, root)
-	testutil.WriteFile(
-		t,
-		root,
-		"flux/consumer.yaml",
-		testutil.KustomizationYAML(
-			"consumer",
-			"apps",
-			"  path: ./consumer\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: hello}]}\n",
-		),
-	)
-	testutil.WriteFile(
-		t,
-		root,
-		"flux/supplier.yaml",
-		testutil.KustomizationYAML("supplier", "apps", "  path: ./supplier\n"),
-	)
-	testutil.WriteFile(t, root, "flux/unused.yaml", testutil.KustomizationYAML("unused", "apps", "  path: ./unused\n"))
-	testutil.WriteFile(t, root, "supplier/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"supplier/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: supplied}\n",
-	)
-	testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"consumer/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${value}'}\n",
-	)
-	testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(
-		t,
-		root,
-		"unused/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unused, namespace: apps}\n",
-	)
-	st := store.New()
-	l := loader.New(st)
-	consumer := testutil.KustomizationID("apps", "consumer")
-	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
-	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
-	supplier := testutil.KustomizationID("apps", "supplier")
-	unused := testutil.KustomizationID("apps", "unused")
-	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
-	_, err := beginTest(
-		t.Context(),
-		testConfig(t, Config{
-			Path:      filepath.Join(root, "flux"),
-			RepoRoot:  root,
-			Store:     st,
-			Loader:    l,
-			Selection: selection.Request{Roots: []manifest.NamedResource{consumer}},
-		}),
-	)
-	assert.NoError(t, err)
-	record, ok := l.Index.Lookup(data)
-	assert.Equal(t, ok, true)
-	assert.Equal(t, record.File, "supplier/cm.yaml")
-	assert.Equal(
-		t,
-		slices.ContainsFunc(
-			record.Productions,
-			func(p manifest.Production) bool { return p.Materializer(data) == supplier },
-		),
-		true,
-	)
-	assert.Equal(t, st.GetObject(data), nil)
-	assert.Equal(t, len(selectedNames(l)), 0)
-	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
-	assert.NoError(t, err)
-	assert.Equal(t, slices.Contains(proposal.Needed, supplier), true)
-	assert.Equal(t, slices.Contains(proposal.Ordinary, supplier), true)
-	assert.Equal(t, slices.Contains(proposal.Needed, unused), false)
-	assert.Equal(t, slices.Contains(proposal.Selected, supplier), false)
-	committed, err := commitSelection(t.Context(), l, proposal, selection.Construction)
-	assert.NoError(t, err)
-	assert.Equal(t, committed, true)
-	assert.Equal(t, len(selectedNames(l)), 0)
-	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(supplier), true)
-	assert.Equal(t, st.GetObject(unused), nil)
-	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
 }

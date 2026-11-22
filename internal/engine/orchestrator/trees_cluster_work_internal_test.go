@@ -53,7 +53,12 @@ func clusterSourceQualifiedTrees(t *testing.T) []Tree {
 				RepoRoot: root,
 				Path:     filepath.Join(root, "entry"),
 				SelfURLs: []string{url},
-				Input:    &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
+				Input: &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        input,
+				},
 			})
 		}
 	}
@@ -83,7 +88,7 @@ func fluxInstanceSyncTrees(t *testing.T) []Tree {
 		)
 		testutil.WriteFile(t, root, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
 		application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\n" +
-			"spec:\n  sync: {name: self, kind: GitRepository, url: " + url + ", ref: main, path: ./entry}\n"
+			"spec:\n  sync: {name: self, kind: GitRepository, url: " + url + ", ref: refs/heads/main, path: ./entry}\n"
 		testutil.WriteFile(
 			t,
 			root,

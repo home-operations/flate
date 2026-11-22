@@ -316,7 +316,10 @@ func newLifetimeAdmissionSession(t *testing.T, request Request) (*Session, *life
 	t.Helper()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	facts := &lifetimeAdmissionFacts{solverFacts: &solverFacts{store: st}}
 	facts.context.Root = root
 	session, err := New(st, facts, request)

@@ -39,7 +39,7 @@ type Entry struct {
 type entryInputs struct {
 	input             store.SourceArtifact
 	parsed            *loader.ParsedInputs
-	aliasViews        map[string]*store.SourceArtifact
+	aliasViews        sourceViews
 	sources           map[manifest.NamedResource]entryResolution
 	projections       *manifest.ProducerProjections
 	publicOperands    []manifest.NamedResource
@@ -120,7 +120,8 @@ func (p *entryInputs) merge(root *clusterRoot) {
 	if p.sources == nil {
 		p.sources = make(map[manifest.NamedResource]entryResolution, len(root.sources))
 	}
-	for id, resolution := range root.sources {
+	for id := range root.sources {
+		resolution := root.sources[id]
 		previous := p.sources[id]
 		previous.merge(&resolution)
 		p.sources[id] = previous
@@ -162,14 +163,20 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 		if resolveErr != nil {
 			return resolveErr
 		}
+		resolved.entryScoped = resolution.entryScoped
 		prepared.sources[id] = resolved
 	}
 	if prepared.sources == nil {
 		prepared.sources = map[manifest.NamedResource]entryResolution{}
 	}
-	bootstrap := d.resolvedSources.snapshot()[manifest.BootstrapSourceID]
-	if entry.aggregate {
+	bootstrap, bound := prepared.sources[manifest.BootstrapSourceID]
+	if !bound {
+		bootstrap = d.resolvedSources.snapshot()[manifest.BootstrapSourceID]
+	}
+	if entry.aggregate &&
+		(!bound || !bootstrap.synthetic && bootstrap.artifact == inputprojection.Authored(entry.Input)) {
 		bootstrap.input, bootstrap.artifact = entry.Input, entry.Input
+		bootstrap.viewKey = sourceViewKey{}
 	}
 	prepared.sources[manifest.BootstrapSourceID] = bootstrap
 	if prepared.parsed == nil {
@@ -185,11 +192,18 @@ func (d *Session) plannedGeneratorPackages(
 	input := d.cfg.Input
 	generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
 	packages, err := d.loader.EnclosingPackages(ctx, input, relative, generator)
-	if err != nil || entry.target == "" {
+	if err != nil {
 		return packages, err
 	}
 	for _, index := range entry.roots {
-		pkg := roots[index].Path
+		root := &roots[index]
+		pkg := root.Path
+		if entry.target == "" && (root.packageBuild == nil || len(root.qualifying) == 0 ||
+			!slices.ContainsFunc(root.seeds, func(occurrence selection.OccurrenceFacts) bool {
+				return generatesEntry(&occurrence)
+			})) {
+			continue
+		}
 		if pkg == relative || slices.Contains(packages, pkg) {
 			continue
 		}
@@ -551,7 +565,7 @@ func (a *Admission) requestedDocuments(
 func (a *Admission) requestedInventory(
 	ctx context.Context, owner *manifest.Kustomization,
 ) (entryDocuments, []store.Child, error) {
-	input := a.bootstrapArtifact()
+	input := a.Input()
 	if frame := a.preparedInventory(owner, input); frame != nil {
 		return inventoryDocuments(frame.children, frame.failedDocuments), frame.children, frame.inventoryError()
 	}
@@ -662,10 +676,7 @@ func (d *Session) requiresEntry() bool {
 }
 
 func (d *Session) hasEntryBuilder() bool {
-	input, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	if input == nil {
-		input = d.cfg.Input
-	}
+	input := d.cfg.Input
 	if input == nil {
 		return false
 	}

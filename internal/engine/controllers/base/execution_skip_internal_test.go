@@ -33,7 +33,7 @@ func TestExecution_SkipClearsAlias(t *testing.T) {
 			}
 			st.SetArtifact(
 				repository.Named(),
-				&store.SourceArtifact{FS: fstest.MapFS{}, InputAlias: true, Reads: &support},
+				&store.SourceArtifact{FS: fstest.MapFS{}, Provider: store.ProviderAlias, Reads: &support},
 			)
 			if invalidArtifact {
 				st.AddObject(&manifest.Secret{Name: "auth", Namespace: "apps"})

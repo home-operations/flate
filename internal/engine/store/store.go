@@ -90,6 +90,14 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 	}
 }
 
+type cellInclusion uint8
+
+const (
+	inclusionUnset cellInclusion = iota
+	inclusionExcluded
+	inclusionIncluded
+)
+
 type objectCell struct {
 	authority
 
@@ -101,12 +109,13 @@ type objectCell struct {
 	document             map[string]any
 	warnings             []manifest.Warning
 	// Direct writes use this revision; emitted values use the immutable producer record.
-	publication                                              uint64
-	binding                                                  *Input
-	support                                                  *Input
-	excluded, included, rooted, retired, hidden, independent bool
-	reconcile, report                                        bool
-	preflight                                                string
+	publication                          uint64
+	binding                              *Input
+	support                              *Input
+	inclusion                            cellInclusion
+	rooted, retired, hidden, independent bool
+	reconcile, report, preflightCycle    bool
+	preflight                            string
 }
 
 func (c *objectCell) visible(needsRoot bool) bool {
@@ -301,7 +310,7 @@ type objectUpdate struct {
 	independent                 bool
 	classified                  bool
 	reads                       *ReadSet
-	inventory                   *registration
+	inventory, production       *registration
 
 	generated, previousGenerated *Child
 }

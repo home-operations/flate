@@ -139,17 +139,19 @@ func TestFinalizeIndex_ApplicationInputProducer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"root/kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
-		"root/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"root/kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+			"root/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: owner, namespace: apps}
 spec:
   path: ./children
   postBuild: {substituteFrom: [{kind: Secret, name: vars}]}
 `)},
-		"children/kustomization.yaml": {Data: []byte("resources: [objects.yaml]\n")},
-		"children/objects.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+			"children/kustomization.yaml": {Data: []byte("resources: [objects.yaml]\n")},
+			"children/objects.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: child, namespace: apps}
 spec: {path: './${VALUE}'}
@@ -159,7 +161,8 @@ kind: ExternalSecret
 metadata: {name: vars, namespace: apps}
 spec: {target: {name: vars}, dataFrom: [{extract: {key: vars}}]}
 `)},
-	}})
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -185,13 +188,16 @@ func TestSubstitutionResolution_ApplicationBindings(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: owner, namespace: apps}
 spec: {path: ./work, postBuild: {substitute: {VALUE: known}}}
 `)},
-	}})
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	l.documents.compact = true
@@ -333,7 +339,10 @@ spec:
 		"work/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out}\n")},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -361,7 +370,10 @@ spec:
 		Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {DIR: work}\n"),
 	}
 	files["root/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [red.yaml, blue.yaml, vars.yaml]\n")}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	_, err = l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -393,24 +405,29 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"flux/kustomization.yaml": {Data: []byte("resources: [owner.yaml,settings.yaml]\n")},
-				"flux/owner.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
-					"metadata: {name: owner, namespace: apps}\nspec:\n  path: ./producers\n  targetNamespace: apps\n" + tc.postbuild)},
-				"flux/settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
-					"metadata: {name: settings, namespace: apps}\ndata: {ROOT: apps/red}\n")},
-				"producers/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
-				"producers/child.yaml": {
-					Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
-						"metadata: {name: child, namespace: apps}\nspec: {path: './${ROOT}'}\n"),
-				},
-				"apps/red/kustomization.yaml": {Data: []byte("resources: [vars.yaml]\n")},
-				"apps/red/vars.yaml": {
-					Data: []byte(
-						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {VALUE: selected}\n",
-					),
-				},
-			}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"flux/kustomization.yaml": {Data: []byte("resources: [owner.yaml,settings.yaml]\n")},
+					"flux/owner.yaml": {
+						Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
+							"metadata: {name: owner, namespace: apps}\nspec:\n  path: ./producers\n  targetNamespace: apps\n" + tc.postbuild),
+					},
+					"flux/settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
+						"metadata: {name: settings, namespace: apps}\ndata: {ROOT: apps/red}\n")},
+					"producers/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
+					"producers/child.yaml": {
+						Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
+							"metadata: {name: child, namespace: apps}\nspec: {path: './${ROOT}'}\n"),
+					},
+					"apps/red/kustomization.yaml": {Data: []byte("resources: [vars.yaml]\n")},
+					"apps/red/vars.yaml": {
+						Data: []byte(
+							"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {VALUE: selected}\n",
+						),
+					},
+				}},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
@@ -470,7 +487,10 @@ func TestSubstitutionResolution_UnavailableProjectionInputs(t *testing.T) {
 		)},
 	}}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	owner := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
@@ -497,7 +517,10 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 				root := t.TempDir()
 				files := new(tc).files(side)
 				st := store.New()
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+				)
 				l := New(st)
 				l.SourceRoot = root
 				configureSelection(t, l, selection.Request{Changed: true})
@@ -674,7 +697,10 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 		},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -689,7 +715,10 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	files = maps.Clone(files)
 	files["flux/settings.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
 		"metadata: {name: settings, namespace: apps}\ndata: {VALUE: new}\n")}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -707,7 +736,10 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 		Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
 			"metadata: {name: reader, namespace: apps}\nspec: {path: ./app}\n"),
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

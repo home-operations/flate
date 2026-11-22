@@ -842,8 +842,8 @@ func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {
 		}
 	}
 	if g.backing == nil && g.current != nil {
-		if _, err := fs.Lstat(g.current, name); err != nil {
-			return nil, err //nolint:wrapcheck // missingInfo forwards the current filesystem Lstat error with its original operation and path.
+		if _, err := fs.Lstat(g.current, name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err //nolint:wrapcheck // Preserve backing filesystem failures other than missing paths.
 		}
 	}
 	return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}

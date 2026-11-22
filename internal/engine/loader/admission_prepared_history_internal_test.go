@@ -60,7 +60,10 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 			}
 		}
 		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: files},
+		)
 		l := New(st)
 		l.SourceRoot = root
 		configureSelection(t, l, selection.Request{Changed: true})
@@ -132,7 +135,10 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 		},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -144,10 +150,8 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 		historyOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
 			owner: {
 				{
-					Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
-						manifest.BootstrapSourceID,
-					),
-					Path: "input.yaml",
+					Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(),
+					Path:   "input.yaml",
 				},
 			},
 		}

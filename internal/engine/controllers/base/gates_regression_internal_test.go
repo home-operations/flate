@@ -347,7 +347,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			_, _, next := s.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children, next.Complete = []store.Child{{Obj: child}}, complete
-			s.SetPreflight(parent.Named(), "cycle")
+			s.SetPreflight(parent.Named(), store.PreflightFailure{Message: "cycle", DependencyCycle: true})
 			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
 			{
 				err := execution.Emit(t.Context(), parent.Named(), &next, payloads)

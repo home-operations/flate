@@ -36,7 +36,7 @@ func TestReconcile_ImplicitSourceIgnore(t *testing.T) {
 			c, st, root := newControllerWithFixture(t)
 			testutil.WriteFile(t, root, ".sourceignore", tc.ignore)
 			source := *st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-			source.FS, source.Content, source.InputAlias = os.DirFS(root), "snapshot", false
+			source.FS, source.Content, source.Provider = os.DirFS(root), "snapshot", store.ProviderInput
 			st.SetArtifact(manifest.BootstrapSourceID, &source)
 			freezeSourceForTest(t, st)
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
@@ -101,7 +101,7 @@ func testPreviousRenderImplicitSourceIgnore(t *testing.T, replacement string) {
 		freezeSourceForTest(t, st)
 		source := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 		assert.Equal(t, source.Content != "", true)
-		assert.Equal(t, source.InputAlias, false)
+		assert.Equal(t, (source.Provider == store.ProviderAlias), false)
 		owner := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 		st.AddObject(owner)
 		info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{

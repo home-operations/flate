@@ -37,7 +37,7 @@ func TestEntryQualification_ReceiptInputs(t *testing.T) {
 func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string) {
 	t.Helper()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/child.yaml": {Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./workload\n"))},
 	}}
 	st := store.New()
@@ -195,7 +195,7 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			cfg := testConfig(t, Config{
 				Store:  st,
 				Loader: l,
-				Input:  &store.SourceArtifact{LocalPath: root, FS: input},
+				Input:  &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 				Path:   filepath.Join(root, "entry"),
 			})
 			if scenario == "unresolved changed-only" {
@@ -252,7 +252,7 @@ func testRunPrivateEntryQualificationLifetime(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			st := store.New()
 			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 			st.AddObject(bootstrap)

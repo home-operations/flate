@@ -110,7 +110,7 @@ func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
 	}
 	selected := []*store.SourceArtifact{
-		{LocalPath: "/head", LocalRoot: "/head", InputAlias: true, FS: fstest.MapFS{
+		{LocalPath: "/head", LocalRoot: "/head", Provider: store.ProviderAlias, FS: fstest.MapFS{
 			"apps/cm.yaml": {Data: []byte("same\n")}, "other.txt": {Data: []byte("also same\n")},
 		}},
 		{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", Content: "committed", FS: fstest.MapFS{
@@ -153,7 +153,7 @@ func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
 		for i, st := range stores {
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: roots[i], FS: selected[i].FS},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: roots[i], FS: selected[i].FS},
 			)
 		}
 	}
@@ -408,9 +408,12 @@ func populateSelectedIndexes(fixture *selectedIndexInput) {
 			st.AddObject(object)
 		}
 		st.SetArtifact(fixture.source.Named(), fixture.selected[i])
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: fixture.roots[i], FS: fstest.MapFS{
-			"apps/cm.yaml": {Data: []byte(fixture.roots[i])},
-		}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: fixture.roots[i], FS: fstest.MapFS{
+				"apps/cm.yaml": {Data: []byte(fixture.roots[i])},
+			}},
+		)
 		fixture.indexes[i] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			fixture.source.Named(): {
 				File: "flux/source.yaml",

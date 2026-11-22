@@ -33,7 +33,7 @@ func TestRender_FluxInstanceGenerationWithdrawal(t *testing.T) {
 kind: FluxInstance
 metadata: {name: instance, namespace: apps}
 spec:
-  sync: {name: `+dir+`, kind: GitRepository, url: `+url+`, ref: main, path: ./payload}
+  sync: {name: `+dir+`, kind: GitRepository, url: `+url+`, ref: refs/heads/main, path: ./payload}
 `)
 		}
 		testutil.WriteFile(t, root, dir+"/kustomization.yaml", resources)

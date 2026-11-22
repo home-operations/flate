@@ -64,7 +64,7 @@ func (f *generatedOCIFetcher) Fetch(
 			}
 			defer func() { _ = directory.Close() }()
 			input := directory.Artifact()
-			input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
+			input.Kind, input.Digest, input.Provider = manifest.KindOCIRepository, "sha256:fixture", store.ProviderFetch
 			return input, nil
 		},
 	}, nil

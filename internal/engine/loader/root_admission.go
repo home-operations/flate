@@ -495,7 +495,7 @@ func (l *Loader) admitsDeclaration(evidence *selection.RootEvidence) bool {
 	root := selection.Root(*evidence)
 	scope := &evidence.Scope
 	nativePrediction := l.documents.compact && l.documents.eager && scope.EntryKustomize && scope.NativeOperand
-	nativeApplication := !scope.Application || scope.ApplicationSource == manifest.BootstrapSourceID
+	nativeApplication := !scope.Application || scope.InputApplication
 	pending := !l.frozen || nativeApplication
 	waiting := nativePrediction && pending && !scope.Prepared && !root.Independent
 	return root.Admitted && !waiting

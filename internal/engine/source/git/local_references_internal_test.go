@@ -50,10 +50,11 @@ func testResolveLocalReferencesCase(t *testing.T, root *string,
 	if artifact == nil || artifact.Revision != tc.want.String() || artifact.URL != repository.URL {
 		t.Fatalf("artifact = %+v, want revision %s", artifact, tc.want)
 	}
+	preview := tc.want == (*b) && (tc.name == "head branch" || tc.name == "head named branch")
 	assert.FatalIf(
 		t,
-		artifact.FS == nil || (artifact.Key == "") != (tc.want == (*b)),
-		"FS/Key state did not distinguish HEAD from committed content: %+v",
+		artifact.FS == nil || (artifact.Key == "") != preview,
+		"FS/Key state did not distinguish a branch preview from committed content: %+v",
 		artifact,
 	)
 	view, pin, err := source.OperationView(t.Context(), artifact.FS)
@@ -67,8 +68,10 @@ func testResolveLocalReferencesCase(t *testing.T, root *string,
 	data, err := fs.ReadFile(view, "value.txt")
 	assert.NoError(t, err)
 	wantBody := "A"
-	if tc.want == (*b) {
+	if preview {
 		wantBody = "dirty"
+	} else if tc.want == (*b) {
+		wantBody = "B"
 	}
 	assert.Equal(t, string(data), wantBody)
 	assert.FatalIf(t, artifact.ContentFingerprint == nil, "%s", "local source content callback is absent")
@@ -82,7 +85,7 @@ func testResolveLocalReferencesCase(t *testing.T, root *string,
 		manifest.Fingerprint(testutil.GitBlobHash(t, []byte(wantBody))),
 	)
 
-	if (artifact.LocalPath == (*root)) != (tc.want == (*b)) {
+	if (artifact.LocalPath == (*root)) != preview {
 		t.Fatalf("unexpected artifact path %q", artifact.LocalPath)
 	}
 }
@@ -111,11 +114,11 @@ func testResolveLocalReferencesCase2(t *testing.T, metadata *string,
 	artifacts, err := ResolveLocal(
 		t.Context(),
 		location,
-		[]*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"})},
+		[]*manifest.GitRepository{localSource(&sourcev1.GitRepositoryRef{Branch: "master"})},
 		LocalOptions{Revision: ""},
 	)
 	assert.Equal(t, err, nil)
-	artifact := artifacts[localSource(&sourcev1.GitRepositoryRef{Tag: "v2.0.0"}).Named()]
+	artifact := artifacts[localSource(&sourcev1.GitRepositoryRef{Branch: "master"}).Named()]
 	assert.FatalIf(
 		t,
 		artifact == nil || artifact.Revision != fixture.head.String(),

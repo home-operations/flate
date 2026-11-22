@@ -98,7 +98,7 @@ type BaseManifest interface {
 	Named() NamedResource
 	// GetLabels returns borrowed typed labels. KindOf identifies objects with typed label storage.
 	GetLabels() map[string]string
-	// Composition returns source include policy and inputs in authored order.
+	// Composition returns source exclusions and include inputs in authored order.
 	Composition() ArtifactComposition
 	// SourcePath returns the source identity and authored path, or zero values when absent.
 	SourcePath() (NamedResource, string, bool)

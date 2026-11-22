@@ -166,7 +166,7 @@ func testChartDependencyChange(t *testing.T, tc chartDependencyChange) {
 		}
 		loaders[side], stores[side], indexes[side] = l, st, l.Index
 	}
-	changes, err := change.Qualify(t.Context(), nil, stores, manifest.WorkScope{})
+	changes, err := change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(),

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -160,6 +161,10 @@ func (rf *readerFinalizer) project(ctx context.Context,
 			rf.unresolvedPaths = map[manifest.NamedResource]bool{}
 		}
 		rf.unresolvedPaths[consumer] = true
+		if ref.Name == "" || rf.sourceVisit(ref.NamedResource).root == "" {
+			rf.loader.recordReader(".", "", new(manifest.FileReader{Reader: consumer, Materialize: true}))
+			return nil
+		}
 		ref.Files = append(slices.Clone(ref.Files), ".")
 		ref.Subtree = true
 	}
@@ -641,20 +646,56 @@ func (rf *readerFinalizer) collectEntryInputs() {
 	if !rf.loader.documents.compact || rf.loader.scopes == nil {
 		return
 	}
-	for _, root := range rf.loader.scopes.roots {
+	entry := rf.loader.fileCoordinate(rf.loader.entryPath)
+	external := rf.aggregateEntryReads(entry)
+	recordInputs := func(root string, inputs []string) {
 		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
 		record := rf.loader.Index.Records[id]
-		// Exact package inputs MUST remain authoritative after construction is frozen.
-		inputs := rf.entryInputs(root)
 		slices.Sort(inputs)
 		record.ContentRoots = map[manifest.NamedResource][]string{manifest.BootstrapSourceID: slices.Compact(inputs)}
 		rf.loader.Index.Records[id] = record
 	}
+	for _, root := range rf.loader.scopes.roots {
+		visits := rf.loader.scopeWalk(new(graphVisit{root: rf.repoRoot, dir: root}))
+		inputs := rf.appendEntryInputs(nil, visits)
+		if root == entry {
+			inputs = append(inputs, external...)
+		}
+		recordInputs(root, inputs)
+	}
+	if len(external) != 0 && !slices.Contains(rf.loader.scopes.roots, entry) {
+		recordInputs(entry, external)
+	}
 }
 
-func (rf *readerFinalizer) entryInputs(root string) []string {
+func (rf *readerFinalizer) aggregateEntryReads(entry string) []string {
+	input := rf.loader.documents.artifacts[rf.repoRoot]
+	if input == nil {
+		return nil
+	}
+	overlay, ok := input.FS.(*inputprojection.Overlay)
+	if !ok || entry == "" || entry == "." {
+		return nil
+	}
 	var inputs []string
-	visits := rf.loader.scopeWalk(new(graphVisit{root: rf.repoRoot, dir: root}))
+	for _, resource := range overlay.Resources {
+		member := path.Join(entry, resource)
+		owners := rf.loader.Index.OwnersOfFile(path.Join(member, manifest.KustomizeBuilderFilenames[0])).Owners
+		// A named Flux owner retains the read footprint of its package.
+		if slices.ContainsFunc(owners, func(id manifest.NamedResource) bool {
+			return id.KindInfo().Render && !id.ReportHidden()
+		}) {
+			continue
+		}
+		visits := rf.loader.scopeWalk(new(graphVisit{root: rf.repoRoot, dir: member}))
+		inputs = rf.appendEntryInputs(inputs, visits)
+	}
+	return slices.DeleteFunc(inputs, func(input string) bool {
+		return input == entry || strings.HasPrefix(input, entry+"/")
+	})
+}
+
+func (rf *readerFinalizer) appendEntryInputs(inputs []string, visits []graphVisit) []string {
 	for i := range visits {
 		visit := &visits[i]
 		if visit.incomplete != "" {

@@ -24,6 +24,7 @@ func TestResolveRoot_ConfinedCapturedSource(t *testing.T) {
 		{name: "directory", path: "inputs", want: "inputs", available: true},
 		{name: "source root", path: ".", want: ".", available: true},
 		{name: "confined symlink", path: "link", want: "inputs", available: true},
+		{name: "symlink before parent", path: "jump/../inputs", want: "nested/inputs", available: true},
 		{name: "escaped root", path: "../outside"},
 		{name: "escaped symlink", path: "escape"},
 		{name: "absolute root", path: "/inputs"},
@@ -40,8 +41,11 @@ func TestResolveRoot_ConfinedCapturedSource(t *testing.T) {
 			base := t.TempDir()
 			root := filepath.Join(base, "source")
 			testutil.WriteFile(t, root, "inputs/file", "captured")
+			testutil.WriteFile(t, root, "nested/child/file", "before parent")
+			testutil.WriteFile(t, root, "nested/inputs/file", "after parent")
 			testutil.WriteFile(t, base, "outside/file", "excluded")
 			assert.NoError(t, os.Symlink("inputs", filepath.Join(root, "link")))
+			assert.NoError(t, os.Symlink("nested/child", filepath.Join(root, "jump")))
 			assert.NoError(t, os.Symlink("../outside", filepath.Join(root, "escape")))
 			st := store.New()
 			source := (&manifest.GitRepository{Name: "source", Namespace: "apps"}).Named()

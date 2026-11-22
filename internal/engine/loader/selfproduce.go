@@ -187,6 +187,17 @@ type producerDeclaration struct {
 	substituteDisabled bool
 }
 
+func (d *producerDeclaration) producerTargets(candidates []manifest.NamedResource) ([]manifest.ProducerTarget, bool) {
+	if d.fact == nil {
+		return manifest.ProducerTargets(d.obj, candidates...), d.substituteDisabled
+	}
+	facts := d.fact.facts
+	if facts.needsCandidates && len(candidates) != 0 {
+		return manifest.ProducerTargets(facts.catalog, candidates...), facts.substituteDisabled
+	}
+	return facts.authoredTargets, facts.substituteDisabled
+}
+
 type pendingProduction struct {
 	target     manifest.ProducerTarget
 	production manifest.Production
@@ -304,14 +315,7 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 		(manifest.KindOf(obj).Runnable || declaration.fact != nil && projected.KindInfo().Runnable) {
 		v.owner = projected
 	}
-	var targets []manifest.ProducerTarget
-	disabled := declaration.substituteDisabled
-	if declaration.fact != nil {
-		targets = declaration.fact.facts.authoredTargets
-		disabled = declaration.fact.facts.substituteDisabled
-	} else {
-		targets = manifest.ProducerTargets(obj, candidates...)
-	}
+	targets, disabled := declaration.producerTargets(candidates)
 	production := manifest.Production{
 		Owner: v.owner, Declaration: projected, Authored: authored,
 		Source: v.source, File: cmp.Or(v.localCoordinate(), v.coordinate),

@@ -99,7 +99,7 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	l.Options.Changes, err = change.Qualify(
 		t.Context(),
 		detectChanges(t, []string{"cm-000.yaml"}, []string{"cm-000.yaml"}),
-		[2]*store.Store{store.New(), store.New()},
+		change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

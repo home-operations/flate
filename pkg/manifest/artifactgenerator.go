@@ -182,9 +182,7 @@ func (r *RawObject) references(yield func(Reference) bool) {
 		if !yield(
 			Reference{
 				NamedResource:    id,
-				Use:              "artifact",
-				readsSourceTree:  true,
-				bindsSource:      true,
+				Use:              artifactKey,
 				Position:         i,
 				NamespaceDefault: source.Namespace == "",
 				Files:            files,

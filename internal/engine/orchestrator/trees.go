@@ -399,7 +399,10 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 		qualified, err := change.Qualify(
 			ctx,
 			changes,
-			[2]*store.Store{base.store, head.store},
+			change.SourcePair{
+				Stores:  [2]*store.Store{base.store, head.store},
+				Indexes: [2]*manifest.DiscoveryIndex{base.index, head.index},
+			},
 			current.cfg.work.Scope(),
 		)
 		if err != nil {
@@ -443,8 +446,9 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 	current.cfg.ExternalChanges = resolved
 	if other != nil {
 		other.cfg.ExternalChanges = resolved
+		current.bindKustomizeInputs(ctx, other, resolved)
 	}
-	return nil
+	return ctx.Err()
 }
 
 func (o *Orchestrator) hasComparison(peer *Orchestrator, changes *change.Set) bool {
@@ -457,7 +461,7 @@ func (r *Invocation) prepareSession(ctx context.Context, i int) {
 	o.loader.Options.Changes = o.cfg.ExternalChanges
 	failure := o.lookupHistory(ctx)
 	if failure == nil {
-		o.configureControllers()
+		o.configureControllerStage(true)
 	}
 	var result selection.AdmissionResult
 	var accepted bool
@@ -474,8 +478,11 @@ func (r *Invocation) prepareSession(ctx context.Context, i int) {
 	if failure == nil && accepted {
 		advanced, failure = o.session.Advance(ctx, &result)
 		if failure == nil {
-			advanced = advanced || len(o.session.PendingSources()) != 0
-			failure = reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks)
+			pending, materializers := o.session.PendingSources(), o.session.PendingMaterializers()
+			advanced = advanced || len(pending) != 0 || len(materializers) != 0
+			dispatcher := constructionDispatcher{controller: o.src, controllers: &o.controllers}
+			failure = dispatcher.run(ctx, pending, materializers, o.tasks)
+			o.configureControllers()
 		}
 	}
 	if failure != nil {
@@ -642,7 +649,10 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 		}
 		current.cfg.ExternalChanges = resolved
 	}
-	return nil
+	if other != nil {
+		o.bindKustomizeInputs(ctx, other, o.cfg.ExternalChanges)
+	}
+	return ctx.Err()
 }
 
 func (r *Invocation) installAdmission(ctx context.Context) {

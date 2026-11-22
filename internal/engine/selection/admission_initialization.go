@@ -122,6 +122,19 @@ func (c *admissionClosure) admitChangedRoots() {
 			c.proposal.Blocked = append(c.proposal.Blocked, root)
 		}
 	}
+	route := c.proposal.entry
+	unbound := route != nil && !route.Bound
+	if c.context.Frozen || !c.session.request.Changed || !unbound {
+		return
+	}
+	relative, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
+	entry := filepath.ToSlash(relative)
+	if slices.ContainsFunc(c.context.Roots, func(root NativeRootFacts) bool { return root.Path == entry }) {
+		return
+	}
+	if c.indexedEntryChanged() {
+		c.proposal.Blocked = append(c.proposal.Blocked, entry)
+	}
 }
 
 func (c *admissionClosure) rootMatches(root string, identities []manifest.NamedResource) bool {
@@ -195,6 +208,8 @@ func (c *admissionClosure) finishStart(
 	}
 	c.prepareEntryStart(materializers)
 
+	c.demandPendingSources()
+
 	for _, id := range slices.SortedFunc(maps.Keys(c.historyOwners), manifest.NamedResource.Compare) {
 		if c.historyOwnerRequired(id) {
 			c.add(id, admissionRole{needed: true, ordinary: true})
@@ -213,12 +228,43 @@ func (c *admissionClosure) finishStart(
 	}
 }
 
+func (c *admissionClosure) demandPendingSources() {
+	if !c.proposal.Request.construction {
+		return
+	}
+	for _, identity := range c.identities {
+		id := identity.id
+		state := c.states[id]
+		if !state.listed || !c.session.request.MatchesScope(id) {
+			continue
+		}
+		if kind := id.KindInfo(); state.changed && kind.Runnable && !kind.Render {
+			occurrence, _ := c.occurrenceFacts(id)
+			if occurrence.NeedsCandidates ||
+				slices.ContainsFunc(occurrence.Targets, func(target manifest.ProducerTarget) bool {
+					return target.KindInfo().SourceArtifact
+				}) {
+				c.demandMaterialization(id)
+			}
+		}
+		if state.affectedKnown {
+			continue
+		}
+		for ref := range c.references(id, c.object(id)) {
+			c.initialSourceChanged(ref.NamedResource)
+		}
+	}
+}
+
 func (c *admissionClosure) prepareEntryStart(materializers func(materializerDemand, manifest.NamedResource) bool) {
 	route := c.proposal.entry
 	if route != nil && route.Producer != (manifest.NamedResource{}) &&
 		c.proposal.reads.GeneratedDocument(route.Producer) && c.proposal.entrySupported() {
-		if !c.session.request.Changed || c.literalEntryChanged() {
-			c.add(route.Producer, admissionRole{needed: true, ordinary: true, dirty: true})
+		indexedChange := c.indexedEntryChanged()
+		if !c.session.request.Changed || indexedChange || c.literalEntryChanged() {
+			c.add(route.Producer, admissionRole{
+				needed: true, ordinary: true, dirty: true, selected: indexedChange,
+			})
 		}
 	}
 	if c.entryRequiresMaterialization() {
@@ -545,13 +591,15 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 			continue
 		}
 		obj := c.object(consumer)
+		if !c.initialSourceChanged(consumer) {
+			continue
+		}
 		unchanged := false
 		for ref := range c.references(consumer, obj) {
 			if ref.NamedResource != id {
 				continue
 			}
-			comparison := c.outputChanged(consumer, new(ref), obj)
-			unchanged = comparison.Known && !comparison.Changed
+			unchanged = !c.reverseChanged(consumer, obj, new(ref))
 			if !unchanged {
 				break
 			}
@@ -566,17 +614,36 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 func (c *admissionClosure) seedChangedReaders(file string) {
 	for reader := range c.facts.SelectionIndex().ReadersOfFile(file) {
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
-		if c.changedClaim(new(reader), file) {
-			if reader.Materialize {
-				if !c.replace[reader.Reader] {
-					c.add(reader.Reader, admissionRole{needed: true, ordinary: true})
-				}
-				continue
-			}
-			state := c.states[reader.Reader]
-			state.seed = true
-			c.states[reader.Reader] = state
+		if !c.changedClaim(new(reader), file) {
+			continue
 		}
+		id := reader.Reader
+		if !reader.Materialize {
+			state := c.states[id]
+			state.seed = true
+			c.states[id] = state
+			continue
+		}
+		if c.replace[id] {
+			continue
+		}
+		c.add(id, admissionRole{needed: true, ordinary: true})
+		if c.proposal.Request.construction && !id.KindInfo().Render &&
+			!c.facts.SelectionIndex().Records[id].StaticOutput {
+			c.demandMaterialization(id)
+		}
+	}
+}
+
+func (c *admissionClosure) demandMaterialization(id manifest.NamedResource) {
+	status, _ := c.objects.GetStatus(id)
+	output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	if output != nil && output.Complete && output.OutputReads.Valid() {
+		return
+	}
+	if status.Outcome() == store.OutcomePending || output != nil && !output.Reads.Valid() {
+		c.add(id, admissionRole{needed: true, ordinary: true})
+		c.acquire(Demand{Identity: id, Materialize: true})
 	}
 }
 

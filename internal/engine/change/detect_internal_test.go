@@ -803,7 +803,7 @@ func TestSet_Present(t *testing.T) {
 		inputs[side] = &digestReadFS{FS: fstest.MapFS{"same.yaml": {Data: []byte("same")}}}
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: inputs[side]})
 	}
-	qualified, err := Qualify(t.Context(), requested, stores, manifest.WorkScope{})
+	qualified, err := Qualify(t.Context(), requested, SourcePair{Stores: stores}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	assert.Diff(t, qualified.Paths(), requested.Paths())
 	for _, input := range inputs {
@@ -834,7 +834,10 @@ func TestSet_Present(t *testing.T) {
 			t.Parallel()
 			original := maps.Clone(tc.set.paths)
 			withoutSource, err := Qualify(
-				t.Context(), tc.set, [2]*store.Store{store.New(), store.New()}, manifest.WorkScope{},
+				t.Context(),
+				tc.set,
+				SourcePair{Stores: [2]*store.Store{store.New(), store.New()}},
+				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 			assert.Diff(t, withoutSource.Paths(), tc.set.Paths())

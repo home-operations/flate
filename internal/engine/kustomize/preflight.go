@@ -2,12 +2,15 @@ package kustomize
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
@@ -16,6 +19,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/tree"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -37,6 +41,121 @@ type inputWalk struct {
 	cache   *TreeCache
 	fs      *treeFS
 	visited map[controlLocation]controlObservation
+	local   *localObservation
+	parsed  map[string]parsedControl
+}
+
+// LocalInputs borrows one accepted source and the effective builder declaration.
+type LocalInputs struct {
+	Files, Roots []string
+	Complete     bool
+
+	source             *store.SourceArtifact
+	spec               *manifest.Kustomization
+	root, dir, subPath string
+	generated          generatedManifest
+	controls           map[string]parsedControl
+}
+
+type localObservation struct {
+	files      map[string]struct{}
+	incomplete bool
+}
+
+type parsedControl struct {
+	doc  *yaml.RNode
+	refs []kustomizeinput.Reference
+}
+
+// ObserveLocalInputs uses the local walk without acquiring or rewriting remote inputs.
+func ObserveLocalInputs(ctx context.Context, req *RenderRequest) *LocalInputs {
+	result := &LocalInputs{source: req.Source, spec: req.Spec}
+	if req.Source == nil || req.Source.FS == nil || !req.Source.Reads.Valid() || ctx.Err() != nil {
+		return result
+	}
+	root, err := renderRoot(req)
+	if err != nil {
+		return result
+	}
+	memFS := newTreeFS(req.Source.FS, root, nil)
+	local := localObservation{files: make(map[string]struct{})}
+	w := inputWalk{fs: memFS, local: &local, parsed: make(map[string]parsedControl)}
+	dir, err := buildDirectory(memFS, req.SubPath)
+	if err != nil {
+		return result
+	}
+	result.Roots = w.declaredRoots(req, dir)
+	generated, err := generateFiles(req.Spec, memFS, dir)
+	if err != nil {
+		return result
+	}
+	err = w.preflight(ctx, dir)
+	result.Files = slices.Sorted(maps.Keys(local.files))
+	result.Complete = err == nil && ctx.Err() == nil && !local.incomplete && req.Source.Reads.Valid()
+	result.root, result.dir, result.subPath = root, dir, req.SubPath
+	result.generated, result.controls = generated, w.parsed
+	return result
+}
+
+func (w *inputWalk) declaredRoots(req *RenderRequest, dir string) []string {
+	var roots []string
+	if root, ok := w.observePath(w.fs.mount(cmp.Or(strings.TrimLeft(req.SubPath, "/"), ".")), true); ok {
+		roots = append(roots, root)
+	}
+	if req.Spec != nil {
+		for _, component := range req.Spec.Components {
+			if component == "" || filepath.IsAbs(component) || strings.Contains(component, "://") {
+				continue
+			}
+			if root, ok := w.observePath(filepath.Join(dir, component), true); ok {
+				roots = append(roots, root)
+			}
+		}
+	}
+	slices.Sort(roots)
+	return slices.Compact(roots)
+}
+
+// Captures binds selection evidence to the declaration and accepted source.
+func (p *LocalInputs) Captures(spec *manifest.Kustomization, source *store.SourceArtifact) bool {
+	if p == nil || !p.Complete {
+		return false
+	}
+	if source == nil || p.source != source || !source.Reads.Valid() {
+		return false
+	}
+	if p.spec == spec {
+		return true
+	}
+	return p.spec != nil && spec != nil && manifest.Equal(p.spec, spec)
+}
+
+func (p *LocalInputs) matches(req *RenderRequest, root string) bool {
+	return p.Captures(req.Spec, req.Source) && p.root == root && p.subPath == req.SubPath &&
+		req.Source.Content != ""
+}
+
+func (w *inputWalk) observePath(name string, directory bool) (string, bool) {
+	authored, err := w.fs.rel(name)
+	if err != nil {
+		return "", false
+	}
+	var links []string
+	rel, err := w.fs.upper.ResolveLinks(authored, &links)
+	if err != nil {
+		return "", false
+	}
+	info, err := w.fs.upper.Stat(rel)
+	if err != nil || info.IsDir() != directory {
+		return "", false
+	}
+	if !directory {
+		w.local.files[rel] = struct{}{}
+	}
+	for _, link := range links {
+		w.local.files[link] = struct{}{}
+	}
+	return rel, true
 }
 
 type controlObservation struct {
@@ -71,7 +190,12 @@ type inputPath struct {
 }
 
 func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS *treeFS, subPath string) error {
-	w := inputWalk{cache: cache, fs: memFS, visited: make(map[controlLocation]controlObservation)}
+	w := inputWalk{cache: cache, fs: memFS}
+	return w.preflight(ctx, subPath)
+}
+
+func (w *inputWalk) preflight(ctx context.Context, subPath string) error {
+	w.visited = make(map[controlLocation]controlObservation)
 	_, err := w.directory(ctx, subPath, &walkScope{})
 	if err != nil {
 		err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("preflight: %w", err), "")
@@ -96,28 +220,19 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 		w.reuse(&prior, &scope)
 		return inputResult{}, nil // Preserve the graph so Build still rejects cycles.
 	}
-	body, err := w.fs.ReadFile(file)
-	if err != nil {
+	parsed, err := w.control(file)
+	if err != nil || parsed.doc == nil {
 		return inputResult{}, err
 	}
-	// Build owns local parse diagnostics for byte-for-byte parity.
-	var k types.Kustomization
-	if unmarshalErr := k.Unmarshal(body); unmarshalErr != nil {
-		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
-		return inputResult{}, nil
+	refs, doc := parsed.refs, parsed.doc
+	if w.parsed != nil {
+		refs = slices.Clone(refs)
+		if w.local == nil {
+			doc = doc.Copy()
+		}
 	}
-	var doc yaml.Node
-	if unmarshalErr2 := yaml.Unmarshal(body, &doc); unmarshalErr2 != nil {
-		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
-		return inputResult{}, nil
-	}
-	if deAnchorErr := yaml.NewRNode(&doc).DeAnchor(); deAnchorErr != nil {
-		//nolint:nilerr // Build owns parse diagnostics, so preflight must preserve its input on parse failure.
-		return inputResult{}, nil
-	}
-	refs := slices.Collect(kustomizeinput.Kustomization(&k))
 	for i := range refs {
-		refs[i].Bind(&doc)
+		refs[i].Bind(doc.YNode())
 	}
 	observation := controlObservation{out: []byte(canonical.String()), parent: scope.observation}
 	w.visited[key] = observation
@@ -131,12 +246,39 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 	if err != nil || !result.rewritten {
 		return result, err
 	}
-	out, err := yaml.Marshal(&doc)
+	out, err := yaml.Marshal(doc.YNode())
 	if err != nil {
 		//nolint:wrapcheck // Preflight must retain the original YAML error value and diagnostic.
 		return inputResult{}, err
 	}
 	return result, w.fs.WriteFile(file, out)
+}
+
+func (w *inputWalk) control(file string) (parsedControl, error) {
+	if parsed, ok := w.parsed[file]; ok {
+		return parsed, nil
+	}
+	body, err := w.fs.ReadFile(file)
+	if err != nil {
+		return parsedControl{}, err
+	}
+	if w.local != nil {
+		w.observePath(file, false)
+	}
+	var k types.Kustomization
+	var doc yaml.Node
+	switch {
+	case k.Unmarshal(body) != nil, yaml.Unmarshal(body, &doc) != nil, yaml.NewRNode(&doc).DeAnchor() != nil:
+		if w.local != nil {
+			w.local.incomplete = true
+		}
+		return parsedControl{}, nil // Build owns local control-file diagnostics.
+	}
+	parsed := parsedControl{doc: yaml.NewRNode(&doc), refs: slices.Collect(kustomizeinput.Kustomization(&k))}
+	if w.local != nil {
+		w.parsed[file] = parsed
+	}
+	return parsed, nil
 }
 
 // A plugin directory needs its own control view: the same directory may also
@@ -180,6 +322,11 @@ func (w *inputWalk) pluginView(ctx context.Context, dir, owner string, scope *wa
 			return pluginSelection{path: string(prior.out), reused: true}, nil
 		}
 		return pluginSelection{path: dir, reused: false}, nil
+	}
+	if w.local != nil {
+		scope.pluginRoot = owner
+		_, err := w.directory(ctx, dir, scope)
+		return pluginSelection{path: dir, reused: false}, err
 	}
 	snapshot, buildErr := w.fs.upper.Build()
 	if buildErr != nil {
@@ -245,21 +392,17 @@ func (w *inputWalk) references(
 		case kustomizeinput.Resource, kustomizeinput.Component:
 			c, err = w.resourceOperand(ctx, &next, &node, ref.Role)
 		case kustomizeinput.Configuration:
-			if ref.Inline {
-				var out []byte
-				out, c, err = w.plugins(ctx, &next, []byte(ref.Path), ref.Resources)
-				if c.rewritten {
-					node.Value = string(out)
-				}
-			} else {
-				c, err = w.pluginOperand(ctx, &next, &node)
-			}
+			c, err = w.pluginOperand(ctx, &next, &node, &ref)
 		case kustomizeinput.File:
 			c, err = w.fileOperand(ctx, &next, &node)
 		default:
 			c, err = w.fileOperand(ctx, &next, &node)
 		}
 		if err != nil {
+			if w.local != nil {
+				w.local.incomplete = true
+				continue
+			}
 			return inputResult{}, fmt.Errorf(
 				"%s %s %q (line %d): %w",
 				loc.file,
@@ -280,6 +423,9 @@ func (w *inputWalk) references(
 func (w *inputWalk) fileOperand(ctx context.Context, incoming *walkScope, node *yaml.Node) (inputResult, error) {
 	loc := *incoming
 	path, err := w.filePath(ctx, &loc, node.Value)
+	if w.local != nil && path.file != "" {
+		w.observePath(path.file, false)
+	}
 	result := replaced(path.replacement != "")
 	if err == nil && result.rewritten {
 		setPlainScalar(node, path.replacement)
@@ -297,6 +443,12 @@ func (w *inputWalk) resourceOperand(
 	path, err := w.resourcePath(ctx, &loc, node.Value, role)
 	if err != nil {
 		return inputResult{}, err
+	}
+	if w.local != nil {
+		if path.file == "" {
+			return inputResult{}, nil
+		}
+		w.observePath(path.file, path.directory)
 	}
 	result := replaced(path.replacement != "")
 	if path.directory {
@@ -320,11 +472,33 @@ func (w *inputWalk) resourceOperand(
 	return result, nil
 }
 
-func (w *inputWalk) pluginOperand(ctx context.Context, incoming *walkScope, node *yaml.Node) (inputResult, error) {
+func (w *inputWalk) pluginOperand(
+	ctx context.Context,
+	incoming *walkScope,
+	node *yaml.Node,
+	ref *kustomizeinput.Reference,
+) (inputResult, error) {
+	if ref.Inline {
+		resources := ref.Resources
+		if w.parsed != nil {
+			resources = nil // Parsed Kustomizations are shared with the eventual render.
+		}
+		out, result, err := w.plugins(ctx, incoming, []byte(ref.Path), resources)
+		if result.rewritten {
+			node.Value = string(out)
+		}
+		return result, err
+	}
 	loc := *incoming
 	path, err := w.resourcePath(ctx, &loc, node.Value, kustomizeinput.Configuration)
 	if err != nil {
 		return inputResult{}, err
+	}
+	if w.local != nil {
+		if path.file == "" {
+			return inputResult{}, nil
+		}
+		w.observePath(path.file, path.directory)
 	}
 	if !path.directory {
 		return w.pluginFile(ctx, &loc, node, &path)
@@ -385,6 +559,9 @@ func (w *inputWalk) filePath(ctx context.Context, incoming *walkScope, raw strin
 	if _, ok := kustomizeinput.CutHTTPScheme(raw); !ok {
 		return inputPath{file: file}, nil
 	}
+	if w.local != nil {
+		return inputPath{}, nil
+	}
 	descriptor := remoteInput{Operation: remoteHTTP, URL: raw}
 	acquired, err := w.acquire(ctx, descriptor, &loc)
 	if err != nil {
@@ -407,10 +584,14 @@ func (w *inputWalk) resourcePath(
 ) (inputPath, error) {
 	loc := *incoming
 	spec, git := kustomizeinput.ParseGitBase(raw)
+	_, http := kustomizeinput.CutHTTPScheme(raw)
+	if w.local != nil && (git || http) {
+		return inputPath{}, nil
+	}
 	var file inputPath
 	var fileErr error
 	var body []byte
-	if _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
+	if http && role != kustomizeinput.Component {
 		var terminalErr error
 		file, body, fileErr, terminalErr = w.httpResource(ctx, &loc, raw, git)
 		if terminalErr != nil {

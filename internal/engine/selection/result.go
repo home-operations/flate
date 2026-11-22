@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"slices"
+
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -59,4 +61,45 @@ func (r *Result) Diagnostic(id manifest.NamedResource) manifest.DiagnosticIdenti
 		return subject
 	}
 	return manifest.DiagnosticFor(id, nil)
+}
+
+func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifest.BaseManifest) {
+	src, _, _ := obj.SourcePath()
+	id := obj.Named()
+	if !(Request{Roots: []manifest.NamedResource{root}}).Matches(id) {
+		return
+	}
+	if s.run.Facts == nil || !s.run.Facts.SourceExternal(src, &s.reads) {
+		return
+	}
+	info := s.status(id)
+	if info.Outcome() != store.OutcomeUnchanged && info.Outcome() != store.OutcomeSkipped {
+		return
+	}
+	entry := s.run.Entry.Producer
+	ownsReader := entry != (manifest.NamedResource{}) && s.run.Store.EmissionOwner(id) == entry
+	if ownsReader && s.reads.GeneratedDocument(entry) {
+		owner := s.run.Store.EmissionOwner(src)
+		ownsGenerator := owner != (manifest.NamedResource{}) && s.run.Store.EmissionOwner(owner) == entry
+		input, _ := s.reads.GetArtifact(src, store.ArtifactContent).(*store.SourceArtifact)
+		readableUnmounted := input != nil && input.FS != nil && input.LocalPath == ""
+		if ownsGenerator && readableUnmounted {
+			return
+		}
+	}
+	if slices.ContainsFunc(s.run.Warnings, func(w manifest.Warning) bool {
+		return w.Resource == src && w.Category == manifest.WarnSourceCredentialsUnavailable
+	}) {
+		return
+	}
+	s.result.External = append(
+		s.result.External,
+		manifest.Warning{
+			Resource: id,
+			Subject:  s.result.Diagnostic(id),
+			Related:  []manifest.NamedResource{src},
+			Category: manifest.WarnExternalSource,
+			Message:  "external source " + s.diagnostic(src).String() + " is outside the local tree; not rendered",
+		},
+	)
 }

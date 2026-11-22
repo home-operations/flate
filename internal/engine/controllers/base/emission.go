@@ -54,7 +54,10 @@ func (e *Execution) emit(
 ) error {
 	if len(next.Children) != 0 && next.Reads.Valid() {
 		if _, err := e.KeepEmitted(ctx, id, selection.PrepareRequest{
-			Generation: next.Children, Reads: next.Reads, Preparation: &e.AdmissionPreparation,
+			Generation:    next.Children,
+			Reads:         next.Reads,
+			Preparation:   &e.AdmissionPreparation,
+			AwaitEmission: !e.construction,
 		}); err != nil {
 			return err
 		}

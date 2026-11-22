@@ -110,7 +110,7 @@ func TestPlan_TracksDisjointWorkloadsForMultipleRoots(t *testing.T) {
 		entry := &entries[i]
 		assert.Equal(t, entry.Path, filepath.Join(root, "entry", name))
 		var inputs entryInputs
-		inputs.collectEntryOperands(entry, roots, "entry/"+name)
+		inputs.collectEntryOperands(entry, roots, "entry/"+name, false)
 		assert.Diff(t, inputs.publicOperands, []manifest.NamedResource{testutil.KustomizationID("apps", name)})
 	}
 }

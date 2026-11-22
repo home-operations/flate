@@ -30,7 +30,7 @@ func TestAdmission_SourceObservationKeepsPreparedComparison(t *testing.T) {
 	changes, err := change.Qualify(
 		t.Context(),
 		detectChanges(t, []string{"hr.yaml"}, []string{"hr.yaml"}),
-		stores,
+		change.SourcePair{Stores: stores},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

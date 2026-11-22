@@ -12,39 +12,48 @@ import (
 func TestCompose_CacheDerivesSemanticIdentity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		change func(*Composition)
+		name        string
+		change      func(*Composition)
+		treeChanges bool
 	}{
-		{"base generation", func(r *Composition) { r.Base.Content = "base-new" }},
-		{"used input generation", func(r *Composition) { r.Inputs[0].Content = "input-new" }},
-		{"unused input generation", func(r *Composition) { r.Inputs[1].Content = "unused-new" }},
-		{"input order", func(r *Composition) { r.Inputs[0], r.Inputs[1] = r.Inputs[1], r.Inputs[0] }},
-		{"selected input", func(r *Composition) { r.Copies[0].Input = 1 }},
-		{"operation order", func(r *Composition) { r.Copies[0], r.Copies[1] = r.Copies[1], r.Copies[0] }},
-		{"source path", func(r *Composition) { r.Copies[0].From = "other" }},
-		{"destination path", func(r *Composition) { r.Copies[0].To = "elsewhere" }},
-		{"mode", func(r *Composition) { r.Copies[0].Mode = PlaceTree }},
-		{"exclusions", func(r *Composition) { r.Copies[0].Exclude = []string{"missing"} }},
-		{"empty exclusions", func(r *Composition) { r.Copies[0].Exclude = []string{} }},
-		{"ignore", func(r *Composition) { r.Ignore = "missing\n" }},
-		{"policy", func(r *Composition) { r.Policy = "fixed" }},
-		{"absent base", func(r *Composition) { r.Base = CompositionInput{} }},
+		{"base generation", func(r *Composition) { r.Base.Content = "base-new" }, false},
+		{"used input generation", func(r *Composition) { r.Inputs[0].Content = "input-new" }, false},
+		{"unused input generation", func(r *Composition) { r.Inputs[1].Content = "unused-new" }, false},
+		{"input order", func(r *Composition) { r.Inputs[0], r.Inputs[1] = r.Inputs[1], r.Inputs[0] }, false},
+		{"selected input", func(r *Composition) { r.Copies[0].Input = 1 }, false},
+		{"operation order", func(r *Composition) { r.Copies[0], r.Copies[1] = r.Copies[1], r.Copies[0] }, false},
+		{"source spelling", func(r *Composition) { r.Copies[0].From += "/" }, false},
+		{"source path", func(r *Composition) { r.Copies[0].From = "other" }, false},
+		{"destination spelling", func(r *Composition) { r.Copies[0].To += "/" }, true},
+		{"destination path", func(r *Composition) { r.Copies[0].To = "elsewhere" }, true},
+		{"mode", func(r *Composition) { r.Copies[0].Mode = PlaceTree }, false},
+		{"exclusions", func(r *Composition) { r.Copies[0].Exclude = []string{"missing"} }, false},
+		{"empty exclusions", func(r *Composition) { r.Copies[0].Exclude = []string{} }, false},
+		{"ignore", func(r *Composition) { r.Ignore = "missing\n" }, false},
+		{"policy", func(r *Composition) { r.Policy = "source" }, true},
+		{"absent base", func(r *Composition) { r.Base = CompositionInput{} }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", New)
 			files := fstest.MapFS{"file": {Data: []byte("bytes")}, "other": {Data: []byte("bytes")}}
 			request := Composition{
-				Content: "unchanged caller facts", Base: CompositionInput{FS: fstest.MapFS{}, Content: "base"},
+				Base:   CompositionInput{FS: fstest.MapFS{}, Content: "base"},
 				Inputs: []CompositionInput{{FS: files, Content: "first"}, {FS: files, Content: "second"}},
-				Copies: []Copy{{From: "file", To: "out"}, {From: "file", To: "second"}}, Policy: "source",
+				Copies: []Copy{{From: "file", To: "out"}, {From: "file", To: "second"}}, Policy: "fixed",
 			}
-			_, _, first, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
+			_, firstTree, first, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
 			assert.NoError(t, err)
 			tc.change(&request)
-			_, _, second, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
+			_, secondTree, second, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
 			assert.NoError(t, err)
 			assert.Equal(t, first == second, false)
+			firstDigest, secondDigest := firstTree.Annotations["flate.tree-digest"], secondTree.Annotations["flate.tree-digest"]
+			assert.Equal(t, firstDigest == "", false)
+			if request.Policy == "fixed" {
+				assert.Equal(t, secondDigest == "", false)
+			}
+			assert.Equal(t, firstDigest != secondDigest, tc.treeChanges)
 		})
 	}
 }
@@ -78,10 +87,9 @@ func TestCompose_ExtractionIdentityIncludesInput(t *testing.T) {
 			"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte(generation)}})},
 		}
 		output, _, _, err := owner.Compose(t.Context(), Composition{
-			Content: "unchanged context", Inputs: []CompositionInput{{FS: files, Content: generation}},
+			Inputs: []CompositionInput{{FS: files, Content: generation}},
 			Copies: []Copy{{
 				From: "archive.tgz", To: "out", Mode: ExtractArchive,
-				ExtractContent: func(string, string) any { return "unchanged extraction context" },
 			}}, Policy: "fixed",
 		}, &Policy{MaxAge: Forever})
 		assert.NoError(t, err)

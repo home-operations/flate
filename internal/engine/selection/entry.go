@@ -15,6 +15,17 @@ func (c *admissionClosure) literalEntryChanged() bool {
 	return slices.ContainsFunc(delta.Paths(), c.entryFileDemand)
 }
 
+func (c *admissionClosure) indexedEntryChanged() bool {
+	if !c.session.request.Matches(manifest.NamedResource{}) {
+		return false
+	}
+	relative, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{}).
+		Named()
+	record, _ := c.indexedRecord(owner)
+	return len(record.ContentRoots[manifest.BootstrapSourceID]) != 0 && c.affected(owner, nil)
+}
+
 func (c *admissionClosure) entryFileDemand(file string) bool {
 	if file == "" || !containsPath(c.context.EntryPath, filepath.Join(c.context.Root, filepath.FromSlash(file))) {
 		return false

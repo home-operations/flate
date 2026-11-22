@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [ConflictingProducers] orig snapshot: GitRepository flux-system/flux-system: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      HelmRelease.helm.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] current snapshot: GitRepository flux-system/flux-system: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      HelmRelease.helm.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system

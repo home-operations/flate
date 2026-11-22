@@ -1,0 +1,11 @@
+
+data.s  (v1/ConfigMap/default/shared)
+  ± value change
+    - 1
+    + 2
+
+data.s  (v1/ConfigMap/default/shared-second)
+  ± value change
+    - 1
+    + 2
+

@@ -119,6 +119,17 @@
         "base"
       ],
       "overlay": "sibling-initial"
+    },
+    {
+      "repository": "repo",
+      "name": "generated",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "generated-initial"
     }
   ],
   "overlays": [
@@ -293,6 +304,31 @@
           }
         }
       ]
+    },
+    {
+      "name": "generated-initial",
+      "directory": "overlays/generated-initial",
+      "operations": [
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/flux/apps.yaml"
+        },
+        {
+          "delete": "repo/charts/mychart"
+        }
+      ]
+    },
+    {
+      "name": "generated-values",
+      "directory": "overlays/generated-values",
+      "operations": []
+    },
+    {
+      "name": "generated-library",
+      "directory": "overlays/generated-library",
+      "operations": []
     }
   ],
   "cases": [
@@ -642,6 +678,93 @@
             "expect": {
               "stdout": "expect/literal-root-warm.stdout",
               "stderr": "expect/literal-root-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-emitted-helmrelease-chart-templated",
+      "description": "A ResourceSet input provider generates a HelmRelease whose templated local chart depends on a sibling library chart.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "generated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-values",
+          "edit": {
+            "overlay": "generated-values"
+          }
+        },
+        {
+          "id": "generated-values-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/generated-values-diff.stdout",
+              "stderr": "expect/generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-library",
+          "edit": {
+            "overlay": "generated-library"
+          }
+        },
+        {
+          "id": "generated-library-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/generated-library-diff.stdout",
+              "stderr": "expect/generated-library-diff.stderr",
               "code": 0
             }
           }
@@ -2124,6 +2247,97 @@
         "source-siblings-symlink-escape"
       ],
       "purpose": "Confined fixture input or independently authored escape diagnostic."
+    },
+    {
+      "path": "overlays/generated-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/flux/resourceset.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/charts/app/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/charts/app/values.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/charts/common/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-initial/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-values/repo/charts/app/values.yaml",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/generated-library/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/generated-values-diff.stdout",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/generated-values-diff.stderr",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/generated-library-diff.stdout",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "expect/generated-library-diff.stderr",
+      "cases": [
+        "changed-only-emitted-helmrelease-chart-templated"
+      ],
+      "purpose": "Authored generated release chart input or independently specified complete CLI result."
     }
   ]
 }

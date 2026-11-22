@@ -106,7 +106,12 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 			Reconcile(input),
 		false,
 	)
-	changes, err := change.Qualify(t.Context(), bootstrap, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		bootstrap,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{

@@ -202,11 +202,6 @@ func testEvaluateCase(t *testing.T, testCaseInput testEvaluateCaseInputs) {
 	builder := tree.NewBuilder(nil)
 	var err error
 	for _, op := range testCaseInput.tc.operations {
-		if op.Mode == ExtractArchive {
-			op.ExtractContent = func(name, destination string) any {
-				return struct{ Path, Destination string }{name, destination}
-			}
-		}
 		if err = e.apply(t.Context(), builder, &op); err != nil {
 			break
 		}

@@ -181,7 +181,7 @@ spec: {path: ./workload}
 			l.Options.Changes, err = change.Qualify(
 				t.Context(),
 				detectChanges(t, []string{"workload/cm.yaml"}, []string{"workload/cm.yaml"}),
-				stores,
+				change.SourcePair{Stores: stores},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)

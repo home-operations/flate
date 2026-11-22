@@ -2,6 +2,7 @@ package loader
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,6 +20,37 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestReaderFinalizer_ImplicitEntryReadsLeaveRootsUnchanged(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/default/kustomization.yaml",
+		"resources: [../../shared/input.yaml, ../../shared/missing.yaml]\n",
+	)
+	testutil.WriteFile(t, root, "shared/input.yaml", "kind: ConfigMap\n")
+	authored := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
+	projected := *authored
+	projected.FS = &inputprojection.Overlay{Authored: authored, Resources: []string{"default"}}
+	l := New(store.New())
+	l.SourceRoot, l.entryPath = root, filepath.Join(root, "apps")
+	l.documents.artifacts = map[string]*store.SourceArtifact{root: &projected}
+	l.documents.views = map[string]fs.FS{root: authored.FS}
+	l.documents.compact = true
+	l.ensureScopes()
+	l.scopes.roots = []string{"apps/default"}
+
+	rf := readerFinalizer{loader: l, repoRoot: root}
+	rf.collectEntryInputs()
+
+	assert.Diff(t, l.scopes.roots, []string{"apps/default"})
+	id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "apps", manifest.NamedResource{}).Named()
+	assert.Diff(t, l.Index.Records[id].ContentRoots[manifest.BootstrapSourceID], []string{
+		"shared/input.yaml", "shared/missing.yaml",
+	})
+}
 
 func TestReaderFinalizer_ConfinedSubtrees(t *testing.T) {
 	t.Parallel()
@@ -210,7 +242,7 @@ func TestFilter_CopiedInputsPairedSides(t *testing.T) {
 					)
 				}
 			}
-			changes, err := change.Qualify(t.Context(), nil, stores, manifest.WorkScope{})
+			changes, err := change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
 			assert.NoError(t, err)
 			changes, err = changes.WithReaders(
 				t.Context(),

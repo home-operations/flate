@@ -176,10 +176,10 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},
 		{"artifactgenerator", "effective", g, []Reference{
-			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other", Name: "remote", Use: "artifact", readsSourceTree: true, Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "local", Use: "artifact", readsSourceTree: true, Position: 1, Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindBucket, Namespace: "effective", Name: "bucket", Use: "artifact", readsSourceTree: true, Position: 2, Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "effective", Name: "generated", Use: "artifact", readsSourceTree: true, Position: 3, Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other", Name: "remote", Use: "artifact", Content: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "local", Use: "artifact", Position: 1, Content: true},
+			{Group: SourceDomain, Kind: KindBucket, Namespace: "effective", Name: "bucket", Use: "artifact", Position: 2, Content: true},
+			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "effective", Name: "generated", Use: "artifact", Position: 3, Content: true},
 		}},
 		{"externalartifact", "effective", e, []Reference{
 			{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "effective", Name: "generator", Use: "materializer"},

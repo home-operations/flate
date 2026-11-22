@@ -113,7 +113,7 @@ func TestQualify_ComposedBootstrapMembership(t *testing.T) {
 			changes, err := Detect(t.Context(), raw[0], raw[1], DetectConfig{})
 			assert.NoError(t, err)
 			assert.Diff(t, changes.Paths(), tc.rawPaths)
-			qualified, err := Qualify(t.Context(), changes, stores, manifest.WorkScope{})
+			qualified, err := Qualify(t.Context(), changes, SourcePair{Stores: stores}, manifest.WorkScope{})
 			assert.NoError(t, err)
 			assert.Diff(t, qualified.Paths(), tc.paths)
 			for side, want := range tc.present {

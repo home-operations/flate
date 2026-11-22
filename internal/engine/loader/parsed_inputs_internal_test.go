@@ -237,7 +237,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		changes, loadErr = change.Qualify(
 			t.Context(),
 			changes,
-			[2]*store.Store{store.New(), store.New()},
+			change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}},
 			manifest.WorkScope{},
 		)
 		assert.NoError(t, loadErr)

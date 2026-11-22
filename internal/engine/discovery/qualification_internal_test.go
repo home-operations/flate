@@ -3,6 +3,7 @@ package discovery
 import (
 	"maps"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -262,4 +263,139 @@ func TestEntryQualification_PreparationReuse(t *testing.T) {
 	fixture.cfg.Store.SetArtifact(fixture.parent.SourceID(), &replacement)
 	commit()
 	assert.Equal(t, recorder.Scope().Admission().Counts.OwnerPrepares, uint64(2))
+}
+
+func TestEntryQualification_CoverageRequiresExactRead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, indexed string
+		covered       bool
+	}{
+		{name: "read by entry", indexed: "entry/member.yaml", covered: true},
+		{name: "same identity in sibling", indexed: "sibling/member.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"entry/kustomization.yaml": {Data: []byte("resources: [member.yaml]\n")},
+				"entry/member.yaml": {
+					Data: []byte(testutil.KustomizationYAML("member", "apps", "  path: ./app\n")),
+				},
+				"sibling/member.yaml": {
+					Data: []byte(testutil.KustomizationYAML("member", "apps", "  path: ./other\n")),
+				},
+			}}
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "entry", Namespace: "apps", Path: "./entry"}
+			member := &manifest.Kustomization{Name: "member", Namespace: "apps", Path: "./app"}
+			st.AddObject(owner)
+			st.RecordEmitted(owner.Named(), &store.Emission{
+				Complete: true, Children: []store.Child{{Obj: member}},
+			}, nil)
+			l := loader.New(st)
+			l.SourceRoot = root
+			l.Index.Records[member.Named()] = manifest.DiscoveryRecord{Path: filepath.Join(root, tc.indexed)}
+			q := &entryQualification{
+				changedOnly: true, loader: l, session: &Session{},
+				active: []manifest.NamedResource{member.Named()},
+				matches: []applicationEvidence{{
+					object: owner, visibleGeneration: true, source: entryResolution{artifact: input},
+					application: manifest.EntryApplication{Path: owner.Path},
+				}},
+			}
+			var reads store.ReadSet
+			reads.Init(st, manifest.BootstrapSourceID, nil)
+			t.Cleanup(reads.Close)
+			walk := qualificationWalk{q: q, admission: &Admission{input: input}, store: st, reads: &reads}
+			_, err := walk.visitActiveOperands(t.Context())
+			assert.NoError(t, err)
+			if tc.covered {
+				assert.Equal(t, q.pending, false)
+				assert.Equal(t, len(q.candidates), 0)
+				return
+			}
+			assert.Equal(t, q.pending, true)
+			assert.Diff(t, q.candidates, []manifest.NamedResource{member.Named()})
+		})
+	}
+}
+
+func TestEntryQualification_ChangedOnlyPreparesOrderedCandidates(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"hint/kustomization.yaml": {Data: []byte("resources: [producer.yaml]\n")},
+		"hint/producer.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: producer, namespace: apps}
+spec:
+  interval: 1m
+  chartRef: {kind: OCIRepository, name: bootstrap}
+  values: {instance: {apiVersion: fluxcd.controlplane.io/v1, kind: FluxInstance}}
+`)},
+		"later/kustomization.yaml": {Data: []byte("resources: []\n")},
+	}}
+	st := store.New()
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
+	st.AddObject(bootstrap)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	first := &manifest.Kustomization{Name: "first", Namespace: "apps", Path: "./hint"}
+	later := &manifest.Kustomization{Name: "later", Namespace: "apps", Path: "./later"}
+	l := loader.New(st)
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	prepared := entryInputs{packagesToQualify: [][]selection.OccurrenceFacts{{
+		{Identity: later.Named(), Object: later}, {Identity: first.Named(), Object: first},
+	}}}
+	t.Run("single operand", func(t *testing.T) {
+		t.Parallel()
+		singleStore := store.New()
+		singleLoader := loader.New(singleStore)
+		singleLoader.SourceRoot = root
+		var reads store.ReadSet
+		reads.Init(singleStore, manifest.BootstrapSourceID, nil)
+		t.Cleanup(reads.Close)
+		var producerReads atomic.Int64
+		trackedInput := input.WithSourceView(entryReadFS{
+			FS: input.FS, reads: map[string]*atomic.Int64{"hint/producer.yaml": &producerReads},
+		})
+		q := &entryQualification{
+			loader: singleLoader, changedOnly: true,
+			packages: [][]selection.OccurrenceFacts{prepared.packagesToQualify[0][1:]},
+		}
+		walk := qualificationWalk{q: q, admission: &Admission{input: trackedInput}, store: singleStore, reads: &reads}
+		assert.NoError(t, walk.advanceOperands(t.Context()))
+		assert.Diff(t, q.candidates, []manifest.NamedResource{first.Named()})
+		assert.Equal(t, producerReads.Load(), 0)
+	})
+
+	hint, err := l.EntryProducerHint(t.Context(), input, first.Path)
+	assert.NoError(t, err)
+	assert.Equal(t, hint, true)
+	q := &entryQualification{loader: l, changedOnly: true, packages: prepared.packagesToQualify}
+	a := &Admission{store: st, input: input, path: filepath.Join(root, "entry"), entryDemand: true, qualification: q}
+	qualifyForTest(t, l, first.Named(), later.Named())
+	candidate, binding, err := a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.Equal(t, candidate == nil, true)
+	assert.Equal(t, binding, Binding{})
+	assert.Diff(t, a.EntryProducers(), []manifest.NamedResource{first.Named()})
+
+	st.UpdateStatus(first.Named(), store.StatusInfo{Status: store.StatusFailed})
+	q.session = &Session{finalized: true}
+	candidate, binding, err = a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.Equal(t, candidate == nil, true)
+	assert.Equal(t, binding, Binding{})
+	assert.Diff(t, a.EntryProducers(), []manifest.NamedResource{later.Named()})
+
+	match := &manifest.Kustomization{Name: "match", Namespace: "apps", Path: "./entry"}
+	st.RecordEmitted(later.Named(), &store.Emission{Children: []store.Child{{Obj: match}}, Complete: true}, nil)
+	q.session = nil
+	candidate, binding, err = a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.FatalIf(t, candidate == nil, "entry candidate missing after the first operand failed")
+	assert.Equal(t, candidate.Named(), match.Named())
+	assert.Equal(t, acceptEntryForTest(t, a, &binding).Producer, match.Named())
 }

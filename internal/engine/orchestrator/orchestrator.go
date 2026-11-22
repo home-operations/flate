@@ -138,6 +138,7 @@ type Orchestrator struct {
 	session              *discovery.Session
 	preparation          *selection.AdmissionResult
 	admissionPreparation *selection.Preparation
+	kustomizeInputs      *kustomizeInputSide
 	discoveryResult      *discovery.Result
 	probes               *base.Execution
 	history              map[manifest.NamedResource]struct {
@@ -328,7 +329,7 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 		return err
 	}
 	o.admission = o.session.Admission()
-	o.configureSources(true)
+	o.configureSources(true, true)
 	for {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr

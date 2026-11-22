@@ -144,7 +144,12 @@ func TestCompleteDeclarations_QualifiedWithoutBootstrap(t *testing.T) {
 		stores[side].AddObject(source)
 		stores[side].SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: inputs[side]})
 	}
-	changes, err := change.Qualify(t.Context(), detectChanges(t, nil, nil), stores, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		detectChanges(t, nil, nil),
+		change.SourcePair{Stores: stores},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	l := New(stores[1])
 	t.Cleanup(l.Close)

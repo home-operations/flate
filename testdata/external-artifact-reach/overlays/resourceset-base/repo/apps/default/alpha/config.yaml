@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alpha
+  namespace: default
+data:
+  value: before

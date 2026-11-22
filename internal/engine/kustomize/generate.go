@@ -49,6 +49,32 @@ type generatedManifest struct {
 	path string
 }
 
+func generateFiles(spec *manifest.Kustomization, memFS *treeFS, dir string) (generatedManifest, error) {
+	if spec == nil {
+		file, _ := kustomizationFileIn(memFS, dir)
+		return generatedManifest{path: file}, nil
+	}
+	document, err := spec.RenderDocument()
+	if err != nil {
+		return generatedManifest{}, err
+	}
+	generated, err := generateManifest(memFS, dir, document)
+	if err != nil {
+		return generatedManifest{}, fmt.Errorf("flux kustomize generator: %w", err)
+	}
+	err = writeGeneratedManifest(memFS, &generated)
+	return generated, err
+}
+
+func writeGeneratedManifest(memFS *treeFS, generated *generatedManifest) error {
+	if generated.data != nil {
+		if err := memFS.WriteFile(generated.path, generated.data); err != nil {
+			return fmt.Errorf("write kustomization.yaml: %w", err)
+		}
+	}
+	return nil
+}
+
 // generateManifest merges the Flux Kustomization document `obj` into the
 // kustomization.yaml that governs `dirPath` within fsys, and returns the merged
 // YAML bytes plus the fs path the caller must write them to (the existing

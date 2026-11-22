@@ -42,13 +42,14 @@ type Emission struct {
 	payloadReads *ReadSet
 	borrowed     map[*ReadSet]struct{}
 
-	family      *manifest.DiscoveryIndex
-	Children    []Child
-	Manifests   []manifest.DocOccurrence
-	Failures    []manifest.DocOccurrence
-	Fingerprint string
-	Unreadable  []manifest.NamedResource
-	Complete    bool
+	family       *manifest.DiscoveryIndex
+	Children     []Child
+	Manifests    []manifest.DocOccurrence
+	Failures     []manifest.DocOccurrence
+	Fingerprint  string
+	Unreadable   []manifest.NamedResource
+	Complete     bool
+	Construction bool
 	// Borrowed inventory MUST remain immutable during publication preparation.
 	entriesOwned bool
 	accepted     bool

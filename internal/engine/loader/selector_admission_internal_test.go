@@ -265,11 +265,13 @@ func selectorAdmissionPair(t *testing.T, selectedSide manifest.TreeSide) (
 		loaders[side] = l
 	}
 	changes, err := change.Qualify(
-
 		t.Context(),
-
-		detectChanges(t, []string{"chosen.yaml"}, []string{"chosen.yaml"}), [2]*store.Store{stores[0], stores[1]},
-
+		detectChanges(
+			t,
+			[]string{"chosen.yaml"},
+			[]string{"chosen.yaml"},
+		),
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -566,7 +568,12 @@ func testSelectorVisibilityCase(t *testing.T, incoming bool, visibleSide manifes
 	provider := controls[0]
 	changes, err := change.Qualify(
 		t.Context(),
-		detectChanges(t, []string{".krmignore"}, []string{".krmignore"}), [2]*store.Store{stores[0], stores[1]},
+		detectChanges(
+			t,
+			[]string{".krmignore"},
+			[]string{".krmignore"},
+		),
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

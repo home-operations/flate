@@ -1,0 +1,14 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: charts, namespace: flux-system}
+spec:
+  sources: [{alias: repo, kind: GitRepository, name: flux-system}]
+  artifacts:
+  - name: generated-charts
+    copy:
+    - from: "@repo/content/charts/app/**"
+      to: "@artifact/"
+  - name: other-charts
+    copy:
+    - from: "@repo/content/charts/other/**"
+      to: "@artifact/"

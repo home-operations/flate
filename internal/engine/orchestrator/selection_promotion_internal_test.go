@@ -180,7 +180,7 @@ func testSelectionPromotionBubble(
 		changes, err = change.Qualify(
 			t.Context(),
 			detectChanges(t, []string{"emitter.yaml", "source.yaml"}, []string{"emitter.yaml", "source.yaml"}),
-			[2]*store.Store{peer, s},
+			change.SourcePair{Stores: [2]*store.Store{peer, s}},
 			manifest.WorkScope{},
 		)
 		assert.NoError(t, err)

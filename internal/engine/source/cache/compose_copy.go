@@ -58,7 +58,7 @@ type copyPlan struct {
 	maxAge                     time.Duration
 	op                         *Copy
 	input                      fs.FS
-	content                    string
+	identity                   compositionIdentity
 	pattern, destination, root string
 	glob                       bool
 	matches                    []string
@@ -73,17 +73,13 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 		return copyPlan{}, fmt.Errorf("missing input filesystem %d", op.Input)
 	}
 	switch op.Mode {
-	case CopyFiles, MergeYAML:
+	case CopyFiles, MergeYAML, ExtractArchive:
 	case PlaceTree:
 		name, err := resolvePlacement(input, cmp.Or(op.From, "."))
 		if err != nil {
 			return copyPlan{}, err
 		}
 		return copyPlan{op: op, input: input, root: name, matches: []string{name}}, nil
-	case ExtractArchive:
-		if op.ExtractContent == nil {
-			return copyPlan{}, fmt.Errorf("extraction requires content identity")
-		}
 	default:
 		return copyPlan{}, fmt.Errorf("unsupported copy mode %d", op.Mode)
 	}
@@ -117,8 +113,8 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 	}
 	return copyPlan{
 		owner: e.owner, work: e.work, maxAge: e.maxAge,
-		op: op, input: input, content: e.request.Inputs[op.Input].Content, pattern: pattern, destination: destination,
-		root: root, glob: glob, matches: matches,
+		op: op, input: input, identity: e.request.Inputs[op.Input].identity(),
+		pattern: pattern, destination: destination, root: root, glob: glob, matches: matches,
 	}, nil
 }
 
@@ -392,15 +388,9 @@ func (p *copyPlan) extract(ctx context.Context, builder *tree.Builder, name stri
 
 func (p *copyPlan) extractionKey(name string) ArchiveKey {
 	return ArchiveKey{Policy: extractPolicy, Content: struct {
-		Context           any
-		Input             string
-		Copy              copyIdentity
-		Path, Destination string
-	}{
-		p.op.ExtractContent(name, p.destination), p.content,
-		copyIdentity{p.op.Input, p.op.From, p.op.To, p.op.Exclude, p.op.Mode},
-		name, p.destination,
-	}}
+		Input compositionIdentity
+		Path  string
+	}{p.identity, name}}
 }
 
 func (e *composition) produce(ctx context.Context, target ProducerInput) error {

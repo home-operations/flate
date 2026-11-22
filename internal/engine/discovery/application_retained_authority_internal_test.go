@@ -577,7 +577,7 @@ func testBindEntryPackageRootOrder(t *testing.T) {
 				{Path: "hinted", Occurrences: hintFacts, seeds: hintFacts},
 			}
 			var inputs entryInputs
-			inputs.collectEntryOperands(&Entry{aggregate: true, roots: []int{0, 1}}, roots, "entry")
+			inputs.collectEntryOperands(&Entry{aggregate: true, roots: []int{0, 1}}, roots, "entry", false)
 			assert.FatalIf(t, len(inputs.packagesToQualify) != 2, "expected two package priority groups")
 			assert.Equal(t, inputs.packagesToQualify[0][0].Identity, hinted.Named())
 			assert.Equal(t, inputs.packagesToQualify[1][0].Identity, opaque.Named())

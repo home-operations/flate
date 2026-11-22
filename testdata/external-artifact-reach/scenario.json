@@ -1,0 +1,2563 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "internal/engine/selection",
+      "internal/engine/loader"
+    ],
+    "reductions": "Three generated artifacts, generated chart reads, an implicit entry, and a removed bootstrap import."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": "bootstrap",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://fixture.invalid/repo"
+        }
+      ]
+    },
+    {
+      "name": "root-diff",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://fixture.invalid/root-diff"
+        }
+      ]
+    },
+    {
+      "name": "bound-entry",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://fixture.invalid/bound-entry"
+        }
+      ]
+    },
+    {
+      "name": "imported-shared",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "generator-base",
+      "repository": "repo",
+      "overlay": "generator-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "component-base",
+      "repository": "repo",
+      "overlay": "component-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "implicit-base",
+      "repository": "repo",
+      "overlay": "implicit-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "removal-base",
+      "repository": "baseline",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "chart-inline",
+      "repository": "repo",
+      "overlay": "chart-inline",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "chart-values",
+      "repository": "repo",
+      "overlay": "chart-values",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "chart-generated",
+      "repository": "repo",
+      "overlay": "chart-generated",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "root-diff-base",
+      "repository": "root-diff",
+      "overlay": "root-diff-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "name": "bound-entry-base",
+      "repository": "bound-entry",
+      "overlay": "bound-entry-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "name": "resourceset-base",
+      "repository": "repo",
+      "overlay": "resourceset-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "resourceset-provider-base",
+      "repository": "repo",
+      "overlay": "resourceset-provider-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "name": "imported-shared-base",
+      "repository": "imported-shared",
+      "overlay": "imported-shared-base",
+      "author": "Fixture",
+      "email": "fixture@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "generator-base",
+      "directory": "overlays/generator-base"
+    },
+    {
+      "name": "generator-app",
+      "directory": "overlays/generator-app"
+    },
+    {
+      "name": "generator-shared",
+      "directory": "overlays/generator-shared"
+    },
+    {
+      "name": "generator-excluded",
+      "directory": "overlays/generator-excluded"
+    },
+    {
+      "name": "component-base",
+      "directory": "overlays/component-base"
+    },
+    {
+      "name": "component-edit",
+      "directory": "overlays/component-edit"
+    },
+    {
+      "name": "implicit-base",
+      "directory": "overlays/implicit-base"
+    },
+    {
+      "name": "implicit-imported",
+      "directory": "overlays/implicit-imported"
+    },
+    {
+      "name": "implicit-unread",
+      "directory": "overlays/implicit-unread"
+    },
+    {
+      "name": "removed-import",
+      "directory": "overlays/removed-import"
+    },
+    {
+      "name": "chart-inline",
+      "directory": "overlays/chart-inline"
+    },
+    {
+      "name": "chart-values",
+      "directory": "overlays/chart-values"
+    },
+    {
+      "name": "chart-generated",
+      "directory": "overlays/chart-generated"
+    },
+    {
+      "name": "chart-library-only",
+      "directory": "overlays/chart-library-only"
+    },
+    {
+      "name": "chart-root-values",
+      "directory": "overlays/chart-root-values"
+    },
+    {
+      "name": "chart-generated-source",
+      "directory": "overlays/chart-generated-source"
+    },
+    {
+      "name": "chart-unrelated",
+      "directory": "overlays/chart-unrelated"
+    },
+    {
+      "name": "chart-unrelated-in-generated-source",
+      "directory": "overlays/chart-unrelated-in-generated-source"
+    },
+    {
+      "name": "root-diff-base",
+      "directory": "overlays/root-diff-base"
+    },
+    {
+      "name": "root-diff-edit",
+      "directory": "overlays/root-diff-edit"
+    },
+    {
+      "name": "bound-entry-base",
+      "directory": "overlays/bound-entry-base"
+    },
+    {
+      "name": "bound-entry-imported",
+      "directory": "overlays/bound-entry-imported"
+    },
+    {
+      "name": "bound-entry-unread",
+      "directory": "overlays/bound-entry-unread"
+    },
+    {
+      "name": "resourceset-base",
+      "directory": "overlays/resourceset-base"
+    },
+    {
+      "name": "resourceset-edit",
+      "directory": "overlays/resourceset-edit"
+    },
+    {
+      "name": "resourceset-provider-base",
+      "directory": "overlays/resourceset-provider-base"
+    },
+    {
+      "name": "resourceset-provider-edit",
+      "directory": "overlays/resourceset-provider-edit"
+    },
+    {
+      "name": "imported-shared-base",
+      "directory": "overlays/imported-shared-base"
+    },
+    {
+      "name": "imported-shared",
+      "directory": "overlays/imported-shared"
+    },
+    {
+      "name": "imported-shared-outside",
+      "directory": "overlays/imported-shared-outside"
+    },
+    {
+      "name": "imported-shared-unread",
+      "directory": "overlays/imported-shared-unread"
+    }
+  ],
+  "cases": [
+    {
+      "name": "generator-app",
+      "description": "Compare a generator app edit against the committed tree.",
+      "setup": [
+        {
+          "commit": "generator-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-generator-app",
+          "edit": {
+            "overlay": "generator-app"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/generator-app-diff.stdout",
+              "stderr": "expect/generator-app-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-shared",
+      "description": "Compare a generator shared edit against the committed tree.",
+      "setup": [
+        {
+          "commit": "generator-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-generator-shared",
+          "edit": {
+            "overlay": "generator-shared"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/generator-shared-diff.stdout",
+              "stderr": "expect/generator-shared-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-excluded",
+      "description": "Compare a generator excluded edit against the committed tree.",
+      "setup": [
+        {
+          "commit": "generator-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-generator-excluded",
+          "edit": {
+            "overlay": "generator-excluded"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/generator-excluded-diff.stdout",
+              "stderr": "expect/generator-excluded-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-component",
+      "description": "Edit a sibling component copied into a generated artifact.",
+      "setup": [
+        {
+          "commit": "component-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-component",
+          "edit": {
+            "overlay": "component-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/generator-component-diff.stdout",
+              "stderr": "expect/generator-component-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "implicit-imported",
+      "description": "Edit an imported component outside the implicit entry.",
+      "setup": [
+        {
+          "commit": "implicit-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-implicit-imported",
+          "edit": {
+            "overlay": "implicit-imported"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "apps",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/implicit-imported-diff.stdout",
+              "stderr": "expect/implicit-imported-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "implicit-unread",
+      "description": "Edit an unread component outside the implicit entry.",
+      "setup": [
+        {
+          "commit": "implicit-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-implicit-unread",
+          "edit": {
+            "overlay": "implicit-unread"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "apps",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/implicit-unread-diff.stdout",
+              "stderr": "expect/implicit-unread-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "removed-import",
+      "description": "Remove an app import and retain only the removals from the accepted build.",
+      "setup": [
+        {
+          "commit": "removal-base"
+        }
+      ],
+      "directory": "@@baseline@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/local/flux",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/removed-import-before.stdout",
+              "stderr": "expect/removed-import-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-removed-import",
+          "edit": {
+            "overlay": "removed-import"
+          }
+        },
+        {
+          "id": "after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/local/flux",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/removed-import-after.stdout",
+              "stderr": "expect/removed-import-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "clusters/local/flux",
+              "--allow-missing-kinds",
+              "Secret",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/removed-import-diff.stdout",
+              "stderr": "expect/removed-import-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-library-only",
+      "description": "Compare a generated HelmRelease after the library-only edit.",
+      "setup": [
+        {
+          "commit": "chart-inline"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-chart-library-only",
+          "edit": {
+            "overlay": "chart-library-only"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/chart-library-only-diff.stdout",
+              "stderr": "expect/chart-library-only-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-root-values",
+      "description": "Compare a generated HelmRelease after the root-values edit.",
+      "setup": [
+        {
+          "commit": "chart-values"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-chart-root-values",
+          "edit": {
+            "overlay": "chart-root-values"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/chart-root-values-diff.stdout",
+              "stderr": "expect/chart-root-values-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-generated-source",
+      "description": "Compare a generated HelmRelease after the generated-source edit.",
+      "setup": [
+        {
+          "commit": "chart-generated"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-chart-generated-source",
+          "edit": {
+            "overlay": "chart-generated-source"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/chart-generated-source-diff.stdout",
+              "stderr": "expect/chart-generated-source-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-unrelated",
+      "description": "Compare a generated HelmRelease after the unrelated edit.",
+      "setup": [
+        {
+          "commit": "chart-inline"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-chart-unrelated",
+          "edit": {
+            "overlay": "chart-unrelated"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/chart-unrelated-diff.stdout",
+              "stderr": "expect/chart-unrelated-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-unrelated-in-generated-source",
+      "description": "Compare a generated HelmRelease after the unrelated-in-generated-source edit.",
+      "setup": [
+        {
+          "commit": "chart-generated"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-chart-unrelated-in-generated-source",
+          "edit": {
+            "overlay": "chart-unrelated-in-generated-source"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/chart-unrelated-in-generated-source-diff.stdout",
+              "stderr": "expect/chart-unrelated-in-generated-source-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "root-diff",
+      "description": "Edit one generated app from a repository root with no builder and duplicate Namespaces in separate packages.",
+      "setup": [
+        {
+          "commit": "root-diff-base"
+        }
+      ],
+      "directory": "@@repo@@/../root-diff",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-alpha",
+          "edit": {
+            "overlay": "root-diff-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--cache-dir=",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/root-diff.stdout",
+              "stderr": "expect/root-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bound-entry-imported",
+      "description": "Change a component that the generated sync entry reads.",
+      "setup": [
+        {
+          "commit": "bound-entry-base"
+        }
+      ],
+      "directory": "@@repo@@/../bound-entry",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-provider",
+          "edit": {
+            "overlay": "bound-entry-imported"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir=",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/bound-entry-imported.stdout",
+              "stderr": "expect/bound-entry-imported.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bound-entry-unread",
+      "description": "Change a sibling outside the generated sync entry reads.",
+      "setup": [
+        {
+          "commit": "bound-entry-base"
+        }
+      ],
+      "directory": "@@repo@@/../bound-entry",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-provider",
+          "edit": {
+            "overlay": "bound-entry-unread"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir=",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/implicit-unread-diff.stdout",
+              "stderr": "expect/root-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resourceset-reach",
+      "description": "Compare a change under one child of a generated namespace Kustomization.",
+      "setup": [
+        {
+          "commit": "resourceset-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-alpha",
+          "edit": {
+            "overlay": "resourceset-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/resourceset-diff.stdout",
+              "stderr": "expect/resourceset-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resourceset-provider-reach",
+      "description": "Compare a file read by a Kustomization whose kind a provider selects.",
+      "setup": [
+        {
+          "commit": "resourceset-provider-base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-child",
+          "edit": {
+            "overlay": "resourceset-provider-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/resourceset-provider-diff.stdout",
+              "stderr": "expect/resourceset-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "imported-shared",
+      "description": "Edit an imported sibling in the generated artifact.",
+      "setup": [
+        {
+          "commit": "imported-shared-base"
+        }
+      ],
+      "directory": "@@repo@@/../imported-shared",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-input",
+          "edit": {
+            "overlay": "imported-shared"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/imported-shared.stdout",
+              "stderr": "expect/imported-shared.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "imported-shared-outside",
+      "description": "Edit a tracked file outside the imported artifact and entry.",
+      "setup": [
+        {
+          "commit": "imported-shared-base"
+        }
+      ],
+      "directory": "@@repo@@/../imported-shared",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-input",
+          "edit": {
+            "overlay": "imported-shared-outside"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/imported-shared-outside.stdout",
+              "stderr": "expect/imported-shared.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "imported-shared-unread",
+      "description": "Edit a copied sibling outside the imported package's inputs.",
+      "setup": [
+        {
+          "commit": "imported-shared-base"
+        }
+      ],
+      "directory": "@@repo@@/../imported-shared",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-input",
+          "edit": {
+            "overlay": "imported-shared-unread"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "flux",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/imported-shared-outside.stdout",
+              "stderr": "expect/imported-shared-unread.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chart-generated-source-diff.stderr",
+      "cases": [
+        "chart-generated-source"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-generated-source-diff.stdout",
+      "cases": [
+        "chart-generated-source"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-library-only-diff.stderr",
+      "cases": [
+        "chart-library-only"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-library-only-diff.stdout",
+      "cases": [
+        "chart-library-only"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-root-values-diff.stderr",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-root-values-diff.stdout",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-unrelated-diff.stderr",
+      "cases": [
+        "chart-unrelated"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-unrelated-diff.stdout",
+      "cases": [
+        "chart-unrelated"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-unrelated-in-generated-source-diff.stderr",
+      "cases": [
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/chart-unrelated-in-generated-source-diff.stdout",
+      "cases": [
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-app-diff.stderr",
+      "cases": [
+        "generator-app"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-app-diff.stdout",
+      "cases": [
+        "generator-app"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-component-diff.stderr",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Complete CLI warnings."
+    },
+    {
+      "path": "expect/generator-component-diff.stdout",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Complete CLI diff."
+    },
+    {
+      "path": "expect/generator-excluded-diff.stderr",
+      "cases": [
+        "generator-excluded"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-excluded-diff.stdout",
+      "cases": [
+        "generator-excluded"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-shared-diff.stderr",
+      "cases": [
+        "generator-shared"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/generator-shared-diff.stdout",
+      "cases": [
+        "generator-shared"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/implicit-imported-diff.stderr",
+      "cases": [
+        "implicit-imported"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/implicit-imported-diff.stdout",
+      "cases": [
+        "implicit-imported"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/implicit-unread-diff.stderr",
+      "cases": [
+        "implicit-unread"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/implicit-unread-diff.stdout",
+      "cases": [
+        "implicit-unread",
+        "bound-entry-unread"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-after.stderr",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-after.stdout",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-before.stderr",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-before.stdout",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-diff.stderr",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "expect/removed-import-diff.stdout",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Complete CLI output."
+    },
+    {
+      "path": "overlays/chart-generated-source/repo/content/charts/app/values.yaml",
+      "cases": [
+        "chart-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/app/Chart.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/app/templates/cm.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/app/values.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/common/Chart.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/common/templates/_cm.tpl",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/other/Chart.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/charts/other/values.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/content/settings.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/flux/generator.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-generated/repo/flux/resourceset.yaml",
+      "cases": [
+        "chart-generated-source",
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/app/Chart.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/app/values.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/common/Chart.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/other/Chart.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/charts/other/values.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/flux/resourceset.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-inline/repo/settings.yaml",
+      "cases": [
+        "chart-library-only",
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-library-only/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "chart-library-only"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-root-values/repo/settings.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-unrelated-in-generated-source/repo/content/charts/other/values.yaml",
+      "cases": [
+        "chart-unrelated-in-generated-source"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-unrelated/repo/charts/other/values.yaml",
+      "cases": [
+        "chart-unrelated"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/app/Chart.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/app/values.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/common/Chart.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/other/Chart.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/charts/other/values.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/flux/resourceset.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/chart-values/repo/settings.yaml",
+      "cases": [
+        "chart-root-values"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/component-base/repo/app/kustomization.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Package read from the generated artifact."
+    },
+    {
+      "path": "overlays/component-base/repo/catalog/kustomization.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Standalone consumer for the component catalog."
+    },
+    {
+      "path": "overlays/component-base/repo/flux/consumer.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Artifact reader that requests the sibling component."
+    },
+    {
+      "path": "overlays/component-base/repo/flux/generator.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Generator that copies the app and component."
+    },
+    {
+      "path": "overlays/component-base/repo/shared/component.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "ConfigMap before the component edit."
+    },
+    {
+      "path": "overlays/component-base/repo/shared/kustomization.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "Component outside the app directory.",
+      "package": "component",
+      "consumer": "repo/catalog"
+    },
+    {
+      "path": "overlays/component-edit/repo/shared/component.yaml",
+      "cases": [
+        "generator-component"
+      ],
+      "purpose": "ConfigMap after the component edit."
+    },
+    {
+      "path": "overlays/generator-app/repo/apps/alpha/release.yaml",
+      "cases": [
+        "generator-app"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/alpha/ignored.txt",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/alpha/kustomization.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/alpha/release.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/beta/kustomization.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/beta/release.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/gamma/kustomization.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/apps/gamma/release.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/flux/alpha.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/flux/beta.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/flux/gamma.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/flux/generator.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/shared/Chart.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-base/repo/shared/templates/config.yaml",
+      "cases": [
+        "generator-app",
+        "generator-shared",
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-excluded/repo/apps/alpha/ignored.txt",
+      "cases": [
+        "generator-excluded"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/generator-shared/repo/shared/templates/config.yaml",
+      "cases": [
+        "generator-shared"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-base/repo/apps/default/kustomization.yaml",
+      "cases": [
+        "implicit-imported",
+        "implicit-unread"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-base/repo/components/c/cm.yaml",
+      "cases": [
+        "implicit-imported",
+        "implicit-unread"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-base/repo/components/c/kustomization.yaml",
+      "cases": [
+        "implicit-imported",
+        "implicit-unread"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-base/repo/components/unread/cm.yaml",
+      "cases": [
+        "implicit-imported",
+        "implicit-unread"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-imported/repo/components/c/cm.yaml",
+      "cases": [
+        "implicit-imported"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/implicit-unread/repo/components/unread/cm.yaml",
+      "cases": [
+        "implicit-unread"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/clusters/local/flux/kustomization.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/clusters/local/flux/sync.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/deploy/app/app.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/deploy/app/kustomization.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/deploy/app/manifests/cm.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/deploy/app/namespace.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "bootstrap/deploy/app/vars.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/removed-import/baseline/clusters/local/flux/kustomization.yaml",
+      "cases": [
+        "removed-import"
+      ],
+      "purpose": "Fixture input."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/bootstrap/apps/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Build the bootstrap package outside the sync path."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/bootstrap/apps/namespace.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Declare the same Namespace as the sync package."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Declare the local FluxInstance chart."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Generate the sync Kustomization at ./kubernetes/apps."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/charts/workload/Chart.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Declare the chart shared by Alpha and Beta."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/charts/workload/templates/config.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Render each app value as ConfigMap data."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/alpha/app/helmrelease.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Set the initial Alpha workload value."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/alpha/app/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Include the Alpha HelmRelease in its generated artifact."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/alpha/ks.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Read the generated artifact for Alpha."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/beta/app/helmrelease.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Set the initial Beta workload value."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/beta/app/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Include the Beta HelmRelease in its generated artifact."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/beta/ks.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Read the generated artifact for Beta."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/default/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Include both app Kustomizations in the sync path."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Render the chart that supplies the generated sync root."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/flux-system/flux-instance/app/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Include the HelmRelease in its generated artifact."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/flux-system/flux-instance/ks.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Read the generated source for the FluxInstance HelmRelease."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/flux-system/generator.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Generate the FluxInstance and app artifacts from the same path pattern."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Include the generator and its sync consumer."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/shared/kustomization.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Build the shared package inside the sync path."
+    },
+    {
+      "path": "overlays/root-diff-base/root-diff/kubernetes/apps/shared/namespace.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Declare the Namespace also used by the bootstrap package."
+    },
+    {
+      "path": "overlays/root-diff-edit/root-diff/kubernetes/apps/default/alpha/app/helmrelease.yaml",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Change only the Alpha value to new."
+    },
+    {
+      "path": "expect/root-diff.stdout",
+      "cases": [
+        "root-diff"
+      ],
+      "purpose": "Report the changed HelmRelease value and the ConfigMap data that reads it."
+    },
+    {
+      "path": "expect/root-diff.stderr",
+      "cases": [
+        "root-diff",
+        "bound-entry-unread"
+      ],
+      "purpose": "Require both snapshots to complete without warnings."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Define the local bootstrap chart."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Generate the Flux sync entry at kubernetes/apps."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/default/kustomization.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Read the Provider component outside the requested path."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Render the local chart that supplies the FluxInstance."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/flux-system/flux-instance/app/kustomization.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Include the bootstrap HelmRelease."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/flux-system/flux-instance/ks.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Read the package with the bootstrap HelmRelease."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Include the bootstrap Kustomization and its source."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/apps/flux-system/source.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Bind the bootstrap source to the fixture checkout."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/components/alerts/kustomization.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Import the Provider from a component.",
+      "package": "component",
+      "consumer": "bound-entry/kubernetes/apps/default"
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/components/alerts/provider.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Set the initial port for the imported Provider."
+    },
+    {
+      "path": "overlays/bound-entry-base/bound-entry/kubernetes/components/unread/provider.yaml",
+      "cases": [
+        "bound-entry-imported",
+        "bound-entry-unread"
+      ],
+      "purpose": "Supply an unread Provider for the control."
+    },
+    {
+      "path": "overlays/bound-entry-imported/bound-entry/kubernetes/components/alerts/provider.yaml",
+      "cases": [
+        "bound-entry-imported"
+      ],
+      "purpose": "Change the port of the imported Provider."
+    },
+    {
+      "path": "overlays/bound-entry-unread/bound-entry/kubernetes/components/unread/provider.yaml",
+      "cases": [
+        "bound-entry-unread"
+      ],
+      "purpose": "Change the port of the unread Provider."
+    },
+    {
+      "path": "expect/bound-entry-imported.stdout",
+      "cases": [
+        "bound-entry-imported"
+      ],
+      "purpose": "Report the imported Provider address change."
+    },
+    {
+      "path": "expect/bound-entry-imported.stderr",
+      "cases": [
+        "bound-entry-imported"
+      ],
+      "purpose": "Report both competing declarations of the bootstrap source."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/flux/apps.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Generate the namespace builder from the inline input."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/flux/provider.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Declare an independent ResourceSet and its input provider."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/apps/default/kustomization.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Import two independent Flux Kustomizations into the generated namespace."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/apps/default/apps.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Declare the readers and bind their source paths."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/apps/default/alpha/config.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Supply the initial value for Alpha."
+    },
+    {
+      "path": "overlays/resourceset-base/repo/apps/default/beta/config.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Supply the independent Beta workload."
+    },
+    {
+      "path": "overlays/resourceset-edit/repo/apps/default/alpha/config.yaml",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Change only the Alpha value."
+    },
+    {
+      "path": "expect/resourceset-diff.stdout",
+      "cases": [
+        "resourceset-reach"
+      ],
+      "purpose": "Require the Alpha value change."
+    },
+    {
+      "path": "expect/resourceset-diff.stderr",
+      "cases": [
+        "resourceset-reach",
+        "resourceset-provider-reach"
+      ],
+      "purpose": "Allow only the render persistence notice when the binary disables persistence."
+    },
+    {
+      "path": "overlays/resourceset-provider-base/repo/flux/factory.yaml",
+      "cases": [
+        "resourceset-provider-reach"
+      ],
+      "purpose": "Choose the generated Kustomization through a static provider."
+    },
+    {
+      "path": "overlays/resourceset-provider-base/repo/apps/child/config.yaml",
+      "cases": [
+        "resourceset-provider-reach"
+      ],
+      "purpose": "Supply the initial value for the generated child."
+    },
+    {
+      "path": "overlays/resourceset-provider-edit/repo/apps/child/config.yaml",
+      "cases": [
+        "resourceset-provider-reach"
+      ],
+      "purpose": "Change only the generated child's input."
+    },
+    {
+      "path": "expect/resourceset-provider-diff.stdout",
+      "cases": [
+        "resourceset-provider-reach"
+      ],
+      "purpose": "Require the generated child's value change."
+    },
+    {
+      "path": "overlays/imported-shared/imported-shared/content/shared/cm.yaml",
+      "cases": [
+        "imported-shared"
+      ],
+      "purpose": "Edit an imported sibling in the generated artifact."
+    },
+    {
+      "path": "expect/imported-shared.stdout",
+      "cases": [
+        "imported-shared"
+      ],
+      "purpose": "Complete CLI diff."
+    },
+    {
+      "path": "overlays/imported-shared-outside/imported-shared/outside/control.txt",
+      "cases": [
+        "imported-shared-outside"
+      ],
+      "purpose": "Edit a tracked file outside the imported artifact and entry."
+    },
+    {
+      "path": "expect/imported-shared-outside.stdout",
+      "cases": [
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Complete CLI diff."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/content/app/cm.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Supply the ConfigMap inside the consumer path."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/content/app/kustomization.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Import the copied shared package from outside the consumer path."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/content/shared/cm.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Supply the initial value from the imported package."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/content/shared/kustomization.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Include the shared ConfigMap in the copied package."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/flux/gen.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Copy both packages and declare their generated artifact consumer."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/flux/kustomization.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Include the generator and the sync declarations."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/flux/sync.yaml",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Bind the GitRepository and sync root to the fixture checkout."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/outside/control.txt",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Track an input outside the requested path and both copy patterns."
+    },
+    {
+      "path": "expect/imported-shared.stderr",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside"
+      ],
+      "purpose": "Complete CLI warnings, including cache persistence when the build disables it."
+    },
+    {
+      "path": "overlays/imported-shared-base/imported-shared/content/shared/unread.txt",
+      "cases": [
+        "imported-shared",
+        "imported-shared-outside",
+        "imported-shared-unread"
+      ],
+      "purpose": "Supply a tracked, copied file outside the consumers' reads."
+    },
+    {
+      "path": "overlays/imported-shared-unread/imported-shared/content/shared/unread.txt",
+      "cases": [
+        "imported-shared-unread"
+      ],
+      "purpose": "Edit only the copied file that no consumer reads."
+    },
+    {
+      "path": "expect/imported-shared-unread.stderr",
+      "cases": [
+        "imported-shared-unread"
+      ],
+      "purpose": "Retain the disclosure for skipped generated artifact consumers."
+    }
+  ]
+}

@@ -134,3 +134,7 @@ func decisionNames(d *Decision) []string {
 func (*publicationFacts) DeclarationContents() func(map[string]any) store.DeclarationContent {
 	return new(solverFacts).DeclarationContents()
 }
+
+func (*publicationFacts) ChartReadPaths(context.Context, *store.SourceArtifact, string) SourceReadPaths {
+	return SourceReadPaths{}
+}

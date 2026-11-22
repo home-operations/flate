@@ -42,6 +42,11 @@ type Controllers struct {
 	ArtifactGenerator nodeController
 }
 
+// Owns reports whether a registered controller can dispatch id.
+func (c *Controllers) Owns(id manifest.NamedResource) bool {
+	return c.owner(id) != nil
+}
+
 // ReconcileNode dispatches id to its owning controller.
 func (c *Controllers) ReconcileNode(
 	ctx context.Context,

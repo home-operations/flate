@@ -5,31 +5,23 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
-type archiveSelection struct {
-	Alias       string `json:"Alias"`
-	Path        string `json:"Path"`
-	Destination string `json:"Destination"`
-}
-
-func (e *evaluation) composition(id manifest.NamedResource, req *request) (cache.Composition, error) {
+func (e *evaluation) composition(req *request) (cache.Composition, error) {
 	e.projectedInputs = slices.Grow(e.projectedInputs[:0], len(e.identity))[:len(e.identity)]
 	e.projectedCopies = slices.Grow(e.projectedCopies[:0], len(req.Output.Copy))[:len(req.Output.Copy)]
-	e.projectedContent.Namespace = "artifactgenerator/output/v1"
-	e.projectedContent.Generator = id
-	e.projectedContent.Request = *req
-	e.projectedContent.Inputs = e.identity
 	result := cache.Composition{
-		Content: &e.projectedContent,
-		Inputs:  e.projectedInputs,
-		Copies:  e.projectedCopies,
-		Policy:  "fixed",
+		Inputs: e.projectedInputs,
+		Copies: e.projectedCopies,
+		Policy: "fixed",
 	}
 	for i := range e.identity {
 		identity := &e.identity[i]
-		result.Inputs[i] = cache.CompositionInput{FS: e.inputs[identity.Alias], Content: identity.Input.Content}
+		result.Inputs[i] = cache.CompositionInput{
+			FS:      e.inputs[identity.Alias],
+			Content: identity.Input.Content,
+			Backing: identity.Input.LocalPath,
+		}
 	}
 	for i, op := range req.Output.Copy {
 		selection := e.lastSelection
@@ -64,13 +56,6 @@ func (e *evaluation) composition(id manifest.NamedResource, req *request) (cache
 			lowered.Mode = cache.MergeYAML
 		case strategyExtract:
 			lowered.Mode = cache.ExtractArchive
-			lowered.ExtractContent = func(path, destination string) any {
-				return struct {
-					Namespace string
-					Inputs    []inputIdentity
-					Selection archiveSelection
-				}{"artifactgenerator/extract/v1", e.identity, archiveSelection{selection.alias, path, destination}}
-			}
 		}
 		result.Copies[i] = lowered
 	}

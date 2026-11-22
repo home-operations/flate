@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -64,8 +65,6 @@ func TestReferences_ArtifactCopiedInputs(t *testing.T) {
 					Namespace:        "apps",
 					Name:             "input",
 					Use:              "artifact",
-					readsSourceTree:  true,
-					bindsSource:      true,
 					Content:          true,
 					Gate:             GateArtifacts,
 					Artifact:         true,
@@ -77,6 +76,14 @@ func TestReferences_ArtifactCopiedInputs(t *testing.T) {
 				},
 			}
 			assert.Equal(t, cmp.Diff(want, refs, cmp.AllowUnexported(Reference{})), "")
+			data, err := json.Marshal(refs) //nolint:musttag // Cache references use the exported Go field names.
+			assert.NoError(t, err)
+			var cached []Reference
+			//nolint:musttag // Cache references use the exported Go field names.
+			assert.NoError(t, json.Unmarshal(data, &cached))
+			assert.Equal(t, len(cached), len(want))
+			assert.Equal(t, cached[0].ReadsSourceTree(), true)
+			assert.Equal(t, cached[0].BindsSource(), true)
 			assert.Equal(t, Fingerprint(raw), before)
 			calls := 0
 			References(raw, ReferenceAll)(func(Reference) bool { calls++; return false })

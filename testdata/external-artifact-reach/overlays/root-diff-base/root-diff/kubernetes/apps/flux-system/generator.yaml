@@ -1,0 +1,11 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: apps, namespace: flux-system}
+spec:
+  pathPattern: "@repo/kubernetes/apps/{namespace}/{app}"
+  sources: [{alias: repo, kind: GitRepository, name: flux-system}]
+  artifacts:
+    - name: "{app}"
+      copy:
+        - from: "@repo/kubernetes/apps/{namespace}/{app}/**"
+          to: "@artifact/kubernetes/apps/{namespace}/{app}/"

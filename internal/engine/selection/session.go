@@ -14,13 +14,14 @@ import (
 
 // Session publishes immutable decisions from guarded admission proposals.
 type Session struct {
-	store    *store.Store
-	facts    census
-	request  Request
-	mu       sync.Mutex
-	decision atomic.Pointer[Decision]
-	entry    atomic.Pointer[EntryRoute]
-	catalog  atomic.Pointer[admissionCatalog]
+	store               *store.Store
+	facts               census
+	request             Request
+	mu                  sync.Mutex
+	decision            atomic.Pointer[Decision]
+	entry               atomic.Pointer[EntryRoute]
+	catalog             atomic.Pointer[admissionCatalog]
+	readKustomizeInputs func(context.Context, manifest.NamedResource, manifest.BaseManifest, *SourceFacts) ([2]SourceReadPaths, bool)
 }
 
 // New MUST retain an admission session for every request.
@@ -28,6 +29,13 @@ func New(st *store.Store, facts census, request Request) (*Session, error) {
 	s := &Session{store: st, facts: facts, request: request}
 	s.decision.Store(&Decision{seed: maphash.MakeSeed(), unrestricted: !request.Changed && request.AllRoots()})
 	return s, nil
+}
+
+// BindKustomizeInputs MUST run at a quiescent construction boundary.
+func (s *Session) BindKustomizeInputs(
+	read func(context.Context, manifest.NamedResource, manifest.BaseManifest, *SourceFacts) ([2]SourceReadPaths, bool),
+) {
+	s.readKustomizeInputs = read
 }
 
 // ComparesDeclarations MUST follow the immutable invocation request.
@@ -125,6 +133,7 @@ type missingPolicy interface {
 
 // PrepareRequest describes the evidence and selection intent for an admission proposal.
 type PrepareRequest struct {
+	construction  bool
 	Preparation   **Preparation
 	ReadHistory   func(context.Context, *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
 	Changes       *change.Set
@@ -137,7 +146,9 @@ type PrepareRequest struct {
 	Owner      manifest.NamedResource
 	Reads      *store.ReadSet
 	Invocation bool
-	History    map[manifest.NamedResource]struct {
+	// AwaitEmission binds child activation to the pending store publication.
+	AwaitEmission bool
+	History       map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
@@ -223,14 +234,15 @@ type admissionReader interface {
 
 // Demand borrows its artifact and capture until the successor preparation consumes its acquisition.
 type Demand struct {
-	Identity   manifest.NamedResource
-	Occurrence OccurrenceFacts
-	Source     manifest.NamedResource
-	Root       string
-	History    bool
-	Artifact   *store.SourceArtifact
-	Reads      *store.ReadSet
-	Witness    manifest.BaseManifest
+	Identity    manifest.NamedResource
+	Occurrence  OccurrenceFacts
+	Source      manifest.NamedResource
+	Root        string
+	History     bool
+	Materialize bool
+	Artifact    *store.SourceArtifact
+	Reads       *store.ReadSet
+	Witness     manifest.BaseManifest
 }
 
 // Acquisition borrows an exact driver's result until its preparation consumes it.
@@ -243,19 +255,19 @@ type Acquisition struct {
 }
 
 type acquisitionKey struct {
-	identity, source   manifest.NamedResource
-	occurrence         OccurrenceID
-	root               string
-	history            bool
-	witness            manifest.BaseManifest
-	declarationWitness any
-	artifact           *store.SourceArtifact
+	identity, source     manifest.NamedResource
+	occurrence           OccurrenceID
+	root                 string
+	history, materialize bool
+	witness              manifest.BaseManifest
+	declarationWitness   any
+	artifact             *store.SourceArtifact
 }
 
 func (d *Demand) key() acquisitionKey {
 	return acquisitionKey{
 		identity: d.Identity, source: d.Source, occurrence: d.Occurrence.Declaration,
-		root: d.Root, history: d.History, witness: d.Witness, artifact: d.Artifact,
+		root: d.Root, history: d.History, materialize: d.Materialize, witness: d.Witness, artifact: d.Artifact,
 		declarationWitness: d.Occurrence.Witness,
 	}
 }

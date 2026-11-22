@@ -1,0 +1,11 @@
+
+spec.values.value  (helm.toolkit.fluxcd.io/v2/HelmRelease/default/alpha)
+  ± value change
+    - old
+    + new
+
+data.app  (v1/ConfigMap/default/alpha)
+  ± value change
+    - old
+    + new
+

@@ -22,6 +22,7 @@ type Controller struct {
 	Tasks *task.Service
 
 	started            atomic.Bool
+	construction       bool
 	selection          *selection.Session
 	loader             *loader.Loader
 	preparedGeneration func(manifest.BaseManifest) (store.ChildDocuments, bool, error)
@@ -48,7 +49,8 @@ func (c *Controller) requireNotStarted(method string) {
 
 // Options contains immutable controller configuration installed before dispatch.
 type Options struct {
-	Cache *cache.Cache
+	Cache        *cache.Cache
+	Construction bool
 	// Loader supplies the invocation's declaration admission boundary.
 	Loader             *loader.Loader
 	PreparedGeneration func(manifest.BaseManifest) (store.ChildDocuments, bool, error)
@@ -71,6 +73,7 @@ type Options struct {
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.Cache = opts.Cache
+	c.construction = opts.Construction
 	c.selection = opts.Session
 	c.loader = opts.Loader
 	c.preparedGeneration = opts.PreparedGeneration
@@ -105,11 +108,18 @@ func (c *Controller) KeepEmitted(
 	}
 	request.Missing = c.Missing
 	request.Owner = parent
+	stage := selection.Execution
+	if c.construction {
+		stage = selection.Construction
+	}
 	_, accepted, err := c.selection.Admit(ctx, selection.AdmissionOptions{
-		Request: request, Stage: selection.Execution, Authority: reads,
+		Request: request, Stage: stage, Authority: reads,
 	})
 	if err != nil || !accepted {
 		return false, err
+	}
+	if stage == selection.Construction {
+		return true, nil
 	}
 	decision := c.selection.Snapshot()
 	selected := len(request.Generation) == 0

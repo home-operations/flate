@@ -516,8 +516,9 @@ func (c *admissionClosure) declarationOwner(
 
 func (c *admissionClosure) checkDeclarationReferences(owner manifest.NamedResource, stable *bool) {
 	if *stable {
-		for ref := range c.references(owner, c.object(owner)) {
-			if !c.reverse(owner, c.object(owner), new(ref)) {
+		object := c.object(owner)
+		for ref := range c.references(owner, object) {
+			if !c.reverse(owner, object, &ref) {
 				continue
 			}
 			if c.changedInput(owner, ref.NamedResource) ||

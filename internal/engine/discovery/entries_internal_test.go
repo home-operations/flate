@@ -20,6 +20,46 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestClusterRoot_QualificationPriorityForProducedSource(t *testing.T) {
+	t.Parallel()
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindExternalArtifact,
+		Namespace: "apps",
+		Name:      "input",
+	}
+	identity := testutil.KustomizationID("apps", "entry")
+	for _, tc := range []struct {
+		name              string
+		changed, producer bool
+		want              qualificationPriority
+	}{
+		{name: "changed-only with candidate", changed: true, producer: true, want: qualificationOpaque},
+		{name: "changed-only with no candidate", changed: true, want: qualificationIneligible},
+		{name: "full render with candidate", producer: true, want: qualificationIneligible},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := clusterRoot{Occurrences: []selection.OccurrenceFacts{{
+				Identity: identity, Witness: true, Source: source, Path: ".", HasPath: true,
+			}}}
+			if tc.producer {
+				root.sources = map[manifest.NamedResource]entryResolution{source: {producers: []occurrenceKey{
+					{
+						identity: manifest.NamedResource{
+							Kind:      manifest.KindArtifactGenerator,
+							Group:     manifest.SourceExtensionsDomain,
+							Name:      "generator",
+							Namespace: "apps",
+						},
+					},
+				}}}
+			}
+			assert.Equal(t, root.qualificationPriority(tc.changed), tc.want)
+		})
+	}
+}
+
 func TestPlan_OccurrenceBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

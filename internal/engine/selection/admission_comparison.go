@@ -2,6 +2,8 @@ package selection
 
 import (
 	"cmp"
+	"io/fs"
+	"path"
 	"slices"
 	"strings"
 
@@ -193,14 +195,50 @@ func (c *admissionClosure) deriveAffected(id manifest.NamedResource, obj manifes
 			return affectedResult{changed: true, settled: true}
 		}
 	}
-	roots := c.contentRoots(id, obj, &record)
+	return c.affectedContentReads(id, obj, &record)
+}
+
+func (c *admissionClosure) affectedContentReads(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	record *manifest.DiscoveryRecord,
+) affectedResult {
+	roots := c.contentRoots(id, obj, record)
 	settled := true
-	for source, roots := range roots {
-		result := c.affectedSourceRoots(id, source, roots, &record)
-		settled = settled && result.settled
-		if result.changed {
-			return affectedResult{changed: true, settled: settled}
+	var generatedSources []manifest.NamedResource
+	for ref := range c.references(id, obj) {
+		paths := c.referenceReadPaths(&ref)
+		comparison, generated := c.generatedKustomizeRead(id, obj, &ref)
+		var result affectedResult
+		switch {
+		case generated:
+			generatedSources = append(generatedSources, ref.NamedResource)
+			result = affectedResult{changed: comparison.Changed, settled: comparison.Known}
+		case len(paths.Roots)+len(paths.Files) != 0:
+			result = c.affectedSourceRoots(id, ref.NamedResource, &paths, record)
+		case len(roots[ref.NamedResource]) == 0:
+			comparison, generated = c.generatedRead(ref.NamedResource, nil)
+			if !generated || !c.reverse(id, obj, &ref) {
+				continue
+			}
+			result = affectedResult{changed: comparison.Changed, settled: comparison.Known}
+		default:
+			continue
 		}
+		if result.changed {
+			return affectedResult{changed: true, settled: true}
+		}
+		settled = settled && result.settled
+	}
+	for source, paths := range roots {
+		if slices.Contains(generatedSources, source) {
+			continue
+		}
+		result := c.affectedSourceRoots(id, source, &SourceReadPaths{Roots: paths}, record)
+		if result.changed {
+			return affectedResult{changed: true, settled: true}
+		}
+		settled = settled && result.settled
 	}
 	return affectedResult{settled: settled}
 }
@@ -264,7 +302,7 @@ func (c *admissionClosure) populateContentRoots(
 		if !initialized {
 			initialized = true
 			for source := range c.sources(id) {
-				if _, input, _ := c.delta(source); input != nil && input.FS != nil {
+				if _, input, _ := c.delta(source); c.incoming(id).Obj != nil || input != nil && input.FS != nil {
 					roots[source] = nil
 				}
 			}
@@ -278,66 +316,233 @@ func (c *admissionClosure) populateContentRoots(
 	}
 }
 
-func (c *admissionClosure) incomingContentSource(
-	obj manifest.BaseManifest,
-	record *manifest.DiscoveryRecord,
-) manifest.NamedResource {
-	source := manifest.BootstrapSourceID
-	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.BindsSource() {
-			source = ref.NamedResource
-			break
-		}
-	}
-	if source == manifest.BootstrapSourceID {
-		for _, ref := range record.Refs {
-			if ref.KindInfo().SourceArtifact {
-				source = ref
-				break
-			}
-		}
-	}
-	return source
-}
-
 func (c *admissionClosure) affectedSourceRoots(
 	id, source manifest.NamedResource,
-	roots []string,
+	paths *SourceReadPaths,
 	record *manifest.DiscoveryRecord,
 ) affectedResult {
-	delta, input, paired := c.delta(source)
-	if delta == nil || len(roots) == 0 || record.Pinned && !paired {
+	evidence := c.boundSource(source)
+	if comparison, generated := c.generatedRead(source, paths); generated {
+		return affectedResult{changed: comparison.Changed, settled: comparison.Known}
+	}
+	if evidence.Delta == nil || record.Pinned && !evidence.Paired {
 		return affectedResult{settled: true}
 	}
-	files := c.boundSource(source).Files
 	settled := true
-	for _, root := range roots {
-		resolved, known := c.affectedRoot(source, root)
-		root = resolved
+	for name, exact := range paths.all() {
+		resolved, known := c.affectedRoot(source, name)
 		if !known {
 			settled = false
 			continue
 		}
-		location := c.affectedCoordinates(root, input, paired)
+		location := c.affectedCoordinates(resolved, evidence.Input, evidence.Paired)
 		if !location.known {
 			continue
 		}
-		base := strings.TrimSuffix(location.base, "/")
-		for _, file := range files {
-			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
-			suffix, contains := strings.CutPrefix(file.Path, base)
-			descendant := contains && strings.HasPrefix(suffix, "/")
-			withinRoot := location.base == "." || file.Path == location.base || descendant
-			missingCoordinates := paired && input != nil && file.Indexed == ""
-			if !withinRoot || missingCoordinates {
-				continue
-			}
-			if c.affectedClaim(id, location.prefix, file.Indexed) {
-				return affectedResult{changed: true, settled: settled}
-			}
+		var changed bool
+		if exact {
+			changed = evidence.Delta.Contains(location.base) && c.affectedClaim(id, location.prefix, location.prefix)
+		} else {
+			changed = c.affectedSubtree(id, &location, evidence)
+		}
+		if changed {
+			return affectedResult{changed: true, settled: settled}
 		}
 	}
 	return affectedResult{settled: settled}
+}
+
+func (c *admissionClosure) affectedSubtree(
+	id manifest.NamedResource,
+	location *affectedLocation,
+	evidence *SourceFacts,
+) bool {
+	base := strings.TrimSuffix(location.base, "/")
+	for _, file := range evidence.Files {
+		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
+		matches := base == "." || file.Path == base || strings.HasPrefix(file.Path, base+"/")
+		missingCoordinates := evidence.Paired && evidence.Input != nil && file.Indexed == ""
+		if matches && !missingCoordinates && c.affectedClaim(id, location.prefix, file.Indexed) {
+			return true
+		}
+	}
+	return false
+}
+
+// Generated captures are comparable only at their accepted generation.
+func (c *admissionClosure) generatedRead(
+	source manifest.NamedResource, paths *SourceReadPaths,
+) (change.Comparison, bool) {
+	var compare func(*change.Set) change.Comparison
+	if paths != nil && len(paths.Roots)+len(paths.Files) != 0 {
+		compare = func(delta *change.Set) change.Comparison {
+			if delta.Len() == 0 {
+				return change.Comparison{Known: true}
+			}
+			resolved, known := c.resolveReadPaths(source, paths)
+			if !known {
+				return change.Comparison{}
+			}
+			return delta.ComparePaths(resolved.matches)
+		}
+	}
+	return c.compareGeneratedRead(source, compare)
+}
+
+func (c *admissionClosure) compareGeneratedRead(
+	source manifest.NamedResource, compare func(*change.Set) change.Comparison,
+) (change.Comparison, bool) {
+	if source == manifest.BootstrapSourceID || !source.KindInfo().SourceArtifact ||
+		!c.context.SideKnown || !c.proposal.Request.Changes.Paired() {
+		return change.Comparison{}, false
+	}
+	evidence := c.boundSource(source)
+	if evidence.Input != nil && evidence.Input.InputAlias && !evidence.External {
+		return change.Comparison{}, false
+	}
+	input := evidence.Input
+	if evidence.Paired {
+		input = evidence.Snapshots[c.context.Side]
+	}
+	comparison, generated := c.proposal.Request.Changes.CompareSource(
+		source, c.context.Side, input, compare,
+	)
+	if evidence.Declaration != evidence.Declarations[c.context.Side] {
+		comparison = change.Comparison{}
+	}
+	if generated {
+		return comparison, true
+	}
+	productions := c.productions(source)
+	for i := range productions {
+		owner := productions[i].Materializer(source)
+		if owner != (manifest.NamedResource{}) && owner != source && !owner.KindInfo().Structural {
+			return comparison, true
+		}
+	}
+	return change.Comparison{}, false
+}
+
+func (c *admissionClosure) resolveReadPaths(
+	source manifest.NamedResource, paths *SourceReadPaths,
+) (SourceReadPaths, bool) {
+	resolved := *paths
+	copied := false
+	for i, root := range paths.Roots {
+		name, known := c.affectedRoot(source, root)
+		if !known {
+			return SourceReadPaths{}, false
+		}
+		if name == root {
+			continue
+		}
+		if !copied {
+			resolved.Roots = slices.Clone(paths.Roots)
+			copied = true
+		}
+		resolved.Roots[i] = name
+	}
+	return resolved, true
+}
+
+func (c *admissionClosure) reverseChanged(
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	ref *manifest.Reference,
+) bool {
+	if ref.NamedResource.KindInfo().SourceArtifact && c.proposal.Request.Changes.Paired() {
+		comparison, generated := c.generatedKustomizeRead(id, obj, ref)
+		if !generated {
+			record := c.contentRecord(id)
+			paths := c.referenceReadPaths(ref)
+			if len(paths.Files)+len(paths.Roots) == 0 {
+				paths.Roots = c.contentRoots(id, obj, &record)[ref.NamedResource]
+			}
+			comparison, generated = c.generatedRead(ref.NamedResource, &paths)
+		}
+		if generated {
+			// Pending generated reads cannot inherit dirtiness through their producer.
+			return comparison.Changed
+		}
+	}
+	comparison := c.outputChanged(id, ref, obj)
+	return !comparison.Known || comparison.Changed
+}
+
+type kustomizeReadKey struct {
+	id, source manifest.NamedResource
+	object     manifest.BaseManifest
+}
+
+type kustomizeReadPaths struct {
+	sides    [2]SourceReadPaths
+	complete bool
+}
+
+func (c *admissionClosure) generatedKustomizeRead(
+	id manifest.NamedResource, obj manifest.BaseManifest, ref *manifest.Reference,
+) (change.Comparison, bool) {
+	if c.session == nil || c.session.readKustomizeInputs == nil || c.evaluationContext == nil {
+		return change.Comparison{}, false
+	}
+	if !id.KindInfo().Structural || !ref.BindsSource() || !ref.ReadsSourceTree() {
+		return change.Comparison{}, false
+	}
+	source := ref.NamedResource
+	return c.compareGeneratedRead(source, func(delta *change.Set) change.Comparison {
+		if delta.Len() == 0 {
+			return change.Comparison{Known: true}
+		}
+		if obj == nil {
+			record := c.record(id)
+			obj, _ = c.completeHydrate(&completeHydrateState{id: &id, record: &record, obj: &obj})
+		}
+		key := kustomizeReadKey{id: id, source: source, object: obj}
+		reads, ok := c.kustomizeReads[key]
+		if !ok {
+			reads.sides, reads.complete = c.session.readKustomizeInputs(
+				c.evaluationContext, id, obj, c.boundSource(source),
+			)
+			if c.kustomizeReads == nil {
+				c.kustomizeReads = make(map[kustomizeReadKey]kustomizeReadPaths)
+			}
+			c.kustomizeReads[key] = reads
+		}
+		comparison := delta.ComparePaths(func(file string) bool {
+			return reads.sides[0].matches(file) || reads.sides[1].matches(file)
+		})
+		comparison.Known = comparison.Changed || reads.complete
+		return comparison
+	})
+}
+
+func (c *admissionClosure) initialSourceChanged(source manifest.NamedResource) bool {
+	comparison, generated := c.generatedRead(source, nil)
+	if !generated {
+		return true
+	}
+	if !comparison.Known {
+		c.requireSourceMaterializers(source)
+	}
+	return comparison.Changed
+}
+
+func (c *admissionClosure) requireSourceMaterializers(source manifest.NamedResource) {
+	if !c.proposal.Request.construction {
+		return
+	}
+	peerOwner := c.proposal.Request.Changes.PendingSourceOwner(source, c.context.Side)
+	if peerOwner.Name != "" && peerOwner != source && !peerOwner.KindInfo().Structural {
+		c.demandMaterialization(peerOwner)
+	}
+	productions := c.productions(source)
+	for i := range productions {
+		owner := productions[i].Materializer(source)
+		local := owner.Name != "" && owner != source && !owner.KindInfo().Structural
+		if local && owner != peerOwner && c.states[owner].changed {
+			c.demandMaterialization(owner)
+		}
+	}
 }
 
 func (c *admissionClosure) affectedRoot(source manifest.NamedResource, root string) (string, bool) {
@@ -375,14 +580,69 @@ func (c *admissionClosure) contentRoots(
 	record *manifest.DiscoveryRecord,
 ) map[manifest.NamedResource][]string {
 	roots := record.ContentRoots
+	if c.incoming(id).Obj != nil && !id.ReportHidden() {
+		roots = nil
+	}
 	if roots == nil && obj != nil {
 		roots = map[manifest.NamedResource][]string{}
 		c.populateContentRoots(id, obj, roots)
 	}
 
-	if c.incoming(id).Obj != nil && (record.ContentRoots == nil || !id.ReportHidden()) {
-		source := c.incomingContentSource(obj, record)
-		roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
-	}
 	return roots
+}
+
+func (c *admissionClosure) referenceReadPaths(ref *manifest.Reference) SourceReadPaths {
+	if c.evaluationContext == nil || !ref.BindsSource() || ref.ChartPath == "" {
+		return SourceReadPaths{}
+	}
+	evidence := c.boundSource(ref.NamedResource)
+	if evidence.Delta == nil || evidence.Delta.Len() == 0 {
+		return SourceReadPaths{}
+	}
+	chart := path.Clean(ref.ChartPath)
+	paths := c.chartReadPaths(evidence.Input, chart)
+	if evidence.Paired && c.context.SideKnown {
+		peer := c.chartReadPaths(evidence.Snapshots[1-c.context.Side], chart)
+		paths.Files = append(paths.Files, peer.Files...)
+		paths.Roots = append(paths.Roots, peer.Roots...)
+	}
+	for _, file := range ref.Files {
+		if name := path.Clean(file); fs.ValidPath(name) && name != "." && strings.IndexByte(name, 0) < 0 {
+			paths.Files = append(paths.Files, name)
+		}
+	}
+	return paths
+}
+
+type chartReadKey struct {
+	input store.ArtifactInput
+	chart string
+}
+
+type chartReadPaths struct {
+	input *store.SourceArtifact
+	paths SourceReadPaths
+}
+
+func (c *admissionClosure) chartReadPaths(input *store.SourceArtifact, chart string) SourceReadPaths {
+	if input == nil || input.FS == nil {
+		return SourceReadPaths{}
+	}
+	key := chartReadKey{input: input.Input(store.ArtifactContent), chart: chart}
+	reads := c.chartReads[key]
+	for i := range reads {
+		if key.input.Content != "" || reads[i].input.SameMaterial(input, store.ArtifactContent) {
+			return reads[i].paths
+		}
+	}
+	paths := c.facts.ChartReadPaths(c.evaluationContext, input, chart)
+	// Current and peer paths MUST keep their backing arrays when callers append values files.
+	paths.Files, paths.Roots = slices.Clip(paths.Files), slices.Clip(paths.Roots)
+	if c.evaluationContext.Err() == nil {
+		if c.chartReads == nil {
+			c.chartReads = make(map[chartReadKey][]chartReadPaths)
+		}
+		c.chartReads[key] = append(reads, chartReadPaths{input: input, paths: paths})
+	}
+	return paths
 }

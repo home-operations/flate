@@ -138,7 +138,7 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 		return fmt.Errorf("entry path: %w", err)
 	}
 	relative = filepath.ToSlash(relative)
-	scope := prepared.collectEntryOperands(entry, roots, relative)
+	scope := prepared.collectEntryOperands(entry, roots, relative, d.cfg.Selection.Changed)
 	if d.cfg.Trees != nil {
 		prepared.generatorPackages, err = d.plannedGeneratorPackages(ctx, entry, roots, relative)
 		if err != nil {
@@ -204,7 +204,9 @@ func (d *Session) plannedGeneratorPackages(
 	return packages, nil
 }
 
-func (p *entryInputs) collectEntryOperands(entry *Entry, roots []clusterRoot, relative string) *rootScope {
+func (p *entryInputs) collectEntryOperands(
+	entry *Entry, roots []clusterRoot, relative string, changed bool,
+) *rootScope {
 	var scope *rootScope
 	var preferred, remaining []selection.OccurrenceFacts
 	for _, j := range entry.roots {
@@ -212,7 +214,7 @@ func (p *entryInputs) collectEntryOperands(entry *Entry, roots []clusterRoot, re
 		scope = &rootScope{occurrences: root.Occurrences, parent: scope}
 		p.merge(root)
 		if entry.aggregate {
-			switch root.qualificationPriority() {
+			switch root.qualificationPriority(changed) {
 			case qualificationHint:
 				preferred = append(preferred, root.seeds...)
 			case qualificationOpaque:
@@ -248,12 +250,20 @@ const (
 )
 
 // Producer hints change preparation order. Coverage requires accepted output.
-func (r *clusterRoot) qualificationPriority() qualificationPriority {
+func (r *clusterRoot) qualificationPriority(changed bool) qualificationPriority {
 	priority := qualificationIneligible
 	for i := range r.Occurrences {
 		occurrence := &r.Occurrences[i]
 		kind := occurrence.Identity.KindInfo()
-		if kind.Structural || !kind.Parent {
+		if !kind.Parent {
+			continue
+		}
+		if kind.Structural {
+			source, _, applies := occurrence.SourcePath()
+			// Paired content equality does not settle whether a produced source carries an entry producer.
+			if changed && applies && len(r.sources[source].producers) != 0 {
+				priority = qualificationOpaque
+			}
 			continue
 		}
 		priority = qualificationOpaque
@@ -452,7 +462,7 @@ func syntheticAggregateInput(
 	projected := *input
 	projected.LocalRoot = input.OriginPath(input.LocalPath)
 	projected.Content, projected.Digest, projected.ContentFingerprint = "", "", nil
-	projected.FS = &inputprojection.Overlay{Tree: content, Authored: input}
+	projected.FS = &inputprojection.Overlay{Tree: content, Authored: input, Resources: resources}
 	return &projected, nil
 }
 

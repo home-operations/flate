@@ -35,7 +35,11 @@ type admissionIdentity struct {
 	stableObject manifest.BaseManifest
 }
 
+//nolint:containedctx // The input read context is borrowed only during synchronous evaluation.
 type admissionClosure struct {
+	evaluationContext   context.Context
+	kustomizeReads      map[kustomizeReadKey]kustomizeReadPaths
+	chartReads          map[chartReadKey][]chartReadPaths
 	declarationContents func(map[string]any) store.DeclarationContent
 
 	changes            *change.Set
@@ -528,6 +532,14 @@ func (c *admissionClosure) selectsChild(id manifest.NamedResource) bool {
 }
 
 func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest) (*Admission, error) {
+	if request.Changes != nil {
+		c.evaluationContext = ctx
+		defer func() {
+			c.evaluationContext = nil
+			clear(c.kustomizeReads)
+			clear(c.chartReads)
+		}()
+	}
 	c.captureIncoming()
 	if len(c.history) != 0 {
 		c.readHistory()

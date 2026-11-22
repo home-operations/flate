@@ -48,6 +48,9 @@ func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 }
 
 func (c *admissionClosure) productionRole(id manifest.NamedResource, role admissionRole, eligible bool) admissionRole {
+	if comparison, generated := c.generatedRead(id, nil); generated && !comparison.Changed {
+		return role
+	}
 	{
 		productionValues := c.productions(id)
 		for productionIndex := range productionValues {
@@ -83,12 +86,7 @@ func (c *admissionClosure) reverseInputRole(
 			if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
 				continue
 			}
-			if comparison := c.outputChanged(
-				id,
-				new(ref),
-				c.incoming(id).Obj,
-			); comparison.Known &&
-				!comparison.Changed {
+			if !c.reverseChanged(id, c.incoming(id).Obj, new(ref)) {
 				continue
 			}
 			role.needed = true
@@ -197,7 +195,7 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 		if !known || !slices.Contains(inputs, id) {
 			continue
 		}
-		if comparison := c.outputChanged(reader, new(ref), object); comparison.Known && !comparison.Changed {
+		if !c.reverseChanged(reader, object, new(ref)) {
 			continue
 		}
 		c.add(reader, admissionRole{needed: true, selected: true, dirty: true})

@@ -12,13 +12,11 @@ import (
 
 // Composition MUST identify the complete base and ordered operations before cache reuse.
 type Composition struct {
-	// Content retains contextual facts beyond the cache-derived filesystem and operation identity.
-	Content any
-	Base    CompositionInput
-	Inputs  []CompositionInput
-	Copies  []Copy
-	Policy  string
-	Ignore  string
+	Base   CompositionInput
+	Inputs []CompositionInput
+	Copies []Copy
+	Policy string
+	Ignore string
 }
 
 // CompositionInput MUST identify immutable backing or force fresh production.
@@ -26,6 +24,8 @@ type CompositionInput struct {
 	FS fs.FS
 	// Empty Content forces fresh production because the backing can change.
 	Content string
+	// Backing distinguishes mutable inputs that can coexist under the same recipe.
+	Backing string
 }
 
 // Copy paths MUST use secure resolution for PlaceTree and relative archive paths otherwise.
@@ -35,9 +35,6 @@ type Copy struct {
 	To      string
 	Exclude []string
 	Mode    CopyMode
-	// ExtractContent retains contextual identity facts for nested extraction acquisitions.
-	// It constructs opaque facts only, without filesystem access or publication.
-	ExtractContent func(path, destination string) any
 }
 
 // CopyMode MUST select one of the supported operations.
@@ -51,6 +48,17 @@ const (
 	PlaceTree
 )
 
+type compositionIdentity struct {
+	Content, Backing string
+}
+
+func (i *CompositionInput) identity() compositionIdentity {
+	if i.Content != "" {
+		return compositionIdentity{Content: i.Content}
+	}
+	return compositionIdentity{Backing: i.Backing}
+}
+
 type copyIdentity struct {
 	Input    int
 	From, To string
@@ -59,9 +67,9 @@ type copyIdentity struct {
 }
 
 func (r *Composition) key() ArchiveKey {
-	inputs := make([]string, len(r.Inputs))
+	inputs := make([]compositionIdentity, len(r.Inputs))
 	for i := range r.Inputs {
-		inputs[i] = r.Inputs[i].Content
+		inputs[i] = r.Inputs[i].identity()
 	}
 	copies := make([]copyIdentity, len(r.Copies))
 	for i := range r.Copies {
@@ -70,12 +78,11 @@ func (r *Composition) key() ArchiveKey {
 	}
 	return ArchiveKey{
 		Content: struct {
-			Context     any
 			BasePresent bool
-			Base        string
-			Inputs      []string
+			Base        compositionIdentity
+			Inputs      []compositionIdentity
 			Copies      []copyIdentity
-		}{r.Content, r.Base.FS != nil, r.Base.Content, inputs, copies},
+		}{r.Base.FS != nil, r.Base.identity(), inputs, copies},
 		Policy: r.Policy, Ignore: r.Ignore,
 	}
 }
@@ -89,7 +96,7 @@ type composition struct {
 
 // Compose borrows input filesystems until production returns. Output backing belongs to the cache.
 //
-//nolint:gocritic // The SDK takes an independent composition value snapshot.
+//nolint:gocritic // The cache takes an independent composition value snapshot.
 func (c *Cache) Compose(
 	ctx context.Context,
 	request Composition,

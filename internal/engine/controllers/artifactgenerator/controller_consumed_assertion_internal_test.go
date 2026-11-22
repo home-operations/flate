@@ -59,7 +59,7 @@ func (f *consumedFixture) assertPublication(t *testing.T) {
 	}
 }
 
-func (f *consumedFixture) finalDocuments(t *testing.T, generatorKeys map[manifest.WorkPhase]map[string]bool) []byte {
+func (f *consumedFixture) finalDocuments(t *testing.T) []byte {
 	t.Helper()
 	st, consumer, change, s1, s2 := f.st, f.consumer, f.change, f.s1, f.s2
 	// No outstanding task, dispatch or Settle structurally excludes slot reacquisition and other Acquire paths.
@@ -76,7 +76,8 @@ func (f *consumedFixture) finalDocuments(t *testing.T, generatorKeys map[manifes
 		},
 		store.ArtifactContent,
 	).(*store.SourceArtifact)
-	assert.Equal(t, generatorKeys[manifest.WorkEvaluation][artifact.Key], true)
+	assert.Equal(t, artifact.Key, "apps/output")
+	assert.Equal(t, artifact.Content, artifact.Digest)
 	if strings.HasPrefix(change, "unselected-") {
 		assert.FatalIf(
 			t,
@@ -217,8 +218,8 @@ func (f *consumedFixture) run(ctx context.Context, t *testing.T, cancel context.
 		diff := cmp.Diff(atSweep, after)
 		assert.ErrorIf(t, diff != "", "%s delayed generator work after final drain (-want +got):\n%s", change, diff)
 	}
-	generatorKeys := f.assertRecordedWork(t)
-	return f.finalDocuments(t, generatorKeys)
+	f.assertRecordedWork(t)
+	return f.finalDocuments(t)
 }
 
 func (f *consumedFixture) assertInitial(t *testing.T) workSnapshot {
@@ -255,7 +256,7 @@ func (f *consumedFixture) assertInitial(t *testing.T) workSnapshot {
 	return before
 }
 
-func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhase]map[string]bool {
+func (f *consumedFixture) assertRecordedWork(t *testing.T) {
 	t.Helper()
 	st, obj, consumer, change := f.st, f.obj, f.consumer, f.change
 	generatorID := manifest.NamedResource{
@@ -284,20 +285,8 @@ func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhas
 	}
 	assert.Equal(t, obj.Named(), generatorID)
 	assert.Equal(t, consumer.Named(), consumerID)
-	physical, cacheCalls, service := uint64(1), uint64(1), uint64(0)
-	if strings.HasPrefix(change, "selected-") {
-		physical, cacheCalls = 2, 2
-	}
-	if change == "selected-uid" {
-		physical, service = 1, 1
-	}
 	gotWork := map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts{}
 	generatorKeys := make(map[manifest.WorkPhase]map[string]bool)
-	selectedBindingKey := ""
-	if change == "selected-binding" {
-		current := st.GetArtifact(outputID, store.ArtifactContent).(*store.SourceArtifact)
-		selectedBindingKey = current.Key
-	}
 
 	records := st.WorkSnapshot()
 	for i := range records {
@@ -325,7 +314,7 @@ func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhas
 			continue
 		}
 		source := f.repo
-		if change == "selected-binding" && record.Key.Input == selectedBindingKey {
+		if change == "selected-binding" && record.Key.Phase == manifest.WorkCache && record.Counts.CacheService != 0 {
 			source = f.rebound
 		}
 		assert.Equal(t, record.Key.Source, source)
@@ -334,31 +323,36 @@ func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhas
 		}
 		generatorKeys[record.Key.Phase][record.Key.Input] = true
 	}
+	generation, composeCalls, composeReuse := uint64(1), uint64(1), uint64(0)
+	render, renderCalls, renderReuse := uint64(1), uint64(1), uint64(0)
+	switch {
+	case change == "selected-union":
+		generation, composeCalls = 2, 2
+		render, renderCalls = 2, 2
+	case change == "selected-uid" || change == "selected-binding":
+		composeCalls, composeReuse = 2, 1
+		renderCalls, renderReuse = 2, 1
+	case strings.HasPrefix(change, "selected-"):
+		composeCalls, composeReuse = 2, 1
+	}
 	phaseCounts1 := make(map[manifest.WorkPhase]manifest.WorkCounts)
 	phaseCounts1[manifest.WorkAcquisition] = manifest.WorkCounts{
-		Attempts:          physical,
-		Completed:         physical,
-		LocalAcquisitions: physical,
+		Attempts: generation, Completed: generation, LocalAcquisitions: generation,
 	}
-	phaseCounts1[manifest.WorkEvaluation] = manifest.WorkCounts{Attempts: physical, Completed: physical}
+	phaseCounts1[manifest.WorkEvaluation] = manifest.WorkCounts{Attempts: generation, Completed: generation}
 	phaseCounts1[manifest.WorkCache] = manifest.WorkCounts{
-		Attempts:     cacheCalls,
-		Completed:    cacheCalls,
-		CacheService: service,
+		Attempts: composeCalls, Completed: composeCalls, CacheService: composeReuse,
 	}
 	phaseCounts2 := make(map[manifest.WorkPhase]manifest.WorkCounts)
-	phaseCounts2[manifest.WorkKustomize] = manifest.WorkCounts{Attempts: physical, Completed: physical}
+	phaseCounts2[manifest.WorkKustomize] = manifest.WorkCounts{Attempts: render, Completed: render}
 	phaseCounts2[manifest.WorkCache] = manifest.WorkCounts{
-		Attempts:     cacheCalls,
-		Completed:    cacheCalls,
-		CacheService: service,
+		Attempts: renderCalls, Completed: renderCalls, CacheService: renderReuse,
 	}
 	assert.Diff(t, gotWork, map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts{
 		generatorID: phaseCounts1,
 		consumerID:  phaseCounts2,
 	})
-	assert.Equal(t, len(generatorKeys[manifest.WorkEvaluation]), int(physical))
+	assert.Equal(t, len(generatorKeys[manifest.WorkEvaluation]), int(generation))
 	assert.Diff(t, generatorKeys[manifest.WorkAcquisition], generatorKeys[manifest.WorkEvaluation])
 	assert.Diff(t, generatorKeys[manifest.WorkCache], generatorKeys[manifest.WorkEvaluation])
-	return generatorKeys
 }

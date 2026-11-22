@@ -1,0 +1,10 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: gamma, namespace: default}
+spec:
+  interval: 1m
+  chart:
+    spec:
+      chart: ./shared
+      sourceRef: {kind: GitRepository, name: repo}
+  values: {app: gamma, value: old}

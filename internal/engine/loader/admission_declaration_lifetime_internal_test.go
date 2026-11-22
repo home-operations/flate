@@ -119,10 +119,16 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	stores, inputs, prepared := preparedDeclarationPair(t, id, owner.Named())
 	changes, err := change.Qualify(
 		t.Context(),
-		detectChanges(t, []string{"declaration.yaml"}, []string{"declaration.yaml"}), [2]*store.Store{
+		detectChanges(
+			t,
+			[]string{"declaration.yaml"},
+			[]string{"declaration.yaml"},
+		),
+		change.SourcePair{Stores: [2]*store.Store{
 			stores[0],
 			stores[1],
-		}, manifest.WorkScope{},
+		}},
+		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
 	changes, err = changes.WithDeclarations(

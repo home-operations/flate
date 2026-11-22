@@ -93,7 +93,7 @@ func testArtifactGeneratorGeneratedWorkloadsCase(
 				assert.FatalIf(t, identity != identities[i], "warm identity changed for output %d", i)
 			}
 		}
-		want := int64((*testCaseInput.count))
+		want := int64(1)
 		if phase != "cold" {
 			want = 0
 		}

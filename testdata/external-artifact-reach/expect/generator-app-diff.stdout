@@ -1,0 +1,20 @@
+--- ConfigMap default/alpha
++++ ConfigMap default/alpha
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  app: old
++  app: new
+   shared: old
+ kind: ConfigMap
+ metadata:
+
+--- HelmRelease default/alpha (app)
++++ HelmRelease default/alpha (app)
+@@ -16,5 +16,5 @@
+   interval: 1m
+   values:
+     app: alpha
+-    value: old
++    value: new
+ 

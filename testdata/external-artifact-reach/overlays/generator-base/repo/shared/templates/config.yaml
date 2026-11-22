@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.app }}
+data:
+  app: {{ .Values.value | quote }}
+  shared: "old"

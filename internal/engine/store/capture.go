@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"iter"
 	"slices"
 	"sync/atomic"
@@ -561,7 +562,8 @@ func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
 }
 
 // SetIncluded MUST never exclude an object after this Store invocation admits it.
-func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool) {
+func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool, incoming ...manifest.BaseManifest) {
+	expected := cmp.Or(incoming...)
 	included = included || ordinary
 	sh := s.shardFor(id)
 	sh.mu.Lock()
@@ -599,7 +601,8 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool) 
 	if reset {
 		dispatch = sh.resetInclusion(s, id, &cell)
 	} else if included && !cell.hidden {
-		if obj := sh.objectLocked(id); obj != nil {
+		// Publication wakes the child after replacing its provisional declaration.
+		if obj := sh.objectLocked(id); obj != nil && cmp.Or(expected, obj) == obj {
 			dispatch = fireUnderLock(s, EventObjectAdded, id)
 			dispatch.payload = obj
 		}

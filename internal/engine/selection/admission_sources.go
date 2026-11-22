@@ -48,7 +48,7 @@ func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.
 			}
 			return
 		}
-		c.yieldObjectSources(id, &record, yield)
+		yield(c.objectSource(c.object(id), &record))
 	}
 }
 
@@ -174,6 +174,7 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 	return delta.Contains(coordinates3.indexed)
 }
 
+// refValue MUST come from references for this object.
 func (c *admissionClosure) reverse(
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
@@ -181,6 +182,9 @@ func (c *admissionClosure) reverse(
 ) bool {
 	target := refValue.NamedResource
 	if object != nil {
+		if refValue.AffectedInput() {
+			return true
+		}
 		matched := false
 		c.references(id, object)(func(input manifest.Reference) bool {
 			matched = input.AffectedInput() && input.NamedResource == target
@@ -251,24 +255,20 @@ func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState
 	return true
 }
 
-func (c *admissionClosure) yieldObjectSources(
-	id manifest.NamedResource,
-	record *manifest.DiscoveryRecord,
-	yield func(manifest.NamedResource) bool,
-) {
-	for ref := range manifest.References(c.object(id), manifest.ReferenceRelations) {
-		if ref.BindsSource() {
-			yield(ref.NamedResource)
-			return
+func (*admissionClosure) objectSource(
+	object manifest.BaseManifest, record *manifest.DiscoveryRecord,
+) manifest.NamedResource {
+	for ref := range manifest.References(object, manifest.ReferenceRelations) {
+		if ref.BindsSource() && ref.NamedResource != manifest.BootstrapSourceID {
+			return ref.NamedResource
 		}
 	}
 	for _, ref := range record.Refs {
 		if ref.KindInfo().SourceArtifact {
-			yield(ref)
-			return
+			return ref
 		}
 	}
-	yield(manifest.BootstrapSourceID)
+	return manifest.BootstrapSourceID
 }
 
 func (c *admissionClosure) comparisonInputChanged(

@@ -45,7 +45,7 @@ func admittedChanges(t *testing.T, result *Result) (*change.Set, [2]*store.Sourc
 		inputs[i] = input.WithSourceView(view)
 		stores[i].SetArtifact(manifest.BootstrapSourceID, inputs[i])
 	}
-	changes, err := change.Qualify(t.Context(), result.Changes, stores, manifest.WorkScope{})
+	changes, err := change.Qualify(t.Context(), result.Changes, change.SourcePair{Stores: stores}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	return changes, inputs
 }

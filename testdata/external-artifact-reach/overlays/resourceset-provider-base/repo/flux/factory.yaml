@@ -1,0 +1,26 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: factory, namespace: flux-system}
+spec:
+  inputsFrom:
+  - kind: ResourceSetInputProvider
+    name: child
+  resourcesTemplate: |
+    << $tracked := inputs.tracked >>
+    apiVersion: << if $tracked >>kustomize.toolkit.fluxcd.io/v1<< else >>v1<< end >>
+    kind: << if $tracked >>Kustomization<< else >>ConfigMap<< end >>
+    metadata: {name: child, namespace: default}
+    << if $tracked >>
+    spec:
+      path: ./apps/child
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+    << else >>
+    data: {value: unused}
+    << end >>
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata: {name: child, namespace: flux-system}
+spec:
+  type: Static
+  defaultValues: {tracked: true}

@@ -129,7 +129,12 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 			)
 		}
 	}
-	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	var observations [2]manifest.DiscoveryIndex
 	for _, source := range sources {
@@ -210,7 +215,12 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	t.Parallel()
 	changes, stores, roots, source := optionalSupplierPair(t, "apps")
-	changes, err := change.Qualify(t.Context(), changes, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		changes,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	support := &manifest.ConfigMap{Name: "support", Namespace: "infra"}
 	stores[1].AddObject(support)
@@ -415,7 +425,12 @@ func testAdmissionUnreferencedInputCollisionCase(
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		stores[side], loaders[side] = st, l
 	}
-	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes

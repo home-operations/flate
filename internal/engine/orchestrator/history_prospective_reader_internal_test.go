@@ -107,7 +107,7 @@ spec:
 	assert.Equal(t, manifest.ValueEqual(before, oracle), false)
 	changes, err := change.Qualify(t.Context(),
 		detectChanges(t, []string{"flux/settings.yaml"}, []string{"flux/settings.yaml"}),
-		[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{})
+		change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	tree.ExternalChanges = changes
 	for _, history := range []bool{false, true} {
@@ -481,7 +481,7 @@ spec:
 	testCaseInput.logs.Reset()
 	tree.ExternalChanges, err = change.Qualify(t.Context(),
 		detectChanges(t, []string{"apps/blue/cm.yaml"}, []string{"apps/blue/cm.yaml"}),
-		[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{})
+		change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
@@ -768,7 +768,7 @@ spec:
 	warm.stop()
 	tree.ExternalChanges, err = change.Qualify(t.Context(),
 		detectChanges(t, []string{"flux/consumer.yaml"}, []string{"flux/consumer.yaml"}),
-		[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{})
+		change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}}, manifest.WorkScope{})
 	assert.NoError(t, err)
 	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)

@@ -1,0 +1,31 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: gen, namespace: flux-system}
+spec:
+  sources:
+    - {alias: repo, kind: GitRepository, name: flux-system}
+  artifacts:
+    - name: app
+      originRevision: "@repo"
+      copy:
+        - {from: "@repo/content/app/**", to: "@artifact/app/"}
+        - {from: "@repo/content/shared/**", to: "@artifact/shared/"}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app, namespace: flux-system}
+spec:
+  interval: 1h
+  path: ./app
+  prune: true
+  sourceRef: {kind: ExternalArtifact, name: app}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: second, namespace: flux-system}
+spec:
+  interval: 1h
+  path: ./app
+  prune: true
+  nameSuffix: -second
+  sourceRef: {kind: ExternalArtifact, name: app}

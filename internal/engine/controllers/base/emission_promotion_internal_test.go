@@ -101,7 +101,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 
 func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"emit", "cached", "accepted"} {
+	for _, mode := range []string{"emit", "matching", "replacing", "cached", "accepted"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testFingerprintDedupIncomingSelectionEvidenceCase(
@@ -524,6 +524,16 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		},
 	)
 	filter := filterLoader.Options.Session
+	switch *testCaseInput {
+	case "matching":
+		s.AddObject(child.Obj)
+		s.SetIncluded(child.Obj.Named(), false, false)
+	case "replacing":
+		s.AddObject(
+			&manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "provisional"}},
+		)
+		s.SetIncluded(child.Obj.Named(), false, false)
+	}
 	if (*testCaseInput) == "cached" {
 		s.RecordEmitted(parent.Named(), attempt, nil)
 	}
@@ -542,6 +552,8 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == child.Obj.Named() && payload != nil {
 			arrivals++
+			assert.Equal(t, payload, any(child.Obj))
+			assert.Equal(t, s.GetObject(id), child.Obj)
 
 			assert.ErrorIf(
 				t,
@@ -552,8 +564,9 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		}
 	}, false)
 	defer stop()
-	if (*testCaseInput) == "emit" {
-		run.Emit(t.Context(), parent.Named(), attempt, nil)
+	emits := *testCaseInput == "emit" || *testCaseInput == "matching" || *testCaseInput == "replacing"
+	if emits {
+		assert.NoError(t, run.Emit(t.Context(), parent.Named(), attempt, nil))
 	} else {
 		fingerprintDedupResult, err := run.FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
 		handled := fingerprintDedupResult.Reused
@@ -561,7 +574,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		assert.Equal(t, handled, true)
 	}
 	assert.Equal(t, filter.Snapshot().Reconcile(child.Obj.Named()), true)
-	if (*testCaseInput) == "emit" {
+	if emits {
 		assert.Equal(t, arrivals, 1)
 	}
 	if (*testCaseInput) == "cached" {

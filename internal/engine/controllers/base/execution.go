@@ -27,6 +27,7 @@ type Execution struct {
 
 	feedback              *renderFeedback
 	independentRender     bool
+	construction          bool
 	preparation           preparation
 	data                  *values.StoreProvider
 	AdmissionPreparation  *selection.Preparation
@@ -96,8 +97,11 @@ func (e *Execution) RenderFailure(
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
 // The execution MUST remain live until its registrations and output borrowers retire.
 func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
-	c.selection.Include(id)
+	if !c.construction {
+		c.selection.Include(id)
+	}
 	e.Controller = c
+	e.construction = c.construction
 	e.probe = false
 	e.Reads.Init(c.Store, id, nil)
 	e.Reads.BeginExecution(nil)
@@ -228,6 +232,7 @@ func (e *Execution) publish(
 		return err
 	}
 	e.bindEmission(next)
+	next.Construction = e.construction
 	if err := e.emit(ctx, id, next, payloads); err != nil {
 		return err
 	}
@@ -415,17 +420,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		e.finish(ctx, err)
 		return
 	}
-	if !e.Reads.Admitted() {
-		if ok {
-			for dep := range manifest.ContentInputs(obj, false) {
-				e.Reads.GetObject(dep)
-			}
-		}
-		e.Store.UpdateStatus(
-			id,
-			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
-		)
-		e.acceptReads(ctx)
+	if e.acceptUnadmitted(ctx, id, obj, ok) {
 		return
 	}
 	if !ok {
@@ -434,6 +429,9 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	}
 
 	e.initial, _ = e.Store.GetStatus(id)
+	if e.replayConstruction(ctx, id) {
+		return
+	}
 	e.recovering = e.initial.IsDependencyFailure() ||
 		e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
 	err := e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
@@ -447,6 +445,45 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		}
 	}
 	e.finish(ctx, err)
+}
+
+func (e *Execution) acceptUnadmitted(
+	ctx context.Context,
+	id manifest.NamedResource,
+	obj manifest.BaseManifest,
+	available bool,
+) bool {
+	if e.construction || e.Reads.Admitted() {
+		return false
+	}
+	if available {
+		for dep := range manifest.ContentInputs(obj, false) {
+			e.Reads.GetObject(dep)
+		}
+	}
+	e.Store.UpdateStatus(
+		id,
+		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
+	)
+	e.acceptReads(ctx)
+	return true
+}
+
+func (e *Execution) replayConstruction(ctx context.Context, id manifest.NamedResource) bool {
+	if e.construction || e.initial.Outcome() != store.OutcomePassed {
+		return false
+	}
+	output, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	if !ok || !output.Construction || !output.Complete || !e.Reads.Matches(output.OutputReads) {
+		return false
+	}
+	_, _, attempt := e.Reads.GetEmission(id)
+	defer attempt.Finish()
+	attempt.Children, attempt.Manifests = output.Children, output.Manifests
+	attempt.Fingerprint, attempt.Render, attempt.Complete = output.Fingerprint, output.Render, true
+	e.Disposition = store.AssessmentReused
+	e.finish(ctx, e.Emit(ctx, id, &attempt, nil))
+	return true
 }
 
 func (e *Execution) acceptReads(ctx context.Context) {

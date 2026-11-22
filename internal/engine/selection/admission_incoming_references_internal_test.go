@@ -121,7 +121,7 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 			)
 			assert.Equal(
 				t,
-				sourceClosure.incomingContentSource(child, &manifest.DiscoveryRecord{}),
+				sourceClosure.objectSource(child, &manifest.DiscoveryRecord{}),
 				child.ChartSource(),
 			)
 			sentinel := testutil.KustomizationID("apps", "sentinel")
@@ -188,8 +188,16 @@ func TestReferences_IncomingRetiresProjectedInputs(t *testing.T) {
 			},
 		},
 	}
+	reverse := func(c *admissionClosure, object manifest.BaseManifest, target manifest.NamedResource) bool {
+		for ref := range c.references(object.Named(), object) {
+			if ref.NamedResource == target && c.reverse(object.Named(), object, &ref) {
+				return true
+			}
+		}
+		return false
+	}
 	closure := solverClosure(t, store.New(), facts)
-	assert.Equal(t, closure.reverse(old.Named(), old, &ref), true)
+	assert.Equal(t, reverse(&closure, old, repository), true)
 	closure.generation = []store.Child{{Obj: replacement}}
 	closure.states[old.Named()] = admissionState{incoming: 1}
 	assert.Equal(
@@ -200,7 +208,7 @@ func TestReferences_IncomingRetiresProjectedInputs(t *testing.T) {
 		),
 		false,
 	)
-	assert.Equal(t, closure.reverse(old.Named(), replacement, &ref), false)
+	assert.Equal(t, reverse(&closure, replacement, repository), false)
 	currentRepository := repository
 	currentRepository.Name = "current"
 	current := manifest.Reference{NamedResource: currentRepository, Content: true}
@@ -218,8 +226,8 @@ func TestReferences_IncomingRetiresProjectedInputs(t *testing.T) {
 		),
 		true,
 	)
-	assert.Equal(t, closure.reverse(old.Named(), replacement, &current), true)
-	assert.Equal(t, closure.reverse(old.Named(), replacement, &ref), false)
+	assert.Equal(t, reverse(&closure, replacement, currentRepository), true)
+	assert.Equal(t, reverse(&closure, replacement, repository), false)
 }
 
 func TestReferences_EarlyStop(t *testing.T) {

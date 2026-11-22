@@ -48,7 +48,7 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			l.Options.Changes, err = change.Qualify(
 				t.Context(),
 				detectChanges(t, []string{"changed.yaml"}, []string{"changed.yaml"}),
-				stores,
+				change.SourcePair{Stores: stores},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -106,7 +106,7 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			changes, err := change.Qualify(
 				t.Context(),
 				detectChanges(t, []string{"apps/b/cm.yaml"}, []string{"apps/b/cm.yaml"}),
-				stores,
+				change.SourcePair{Stores: stores},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -341,7 +341,10 @@ func TestSourceFacts_InitializationRoutes(t *testing.T) {
 				}
 				var err error
 				l.Options.Changes, err = change.Qualify(
-					t.Context(), detectChanges(t, nil, nil), [2]*store.Store{l.Store, peer}, manifest.WorkScope{},
+					t.Context(),
+					detectChanges(t, nil, nil),
+					change.SourcePair{Stores: [2]*store.Store{l.Store, peer}},
+					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
 				l.Store.SetArtifact(source, nil)

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
@@ -266,6 +268,158 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	)
 }
 
+func TestSet_WithReadersGeneratedInventory(t *testing.T) {
+	t.Parallel()
+	owner := &manifest.RawObject{
+		APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
+		Kind:       manifest.KindArtifactGenerator,
+		Name:       "generator", Namespace: "apps",
+	}
+	child := owner.ExternalArtifact(metav1.ObjectMeta{Name: "output", Namespace: owner.Namespace})
+	id := child.Named()
+	var stores [2]*store.Store
+	for side := range stores {
+		stores[side] = store.New()
+		stores[side].AddObject(owner)
+		stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
+	}
+	before := &store.SourceArtifact{Key: "apps/output", Content: "base", FS: fstest.MapFS{
+		"app/file":  {Data: []byte("before")},
+		"same/file": {Data: []byte("same")},
+	}}
+	after := &store.SourceArtifact{Key: before.Key, Content: "head", FS: fstest.MapFS{
+		"app/file":  {Data: []byte("after")},
+		"same/file": {Data: []byte("same")},
+	}}
+	emission := store.Emission{Complete: true, Children: []store.Child{{Obj: child}}}
+	stores[0].RecordEmitted(owner.Named(), &emission, map[manifest.NamedResource]*store.SourceArtifact{id: before})
+	stores[1].RecordEmitted(owner.Named(), &store.Emission{}, nil)
+
+	index := &manifest.DiscoveryIndex{}
+	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{}
+	first, err := Qualify(t.Context(), nil, SourcePair{Stores: stores}, manifest.WorkScope{})
+	assert.NoError(t, err)
+	first, err = first.WithReaders(t.Context(), [2]*manifest.DiscoveryIndex{index, index}, inputs, manifest.WorkScope{})
+	assert.NoError(t, err)
+	comparison, generated := first.CompareSource(id, manifest.TreeHead, nil, nil)
+	assert.Equal(t, generated, true)
+	assert.Equal(t, comparison, Comparison{})
+
+	stores[1].RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
+	for side, ordered := range [2][2]*store.Store{stores, {stores[1], stores[0]}} {
+		changed, qualifyErr := Qualify(t.Context(), first, SourcePair{Stores: ordered}, manifest.WorkScope{})
+		assert.NoError(t, qualifyErr)
+		comparison, generated = changed.CompareSource(id, manifest.TreeSide(1-side), nil, nil)
+		assert.Equal(t, generated, true)
+		assert.Equal(t, comparison, Comparison{Known: true, Changed: true})
+	}
+
+	stores[1].RecordEmitted(owner.Named(), &emission, map[manifest.NamedResource]*store.SourceArtifact{id: after})
+	qualified, err := Qualify(t.Context(), first, SourcePair{Stores: stores}, manifest.WorkScope{})
+	assert.NoError(t, err)
+	qualified, err = qualified.WithReaders(
+		t.Context(),
+		[2]*manifest.DiscoveryIndex{index, index},
+		inputs,
+		manifest.WorkScope{},
+	)
+	assert.NoError(t, err)
+	_, snapshots, _ := qualified.ForSource(id)
+	comparison, generated = qualified.CompareSource(id, manifest.TreeHead, snapshots[1], nil)
+	assert.Equal(t, generated, true)
+	assert.Equal(t, comparison, Comparison{Known: true, Changed: true})
+	comparison, _ = qualified.CompareSource(id, manifest.TreeHead, snapshots[1],
+		func(delta *Set) Comparison {
+			return delta.ComparePaths(func(file string) bool { return file == "same/file" })
+		})
+	assert.Equal(t, comparison, Comparison{Known: true})
+	comparison, _ = qualified.CompareSource(id, manifest.TreeHead, before, nil)
+	assert.Equal(t, comparison, Comparison{})
+
+	assertGeneratedAbsenceGuards(t, stores[0], owner, child)
+}
+
+func assertGeneratedAbsenceGuards(
+	t *testing.T,
+	before *store.Store,
+	owner *manifest.RawObject,
+	child *manifest.ExternalArtifact,
+) {
+	t.Helper()
+	id := child.Named()
+	for _, tc := range []struct {
+		name string
+		want Comparison
+	}{
+		{name: "invalid inventory"},
+		{name: "listed child"},
+		{name: "present object"},
+		{name: "absent producer", want: Comparison{Known: true, Changed: true}},
+		{name: "alternate materializer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			peer := store.New()
+			peer.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
+			next := store.Emission{Complete: true}
+			if tc.name != "absent producer" {
+				peer.AddObject(owner)
+			}
+			var reads store.ReadSet
+			switch tc.name {
+			case "invalid inventory":
+				reads.Init(peer, owner.Named(), nil)
+				t.Cleanup(reads.Retire)
+				reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+				reads.Bind(&next)
+			case "listed child":
+				next.Children = []store.Child{{Obj: child, Generated: true}}
+			}
+			if tc.name != "absent producer" {
+				peer.RecordEmitted(owner.Named(), &next, nil)
+			}
+			switch tc.name {
+			case "invalid inventory":
+				peer.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+					Content: "replacement",
+					FS:      fstest.MapFS{},
+				})
+				current, ok := peer.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+				assert.FatalIf(
+					t, !ok || !current.Complete || current.OutputReads.Valid(),
+					"expected complete, invalid inventory",
+				)
+			case "listed child":
+				current, ok := peer.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+				assert.FatalIf(t, !ok || len(current.Children) != 1, "expected the child in inventory")
+				assert.Equal(t, inventoryOmits(current, id), false)
+			case "present object":
+				peer.AddObject(child)
+			case "alternate materializer":
+				alternate := *owner
+				alternate.Name = "alternate"
+				peer.AddObject(&alternate)
+				peer.SetDiscoveryIndex(
+					&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						id: {Productions: []manifest.Production{{Owner: alternate.Named()}}},
+					}},
+				)
+			}
+			assert.Equal(t, peer.GetArtifact(id, store.ArtifactContent), store.Artifact(nil))
+			paired, err := Qualify(
+				t.Context(),
+				nil,
+				SourcePair{Stores: [2]*store.Store{before, peer}},
+				manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			read, generated := paired.CompareSource(id, manifest.TreeHead, nil, nil)
+			assert.Equal(t, generated, true)
+			assert.Equal(t, read, tc.want)
+		})
+	}
+}
+
 func TestSet_InputVisibilityDuplicateSourcePolicy(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
@@ -303,7 +457,12 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 		}
 		stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
 	}
-	raw, err := Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	raw, err := Qualify(
+		t.Context(),
+		nil,
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	before := &manifest.DiscoveryIndex{
 		Visibility: []manifest.InputVisibility{
@@ -331,7 +490,12 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 		maps.Collect(first.Inputs(manifest.NamedResource{})),
 		map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}},
 	)
-	reused, err := Qualify(t.Context(), first, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	reused, err := Qualify(
+		t.Context(),
+		first,
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	current, err := reused.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
@@ -348,7 +512,12 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 			&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"unchanged.txt": {Data: []byte("same")}}},
 		)
 	}
-	replaced, err := Qualify(t.Context(), first, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	replaced, err := Qualify(
+		t.Context(),
+		first,
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, replaced.Len(), 0)
 	for file := range replaced.paths {

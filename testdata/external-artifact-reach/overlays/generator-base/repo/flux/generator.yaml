@@ -1,0 +1,14 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: default}
+spec:
+  pathPattern: "@repo/apps/{app}"
+  sources: [{alias: repo, kind: GitRepository, name: repo}]
+  artifacts:
+  - name: "{app}"
+    copy:
+    - from: "@repo/apps/{app}/**"
+      to: "@artifact/app/"
+      exclude: ["ignored.txt"]
+    - from: "@repo/shared/**"
+      to: "@artifact/app/chart/"

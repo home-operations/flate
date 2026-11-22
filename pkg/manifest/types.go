@@ -223,17 +223,21 @@ func (r Reference) ContentInput() bool {
 
 // IsSource classifies relation use without implying a publication binding.
 func (r Reference) IsSource() bool {
-	return r.Use == sourceKey || r.Use == chartKey || r.Use == "artifact"
+	return r.Use == sourceKey || r.Use == chartKey || r.Use == artifactKey
 }
 
 // BindsSource excludes a producer's generated chart from its backing inputs.
 func (r Reference) BindsSource() bool {
-	return r.bindsSource
+	return r.bindsSource || r.artifactTreeInput()
 }
 
 // ReadsSourceTree permits bootstrap aliases for references that read files inside a source tree.
 func (r Reference) ReadsSourceTree() bool {
-	return r.readsSourceTree
+	return r.readsSourceTree || r.artifactTreeInput()
+}
+
+func (r Reference) artifactTreeInput() bool {
+	return r.Use == artifactKey && r.ArtifactOnly
 }
 
 // AffectedInput includes source relations even when they carry no content edge.

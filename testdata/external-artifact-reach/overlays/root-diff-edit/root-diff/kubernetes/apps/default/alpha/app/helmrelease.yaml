@@ -1,0 +1,10 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: alpha, namespace: default}
+spec:
+  interval: 1m
+  chart:
+    spec:
+      chart: ./charts/workload
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values: {app: alpha, value: new}

@@ -389,6 +389,56 @@ func TestAdmission_ProjectedProductionLifetime(t *testing.T) {
 	}
 }
 
+func TestAdmission_ChangedSourceProducerWithoutOutputEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name            string
+		changed, render bool
+	}{
+		{name: "changed producer", changed: true},
+		{name: "unchanged producer"},
+		{name: "changed chart release", changed: true, render: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			id := manifest.NamedResource{
+				Group: manifest.SourceExtensionsDomain, Kind: manifest.KindArtifactGenerator,
+				Name: "generator", Namespace: "apps",
+			}
+			if tc.render {
+				id = testutil.HelmReleaseID("apps", "generator")
+			}
+			source := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository,
+				Name: "chart", Namespace: "apps",
+			}
+			facts := &solverFacts{store: st, occurrences: map[manifest.NamedResource]OccurrenceFacts{
+				id: {
+					Identity:        id,
+					NeedsCandidates: !tc.render,
+					Targets:         []manifest.ProducerTarget{{NamedResource: source}},
+				},
+			}}
+			c := solverClosure(t, st, facts)
+			preparation := &Preparation{}
+			defer preparation.Retire()
+			c.proposal.preparation = preparation
+			c.proposal.Request.construction = true
+			c.identities = []admissionIdentity{{id: id}}
+			c.states[id] = admissionState{listed: true, changed: tc.changed, affectedKnown: true}
+
+			c.demandPendingSources()
+
+			var want []Demand
+			if tc.changed && !tc.render {
+				want = []Demand{{Identity: id, Materialize: true}}
+			}
+			assert.Diff(t, c.proposal.demands, want)
+		})
+	}
+}
+
 func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

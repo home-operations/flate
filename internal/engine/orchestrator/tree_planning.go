@@ -160,7 +160,7 @@ func (r *Invocation) planTree(
 		admission: session.Admission(),
 		cfg:       treeConfig{Config: *cfg},
 	}
-	planning.configureSources(true)
+	planning.configureSources(true, true)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err

@@ -66,6 +66,7 @@ const (
 	annotationsKey    = "annotations"
 	apiVersionKey     = "apiVersion"
 	branchKey         = "branch"
+	artifactKey       = "artifact"
 	chartKey          = "chart"
 	commitKey         = "commit"
 	binaryDataKey     = "binaryData"

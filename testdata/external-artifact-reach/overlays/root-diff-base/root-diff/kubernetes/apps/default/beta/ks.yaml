@@ -1,0 +1,7 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: beta, namespace: default}
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/beta/app
+  sourceRef: {kind: ExternalArtifact, name: beta, namespace: flux-system}

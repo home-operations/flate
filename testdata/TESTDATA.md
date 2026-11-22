@@ -308,6 +308,12 @@ without selecting an unrelated consumer. Each case runs with
 two workers and compares two equal CLI runs. Consumed-input successor scheduling
 remains deferred to X2 and is not asserted by these fixtures.
 
+`TestE2E_ArtifactGeneratorChangedArtifactReach` uses three apps from one generator.
+Each app reads a named artifact and renders a local Helm chart.
+The test edits one app, a shared chart, or a file that the copy excludes.
+It compares the complete CLI output and the work counted on each side.
+Each invocation uses a fresh cache and two workers.
+
 The `flux-instance-root/` fixture uses a local chart to emit a FluxInstance. It checks the generated root and its Plex patches in full and narrow builds. Its diff changes the Plex Kustomization timeout to two minutes.
 
 The descendant case requests `kubernetes/apps/media`. The FluxInstance sync root covers that directory. Two builds share one cache and show one sync root and the patched Plex HelmRelease. The sibling package stays outside the output.
@@ -708,6 +714,7 @@ Both sequence replays start with empty caches.
 | `helm-dependencies/changed-only-emitted-kustomization-path-templated-root` | changed only emitted kustomization path templated root. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal` | changed only emitted kustomization path literal. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal-root` | changed only emitted kustomization path literal root. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-helmrelease-chart-templated` | A generated release reads its chart values and a sibling library. | Reset before each invocation. |
 | `helm-dependencies/changed-only-render-emitted-dependency` | changed only render emitted dependency. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/ready-expr--helm-release` | ready expr  helm release. | Reuse within sequence; reset on replay. |
 | `helm-oci/helm-missingoci-source` | helm missingoci source. | Reuse within sequence; reset on replay. |
@@ -2045,3 +2052,50 @@ The `entry-unknown-projection/` fixture covers the replacement overlay from issu
 | `flux-instance-aggregate-values/generator-values` | Exercise chart omission, convergence, and a repeated render key in the generated root feedback. |
 | `entry-unknown-projection/rootless` | List the transformed child and compare its workload when the requested path has no builder. |
 | `entry-unknown-projection/real-parent` | List the physical parent and make the same workload comparison. |
+
+The generated chart fixture and its two output pairs come from hatemosphere's PR #1640 at `561b07b52e995f1b76200921c88b20aafbfb93bd`.
+The related CLI tests also edit only the library, edit a source-root values file, and compare charts that read generated artifacts.
+An unrelated chart edit causes zero Helm calls.
+
+The `external-artifact-reach/` cases run through the shared fixture harness.
+Each debug replay starts with a fresh cache and compares attempts and cache service by tree, owner, and phase.
+The ResourceSet case generates a namespace Kustomization from an inline input.
+The namespace includes independent Alpha and Beta Kustomizations.
+A change in Alpha reaches its reader on both snapshots.
+Beta and the separate provider-backed ExternalSecret remain outside the comparison.
+The implicit entry case uses the `fixture-min3` subroot layout.
+The `apps/default` builder imports the component at `components/c`.
+The test edits that component and an unread sibling in separate runs.
+
+The imported shared cases use an ArtifactGenerator that copies the app and shared packages.
+Two consumers read the shared package through `../shared` in the generated artifact.
+The outside-copy and unread-copy edits cause zero consumer renders.
+Each case starts from the committed fixture on `main` with a matching Git origin and a fresh cache.
+
+The removed import CLI test reduces the Biohazard entry layout.
+The test compares full builds and the changed-only diff after it removes an app import.
+The diff includes the substituted ExternalSecret and the ConfigMap from the app's own render.
+The native entry still renders for discovery on both sides.
+
+| Case | Behavior |
+| --- | --- |
+| `external-artifact-reach/resourceset-reach` | Edit Alpha and leave Beta and the provider-backed ResourceSet outside the render. |
+| `external-artifact-reach/resourceset-provider-reach` | Edit only the input of a Kustomization whose kind a ResourceSet provider selects. |
+| `external-artifact-reach/generator-app` | Edit one app and render its artifact readers on both sides. |
+| `external-artifact-reach/generator-shared` | Edit shared chart content and reach all three apps. |
+| `external-artifact-reach/generator-excluded` | Edit an excluded file and leave every artifact reader outside the work. |
+| `external-artifact-reach/generator-component` | Edit a sibling component and render its artifact reader once per side. |
+| `external-artifact-reach/imported-shared` | Edit the imported ConfigMap. Build each of its two artifact consumers once per snapshot. |
+| `external-artifact-reach/imported-shared-outside` | Edit a tracked file outside the entry and both copy patterns. Show an empty diff and no artifact consumer builds. |
+| `external-artifact-reach/imported-shared-unread` | Edit a copied file that no consumer reads. Show an empty diff and zero artifact consumer builds. |
+| `external-artifact-reach/root-diff` | Edit Alpha with duplicate Namespaces in separate packages. The generated Flux sync root patches Alpha, which builds once per snapshot. |
+| `external-artifact-reach/implicit-imported` | Edit an imported component outside the scan path. |
+| `external-artifact-reach/implicit-unread` | Edit an unread sibling and report zero builds. |
+| `external-artifact-reach/bound-entry-imported` | Edit a Provider that the generated sync entry imports from outside its path. |
+| `external-artifact-reach/bound-entry-unread` | Edit an unread sibling of that Provider and report an empty diff. |
+| `external-artifact-reach/removed-import` | Compare the full builds and report only accepted removals. |
+| `external-artifact-reach/chart-library-only` | Edit only the generated release's library dependency. |
+| `external-artifact-reach/chart-root-values` | Edit a values file at the source root. |
+| `external-artifact-reach/chart-generated-source` | Edit values copied into the artifact that supplies the chart. |
+| `external-artifact-reach/chart-unrelated` | Leave Helm work empty after an unrelated local chart edit. |
+| `external-artifact-reach/chart-unrelated-in-generated-source` | Leave Helm work empty after another generated artifact changes. |

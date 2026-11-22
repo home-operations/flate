@@ -83,6 +83,11 @@ func (s *Snapshot) collectEmissions(other *Snapshot) {
 }
 
 func (s *Snapshot) emissionParent(emission *EmissionFacts) manifest.BaseManifest {
+	// A bound application owns output at the literal entry's comparison key.
+	if s.Entry.Producer != (manifest.NamedResource{}) && s.Entry.Producer != s.Entry.Key &&
+		emission.Emitter.Named() == s.Entry.Key {
+		return nil
+	}
 	if !emission.ParentAttributed || emission.ParentRecorded || emission.Parent != nil {
 		return emission.Parent
 	}

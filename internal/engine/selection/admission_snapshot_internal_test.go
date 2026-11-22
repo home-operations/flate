@@ -643,20 +643,10 @@ func TestAdmission_RecordProjectsOnlyConsumedContentRoots(t *testing.T) {
 			c.generation = []store.Child{{Obj: obj}}
 			c.states[obj.Named()] = admissionState{incoming: 1}
 			record := manifest.DiscoveryRecord{Refs: []manifest.NamedResource{other}}
-			var sources []manifest.NamedResource
-			c.yieldObjectSources(obj.Named(), &record, func(id manifest.NamedResource) bool {
-				sources = append(sources, id)
-				return true
-			})
-			assert.Diff(t, sources, []manifest.NamedResource{source})
-			assert.Equal(t, c.incomingContentSource(obj, &record), source)
-			assert.Equal(t, c.incomingContentSource(nil, &record), other)
-			sources = nil
-			c.yieldObjectSources(manifest.NamedResource{}, &record, func(id manifest.NamedResource) bool {
-				sources = append(sources, id)
-				return true
-			})
-			assert.Diff(t, sources, []manifest.NamedResource{other})
+			assert.Equal(t, c.objectSource(c.object(obj.Named()), &record), source)
+			assert.Equal(t, c.objectSource(obj, &record), source)
+			assert.Equal(t, c.objectSource(nil, &record), other)
+			assert.Equal(t, c.objectSource(c.object(manifest.NamedResource{}), &record), other)
 		})
 	}
 

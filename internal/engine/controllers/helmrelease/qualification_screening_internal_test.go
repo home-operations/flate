@@ -48,7 +48,7 @@ func TestReconcile_QualificationDemandPromotion(t *testing.T) {
 	assert.Equal(t, empty.Render, (*manifest.RenderReceipt)(nil))
 	empty.Finish()
 
-	c.Store.SetIncluded(id, true, true)
+	c.Store.SetIncluded(id, true, true, false)
 	assert.Equal(t, screened.Valid(), false)
 	fresh := reconcileQualificationRelease(t, c, id)
 	assert.Equal(t, fresh.Disposition, store.AssessmentReconciled)
@@ -126,7 +126,7 @@ func qualificationRelease(t *testing.T, body, values string) (*Controller, *mani
 		},
 	})
 	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
-	st.SetIncluded(hr.Named(), true, false)
+	st.SetIncluded(hr.Named(), true, false, false)
 	return c, hr
 }
 
@@ -156,7 +156,7 @@ func TestReconcile_QualificationDrain(t *testing.T) {
 func TestReconcile_QualificationOrdinaryDemand(t *testing.T) {
 	t.Parallel()
 	c, producer := qualificationRelease(t, `{{ fail "ordinary body ran" }}`, "")
-	c.Store.SetIncluded(producer.Named(), true, true)
+	c.Store.SetIncluded(producer.Named(), true, true, false)
 	run := reconcileQualificationRelease(t, c, producer.Named())
 	assert.Equal(t, run.Disposition, store.AssessmentReconciled)
 	status, _ := c.Store.GetStatus(producer.Named())

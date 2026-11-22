@@ -1,0 +1,5 @@
+
+  ✗  HelmRelease  web/db  not found
+         required by web/web
+
+  ✗ 1 failed · 1 blocked

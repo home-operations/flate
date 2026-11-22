@@ -644,3 +644,44 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 	}
 	assert.Diff(t, maps.Collect(bound.Inputs(manifest.NamedResource{})), want)
 }
+
+func TestSet_RemovedDeclarations(t *testing.T) {
+	t.Parallel()
+	old := testutil.HelmReleaseID("web", "old")
+	newID := testutil.HelmReleaseID("web", "new")
+	onlyAdded := testutil.KustomizationID("web", "added")
+	source := manifest.BootstrapSourceID
+	set := &Set{removedDeclarations: [2]map[manifest.NamedResource]bool{
+		{newID: true, onlyAdded: true},
+		{old: true},
+	}}
+	assert.Diff(
+		t,
+		slices.Collect(set.RemovedDeclarations(manifest.TreeBase, source, nil, true)),
+		[]manifest.NamedResource{newID},
+	)
+	assert.Diff(
+		t,
+		slices.Collect(set.RemovedDeclarations(manifest.TreeHead, source, nil, true)),
+		[]manifest.NamedResource{old},
+	)
+	assert.Equal(t, len(slices.Collect(set.RemovedDeclarations(manifest.TreeHead, source, nil, false))), 0)
+
+	input := &store.SourceArtifact{LocalPath: "/head"}
+	set = &Set{effectiveRemovals: map[manifest.NamedResource]effectiveInventoryPair{
+		source: {
+			input:   [2]*store.SourceArtifact{nil, input},
+			removed: [2]map[manifest.NamedResource]bool{nil, {old: true}},
+		},
+	}}
+	assert.Diff(
+		t,
+		slices.Collect(set.RemovedDeclarations(manifest.TreeHead, source, input, false)),
+		[]manifest.NamedResource{old},
+	)
+	assert.Equal(
+		t,
+		len(slices.Collect(set.RemovedDeclarations(manifest.TreeHead, source, &store.SourceArtifact{}, false))),
+		0,
+	)
+}

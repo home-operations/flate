@@ -33,15 +33,16 @@ type cachedGraphContext struct {
 }
 
 type cachedWalk struct {
-	dictionary []cachedVisit
-	Context    cachedGraphContext `json:"Context"`
-	SourceRoot string             `json:"SourceRoot,omitempty"`
-	Prefix     string             `json:"Prefix,omitempty"`
-	LocalBase  string             `json:"LocalBase,omitempty"`
-	Visits     []cachedVisit      `json:"-"`
-	VisitIDs   []int              `json:"Visits,omitempty"`
-	Inputs     []string           `json:"Inputs,omitempty"`
-	Listed     []string           `json:"Listed,omitempty"`
+	dictionary    []cachedVisit
+	Context       cachedGraphContext `json:"Context"`
+	SourceRoot    string             `json:"SourceRoot,omitempty"`
+	Prefix        string             `json:"Prefix,omitempty"`
+	LocalBase     string             `json:"LocalBase,omitempty"`
+	Visits        []cachedVisit      `json:"-"`
+	VisitIDs      []int              `json:"Visits,omitempty"`
+	Inputs        []string           `json:"Inputs,omitempty"`
+	Listed        []string           `json:"Listed,omitempty"`
+	UnknownRecipe bool               `json:"UnknownRecipe,omitempty"`
 }
 
 type cachedVisit struct {
@@ -86,7 +87,10 @@ func cacheWalk(state *inputCache, key *physicalContext, walk physicalWalk) (cach
 	if !valid || len(walk.inputs) == 0 {
 		return cachedWalk{}, false
 	}
-	saved := cachedWalk{Context: context, SourceRoot: key.sourceRoot, Prefix: key.prefix, LocalBase: key.localBase}
+	saved := cachedWalk{
+		Context: context, SourceRoot: key.sourceRoot, Prefix: key.prefix, LocalBase: key.localBase,
+		UnknownRecipe: walk.unknownRecipe,
+	}
 	if key.sourceRoot == root {
 		saved.SourceRoot = ""
 	}
@@ -161,7 +165,10 @@ func (w *cachedWalk) key(root string) physicalContext {
 }
 
 func (l *Loader) restoreWalk(root string, saved *cachedWalk) (physicalWalk, bool) {
-	walk := physicalWalk{imported: true, visits: make([]graphVisit, 0, max(len(saved.Visits), len(saved.VisitIDs)))}
+	walk := physicalWalk{
+		imported: true, unknownRecipe: saved.UnknownRecipe,
+		visits: make([]graphVisit, 0, max(len(saved.Visits), len(saved.VisitIDs))),
+	}
 	for _, name := range saved.Inputs {
 		walk.inputs = append(walk.inputs, walkInput{path: filepath.Join(root, filepath.FromSlash(name))})
 	}

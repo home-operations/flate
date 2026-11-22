@@ -19,6 +19,7 @@ import (
 type stateReader interface {
 	ReadableSourceArtifact(manifest.NamedResource) (*store.SourceArtifact, bool)
 	GetObject(manifest.NamedResource) manifest.BaseManifest
+	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)
 	Preflight(manifest.NamedResource) store.PreflightFailure
@@ -27,17 +28,15 @@ type stateReader interface {
 
 // Waiter holds the parameters for one dependency-classification operation.
 type Waiter struct {
-	Admission selection.PrepareRequest
-	Store     stateReader
-	Parent    manifest.NamedResource
-	Missing   *MissingPolicy
-	Decision  *selection.Decision
-	Indexed   interface {
-		IsFileIndexed(manifest.NamedResource) bool
-	}
-
+	Admission               selection.PrepareRequest
+	Decision                *selection.Decision
+	Store                   stateReader
+	Parent                  manifest.NamedResource
+	Missing                 *MissingPolicy
+	IncompatibleDeclaration bool
 	// Materializer requires readiness even for existence-only dependency kinds.
-	Materializer bool
+	Materializer   bool
+	orderingParent manifest.BaseManifest
 
 	// Existence, when non-nil, lets Classify lazy-promote a missing dep
 	// from the loader's discovery records before deciding it is
@@ -78,6 +77,9 @@ func (w *Waiter) tryReadyExpr(
 	obj manifest.BaseManifest,
 	conds []store.Condition,
 ) expressionReadiness {
+	if dep.RequiresDeclaration && obj == nil {
+		return expressionReadiness{}
+	}
 	ok, err := w.evaluateReadyExpr(*dep.ReadyExpr, dep.NamedResource, obj, conds)
 	if err != nil {
 		if _, isCompile := errors.AsType[*celCompileError](err); isCompile {

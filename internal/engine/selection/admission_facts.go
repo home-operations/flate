@@ -179,14 +179,6 @@ func (c *admissionClosure) declarationLocated(id manifest.NamedResource, objects
 		Root(*c.capturedRoot(record.Parent)).InitialIndependent
 }
 
-func (c *admissionClosure) occurrenceMount(id manifest.NamedResource, root string) *store.SourceArtifact {
-	facts, _ := c.occurrenceFacts(id)
-	if facts.Declaration.Source == root {
-		return facts.Mounted
-	}
-	return nil
-}
-
 func opaqueOccurrence(facts *OccurrenceFacts, targets []manifest.ProducerTarget) bool {
 	return facts != nil && facts.Policy != nil && facts.Structural == nil && !facts.HasPath &&
 		len(facts.AuthoredTargets) == 0 &&

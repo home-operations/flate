@@ -17,6 +17,7 @@ type SourceContext struct {
 	Root                       string
 	Roots                      []NativeRootFacts
 	InputReaders, InputObjects map[manifest.NamedResource][]manifest.NamedResource
+	TransformingProducers      []manifest.NamedResource
 	TemplateProjections        map[manifest.NamedResource]manifest.TemplateProjection
 	EntryPath                  string
 	NativeEntry                bool

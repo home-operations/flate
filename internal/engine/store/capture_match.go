@@ -15,7 +15,7 @@ func (r *ReadSet) matchesInput(input *Input, exact bool) bool {
 			return false
 		}
 	}
-	if input.ordinaryDemand && r.OrdinaryDemand(id) != input.view.ordinary {
+	if input.demandCaptured && r.captureDemand(id) != input.view.demand {
 		return false
 	}
 	if input.declaration && (r.GetDeclaration(id) == nil) != (new(input.view).declaration() == nil) {

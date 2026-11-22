@@ -33,7 +33,7 @@ func TestRun_GeneratedValuesDirectDependentAndKS(t *testing.T) {
 }
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
-func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
+func TestRun_DiffOrderingAndSelectedSourceFailure(t *testing.T) {
 	for _, kind := range []string{"hr", "ks"} {
 		for _, broken := range []bool{false, true} {
 			name := "healthy"
@@ -42,7 +42,7 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 			}
 			t.Run(
 				fmt.Sprintf("%s/%s", kind, name),
-				func(t *testing.T) { runDiffExcludedOrderingAndSelectedSourceFailureCase(t, &broken, &kind) },
+				func(t *testing.T) { runDiffOrderingAndSelectedSourceFailureCase(t, &broken, &kind) },
 			)
 		}
 	}
@@ -223,7 +223,7 @@ func runGeneratedValuesDirectDependentAndKSCase(t *testing.T, tc *struct {
 	)
 }
 
-func runDiffExcludedOrderingAndSelectedSourceFailureCase(t *testing.T, broken *bool, kind *string) {
+func runDiffOrderingAndSelectedSourceFailureCase(t *testing.T, broken *bool, kind *string) {
 	t.Helper()
 
 	baseDir, headDir := t.TempDir(), t.TempDir()

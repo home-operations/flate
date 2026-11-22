@@ -95,13 +95,10 @@ func TestController_ArtifactMaterializersProduction(t *testing.T) {
 				blocked = run.Blocked
 			})
 			c.Tasks.BlockTillDone()
-			if len(blocked) != 1 || blocked[0] != materializer || fetcher.calls.Load() != 0 {
-				t.Fatalf(
-					"progressing materializer = %v, want %s; fetches=%d",
-					blocked,
-					materializer,
-					fetcher.calls.Load(),
-				)
+			want := []manifest.NamedResource{obj.Named(), materializer}
+			slices.SortFunc(want, manifest.NamedResource.Compare)
+			if !slices.Equal(blocked, want) || fetcher.calls.Load() != 0 {
+				t.Fatalf("progressing materializer = %v, want %v; fetches=%d", blocked, want, fetcher.calls.Load())
 			}
 		})
 	}

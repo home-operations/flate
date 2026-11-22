@@ -3,6 +3,7 @@ package store
 import (
 	"iter"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -115,6 +116,81 @@ func (r *ReadSet) RequireData(id manifest.NamedResource) {
 	input.required, input.qualification = true, false
 }
 
+// OrderingEdge retains an effective prerequisite and its edge-specific expression.
+type OrderingEdge struct {
+	Target    manifest.NamedResource
+	ReadyExpr string
+}
+
+// OrderingEdgeFor retains the target and optional readiness expression of a captured dependency.
+func OrderingEdgeFor(dep *manifest.DependencyRef) OrderingEdge {
+	edge := OrderingEdge{Target: dep.NamedResource}
+	if dep.ReadyExpr != nil {
+		edge.ReadyExpr = *dep.ReadyExpr
+	}
+	return edge
+}
+
+// Compare orders edges by target and readiness expression.
+//
+//nolint:gocritic // Sorting and searching both consume immutable value keys.
+func (e OrderingEdge) Compare(other OrderingEdge) int {
+	if order := e.Target.Compare(other.Target); order != 0 {
+		return order
+	}
+	return strings.Compare(e.ReadyExpr, other.ReadyExpr)
+}
+
+// RequireOrdering retains readiness demand from the effective declaration.
+func (r *ReadSet) RequireOrdering(edge *OrderingEdge) {
+	input := r.input(edge.Target)
+	input.required, input.qualification, input.ordering = true, false, true
+	if edge.ReadyExpr == "" {
+		input.orderingDefault = true
+		return
+	}
+	details := r.details(input)
+	if !slices.Contains(details.orderingExprs, edge.ReadyExpr) {
+		details.orderingExprs = append(details.orderingExprs, edge.ReadyExpr)
+	}
+}
+
+// AssessOrdering records that an empty ordering footprint is authoritative.
+func (r *ReadSet) AssessOrdering() { r.orderingAssessed = true }
+
+// OrderingAssessed distinguishes an empty assessment from one still in preparation.
+func (r *ReadSet) OrderingAssessed() bool { return r != nil && r.orderingAssessed }
+
+// RequiresOrdering identifies ordering among retained required inputs.
+func (r *ReadSet) RequiresOrdering(id manifest.NamedResource) bool {
+	input := r.findInput(id)
+	return input != nil && input.ordering
+}
+
+// Ordering yields the effective declaration dependencies.
+func (r *ReadSet) Ordering() iter.Seq[OrderingEdge] {
+	return func(yield func(OrderingEdge) bool) {
+		for input := r.inputs; input != nil; input = input.next {
+			if !input.ordering {
+				continue
+			}
+			id := input.Ref.NamedResource
+			if input.orderingDefault && !yield(OrderingEdge{Target: id}) {
+				return
+			}
+			details := input.details.Load()
+			if details == nil {
+				continue
+			}
+			for _, expr := range details.orderingExprs {
+				if !yield(OrderingEdge{Target: id, ReadyExpr: expr}) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // RequireQualification retains demand without authorizing an ordinary producer body.
 func (r *ReadSet) RequireQualification(id manifest.NamedResource) {
 	input := r.input(id)
@@ -153,4 +229,24 @@ func (r *ReadSet) AddWarning(warning manifest.Warning) {
 	warning.Detail = slices.Clone(warning.Detail)
 	warning.Related = slices.Clone(warning.Related)
 	r.warnings = append(r.warnings, warning)
+}
+
+// ProducerPublished reports whether the captured declaration producer supplied an inventory.
+func (r *ReadSet) ProducerPublished(id manifest.NamedResource) bool {
+	input := r.findInput(id)
+	return input != nil && input.producer != 0
+}
+
+// DeclarationProducers retains observed omission without authorizing indexed bytes.
+func (r *ReadSet) DeclarationProducers(id manifest.NamedResource) []manifest.NamedResource {
+	result := productionResult{reads: r, captureTarget: true, retainOmitted: true, watch: true}
+	r.store.visitProductions(id, nil, &result)
+	var owners []manifest.NamedResource
+	for i := range result.out {
+		owner := r.Materializer(id, result.out[i])
+		if owner != (manifest.NamedResource{}) && owner != id && !slices.Contains(owners, owner) {
+			owners = append(owners, owner)
+		}
+	}
+	return owners
 }

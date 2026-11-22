@@ -199,37 +199,67 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 
 func TestInputCache_RejectsChangedPublication(t *testing.T) {
 	t.Parallel()
-	persistent := cache.RenderPersistenceDisabledReason() == ""
-	owner, err := cache.New(t.Context(), t.TempDir())
-	assert.NoError(t, err)
-	defer func() { assert.NoError(t, owner.Close()) }()
-	assert.Equal(t, owner.CanPersistRenders(), persistent)
-	files := fstest.MapFS{"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")}}
-	view, _, err := gittree.New(
-		t.Context(),
-		nil,
-		plumbing.ZeroHash,
-		gittree.ViewOptions{Mode: gittree.Direct, Current: files},
-	)
-	assert.NoError(t, err)
-	root := t.TempDir()
-	st := store.New()
-	st.SetArtifact(
-		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
-	)
-	l := New(st)
-	defer l.Close()
-	l.SourceRoot, l.Options.Cache = root, owner
-	configureSelection(t, l, selection.Request{Changed: true})
-	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
-	assert.NoError(t, err)
-	files["object.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")}
-	err = l.PersistInputs(t.Context())
-	assert.Equal(t, errors.Is(err, manifest.ErrInput), persistent)
-	assert.Equal(t, errors.Is(err, manifest.ErrFlux), persistent)
-	if !persistent {
-		assert.NoError(t, err)
+	reason := cache.RenderPersistenceDisabledReason()
+	t.Logf("render persistence reason=%q backing=disk", reason)
+	for _, tc := range []struct {
+		name        string
+		builderOnly bool
+	}{
+		{name: "file digest"},
+		{name: "alternate builder", builderOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const builder, alternate = "kustomization.yaml", "kustomization.yml"
+			root := t.TempDir()
+			owner, err := cache.New(t.Context(), t.TempDir())
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+			persistent := reason == ""
+			assert.Equal(t, owner.CanPersistRenders(), persistent)
+			files := fstest.MapFS{
+				"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")},
+			}
+			if tc.builderOnly {
+				files[builder] = &fstest.MapFile{Data: []byte("resources: [object.yaml]\n")}
+			}
+			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+			assert.NoError(t, err)
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view})
+			l := New(st)
+			defer l.Close()
+			l.SourceRoot, l.Options.Cache = root, owner
+			configureSelection(t, l, selection.Request{Changed: true})
+			if tc.builderOnly {
+				l.documents.compact = true
+				l.mountSources()
+				assert.NoError(t, l.restoreCachedInputs(t.Context()))
+				assert.Equal(t, l.documents.read(root).recipe, recipeResourceOnly)
+				if persistent {
+					frame, frameErr := l.cacheSourceInputs(l.inputCaches[root])
+					assert.NoError(t, frameErr)
+					assert.FatalIf(t, frame == nil || len(frame.Files) != 1, "want one builder file in the frame")
+					assert.Equal(t, frame.Files[0].Builder, builder)
+					assert.Equal(t, len(frame.Loads)+len(frame.Walks), 0)
+				}
+				files[alternate] = files[builder]
+			} else {
+				_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+				assert.NoError(t, err)
+				files["object.yaml"] = &fstest.MapFile{
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n"),
+				}
+			}
+			err = l.PersistInputs(t.Context())
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), persistent)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), persistent)
+			if !persistent {
+				assert.NoError(t, err)
+			}
+		})
 	}
 }
 

@@ -114,13 +114,7 @@ func (r *admissionRootReader) GetArtifact(id manifest.NamedResource, fields stor
 }
 
 func (r *admissionRootReader) RootOwners() *[]RootCoveringOwner {
-	if !r.closure.ownersKnown {
-		r.closure.collectOwners()
-	}
-	if r.closure.ownerCandidates == nil {
-		r.closure.ownerCandidates = []RootCoveringOwner{}
-	}
-	return &r.closure.ownerCandidates
+	return r.closure.fullOwnerClaims(r.closure.bootstrapClaimRoot())
 }
 
 func (r *admissionRootReader) rootReplacement(
@@ -139,40 +133,48 @@ func (r *admissionRootReader) rootOwnerStorage(id manifest.NamedResource) []Root
 	return captured.owners[:0]
 }
 
-// Owner claim keys MUST stay within the current prerequisite snapshot.
-type ownerClaimKey struct {
-	object           manifest.BaseManifest
-	identity, source manifest.NamedResource
-	input            *store.SourceArtifact
-	root, path       string
+type ownerClaimScope uint8
+
+const (
+	targetedClaimScope ownerClaimScope = iota
+	fullClaimScope
+)
+
+func (c *admissionClosure) bootstrapClaimRoot() string {
+	if _, input, _ := c.delta(manifest.BootstrapSourceID); input != nil {
+		return input.LocalPath
+	}
+	return c.context.Root
 }
 
-func (c *admissionClosure) rootOwnerClaims(owner *RootCoveringOwner) *manifest.DiscoveryIndex {
-	key := ownerClaimKey{
-		object: owner.Object, identity: owner.Identity, source: owner.Source,
-		input: owner.Input, root: owner.Root, path: owner.Path,
+func (c *admissionClosure) fullOwnerClaims(root string) *[]RootCoveringOwner {
+	c.collectOwners()
+	if len(c.ownerCandidates) != 0 && c.ownerCandidates[0].claims == nil {
+		captureOwnerClaims(c.ownerCandidates, c.facts.SelectionIndex(), root, &c.ownerClaims)
 	}
-	if claims, ok := c.ownerClaims[key]; ok {
+	return &c.ownerCandidates
+}
+
+func (c *admissionClosure) rootOwnerClaims(
+	owner *RootCoveringOwner,
+	root string,
+	scope ownerClaimScope,
+) *manifest.DiscoveryIndex {
+	if scope == fullClaimScope {
+		c.fullOwnerClaims(root)
+		return owner.claims
+	}
+	key := owner.claimKey(root)
+	if claims := c.ownerClaims[key]; claims != nil {
 		return claims
 	}
 	owners := [1]RootCoveringOwner{*owner}
-	index := c.facts.SelectionIndex()
-	captureOwnerClaims(owners[:], index, c.context.Root)
-	claims := owners[0].claims
-	if claims == index {
-		return claims
-	}
-	if c.ownerClaims == nil {
-		c.ownerClaims = map[ownerClaimKey]*manifest.DiscoveryIndex{}
-	}
-	c.ownerClaims[key] = claims
-	return claims
+	captureOwnerClaims(owners[:], c.facts.SelectionIndex(), root, &c.ownerClaims)
+	return owners[0].claims
 }
 
 func (c *admissionClosure) hasOwner(matches func(*RootCoveringOwner) bool) bool {
-	if !c.ownersKnown {
-		c.collectOwners()
-	}
+	c.collectOwners()
 	for i := range c.ownerCandidates {
 		owner := &c.ownerCandidates[i]
 		if owner.Object == nil || !manifest.KindOf(owner.Object).Structural {
@@ -188,6 +190,12 @@ func (c *admissionClosure) hasOwner(matches func(*RootCoveringOwner) bool) bool 
 }
 
 func (c *admissionClosure) collectOwners() {
+	if c.ownersKnown {
+		return
+	}
+	if c.ownerCandidates == nil {
+		c.ownerCandidates = []RootCoveringOwner{}
+	}
 	var prospective map[manifest.NamedResource]bool
 	include := func(id manifest.NamedResource, productions []manifest.Production) {
 		if id.KindInfo().Structural && slices.ContainsFunc(productions, func(p manifest.Production) bool {
@@ -222,11 +230,6 @@ func (c *admissionClosure) collectOwners() {
 			c.ownerCandidates = append(c.ownerCandidates, rootOwnerFact(object, c.rootReader()))
 		}
 	}
-	root := c.context.Root
-	if input, _ := c.rootReader().GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); input != nil {
-		root = input.LocalPath
-	}
-	captureOwnerClaims(c.ownerCandidates, c.facts.SelectionIndex(), root)
 	c.ownersKnown = true
 }
 

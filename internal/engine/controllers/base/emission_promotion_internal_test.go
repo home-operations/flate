@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil"
@@ -47,7 +48,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	} {
 		s.AddObject(object)
 	}
-	s.SetIncluded(source.Named(), false, false)
+	s.SetIncluded(source.Named(), false, false, false)
 	child := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
 		Name:      "consumer",
@@ -142,7 +143,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					},
 				)
 				admissiontest.Commit(t, l.Options.Session, nil)
-				st.SetIncluded(input.Named(), false, false)
+				st.SetIncluded(input.Named(), false, false, false)
 				c := New(st, task.NewBounded(2))
 				c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 				var execution Execution
@@ -219,7 +220,7 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	st.SetIncluded(input, true, true)
+	st.SetIncluded(input, true, true, false)
 	c := New(st, task.NewBounded(2))
 	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 	var reads store.ReadSet
@@ -340,6 +341,82 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 		"%v",
 		"unrelated partial publication invalidated the child's admission-only inventory proof",
 	)
+}
+
+func TestDispatch_ReusesStableDeclarationGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	object := &manifest.Kustomization{Name: "app", Namespace: "apps", Path: "original"}
+	id := object.Named()
+	st.AddObject(object)
+	l, session := admissiontest.New(t, admissiontest.Config{
+		Inventory: st, Changes: detectChanges(t, nil, nil),
+	})
+	admissiontest.Commit(t, session, nil)
+	c := New(st, nil)
+	c.Configure(Options{Loader: l, Session: session, Index: l.Index})
+	reconcile := func(struct{}, context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+		t.Error("unchanged declaration reconciled")
+		return nil
+	}
+	var first, repeated, changed Execution
+	first.Init(c, id)
+	t.Cleanup(first.Close)
+	first.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, reconcile)
+	generation := first.dispatchGeneration
+	assert.FatalIf(t, len(generation) != 1, "generation length = %d", len(generation))
+
+	repeated.Init(c, id)
+	t.Cleanup(repeated.Close)
+	repeated.Take(schedule.Result{Assessment: &first})
+	repeated.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, reconcile)
+	assert.Equal(t, &repeated.dispatchGeneration[0], &generation[0])
+
+	replacement := object.Clone()
+	replacement.Path = "replacement"
+	st.AddObject(replacement)
+	changed.Init(c, id)
+	t.Cleanup(changed.Close)
+	changed.Take(schedule.Result{Assessment: &repeated})
+	changed.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, reconcile)
+	assert.Equal(t, changed.dispatchGeneration[0].Obj, manifest.BaseManifest(replacement))
+	assert.Equal(t, generation[0].Obj, manifest.BaseManifest(object))
+}
+
+func TestDispatch_AssessesAcceptedOrderingWithoutReadmission(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	target := &manifest.Kustomization{Name: "target", Namespace: "apps", Path: "target"}
+	reader := &manifest.Kustomization{
+		Name: "reader", Namespace: "apps", Path: "reader",
+		DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
+	}
+	for _, obj := range []*manifest.Kustomization{target, reader} {
+		st.AddObject(obj)
+	}
+	const edited = "reader.yaml"
+	l, session := admissiontest.New(t, admissiontest.Config{
+		Inventory: st, Changes: detectChanges(t, []string{edited}, []string{edited}),
+		Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			reader.Named(): {File: edited},
+		}},
+	})
+	admissiontest.Commit(t, session, nil)
+	id := target.Named()
+	assert.Equal(t, session.Snapshot().ReadinessDemand(id), true)
+	assert.Equal(t, session.Snapshot().EvaluationOnly(id), true)
+	c := New(st, nil)
+	c.Configure(Options{Loader: l, Session: session, Index: l.Index})
+	var execution Execution
+	execution.Init(c, id)
+	t.Cleanup(execution.Close)
+	execution.Dispatch(t.Context(), manifest.DrainNone, struct{}{},
+		func(struct{}, context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+			t.Error("evaluation-only prerequisite reconciled")
+			return nil
+		})
+	assert.Equal(t, execution.Reads.OrderingAssessed(), true)
+	assert.Equal(t, len(execution.dispatchGeneration), 0)
 }
 
 func testKeepEmittedLatePromotionConvergesCase(
@@ -527,12 +604,12 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 	switch *testCaseInput {
 	case "matching":
 		s.AddObject(child.Obj)
-		s.SetIncluded(child.Obj.Named(), false, false)
+		s.SetIncluded(child.Obj.Named(), false, false, false)
 	case "replacing":
 		s.AddObject(
 			&manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "provisional"}},
 		)
-		s.SetIncluded(child.Obj.Named(), false, false)
+		s.SetIncluded(child.Obj.Named(), false, false, false)
 	}
 	if (*testCaseInput) == "cached" {
 		s.RecordEmitted(parent.Named(), attempt, nil)

@@ -1,0 +1,7 @@
+namespace: web
+resources: [web.yaml, ordering.yaml]
+replacements:
+  - source: {kind: ConfigMap, name: ordering, fieldPath: data.dependency}
+    targets:
+      - select: {kind: HelmRelease, name: web}
+        fieldPaths: [spec.dependsOn.0.name]

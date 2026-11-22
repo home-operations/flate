@@ -654,7 +654,7 @@ func (w *qualificationWalk) ordinaryApplication(
 	id := evidence.object.Named()
 	policy := w.reads.Policy(id)
 	if w.q.session != nil || !policy.Root || policy.Supplied() ||
-		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.OrdinaryDemand(id) {
+		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.ControllerDemand(id) {
 		return false
 	}
 	if possible {

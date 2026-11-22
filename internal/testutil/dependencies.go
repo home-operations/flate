@@ -82,23 +82,20 @@ func WriteFilteredOrderingCluster(tb testing.TB, root, greeting string, brokenSo
 		"flux/kustomization.yaml",
 		"resources: [selected.yaml, monitor-a.yaml, monitor-b.yaml, source.yaml]\n",
 	)
-	// Excluded resources are marked Ready, so a rejected CEL gate makes
-	// the dependsOn prune necessary even when the target is skipped.
-	selected := dependencyKS("selected", "apps/selected", "monitor-a")
-	selected = strings.Replace(
-		selected,
-		"  - name: monitor-a\n",
-		"  - name: monitor-a\n    readyExpr: 'dep.isHealthy()'\n",
-		1,
-	)
+	selected := dependencyKS("selected", "apps/selected", "")
 	WriteFile(tb, root, "flux/selected.yaml", selected+"  postBuild:\n    substitute:\n      GREETING: "+greeting+"\n")
-	for _, name := range []string{"monitor-a", "monitor-b"} {
-		WriteFile(tb, root, "flux/"+name+".yaml", dependencyKS(name, "apps/"+name, ""))
+	const monitorA, monitorB = "monitor-a", "monitor-b"
+	for _, name := range []string{monitorA, monitorB} {
+		dependency := ""
+		if name == monitorA {
+			dependency = monitorB
+		}
+		WriteFile(tb, root, "flux/"+name+".yaml", dependencyKS(name, "apps/"+name, dependency))
 		WriteFile(
 			tb,
 			root,
 			"apps/"+name+"/kustomization.yaml",
-			"resources:\n- missing.yaml\n- "+map[string]string{"monitor-a": "bundle.yaml", "monitor-b": "hr.yaml"}[name]+"\n",
+			"resources:\n- missing.yaml\n- "+map[string]string{monitorA: "bundle.yaml", monitorB: "hr.yaml"}[name]+"\n",
 		)
 	}
 	chart := "  chartRef: {kind: HelmChart, name: shared-chart}\n"
@@ -111,9 +108,6 @@ kind: HelmRelease
 metadata: {name: selected, namespace: flux-system}
 spec:
   interval: 10m
-  dependsOn:
-  - name: monitor-a
-  - name: monitor-b
 `+chart+`  valuesFrom:
   - kind: ConfigMap
     name: selected-values

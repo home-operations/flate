@@ -1,0 +1,7 @@
+apiVersion: builtin
+kind: LabelTransformer
+metadata: {name: mark}
+labels: {lane: original}
+fieldSpecs:
+- path: metadata/labels
+  create: true

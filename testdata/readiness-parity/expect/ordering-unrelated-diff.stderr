@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [IncompleteInputCoverage] orig snapshot: Kustomization flux-system/infra: changed-only input coverage is incomplete; render the full tree to inspect all inputs
+      GitRepository.source.toolkit.fluxcd.io/flux-system/flux-system:infra/plugin/kustomization.yaml: configuration transformations may rewrite plugin file operands
+    [IncompleteInputCoverage] current snapshot: Kustomization flux-system/infra: changed-only input coverage is incomplete; render the full tree to inspect all inputs
+      GitRepository.source.toolkit.fluxcd.io/flux-system/flux-system:infra/plugin/kustomization.yaml: configuration transformations may rewrite plugin file operands

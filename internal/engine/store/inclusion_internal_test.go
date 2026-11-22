@@ -55,7 +55,7 @@ func testStoreInclusionArrivalCase(t *testing.T, testCaseInput *string,
 		sh.cells[id] = cell
 	}
 	if (*testCaseInput) == "excluded" {
-		s.SetIncluded(id, false, false)
+		s.SetIncluded(id, false, false, false)
 	}
 	var calls atomic.Int32
 	s.AddListener(EventObjectAdded, func(got manifest.NamedResource, payload any) {
@@ -69,12 +69,12 @@ func testStoreInclusionArrivalCase(t *testing.T, testCaseInput *string,
 	for range 2 {
 		workers.Go(func() {
 			<-start
-			s.SetIncluded(id, true, true)
+			s.SetIncluded(id, true, true, false)
 		})
 	}
 	close(start)
 	workers.Wait()
-	s.SetIncluded(id, false, false)
+	s.SetIncluded(id, false, false, false)
 	var reads ReadSet
 	reads.Init(s, id, nil)
 	defer reads.Retire()

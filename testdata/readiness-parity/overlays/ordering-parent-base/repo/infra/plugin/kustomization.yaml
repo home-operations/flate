@@ -1,0 +1,5 @@
+resources: [label.yaml]
+patches:
+- target: {kind: LabelTransformer, name: mark}
+  patch: |-
+    - {op: replace, path: /labels/lane, value: marked}

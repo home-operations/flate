@@ -1,0 +1,5 @@
+
+  ✗  current snapshot: Kustomization  flux-system/infra  not found
+         current snapshot: required by flux-system/app
+
+  ✗ 1 failed · 1 blocked

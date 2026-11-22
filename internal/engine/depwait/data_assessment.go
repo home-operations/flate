@@ -27,7 +27,7 @@ func (a *DataAssessment) Settle(
 	reads *store.ReadSet,
 	level manifest.DrainLevel,
 ) error {
-	gateErr := w.Assess(ctx, reads, level)
+	gateErr := w.Assess(ctx, reads, level, AssessGates)
 	a.Failed, _ = errors.AsType[*manifest.DependencyFailedError](gateErr)
 	a.Blocked = a.Blocked[:0]
 	a.causes = a.causes[:0]

@@ -1,0 +1,9 @@
+namespace: web
+resources: [web.yaml]
+configurations: [kustomizeconfig.yaml]
+patches:
+  - target: {kind: HelmRelease, name: web}
+    patch: |-
+      - op: add
+        path: /metadata/labels
+        value: {stage: test}

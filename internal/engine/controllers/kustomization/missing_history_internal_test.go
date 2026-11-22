@@ -111,7 +111,7 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			assert.FatalIf(t, warmHistory.Assessment == nil, "missing warm assessment")
 			warmHistory.Assessment.Close()
 			st.AddObject(owner)
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			objects, warnings := st.Objects(), st.Warnings()
 			status, statusExists := st.GetStatus(owner.Named())
 			var events atomic.Int32
@@ -137,7 +137,7 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			assert.Equal(t, c.Tasks.Failures(), int64(0))
 
 			history.Assessment.Close()
-			st.SetIncluded(owner.Named(), true, true)
+			st.SetIncluded(owner.Named(), true, true, false)
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
 				Tasks: c.Tasks, Store: st, ID: owner.Named(), ReconcileNode: c.ReconcileNode,
 			})
@@ -403,7 +403,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				input: {Productions: []manifest.Production{{Owner: producer, Declaration: producer}}},
 			}})
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			prior := c.newExecution(owner.Named())
 			defer prior.run.Close()
 			var previous schedule.Result

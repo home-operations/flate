@@ -1,0 +1,14 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "db",
+        "helm.toolkit.fluxcd.io/namespace": "web"
+      },
+      "name": "db",
+      "namespace": "web"
+    }
+  }
+]

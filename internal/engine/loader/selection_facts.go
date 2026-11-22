@@ -16,17 +16,18 @@ func (l *Loader) selectionContext() selection.SourceContext {
 		roots = l.scopes.rootFacts
 	}
 	return selection.SourceContext{
-		Root:                l.SourceRoot,
-		EntryPath:           l.entryPath,
-		NativeEntry:         l.entry == entryKustomize,
-		PlainEntry:          l.entry == entryPlain,
-		Frozen:              l.frozen,
-		SideKnown:           known,
-		Side:                side,
-		Roots:               roots,
-		InputReaders:        l.inputReaders,
-		InputObjects:        l.inputObjects,
-		TemplateProjections: l.templateProjections,
+		Root:                  l.SourceRoot,
+		EntryPath:             l.entryPath,
+		NativeEntry:           l.entry == entryKustomize,
+		PlainEntry:            l.entry == entryPlain,
+		Frozen:                l.frozen,
+		SideKnown:             known,
+		Side:                  side,
+		Roots:                 roots,
+		InputReaders:          l.inputReaders,
+		InputObjects:          l.inputObjects,
+		TransformingProducers: l.transformingProducers,
+		TemplateProjections:   l.templateProjections,
 	}
 }
 
@@ -113,10 +114,14 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 			Document: occurrence.Declaration.Document, Item: occurrence.Declaration.item,
 		},
 		Identity: occurrence.Identity, Authored: occurrence.Authored,
-		Object: occurrence.object, RequiresBuild: occurrence.requiresBuild,
+		Object: occurrence.object, Parsed: occurrence.object,
+		RequiresBuild: occurrence.requiresBuild, OrderingKnown: occurrence.orderingKnown,
 	}
 	if facts := occurrence.facts; facts != nil {
 		view.Catalog = facts.catalog
+		if view.Parsed == nil && facts.completeCatalog {
+			view.Parsed = facts.catalog
+		}
 		view.Source, view.Path, view.HasPath = facts.source, facts.path, facts.hasPath
 		view.Namespaced, view.Uncertain = facts.namespaced, facts.uncertain
 		view.Retained, view.Structural, view.NeedsCandidates = facts.retained, facts.structural, facts.needsCandidates

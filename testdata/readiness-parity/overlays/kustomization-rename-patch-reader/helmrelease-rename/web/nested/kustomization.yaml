@@ -1,0 +1,7 @@
+resources: [web.yaml]
+patches:
+  - target: {kind: Kustomization, name: app}
+    patch: |-
+      - op: add
+        path: /spec/dependsOn
+        value: [{name: infra}]

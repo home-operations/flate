@@ -44,11 +44,26 @@ func (s *inputCache) certify(ctx context.Context, frame *inputFrame) error {
 	for i := range frame.Files {
 		file := &frame.Files[i]
 		mode, observed := current.Types[file.Name]
-		if current.Files[file.Name] != file.Digest || !observed || !mode.IsRegular() {
+		sameFile := current.Files[file.Name] == file.Digest && observed && mode.IsRegular()
+		sameBuilder := file.Builder == "" || frame.matchesBuilderFiles(file.Name, current.Types)
+		if !sameFile || !sameBuilder {
 			return manifest.NewError(manifest.ErrInput, nil, "discovery inputs changed during construction")
 		}
 	}
 	return nil
+}
+
+func (f *inputFrame) matchesBuilderFiles(file string, current map[string]fs.FileMode) bool {
+	dir := path.Dir(file)
+	for _, name := range manifest.KustomizeBuilderFilenames {
+		candidate := path.Join(dir, name)
+		before, saved := f.Types[candidate]
+		after, present := current[candidate]
+		if saved != present || before != after {
+			return false
+		}
+	}
+	return true
 }
 
 type inputChanges struct {

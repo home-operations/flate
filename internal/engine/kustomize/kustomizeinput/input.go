@@ -11,7 +11,10 @@ import (
 	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/resid"
+	"sigs.k8s.io/kustomize/kyaml/utils"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/core/kustpath"
 )
@@ -361,6 +364,33 @@ func Local(root, dir, raw string) (string, bool) {
 		return "", false
 	}
 	return filepath.ToSlash(rel), true
+}
+
+// ConfigurationPreservesOrdering accepts only name rewrites outside identity and ordering fields.
+func ConfigurationPreservesOrdering(data []byte) bool {
+	var configuration struct {
+		NameReference []struct {
+			resid.Gvk `json:",inline"`
+
+			FieldSpecs []types.FieldSpec `json:"fieldSpecs"`
+		} `json:"nameReference"`
+	}
+	if err := sigsyaml.UnmarshalStrict(data, &configuration); err != nil || len(configuration.NameReference) == 0 {
+		return false
+	}
+	for _, reference := range configuration.NameReference {
+		for _, spec := range reference.FieldSpecs {
+			parts := utils.PathSplitter(spec.Path, "/")
+			if len(parts) < 2 || parts[0] != "spec" {
+				return false
+			}
+			switch strings.TrimSuffix(parts[1], "[]") {
+			case "dependsOn", "suspend":
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // MetadataOnly reports whether a plugin can only change configuration metadata.

@@ -1,0 +1,5 @@
+resources: [db.yaml]
+patches:
+  - target: {kind: HelmRelease, name: db}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: database}

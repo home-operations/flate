@@ -109,6 +109,9 @@ transformers: [../transformer]
 	for _, side := range []string{"left", "right"} {
 		visit := graphVisit{graphContext: key(side).graphContext}
 		got, want := restored.scopeWalk(&visit), cold.scopeWalk(&visit)
+		wantUnknownRecipe := side == "left" && edit != "missing" && edit != "builder" && edit != "precedence"
+		assert.Equal(t, cold.scopes.walks[visit.graphContext].unknownRecipe, wantUnknownRecipe)
+		assert.Equal(t, restored.scopes.walks[visit.graphContext].unknownRecipe, wantUnknownRecipe)
 		if diff := cmp.Diff(want, got, cmp.AllowUnexported(graphVisit{}, graphContext{})); diff != "" {
 			t.Fatal(diff)
 		}

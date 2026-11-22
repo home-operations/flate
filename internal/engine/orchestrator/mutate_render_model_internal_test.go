@@ -318,10 +318,30 @@ func checkRenderModelMembership(want, got modelObservation) error {
 	return compareModelObservation(want, got)
 }
 
+func modelOrderingReaders(w modelWorld, changed modelSet) modelSet {
+	readers := make(map[modelID][]modelID)
+	for id := range w.producers {
+		for _, target := range w.producers[id].ordering {
+			readers[target] = append(readers[target], id)
+		}
+	}
+	pending := modelIDs(changed)
+	reached := make(modelSet)
+	for i := 0; i < len(pending); i++ {
+		for _, reader := range readers[pending[i]] {
+			if !reached[reader] {
+				reached[reader] = true
+				pending = append(pending, reader)
+			}
+		}
+	}
+	return reached
+}
+
 func projectRenderModel(full modelObservation, selection modelSelection, w modelWorld) modelObservation {
 	out := modelObservation{producers: make(map[modelID]modelStatus)}
 	for id, state := range full.producers {
-		if selection.affected[id] || selection.support[id] {
+		if selection.affected[id] || selection.support[id] || selection.readiness[id] {
 			out.producers[id] = state
 			if state.failure != "" && state.failure != "suspended" {
 				out.errorClass = "flux"
@@ -334,6 +354,9 @@ func projectRenderModel(full modelObservation, selection modelSelection, w model
 			doc := docValues3[docIndex3]
 
 			for id := range out.producers {
+				if !selection.affected[id] && !selection.support[id] {
+					continue
+				}
 				if slices.ContainsFunc(
 					w.producers[id].documents,
 					func(d modelDocument) bool { return d.id == doc.id },
@@ -455,14 +478,18 @@ func observeRenderModelSegment(
 		if statementInput.side.store.ReportHidden(id) || !id.KindInfo().Runnable {
 			continue
 		}
-		if (*statementInput.selected) && !statementInput.side.selection.Snapshot().Reconcile(id) {
-			if err := checkUnselectedModelArtifact(statementInput.side, id, &key); err != nil {
-				return true, (*statementInput.out), (*statementInput.admitted), err
-			}
+		decision := statementInput.side.selection.Snapshot()
+		ordinary := !*statementInput.selected || decision.Reconcile(id)
+		if err := checkUnselectedModelArtifact(statementInput.side, id, &key, ordinary); err != nil {
+			return true, (*statementInput.out), (*statementInput.admitted), err
+		}
+		if !ordinary && !decision.Assess(id) {
 			continue
 		}
-		(*statementInput.admitted)[key] = true
-		state, err := observeModelProducerStatus(statementInput, obj, id, &key)
+		if ordinary {
+			(*statementInput.admitted)[key] = true
+		}
+		state, err := observeModelProducerStatus(statementInput, obj, &key, ordinary)
 		if err != nil {
 			return true, (*statementInput.out), (*statementInput.admitted), err
 		}
@@ -654,7 +681,10 @@ func (s modelSet) containsNamed(id manifest.NamedResource) bool {
 	return false
 }
 
-func checkUnselectedModelArtifact(side *Rendered, id manifest.NamedResource, key *modelID) error {
+func checkUnselectedModelArtifact(side *Rendered, id manifest.NamedResource, key *modelID, ordinary bool) error {
+	if ordinary {
+		return nil
+	}
 	if artifact := side.store.GetArtifact(id, store.ArtifactContent); artifact != nil {
 		if _, source := artifact.(*store.SourceArtifact); !source {
 			return fmt.Errorf(
@@ -669,9 +699,10 @@ func checkUnselectedModelArtifact(side *Rendered, id manifest.NamedResource, key
 func observeModelProducerStatus(
 	statementInput *observeRenderModelSegmentInputs,
 	obj manifest.BaseManifest,
-	id manifest.NamedResource,
 	key *modelID,
+	ordinary bool,
 ) (modelStatus, error) {
+	id := obj.Named()
 	info, ok := statementInput.side.store.GetStatus(id)
 	state := modelStatus{terminal: ok && info.Status != store.StatusPending, blockers: make(modelSet)}
 	switch info.Outcome() {
@@ -686,7 +717,7 @@ func observeModelProducerStatus(
 	for _, blocker := range statementInput.side.Result.Blocked[id] {
 		state.blockers[actualRenderModelID((*statementInput.w), (*statementInput.side), blocker)] = true
 	}
-	if state.failure == "" && !obj.Suspended() {
+	if ordinary && state.failure == "" && !obj.Suspended() {
 		artifact := statementInput.side.store.GetArtifact(id, store.ArtifactContent)
 		if artifact == nil || info.Outcome() != store.OutcomePassed {
 			return modelStatus{}, fmt.Errorf(

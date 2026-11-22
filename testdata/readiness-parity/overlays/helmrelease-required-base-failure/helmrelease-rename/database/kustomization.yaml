@@ -1,0 +1,5 @@
+resources: [db.yaml]
+patches:
+  - target: {kind: HelmRelease, name: db}
+    patch: |-
+      - {op: remove, path: /metadata/noSuchParent/name}

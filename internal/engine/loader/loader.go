@@ -86,6 +86,7 @@ type Loader struct {
 	locations             map[manifest.NamedResource]authoredOccurrence
 	bindings              [64]atomic.Pointer[sourceBinding]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
+	transformingProducers []manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
 	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
 	projections           manifest.ProducerProjections

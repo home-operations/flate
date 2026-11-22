@@ -1,0 +1,9 @@
+resources: [namespace.yaml, gate.yaml]
+replacements:
+- source:
+    kind: Namespace
+    name: infra-ready
+    fieldPath: metadata.name
+  targets:
+  - select: {kind: Kustomization, name: gate}
+    fieldPaths: [metadata.name]

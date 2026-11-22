@@ -175,17 +175,13 @@ func (e *orchestratorExistence) promoteAdmission(
 	})
 }
 
-func (o *Orchestrator) run(ctx context.Context) error {
-	return o.runAfter(ctx, nil)
-}
-
-func (o *Orchestrator) runAfter(ctx context.Context, prior *selection.Decision) error {
+func (o *Orchestrator) watchRun(ctx context.Context) func() {
 	o.cfg.work.Scope().Reserve(len(o.index.Records))
 	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		o.configureControllers()
 	}
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
-	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+	return o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if !id.KindInfo().Render {
 			return
 		}
@@ -194,9 +190,11 @@ func (o *Orchestrator) runAfter(ctx context.Context, prior *selection.Decision) 
 			return
 		}
 	}, false)
-	defer unsubCycles()
+}
 
-	return o.dispatchDAG(ctx, prior)
+func (o *Orchestrator) run(ctx context.Context) error {
+	defer o.watchRun(ctx)()
+	return o.runDAG(ctx)
 }
 
 // Configure MUST precede dispatch; controllers freeze shaping config on start.
@@ -276,17 +274,25 @@ func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result
 		Failed:   failed,
 		Entry:    o.entryBinding.Projection(),
 	}
+	predictedOrderingFailure := false
 	for id, references := range snapshot.Predictions() {
 		var reads store.ReadSet
 		reads.Init(o.store, id, nil)
 		waiter := depwait.Waiter{
-			Store: &reads, Parent: id, Missing: o.cfg.missing, Decision: snapshot.Decision, Indexed: o.loader,
+			Store: &reads, Parent: id, Missing: o.cfg.missing, Decision: snapshot.Decision,
 		}
 		if err := waiter.Prediction(ctx, &reads, references, discovered); err != nil {
 			res.Failed[id] = store.FailureStatus(err)
+			decision := snapshot.Decision
+			predictedOrderingFailure = predictedOrderingFailure ||
+				decision.ReadinessDemand(id) && decision.EvaluationOnly(id) && decision.Assess(id)
 		}
 		reads.Retire()
 	}
+	if runErr == nil && predictedOrderingFailure {
+		runErr = o.aggregateFailures(res.Failed)
+	}
+	snapshot.Decision.ProjectOrderingFailures(res.Failed)
 	maps.Copy(res.Orphans, o.orphans)
 	for id, info := range res.Failed {
 		if info.IsDependencyFailure() {

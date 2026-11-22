@@ -1,0 +1,6 @@
+namespace: web
+resources: [values-owner.yaml]
+configurations: [kustomizeconfig.yaml]
+configMapGenerator:
+  - name: values
+    literals: [hello=dependency]

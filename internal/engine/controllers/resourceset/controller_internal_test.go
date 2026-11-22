@@ -385,15 +385,12 @@ func TestReconcile_NamedOnlyRetainsNamedGate(t *testing.T) {
 	assert.FatalIf(t, !slices.Equal(execution.Blocked, []manifest.NamedResource{want}),
 		"named-only dependencies = %v, want [%s]", execution.Blocked, want)
 
-	unknown := c.ReconcileNode(
-		t.Context(),
-		manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"},
-		manifest.DrainNone,
-		schedule.Result{},
-	)
+	ghost := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"}
+	unknown := c.ReconcileNode(t.Context(), ghost, manifest.DrainNone, schedule.Result{})
 	defer unknown.Close()
-	assert.FatalIf(t, unknown.Outcome() == schedule.Blocked,
-		"absent declaration has dependencies: %v", unknown.Blocked)
+	assert.Diff(t, unknown.Blocked, []manifest.NamedResource{ghost})
+	unknown.Settle(t.Context(), manifest.DrainCascade)
+	assert.Equal(t, unknown.Outcome(), schedule.Terminal)
 }
 
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {

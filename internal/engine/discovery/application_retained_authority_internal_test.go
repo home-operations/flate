@@ -417,7 +417,7 @@ func TestResolve_UnrelatedApplicationAdmission(t *testing.T) {
 	reads.GetArtifact(source.Named(), store.ArtifactContent)
 	reads.Accept(store.AssessmentReconciled)
 	assert.Equal(t, reads.Valid(), true)
-	st.SetIncluded(application.Named(), false, false)
+	st.SetIncluded(application.Named(), false, false, false)
 	assert.Equal(t, reads.Valid(), true)
 	for changed := range st.Sweep() {
 		assert.ErrorIf(t, changed == source.Named(), "unrelated application admission invalidated bootstrap source")

@@ -153,19 +153,18 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 			want...)
 	}
 	if form == "resolved" {
-		want = append(
-			[]Reference{
-				{
-					Group:       SourceDomain,
-					Kind:        KindHelmChart,
-					Namespace:   "effective",
-					Name:        "chart",
-					Use:         "chart",
-					bindsSource: true,
-					Content:     true,
-				},
+		want = append([]Reference{
+			{
+				Group:               SourceDomain,
+				Kind:                KindHelmChart,
+				Namespace:           "effective",
+				Name:                "chart",
+				RequiresDeclaration: true,
+				Use:                 "chart",
+				bindsSource:         true,
+				Content:             true,
 			},
-			want...)
+		}, want...)
 	}
 	assertReferenceEdges(t, refs, want)
 	if testCaseInput.files && len(refs[len(refs)-1].Files) != 0 {

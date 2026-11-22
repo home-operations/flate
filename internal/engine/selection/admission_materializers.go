@@ -390,7 +390,13 @@ func (c *admissionClosure) materializerTargetsMatch(
 			return true
 		}
 	}
-	return c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target) ||
+	if demand.ordering && c.session.request.Changed {
+		record, _ := c.facts.SelectionIndex().Lookup(target)
+		return slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
+			return production.Materializer(target) == id
+		})
+	}
+	return c.coversDeclaration(new(rootOwnerFact(facts.Catalog, c.rootReader())), target, targetedClaimScope) ||
 		demand.lookup && c.lookupPackageSource(id, target, facts)
 }
 
@@ -630,7 +636,8 @@ func (c *admissionClosure) candidateMaterializerFacts(
 	}
 	unconstrained := target.Kind == ""
 	fixedPath := facts.HasPath && !slices.ContainsFunc(facts.Roots, manifest.HasEnvsubstReference)
-	if unconstrained && fixedPath && !c.coversDeclaration(new(rootOwnerFact(c.object(id), c.rootReader())), consumer) {
+	if unconstrained && fixedPath &&
+		!c.coversDeclaration(new(rootOwnerFact(c.object(id), c.rootReader())), consumer, targetedClaimScope) {
 		return nil
 	}
 	return facts

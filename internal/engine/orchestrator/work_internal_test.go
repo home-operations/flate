@@ -16,6 +16,13 @@ import (
 
 func assertHeadOnlyWork(t *testing.T, rendered Rendered) {
 	t.Helper()
+	work := assertWorkOnlyBase(t, rendered)
+	assert.Equal(t, workCounts(work, manifest.NamedResource{}, manifest.WorkKustomize).Attempts, uint64(0))
+	assert.Equal(t, workCounts(work, manifest.NamedResource{}, manifest.WorkHelm).Attempts, uint64(0))
+}
+
+func assertWorkOnlyBase(t *testing.T, rendered Rendered) manifest.WorkSummary {
+	t.Helper()
 	result := rendered.Result
 	rendered.Result = nil
 	assert.Equal(t, rendered, Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}})
@@ -25,12 +32,11 @@ func assertHeadOnlyWork(t *testing.T, rendered Rendered) {
 	if difference := cmp.Diff(&Result{Work: result.Work}, result, cmp.AllowUnexported(Result{})); difference != "" {
 		t.Errorf("head-only result differs (-want +got):\n%s", difference)
 	}
-	assert.Equal(t, workCounts(result.Work, manifest.NamedResource{}, manifest.WorkKustomize).Attempts, uint64(0))
-	assert.Equal(t, workCounts(result.Work, manifest.NamedResource{}, manifest.WorkHelm).Attempts, uint64(0))
 	for recordIndex := range result.Work {
 		record := result.Work[recordIndex]
 		assert.Equal(t, record.Key.Tree, rendered.ID)
 	}
+	return result.Work
 }
 
 func TestWork_BorrowedOwners(t *testing.T) {

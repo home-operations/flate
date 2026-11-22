@@ -47,7 +47,11 @@ metadata: {name: labels}
 labels: {from: transformer}
 fieldSpecs: [{path: metadata/labels, create: true}]
 `)},
-		"apps/leaf/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n")},
+		"apps/leaf/object.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n"),
+		},
+		"plain/kustomization.yaml":        {Data: []byte("resources: [nested]\n")},
+		"plain/nested/kustomization.yaml": {Data: []byte("resources: [absent.yaml]\n")},
 	}
 	fresh := cachedFixtureLoader(t, root, files, nil)
 	defer fresh.Close()
@@ -63,21 +67,48 @@ metadata:
 	owner, err := cache.New(t.Context(), backing)
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	visit := graphVisit{root: root, dir: "plain"}
+	walkKey := physicalContext{graphContext: visit.graphContext, sourceRoot: root}
+	walk := func(l *Loader) physicalWalk {
+		l.ensureScopes()
+		l.scopeWalk(&visit)
+		source := l.sourceFacts(root)
+		result, known := source.walk(&walkKey)
+		assert.Equal(t, known, true)
+		return result
+	}
 	seed := cachedFixtureLoader(t, root, files, owner)
+	assert.Equal(t, walk(seed).unknownRecipe, true)
 	state := seed.inputCaches[root]
-	publishInputFrameWithoutRecipe(t, seed, builder)
-	seed.Close()
-
 	origin, url := state.input.OriginPath(root), state.input.URL
 	current, _ := cache.InputFrameIdentity(origin, url, nil)
 	policy := &cache.Policy{MaxAge: cache.Forever}
-	_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
-	assert.ErrorIf(t, !errors.Is(err, errdef.ErrNotFound), "input cache accepted the version 4 key: %v", err)
+	for _, version := range []int{4, 5} {
+		previous := publishPreviousInputFrame(t, seed, builder, version)
+		_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
+		assert.ErrorIf(t, !errors.Is(err, errdef.ErrNotFound),
+			"input cache accepted the version %d key: %v", version, err)
+		if version == 5 {
+			replay := cachedFixtureLoader(t, root, files, owner)
+			replayState := replay.inputCaches[root]
+			assert.NoError(t, replay.restoreFrameFiles(replayState, previous))
+			assert.NoError(t, replay.restoreFrameTraversal(replayState, previous))
+			replayed := walk(replay)
+			assert.Equal(t, replayed.imported, true)
+			assert.Equal(t, replayed.unknownRecipe, false)
+			replay.Close()
+		}
+	}
+	seed.Close()
 
 	coordinate := inputCoordinate{name: builder, builder: true}
 	rebuilt := cachedFixtureLoader(t, root, files, owner)
 	_, restored := rebuilt.inputCaches[root].files[coordinate]
 	assert.Equal(t, restored, false)
+	rebuiltSource := rebuilt.sourceFacts(root)
+	_, restored = rebuiltSource.walk(&walkKey)
+	assert.Equal(t, restored, false)
+	assert.Equal(t, walk(rebuilt).unknownRecipe, true)
 	assert.Equal(t, patchedInputResult(t, rebuilt, files), expected)
 	assert.NoError(t, rebuilt.PersistInputs(t.Context()))
 	_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
@@ -92,22 +123,41 @@ metadata:
 	defer warm.Close()
 	_, restored = warm.inputCaches[root].files[coordinate]
 	assert.Equal(t, restored, true)
+	restoredWalk := walk(warm)
+	assert.Equal(t, restoredWalk.imported, true)
+	assert.Equal(t, restoredWalk.unknownRecipe, true)
 	assert.Equal(t, patchedInputResult(t, warm, files), expected)
 }
 
-func publishInputFrameWithoutRecipe(t *testing.T, l *Loader, name string) {
+func publishPreviousInputFrame(t *testing.T, l *Loader, name string, version int) *inputFrame {
 	t.Helper()
 	owner, state := l.Options.Cache, l.inputCaches[l.SourceRoot]
 	origin, url := state.input.OriginPath(state.input.LocalPath), state.input.URL
 	previous := manifest.Fingerprint(struct {
 		Version             int
 		Domain, Origin, URL string
-	}{Version: 4, Domain: "loader-inputs", Origin: origin, URL: url})
-	frame := inputFrame{Files: []cachedInput{{
-		Name: name, Builder: filepath.Base(name), Digest: state.digests[name],
-		Body: l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, name))].body,
-	}}}
-	assert.NoError(t, state.certify(t.Context(), &frame))
+	}{Version: version, Domain: "loader-inputs", Origin: origin, URL: url})
+	doc := l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, name))]
+	frame := &inputFrame{
+		Files: []cachedInput{{
+			Name: name, Builder: filepath.Base(name), Digest: state.digests[name],
+			Body: doc.body,
+		}},
+		Types: map[string]fs.FileMode{name: state.types[name]},
+	}
+	if version == 5 {
+		var err error
+		frame, err = l.cacheSourceInputs(state)
+		assert.NoError(t, err)
+		assert.FatalIf(t, frame == nil, "want a version 5 frame")
+		walkIndex := slices.IndexFunc(frame.Walks, func(walk cachedWalk) bool {
+			return walk.Context.Dir == "plain" && walk.UnknownRecipe
+		})
+		assert.FatalIf(t, walkIndex < 0, "want the plain builder walk in the version 5 frame")
+		frame.Walks = frame.Walks[walkIndex : walkIndex+1]
+		frame.Walks[0].UnknownRecipe = false
+	}
+	assert.NoError(t, state.certify(t.Context(), frame))
 	content, err := frame.prepare(t.Context())
 	assert.NoError(t, err)
 	_, identity := cache.InputFrameIdentity(origin, url, content)
@@ -125,14 +175,27 @@ func publishInputFrameWithoutRecipe(t *testing.T, l *Loader, name string) {
 	assert.NoError(t, err)
 	var wire struct {
 		Files []map[string]json.RawMessage
+		Walks []map[string]json.RawMessage
 	}
 	stored, err := cache.OpenFrame(t.Context(), "loader-inputs", generation, &wire)
 	assert.NoError(t, err)
-	assert.FatalIf(t, len(wire.Files) != 1, "version 4 frame files: %v", wire.Files)
-	_, hasRecipe := wire.Files[0]["Recipe"]
-	assert.Equal(t, hasRecipe, false)
+	if version == 4 {
+		assert.FatalIf(t, len(wire.Files) != 1, "version 4 frame files: %v", wire.Files)
+		_, hasRecipe := wire.Files[0]["Recipe"]
+		assert.Equal(t, hasRecipe, false)
+	} else {
+		assert.FatalIf(t, len(wire.Walks) != 1, "version 5 frame walks: %v", wire.Walks)
+		_, hasUnknownRecipe := wire.Walks[0]["UnknownRecipe"]
+		assert.Equal(t, hasUnknownRecipe, false)
+		assert.Equal(t, slices.ContainsFunc(wire.Files, func(file map[string]json.RawMessage) bool {
+			return string(file["Name"]) == strconv.Quote(name) && file["Recipe"] != nil
+		}), true)
+	}
 	_, complete := stored.History(manifest.BootstrapSourceID, binding)
 	assert.Equal(t, complete, true)
+	restored, err := readInputFrame(t.Context(), generation)
+	assert.NoError(t, err)
+	return restored
 }
 
 func patchedInputResult(t *testing.T, l *Loader, files fstest.MapFS) string {

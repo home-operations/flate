@@ -1,11 +1,14 @@
 package selection
 
 import (
+	"bytes"
 	"context"
 	"iter"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -119,7 +122,7 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "before"}
 			st.AddObject(owner)
-			st.SetIncluded(owner.Named(), false, false)
+			st.SetIncluded(owner.Named(), false, false, false)
 			session := newSolverSession(t, st, nil, Request{Changed: true})
 			previous := AdmissionResult{
 				Needed:   []manifest.NamedResource{owner.Named()},
@@ -289,6 +292,16 @@ type retryAcquisitionFacts struct {
 
 	rootsRead       int
 	occurrencesRead int
+	watched         manifest.NamedResource
+	captured        *store.ReadSet
+}
+
+func (f *retryAcquisitionFacts) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) RootEvidence {
+	if f.watched.Name != "" {
+		reads.GetObject(f.watched)
+		f.captured = reads
+	}
+	return f.solverFacts.RootEvidence(id, reads)
 }
 
 //nolint:gocritic // The fixture MUST retain the census result signature.
@@ -311,24 +324,116 @@ func (f *retryAcquisitionFacts) OccurrenceObject(
 	return f.solverFacts.OccurrenceObject(ctx, occurrence, input)
 }
 
+//nolint:paralleltest // The occurrence trace uses the process logger.
 func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
-	t.Parallel()
+	t.Run("source replacement", testPublicationRetryReplacesSource)
+	t.Run("base side", func(t *testing.T) { testPublicationRetryReusesOccurrence(t, manifest.TreeBase) })
+	t.Run("head side", func(t *testing.T) { testPublicationRetryReusesOccurrence(t, manifest.TreeHead) })
+}
+
+func testPublicationRetryReusesOccurrence(t *testing.T, side manifest.TreeSide) {
+	t.Helper()
+	var trace bytes.Buffer
+	logger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&trace, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(logger) })
+
 	st := store.New()
 	root := t.TempDir()
 	input := &store.SourceArtifact{
 		Provider:  store.ProviderInput,
-		Content:   "before",
+		Content:   "source",
 		LocalPath: root,
 		FS:        fstest.MapFS{},
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "app"}
+	facts := newRetryAcquisitionFacts(st, input, owner)
+	facts.context.Side, facts.context.SideKnown = side, true
+	reader := &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: "reader"}
+	facts.watched = reader.Named()
+	st.AddObject(reader)
+	session, err := New(st, facts, Request{Changed: true, Roots: []manifest.NamedResource{owner.Named()}})
+	assert.NoError(t, err)
+	var preparation *Preparation
+	defer func() { preparation.Retire() }()
+	var reads store.ReadSet
+	var work manifest.WorkRecorder
+	reads.Init(st, manifest.NamedResource{}, nil)
+	reads.SetWork(&work)
+	defer reads.Retire()
+	request := PrepareRequest{Preparation: &preparation, Reads: &reads}
+	reads.RequireOrdering(&store.OrderingEdge{Target: owner.Named()})
+	_, accepted, err := session.admitTest(t.Context(), AdmissionOptions{Request: request, Stage: Construction})
+	assert.NoError(t, err)
+	assert.Equal(t, accepted, true)
+	first := preparation.occurrences[owner.Named()]
+	assert.Equal(t, first != nil, true)
+	assert.Equal(t, facts.occurrencesRead, 1)
+	firstOwnerPrepares := work.Scope().Admission().Counts.OwnerPrepares
+	assert.Equal(t, firstOwnerPrepares, uint64(1))
+	st.DeleteObject(owner.Named())
+
+	trigger := &manifest.ConfigMap{Name: "trigger", Namespace: "apps"}
+	request.Invocation = true
+	request.Generation = []store.Child{{Obj: trigger, Entry: &manifest.EntryApplication{}}}
+	histories := 0
+	request.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+		owner.Named(): {{Path: "app/child.yaml"}},
+	}
+	published := false
+	request.ReadHistory = func(_ context.Context, demand *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+		histories++
+		assert.Equal(t, demand.Identity, owner.Named())
+		root := "app/../original"
+		if published {
+			root = "app/../added"
+		}
+		return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+			yield(owner.Named(), manifest.DiscoveryRecord{
+				ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {root}},
+			})
+		}, false
+	}
+	stop := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if published || id != trigger.Named() {
+			return
+		}
+		published = true
+		replacement := reader.Clone()
+		replacement.Path = "reader-after"
+		st.AddObject(replacement)
+		assert.Equal(t, st.GetObject(reader.Named()), manifest.BaseManifest(replacement))
+		assert.Equal(t, facts.captured.Valid(), false)
+	}, false)
+	defer stop()
+	result, accepted, err := session.admitTest(t.Context(), AdmissionOptions{Request: request, Stage: Execution})
+	assert.NoError(t, err)
+	assert.Equal(t, accepted, true)
+	assert.Equal(t, published, true)
+	assert.Equal(t, histories, 2)
+	assert.Equal(t, facts.rootsRead, 2)
+	assert.Equal(t, facts.occurrencesRead, 1)
+	assert.Equal(t, strings.Count(trace.String(), "result=derived"), 1)
+	assert.Equal(t, strings.Count(trace.String(), "result=reused") > 0, true)
+	assert.Equal(t, preparation.occurrences[owner.Named()] == first, true)
+	assert.Equal(t, work.Scope().Admission().Counts.OwnerPrepares > firstOwnerPrepares, true)
+	assert.Equal(t, slices.Contains(result.Needed, owner.Named()), true)
+	assert.Equal(t, len(result.Demands), 0)
+}
+
+func newRetryAcquisitionFacts(
+	st *store.Store,
+	input *store.SourceArtifact,
+	owner *manifest.Kustomization,
+) *retryAcquisitionFacts {
+	root := input.LocalPath
 	record := manifest.DiscoveryRecord{File: "owner.yaml", Path: filepath.Join(root, "owner.yaml"), Declaration: owner}
 	occurrence := OccurrenceFacts{
 		Identity: owner.Named(), Authored: owner.Named(), Object: owner, Catalog: owner,
 		Declaration: OccurrenceID{Source: root, File: "owner.yaml"}, Mounted: input, Located: true, CatalogKnown: true,
 	}
-	facts := &retryAcquisitionFacts{solverFacts: &solverFacts{
+	return &retryAcquisitionFacts{solverFacts: &solverFacts{
 		store:   st,
 		context: SourceContext{Root: root},
 		index: manifest.DiscoveryIndex{
@@ -350,8 +455,20 @@ func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
 			},
 		}},
 	}}
+}
+
+func testPublicationRetryReplacesSource(t *testing.T) {
+	t.Helper()
+	st := store.New()
+	input := &store.SourceArtifact{Content: "before", LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "app"}
+	facts := newRetryAcquisitionFacts(st, input, owner)
 	session, err := New(st, facts, Request{Roots: []manifest.NamedResource{owner.Named()}})
 	assert.NoError(t, err)
+	var preparation *Preparation
+	defer func() { preparation.Retire() }()
+	var newer *store.SourceArtifact
 	histories := 0
 	trigger := &manifest.ConfigMap{Name: "trigger", Namespace: "apps"}
 	published := false
@@ -361,11 +478,13 @@ func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
 		}
 		published = true
 		assert.Equal(t, histories > 0 && facts.rootsRead > 0 && facts.occurrencesRead > 0, true)
+		assert.Equal(t, preparation.occurrences[owner.Named()], nil)
 		replacement := *input
 		replacement.Content = "after"
-		st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+		newer = &replacement
+		st.SetArtifact(manifest.BootstrapSourceID, newer)
 		current := facts.occurrences[owner.Named()]
-		current.Mounted = &replacement
+		current.Mounted = newer
 		facts.occurrences[owner.Named()] = current
 		rootEvidence := facts.roots[owner.Named()]
 		rootEvidence.Occurrence = current
@@ -374,6 +493,7 @@ func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
 	defer stop()
 	result, accepted, err := session.admitTest(t.Context(), AdmissionOptions{Request: PrepareRequest{
 		Invocation:    true,
+		Preparation:   &preparation,
 		Generation:    []store.Child{{Obj: trigger, Entry: &manifest.EntryApplication{}}},
 		HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{owner.Named(): {{Path: "app/child.yaml"}}},
 		ReadHistory: func(context.Context, *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
@@ -396,6 +516,7 @@ func TestAdmit_PublicationRetryAcquiresDemand(t *testing.T) {
 	assert.Equal(t, histories, 2)
 	assert.Equal(t, facts.rootsRead, 2)
 	assert.Equal(t, facts.occurrencesRead, 2)
+	assert.Equal(t, preparation.occurrences[owner.Named()].key.artifact, newer)
 	assert.Equal(t, len(result.Demands), 0)
 	assert.Equal(t, slices.Contains(result.Needed, owner.Named()), true)
 	assert.Equal(t, st.GetDeclaration(owner.Named()) == owner, true)

@@ -60,6 +60,18 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			}
 		}
 	}
+	t.Run("head-only-paired", func(t *testing.T) {
+		testRenderTreesCancellationJoinsBeforeCacheCloseCase(
+			t,
+			testRenderTreesCancellationJoinsBeforeCacheCloseCaseInputs{
+				workers: new(2), headOnly: new(true), comparison: true,
+				tc: &struct {
+					backing  string
+					injected bool
+				}{backing: "memory", injected: true},
+			},
+		)
+	})
 	t.Run("http-bootstrap", func(t *testing.T) { testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrap(t) })
 }
 
@@ -324,9 +336,10 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 }
 
 type testRenderTreesCancellationJoinsBeforeCacheCloseCaseInputs struct {
-	workers  *int
-	headOnly *bool
-	tc       *struct {
+	workers    *int
+	headOnly   *bool
+	comparison bool
+	tc         *struct {
 		backing string
 
 		injected bool
@@ -555,6 +568,31 @@ type testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrapCaseInputs str
 	}
 }
 
+func cancellationSourceFiles(i int, comparison bool) fstest.MapFS {
+	files := fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [flux.yaml]\n")},
+		"flux.yaml": {
+			Data: []byte(
+				testutil.KustomizationYAML(
+					"owner",
+					"apps",
+					"  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n",
+				),
+			),
+		},
+		"app/kustomization.yaml": {
+			Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n"),
+		},
+		"app/payload.txt": {Data: fmt.Appendf(nil, "fixture-%d", i)},
+	}
+	if comparison {
+		files["app/kustomization.yaml"].Data = append(files["app/kustomization.yaml"].Data,
+			"resources: [operand.yaml]\n"...)
+		files["app/operand.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML("operand", "apps", ""))}
+	}
+	return files
+}
+
 func testRenderTreesCancellationCaseBubble(
 	t *testing.T,
 	testCaseInput testRenderTreesCancellationJoinsBeforeCacheCloseCaseInputs,
@@ -577,13 +615,9 @@ func testRenderTreesCancellationCaseBubble(
 	defer cancel()
 	release := make(chan struct{})
 	defer close(release)
-	active := 2
-	if *testCaseInput.headOnly {
-		active = 1
-	}
-	wantOrigErrors := 1
-	if *testCaseInput.headOnly {
-		wantOrigErrors = 0
+	active, wantOrigErrors := 2, 1
+	if *testCaseInput.headOnly && !testCaseInput.comparison {
+		active, wantOrigErrors = 1, 0
 	}
 	entered, canceled, completed := make(
 		chan struct{},
@@ -597,22 +631,8 @@ func testRenderTreesCancellationCaseBubble(
 	)
 	inputs := [2]*store.SourceArtifact{}
 	for i := range inputs {
-		input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: fstest.MapFS{
-			"kustomization.yaml": {Data: []byte("resources: [flux.yaml]\n")},
-			"flux.yaml": {
-				Data: []byte(
-					testutil.KustomizationYAML(
-						"owner",
-						"apps",
-						"  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n",
-					),
-				),
-			},
-			"app/kustomization.yaml": {
-				Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n"),
-			},
-			"app/payload.txt": {Data: fmt.Appendf(nil, "fixture-%d", i)},
-		}}
+		files := cancellationSourceFiles(i, testCaseInput.comparison)
+		input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: files}
 		input.acquire = func() error {
 			_, _, _, localErr := owner.Blob(
 				ctx,

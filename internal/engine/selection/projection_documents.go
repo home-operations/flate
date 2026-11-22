@@ -104,6 +104,7 @@ func (c *selectionCollection) collectObjects() {
 		for _, obj := range c.rootObjects(root) {
 			c.collectObject(root, obj)
 		}
+		c.countCapturedAssessments(root)
 	}
 }
 
@@ -179,6 +180,7 @@ func (c *selectionCollection) selectRoot(root manifest.NamedResource, obj manife
 		s.result.LookupMatched = true
 	}
 	if !s.selectedObject(obj, c.counterpart()) {
+		s.countNamedAssessment(root, id)
 		if c.canPair(obj) {
 			c.emitters = append(c.emitters, obj)
 		}

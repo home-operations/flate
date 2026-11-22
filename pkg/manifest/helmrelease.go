@@ -511,14 +511,15 @@ func (h *HelmRelease) declaredChartReference(source, declared NamedResource) Ref
 		namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
 	}
 	return Reference{
-		NamespaceDefault: namespaceDefault,
-		NamedResource:    declared,
-		Use:              chartKey,
-		bindsSource:      h.ChartRef != nil,
-		Content:          true,
-		Gate:             stage,
-		Artifact:         artifact,
-		ChartSource:      artifact,
-		ArtifactStages:   GateArtifacts,
+		NamespaceDefault:    namespaceDefault,
+		NamedResource:       declared,
+		Use:                 chartKey,
+		bindsSource:         h.ChartRef != nil,
+		Content:             true,
+		Gate:                stage,
+		Artifact:            artifact,
+		RequiresDeclaration: h.ChartRef != nil,
+		ChartSource:         artifact,
+		ArtifactStages:      GateArtifacts,
 	}
 }

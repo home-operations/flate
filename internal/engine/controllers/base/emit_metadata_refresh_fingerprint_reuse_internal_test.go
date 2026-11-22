@@ -173,7 +173,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
 			assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{current}})
 			assert.Equal(t, second.Valid(), true)
-			s.SetIncluded(child.Named(), false, false)
+			s.SetIncluded(child.Named(), false, false, false)
 			assert.FatalIf(t, !second.Valid(), "%v", "replayed output became a consumed input of its own producer")
 		})
 	}
@@ -405,7 +405,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 
 	captured := make(map[manifest.NamedResource]*Execution)
 	for _, obj := range []manifest.BaseManifest{producer, chart, foreignProducer} {
-		s.SetIncluded(obj.Named(), false, false)
+		s.SetIncluded(obj.Named(), false, false, false)
 		execution := newExecution(c, obj.Named())
 		t.Cleanup(execution.Close)
 		assert.FatalIf(t, execution.Reads.Admitted(),
@@ -686,7 +686,7 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	)
 	admissiontest.Commit(t, admissionLoader2.Options.Session, nil)
 	c.Configure(Options{Session: admissionLoader2.Options.Session, Index: index, Loader: admissionLoader2})
-	s.SetIncluded(obj.Named(), false, false)
+	s.SetIncluded(obj.Named(), false, false, false)
 	execution := newExecution(c, obj.Named())
 	t.Cleanup(execution.Close)
 	assert.FatalIf(t, execution.Reads.Admitted(), "%v", "child admitted before publication")

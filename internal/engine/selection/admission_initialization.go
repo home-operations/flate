@@ -22,11 +22,16 @@ func (c *admissionClosure) start(
 	c.indexStartObjects(objects)
 
 	edges := make([]admissionStartEdge, 0, len(c.identities))
-	link := func(from, to manifest.NamedResource) {
+	link := func(from, to manifest.NamedResource, ordering bool) {
 		state := c.states[from]
 		edges = append(
 			edges,
-			admissionStartEdge{consumer: to, next: state.consumer, generation: c.states[to].generation},
+			admissionStartEdge{
+				consumer:   to,
+				next:       state.consumer,
+				generation: c.states[to].generation,
+				ordering:   ordering,
+			},
 		)
 		state.consumer = len(edges)
 		c.states[from] = state
@@ -95,26 +100,45 @@ func (c *admissionClosure) start(
 			}
 		}
 	}
+	if len(c.proposal.Request.OrderingCandidates) != 0 {
+		return nil
+	}
 	c.admitInitialStates(claims)
 	c.qualifySelectionProducers()
+	c.admitTransformedOrdering()
 	c.finishStart(known, materializers)
 
 	return nil
 }
 
+func (c *admissionClosure) seedReadDemand(reads *store.ReadSet) {
+	for id, qualification := range reads.Required() {
+		if c.states == nil {
+			c.states = map[manifest.NamedResource]admissionState{}
+		}
+		state := c.states[id]
+		state.requested = reads.ID() == (manifest.NamedResource{})
+		c.states[id] = state
+		role := c.role(id)
+		ordering := reads.RequiresOrdering(id)
+		role.needed = role.needed || !ordering || !c.session.request.Changed
+		role.ordinary = role.ordinary || !qualification && !ordering
+		role.readiness = role.readiness || ordering
+		c.add(id, role)
+	}
+}
+
 func (c *admissionClosure) admitChangedRoots() {
 	for _, root := range c.roots {
-		var identities []manifest.NamedResource
-		for i := range c.context.Roots {
-			if facts := &c.context.Roots[i]; facts.Path == root {
-				identities = facts.Identities
-				break
+		if c.session.comparisonOnly {
+			if c.rootRequired(root) {
+				c.proposal.Blocked = append(c.proposal.Blocked, root)
 			}
+			continue
 		}
-		matches := c.rootMatches(root, identities)
 		entry := filepath.Join(c.context.Root, filepath.FromSlash(root)) == c.context.EntryPath &&
 			c.session.request.Matches(manifest.NamedResource{})
-		if !matches && !entry {
+		if !c.rootMatches(root) && !entry {
 			continue
 		}
 		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
@@ -125,7 +149,7 @@ func (c *admissionClosure) admitChangedRoots() {
 	}
 	route := c.proposal.entry
 	unbound := route != nil && !route.Bound
-	if c.context.Frozen || !c.session.request.Changed || !unbound {
+	if c.context.Frozen || c.session.comparisonOnly || !c.session.request.Changed || !unbound {
 		return
 	}
 	relative, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
@@ -136,31 +160,6 @@ func (c *admissionClosure) admitChangedRoots() {
 	if c.indexedEntryChanged() {
 		c.proposal.Blocked = append(c.proposal.Blocked, entry)
 	}
-}
-
-func (c *admissionClosure) rootMatches(root string, identities []manifest.NamedResource) bool {
-	matches := c.rootRequired(root) || slices.ContainsFunc(
-		identities,
-		func(id manifest.NamedResource) bool { return c.session.request.Matches(id) },
-	)
-	if !matches {
-		delta, _, _ := c.delta(manifest.BootstrapSourceID)
-		for id, input := range c.comparisonInputs(delta, manifest.NamedResource{}) {
-			if c.session.request.Matches(id) &&
-				slices.ContainsFunc(input.Declarations, func(file string) bool {
-					return containsPath(c.context.Root, filepath.Join(c.context.Root, root)) &&
-						containsPath(
-							filepath.Join(c.context.Root, root),
-							filepath.Join(c.context.Root, filepath.FromSlash(file)),
-						)
-				}) {
-				matches = true
-				break
-			}
-		}
-	}
-
-	return matches
 }
 
 func (c *admissionClosure) rootRequired(root string) bool {
@@ -189,8 +188,8 @@ func (c *admissionClosure) finishStart(
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) {
 	if c.context.NativeEntry && c.session.request.Matches(manifest.NamedResource{}) {
-		path, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
-		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
+		entry, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
+		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(entry), manifest.NamedResource{}).
 			Named()
 		if object := c.object(owner); object != nil && c.affected(owner, object) {
 			c.add(owner, admissionRole{needed: true, ordinary: true})
@@ -226,7 +225,9 @@ func (c *admissionClosure) finishStart(
 		if !state.role.needed && c.namespaceProductionDemand(id) {
 			c.add(id, admissionRole{needed: true, ordinary: true})
 		}
-		if c.states[id].role.needed {
+		role := c.states[id].role
+		switch {
+		case role.needed, role.readiness:
 			c.queue = append(c.queue, id)
 		}
 	}
@@ -401,6 +402,7 @@ func (c *admissionClosure) retireIdentities() {
 type admissionStartEdge struct {
 	consumer         manifest.NamedResource
 	next, generation int
+	ordering         bool
 }
 
 type admissionStartRestoration struct {
@@ -426,10 +428,10 @@ func (s *admissionSeeds) scanReferences(
 	c *admissionClosure,
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) {
 	for ref := range c.references(id, obj) {
-		if !c.reverse(id, obj, new(ref)) {
+		if !c.reverse(id, obj, &ref) {
 			continue
 		}
 		inputs, known, err := c.matchingInputs(new(ref), true)
@@ -437,13 +439,14 @@ func (s *admissionSeeds) scanReferences(
 			continue
 		}
 		for _, input := range inputs {
-			if c.changedInput(id, input) {
+			if !ref.Ordering && c.changedInput(id, input) ||
+				ref.Ordering && c.orderingDeclarationChanged(input) {
 				*s = append(
 					*s,
 					admissionStartSeed{target: input, origin: id, generation: c.states[id].generation},
 				)
 			}
-			link(input, id)
+			link(input, id, ref.Ordering)
 		}
 	}
 }
@@ -452,7 +455,7 @@ func (s *admissionSeeds) scanProductions(
 	c *admissionClosure,
 	id manifest.NamedResource,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) []manifest.Production {
 	productions := c.productions(id)
 	if c.unavailableGeneratedData(id) {
@@ -485,7 +488,7 @@ func (s *admissionSeeds) scanProductions(
 			}
 			if owner != id && owner != (manifest.NamedResource{}) && !owner.ReportHidden() &&
 				!c.unchangedDeclaration(id, owner, obj) {
-				link(owner, id)
+				link(owner, id, false)
 			}
 		}
 	}
@@ -525,7 +528,7 @@ func (c *admissionClosure) recordDirectState(
 		}
 		for source := range c.sources(id) {
 			state.direct = state.direct ||
-				c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file)
+				c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file, false)
 		}
 	}
 	c.states[id] = state
@@ -587,64 +590,37 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 	for next := c.states[id].consumer; next != 0; next = edges[next-1].next {
 		edge := edges[next-1]
 		consumer := edge.consumer
-		if edge.generation != c.states[consumer].generation || c.states[consumer].changed {
+		state := c.states[consumer]
+		if edge.generation != state.generation {
 			continue
 		}
-		obj := c.object(consumer)
-		if !c.initialSourceChanged(consumer) {
+		if edge.ordering {
+			c.reachReadinessReader(consumer)
 			continue
 		}
-		unchanged := false
-		for ref := range c.references(consumer, obj) {
-			if ref.NamedResource != id {
-				continue
-			}
-			unchanged = !c.reverseChanged(consumer, obj, new(ref))
-			if !unchanged {
-				break
-			}
+		if state.changed || !c.states[id].changed || !c.initialSourceChanged(consumer) {
+			continue
 		}
-		if !unchanged {
+		if c.readerUsesChangedInput(consumer, id) {
 			c.markChanged(consumer)
 			c.queue = append(c.queue, consumer)
 		}
 	}
 }
 
-func (c *admissionClosure) seedChangedReaders(file string) {
-	for reader := range c.facts.SelectionIndex().ReadersOfFile(file) {
-		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
-		if !c.changedClaim(new(reader), file) {
+func (c *admissionClosure) readerUsesChangedInput(consumer, input manifest.NamedResource) bool {
+	object := c.object(consumer)
+	matched := false
+	for ref := range c.references(consumer, object) {
+		if ref.NamedResource != input || ref.Ordering {
 			continue
 		}
-		id := reader.Reader
-		if !reader.Materialize {
-			state := c.states[id]
-			state.seed = true
-			c.states[id] = state
-			continue
+		if c.reverseChanged(consumer, object, new(ref)) {
+			return true
 		}
-		if c.replace[id] {
-			continue
-		}
-		c.add(id, admissionRole{needed: true, ordinary: true})
-		if c.proposal.Request.construction && !id.KindInfo().Render &&
-			!c.facts.SelectionIndex().Records[id].StaticOutput {
-			c.demandMaterialization(id)
-		}
+		matched = true
 	}
-}
-
-func (c *admissionClosure) demandMaterialization(id manifest.NamedResource) {
-	status, _ := c.objects.GetStatus(id)
-	output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-	if output != nil && output.Complete && output.OutputReads.Valid() {
-		return
-	}
-	if status.Outcome() == store.OutcomePending || output != nil && !output.Reads.Valid() {
-		c.add(id, admissionRole{needed: true, ordinary: true})
-		c.acquire(Demand{Identity: id, Materialize: true})
-	}
+	return !matched
 }
 
 func (c *admissionClosure) admitAncestorClaims(
@@ -658,7 +634,7 @@ func (c *admissionClosure) admitAncestorClaims(
 			continue
 		}
 		for source := range c.sources(id) {
-			if c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file) {
+			if c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file, false) {
 				c.add(id, admissionRole{needed: true, ordinary: true})
 			}
 		}
@@ -675,6 +651,9 @@ func (c *admissionClosure) selectInitialState(id manifest.NamedResource, state *
 	}
 	if !state.eligible {
 		return
+	}
+	if state.readinessAffected && c.session.request.Changed && !state.changed {
+		c.add(id, admissionRole{readiness: true, fatal: !id.ReportHidden()})
 	}
 	if state.changed || !c.session.request.Changed || c.proposal.Request.Changes == nil {
 		c.add(id, admissionRole{needed: true, selected: !id.ReportHidden(), dirty: true})
@@ -758,7 +737,7 @@ func (c *admissionClosure) prepareInitialChanges(seeds admissionSeeds, edges []a
 	c.queue = c.queue[:0]
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
-		state.changed = state.seed || state.direct
+		state.changed, state.readinessAffected = state.seed || state.direct, false
 		c.states[id] = state
 	}
 	c.activateInitialSeeds(seeds, edges)
@@ -793,11 +772,11 @@ func (c *admissionClosure) linkInitialParent(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 	obj manifest.BaseManifest,
-	link func(from, to manifest.NamedResource),
+	link func(from, to manifest.NamedResource, ordering bool),
 ) {
 	if parent := record.Parent; parent != (manifest.NamedResource{}) && parent != id && !parent.ReportHidden() &&
 		!c.unchangedDeclaration(id, parent, obj) {
-		link(parent, id)
+		link(parent, id, false)
 	}
 }
 
@@ -838,4 +817,25 @@ func (c *admissionClosure) recordInitialRestorations(
 		}
 	}
 	return restorations
+}
+
+func (c *admissionClosure) admitTransformedOrdering() {
+	if !c.session.request.Changed || !c.context.Frozen || !c.context.SideKnown ||
+		len(c.context.TransformingProducers) == 0 {
+		return
+	}
+	for source := range c.proposal.Request.Changes.Sources() {
+		facts := c.boundSource(source)
+		for target := range c.proposal.Request.Changes.RemovedDeclarations(c.context.Side, source, facts.Input, facts.Paired) {
+			kind := manifest.NamedResource{Group: target.Group, Kind: target.Kind}
+			if !kind.KindInfo().Render || !c.session.request.MatchesScope(kind) ||
+				c.objects.GetDeclaration(target) != nil {
+				continue
+			}
+			for _, owner := range c.context.TransformingProducers {
+				c.needOrderingOwner(manifest.NamedResource{}, owner)
+			}
+			return
+		}
+	}
 }

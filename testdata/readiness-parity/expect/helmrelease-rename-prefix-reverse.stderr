@@ -1,0 +1,5 @@
+
+  ✗  orig snapshot: HelmRelease  web/db  not found
+         orig snapshot: required by web/x-web
+
+  ✗ 1 failed · 1 blocked

@@ -168,7 +168,7 @@ func (c *admissionClosure) bootstrapPrerequisite(
 				owner = rootOwnerFact(object, c.rootReader())
 			}
 		}
-		return c.bootstrapInputRequired(&owner, id, &record)
+		return c.bootstrapInputRequired(&owner, id, &record, targetedClaimScope)
 	}
 	if required(c.object(record.Parent)) || c.incoming(id).Obj != nil && required(c.incoming(id).Obj) {
 		return true
@@ -180,7 +180,9 @@ func (c *admissionClosure) bootstrapPrerequisite(
 			return true
 		}
 	}
-	return c.hasOwner(func(owner *RootCoveringOwner) bool { return c.bootstrapInputRequired(owner, id, &record) })
+	return c.hasOwner(func(owner *RootCoveringOwner) bool {
+		return c.bootstrapInputRequired(owner, id, &record, fullClaimScope)
+	})
 }
 
 func (c *admissionClosure) directBootstrap(id manifest.NamedResource) bool {
@@ -195,6 +197,7 @@ func (c *admissionClosure) bootstrapInputRequired(
 	owner *RootCoveringOwner,
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
+	scope ownerClaimScope,
 ) bool {
 	if owner.Object == nil {
 		return false
@@ -214,7 +217,7 @@ func (c *admissionClosure) bootstrapInputRequired(
 				continue
 			}
 		}
-		return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
+		return record.Parent == owner.Identity || c.coversDeclaration(owner, id, scope)
 	}
 	return false
 }
@@ -233,14 +236,18 @@ func (c *admissionClosure) bootstrapProductionCurrent(id manifest.NamedResource,
 		slices.ContainsFunc(output.Children, func(child store.Child) bool { return child.Obj.Named() == id })
 }
 
-func (c *admissionClosure) coversDeclaration(owner *RootCoveringOwner, id manifest.NamedResource) bool {
+func (c *admissionClosure) coversDeclaration(
+	owner *RootCoveringOwner,
+	id manifest.NamedResource,
+	scope ownerClaimScope,
+) bool {
 	if owner.Object == nil || owner.Input == nil {
 		return false
 	}
 	if !manifest.KindOf(owner.Object).Parent || !owner.Object.EmissionPolicy().MatchesNamespace(id) {
 		return false
 	}
-	return c.completeCoversDeclaration(id, owner)
+	return c.completeCoversDeclaration(id, owner, scope)
 }
 
 func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
@@ -348,7 +355,11 @@ func (c *admissionClosure) ownerDeclarationStable(id, owner manifest.NamedResour
 	return stable
 }
 
-func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, owner *RootCoveringOwner) bool {
+func (c *admissionClosure) completeCoversDeclaration(
+	id manifest.NamedResource,
+	owner *RootCoveringOwner,
+	scope ownerClaimScope,
+) bool {
 	if owner.Path == "" {
 		return false
 	}
@@ -367,7 +378,7 @@ func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, 
 					filepath.Join(owner.Input.LocalPath, filepath.FromSlash(declaration)),
 				)
 				facts.DeclarationSource = owner.Root
-				if c.declarationClaimed(&facts, owner) {
+				if c.declarationClaimed(&facts, owner, scope) {
 					return true
 				}
 			}
@@ -375,15 +386,23 @@ func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, 
 		return false
 	}
 	facts.DeclarationSource = c.declarationSource(id)
-	return c.declarationClaimed(&facts, owner)
+	return c.declarationClaimed(&facts, owner, scope)
 }
 
-func (c *admissionClosure) declarationClaimed(facts *RootEvidence, owner *RootCoveringOwner) bool {
+func (c *admissionClosure) declarationClaimed(
+	facts *RootEvidence,
+	owner *RootCoveringOwner,
+	scope ownerClaimScope,
+) bool {
 	if owner.claims != nil {
 		return rootClaimed(facts, owner, owner.claims)
 	}
-	coordinate, known := rootClaimCoordinate(facts, owner, c.context.Root)
-	return known && claimContains(c.rootOwnerClaims(owner), coordinate, facts.Identity, owner)
+	root := c.context.Root
+	if scope == fullClaimScope {
+		root = c.bootstrapClaimRoot()
+	}
+	coordinate, known := rootClaimCoordinate(facts, owner, root)
+	return known && claimContains(c.rootOwnerClaims(owner, root, scope), coordinate, facts.Identity, owner)
 }
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
@@ -568,7 +587,7 @@ func (c *admissionClosure) checkDeclarationReferences(owner manifest.NamedResour
 	if *stable {
 		object := c.object(owner)
 		for ref := range c.references(owner, object) {
-			if !c.reverse(owner, object, &ref) {
+			if ref.Ordering || !c.reverse(owner, object, &ref) {
 				continue
 			}
 			if c.changedInput(owner, ref.NamedResource) ||
@@ -586,7 +605,7 @@ func (c *admissionClosure) checkDeclarationFiles(
 	stable *bool,
 	declared, record *manifest.DiscoveryRecord,
 ) {
-	if *stable {
+	if *stable && (len(declared.Inputs) != 0 || len(record.Inputs) != 0) {
 		for file := range c.sourceFiles(source) {
 			if slices.Contains(declared.Inputs, file) || slices.Contains(record.Inputs, file) {
 				(*stable) = false
@@ -768,7 +787,7 @@ func (c *admissionClosure) classifyAuthoredDeclaration(
 	if evidence.owner != (manifest.NamedResource{}) && !evidence.owner.ReportHidden() && evidence.owner != id {
 		return
 	}
-	input, _ := c.hydrationSource(id, occurrence.Declaration.Source)
+	input, _ := c.hydrationSource(id, occurrence.Mounted)
 	if input != nil {
 		evidence.authored, evidence.owner = true, manifest.NamedResource{}
 	}

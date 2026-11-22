@@ -88,8 +88,10 @@ func (l *Loader) freezeConstruction() {
 			continue
 		}
 		for ref := range manifest.References(object, manifest.ReferenceRelations) {
-			if ref.ContentInput() && (ref.Name != "" || ref.Selector != nil) &&
-				!slices.Contains(l.inputReaders[ref.NamedResource], id) {
+			if !indexesReferenceReader(&ref) {
+				continue
+			}
+			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
 				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
 			}
 		}
@@ -269,7 +271,7 @@ func (l *Loader) Close() {
 	l.Options.ConfiguredInput = nil
 	l.Options.Cache, l.inputCaches = nil, nil
 	l.facts, l.scopes, l.admitted, l.snapshot = nil, nil, nil, nil
-	l.inputReaders, l.inputObjects, l.templateProjections = nil, nil, nil
+	l.inputReaders, l.inputObjects, l.templateProjections, l.transformingProducers = nil, nil, nil, nil
 	for i := range l.bindings {
 		l.bindings[i].Store(nil)
 	}
@@ -431,6 +433,8 @@ func (l *Loader) completeIndexInputs(repoRoot string) error {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
 	l.Index.Components = new(l.documents).claimComponentIndex()
+	l.qualifyOrderingOccurrences()
+	l.indexTransformingProducers()
 	return l.captureNativeRoots(repoRoot)
 }
 
@@ -537,10 +541,15 @@ func (l *Loader) markCompleteSources() {
 	}
 }
 
+func indexesReferenceReader(ref *manifest.Reference) bool {
+	readinessInput := ref.Ordering && !ref.Optional
+	return (ref.ContentInput() || readinessInput) && (ref.Name != "" || ref.Selector != nil)
+}
+
 func (l *Loader) indexRecordInputs() {
 	for id := range l.Index.Records {
 		for ref := range l.References(id) {
-			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
+			if !indexesReferenceReader(&ref) {
 				continue
 			}
 			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {

@@ -32,6 +32,9 @@ type Set struct {
 	groups       []sourceGroup
 	declarations map[comparisonKey]declarationComparison
 	paired       bool
+	// Paired absence evidence MUST survive discovery narrowing within the same admitted source pair.
+	removedDeclarations [2]map[manifest.NamedResource]bool
+	effectiveRemovals   map[manifest.NamedResource]effectiveInventoryPair
 }
 
 type filePresence uint8

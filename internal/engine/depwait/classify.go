@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/home-operations/flate/internal/engine/schedule"
@@ -57,64 +58,104 @@ func failedClassification(
 //
 //nolint:gocritic // DependencyRef remains a value in the SDK so callers retain ownership.
 func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
+	cl, _ := w.classifyCaptured(ctx, &dep, level, nil)
+	return cl
+}
+
+func (w *Waiter) classifyCaptured(
+	ctx context.Context, dep *manifest.DependencyRef, level manifest.DrainLevel, ordering *orderingAssessment,
+) (Classification, []manifest.NamedResource) {
 	if message := w.Store.Preflight(w.Parent).Message; message != "" {
-		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}
+		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}, nil
 	}
-	existence := w.Existence
-	for {
-		result, promoted := w.classify(ctx, &dep, level, existence)
-		if !promoted {
-			return result
-		}
-		existence = nil
+	result, pending, promoted := w.classify(ctx, dep, level, ordering)
+	if !promoted {
+		return result, pending
 	}
+	captured := *w
+	captured.Existence = nil
+	result, pending, _ = captured.classify(ctx, dep, level, ordering)
+	return result, pending
 }
 
 func (w *Waiter) classify(
 	ctx context.Context,
 	dep *manifest.DependencyRef,
 	level manifest.DrainLevel,
-	existence ExistenceLookup,
-) (Classification, bool) {
+	ordering *orderingAssessment,
+) (Classification, []manifest.NamedResource, bool) {
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
 	if w.artifactOnlyReady(dep, !dep.RequiresDeclaration) {
-		return Classification{Kind: schedule.Terminal}, false
+		return Classification{Kind: schedule.Terminal}, nil, false
 	}
-	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
-	present := obj != nil || info.Status != ""
-	if dep.RequiresDeclaration {
-		present = obj != nil
+	observed := w.observeDependency(dep, ordering, hasExpr)
+	if dep.RequiresDeclaration && w.artifactOnlyReady(dep, observed.present) {
+		return Classification{Kind: schedule.Terminal}, nil, false
 	}
-	if dep.RequiresDeclaration && w.artifactOnlyReady(dep, present) {
-		return Classification{Kind: schedule.Terminal}, false
+	if !w.Materializer && observed.present && !observed.info.Statusful {
+		return w.artifactReady(dep, level), nil, false
 	}
-	if !w.Materializer && present && !info.Statusful {
-		return w.artifactReady(dep, level), false
+	var downstream error
+	if ordering != nil {
+		ordering.reads.ControllerDemand(id)
+		downstream = ordering.projectReadiness(ctx, w, &observed, level)
 	}
 	var readiness expressionReadiness
 	if hasExpr {
-		readiness = w.tryReadyExpr(dep, obj, info.Conditions)
+		readiness = w.tryReadyExpr(dep, observed.object, observed.info.Conditions)
 	}
 	if readiness.failure != "" {
-		return failedClassification(id, obj, readiness.failure, nil), false
+		return failedClassification(id, observed.object, readiness.failure, nil), nil, false
 	}
-	if !present && existence != nil {
-		promoted, err := existence.Promote(ctx, w.Admission, id)
-		if err != nil {
-			return Classification{Err: err}, false
-		}
-		if promoted {
-			return Classification{}, true
+	if !observed.present && ordering == nil && w.Existence != nil {
+		promoted, err := w.Existence.Promote(ctx, w.Admission, id)
+		if promoted || err != nil {
+			return Classification{Err: err}, nil, err == nil
 		}
 	}
-	if !present {
-		return w.classifyAbsent(dep, level), false
+	if !observed.present {
+		classification, pending := w.classifyAbsent(dep, level, ordering)
+		return classification, pending, false
 	}
 	if readiness.ready {
-		return w.artifactReady(dep, level), false
+		return w.artifactReady(dep, level), nil, false
 	}
-	return w.classifyPresent(dep, obj, &info, level), false
+	if downstream != nil {
+		if blocked, ok := errors.AsType[*BlockedError](downstream); ok {
+			return Classification{Kind: schedule.Blocked}, blocked.Deps, false
+		}
+		observed.info.StatusInfo = store.FailureStatus(downstream)
+	}
+	return w.classifyPresent(dep, observed.object, &observed.info, level), nil, false
+}
+
+type dependencyObservation struct {
+	object  manifest.BaseManifest
+	info    store.Observation
+	present bool
+	hasExpr bool
+}
+
+func (w *Waiter) observeDependency(
+	dep *manifest.DependencyRef, ordering *orderingAssessment, hasExpr bool,
+) dependencyObservation {
+	id := dep.NamedResource
+	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
+	if !dep.RequiresDeclaration {
+		return dependencyObservation{
+			object:  obj,
+			info:    info,
+			present: obj != nil || info.Status != "",
+			hasExpr: hasExpr,
+		}
+	}
+	if ordering != nil {
+		obj = w.Decision.OrderingDeclaration(ordering.reads, id, hasExpr)
+	} else {
+		obj = w.Store.GetDeclaration(id)
+	}
+	return dependencyObservation{object: obj, info: info, present: obj != nil, hasExpr: hasExpr}
 }
 
 func (w *Waiter) artifactOnlyReady(dep *manifest.DependencyRef, declarationSatisfied bool) bool {
@@ -125,22 +166,35 @@ func (w *Waiter) artifactOnlyReady(dep *manifest.DependencyRef, declarationSatis
 	return readable
 }
 
-func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
+func (w *Waiter) classifyAbsent(
+	dep *manifest.DependencyRef,
+	level manifest.DrainLevel,
+	ordering *orderingAssessment,
+) (Classification, []manifest.NamedResource) {
 	id := dep.NamedResource
 	if dep.Artifact && !dep.RequiresDeclaration {
 		if artifact, _ := w.Store.ReadableSourceArtifact(id); artifact != nil {
-			return w.artifactReady(dep, level)
+			return w.artifactReady(dep, level), nil
 		}
 	}
+	var pending []manifest.NamedResource
+	if ordering != nil {
+		pending = w.orderingProducers(ordering.reads, id)
+	}
 	if level < manifest.DrainCascade {
-		return Classification{Kind: schedule.Blocked}
+		return Classification{Kind: schedule.Blocked}, pending
+	}
+	if dep.RequiresDeclaration && level < manifest.DrainForce {
+		if ordering != nil && len(pending) != 0 || ordering == nil && len(w.Store.UnsettledProducers(id)) != 0 {
+			return Classification{Kind: schedule.Blocked}, pending
+		}
 	}
 	if w.Missing.allowsMissingDeclaration(id) {
 		result := w.artifactReady(dep, level)
 		result.ToleratedCRD = result.Kind == schedule.Terminal && result.Err == nil
-		return result
+		return result, pending
 	}
-	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}
+	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}, pending
 }
 
 func (w *Waiter) classifyPresent(

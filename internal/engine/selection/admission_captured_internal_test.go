@@ -199,14 +199,14 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	st.AddObject(target)
 	assert.Equal(t, reads.GetObject(target.Named()), nil)
 	c.evaluateCaptured(t, emitter, child, &reads)
+	assert.Equal(t, c.role(target.Named()).readiness, true)
+	assert.Equal(t, c.objects.GetDeclaration(target.Named()), nil)
 	assert.Diff(
 		t,
 		capturedRoles(&c),
 		map[manifest.NamedResource][4]bool{
-			emitter:          {true, true, true, true},
-			child.Named():    {true, true, true, true},
-			target.Named():   {true, false, false, true},
-			producer.Named(): {true, false, false, true},
+			emitter:       {true, true, true, true},
+			child.Named(): {true, true, true, true},
 		},
 	)
 	assert.Equal(t, reads.Valid(), false)
@@ -219,7 +219,11 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	assert.Diff(
 		t,
 		capturedRoles(&fresh),
-		map[manifest.NamedResource][4]bool{emitter: {true, true, true, true}, child.Named(): {true, true, true, true}},
+		map[manifest.NamedResource][4]bool{
+			emitter: {true, true, true, true}, child.Named(): {true, true, true, true},
+		},
 	)
+	assert.Equal(t, fresh.role(target.Named()).readiness, true)
+	assert.Equal(t, fresh.objects.GetDeclaration(target.Named()), manifest.BaseManifest(target))
 	assert.Equal(t, current.Valid(), true)
 }

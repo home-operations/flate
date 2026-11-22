@@ -11,6 +11,43 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// ProjectOrderingFailures retains the captured intermediate failures of unelected prerequisites.
+func (d *Decision) ProjectOrderingFailures(failed map[manifest.NamedResource]store.StatusInfo) {
+	if d == nil || !d.changedOnly || len(failed) == 0 {
+		return
+	}
+	var visit func(*manifest.DiagnosticReason)
+	visit = func(reason *manifest.DiagnosticReason) {
+		id := reason.Subject.ID
+		if !d.EvaluationOnly(id) || len(reason.Causes) == 0 {
+			return
+		}
+		if _, known := failed[id]; known {
+			return
+		}
+		err := &manifest.DependencyFailedError{
+			Parent: id, Subject: reason.Subject,
+			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason, len(reason.Causes)),
+		}
+		for i := range reason.Causes {
+			cause := &reason.Causes[i]
+			err.Failed = append(err.Failed, cause.Subject.ID)
+			err.Reasons[cause.Subject.ID] = *cause
+		}
+		slices.SortFunc(err.Failed, manifest.NamedResource.Compare)
+		failed[id] = store.FailureStatus(err)
+		for i := range reason.Causes {
+			visit(&reason.Causes[i])
+		}
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(failed), manifest.NamedResource.Compare) {
+		reasons := failed[id].DependencyReason(manifest.DiagnosticFor(id, nil)).Causes
+		for i := range reasons {
+			visit(&reasons[i])
+		}
+	}
+}
+
 func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *selectionSide) {
 	if len(s.run.Failed) == 0 && len(s.lookupFailures) == 0 {
 		return
@@ -25,7 +62,7 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	for id, info := range s.run.Failed {
 		_, needed := required[id]
 		if required != nil && !needed {
-			if s.includes(id.Namespace) {
+			if s.includes(id.Namespace) && s.reportsUnrelated(id, &info) {
 				unrelated[id] = info
 			}
 			continue
@@ -54,6 +91,46 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 		s.result.Unrelated = s.unrelatedFailures(&s.run, unrelated, required)
 	}
 	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
+}
+
+func (s *selectionSide) countNamedAssessment(root, id manifest.NamedResource) {
+	if root.Name != "" && s.run.Decision.reportsFailure(id) && s.run.Store.GetDeclaration(id) != nil {
+		s.result.Counts[root.Kind]++
+	}
+}
+
+func (c *selectionCollection) countCapturedAssessments(root manifest.NamedResource) {
+	s := c.side
+	if root.Name == "" || s.run.Decision == nil {
+		return
+	}
+	for id := range s.run.Failed {
+		if root.Group != id.Group || root.Kind != id.Kind || !c.intent.Matches(id) || !s.includes(id.Namespace) {
+			continue
+		}
+		if s.run.Decision.reportsFailure(id) && s.run.Decision.orderingDeclarations[id].object != nil &&
+			s.run.Store.GetObject(id) == nil {
+			s.result.Counts[root.Kind]++
+		}
+	}
+}
+
+func (s *selectionSide) reportsUnrelated(id manifest.NamedResource, status *store.StatusInfo) bool {
+	decision := s.run.Decision
+	readinessOnly := func(id manifest.NamedResource) bool {
+		if !decision.ReadinessDemand(id) || decision.OrdinaryDemand(id) {
+			return false
+		}
+		owner := s.run.Store.EmissionOwner(id)
+		return owner == (manifest.NamedResource{}) || owner.ReportHidden()
+	}
+	if readinessOnly(id) {
+		return false
+	}
+	blocked := status.BlockedBy()
+	return len(blocked) == 0 || slices.ContainsFunc(blocked, func(dep manifest.NamedResource) bool {
+		return !readinessOnly(dep)
+	})
 }
 
 func (s *selectionSide) requiredClosure(
@@ -109,7 +186,7 @@ func (q *requiredSelection) add(id manifest.NamedResource) {
 func (q *requiredSelection) seed(id manifest.NamedResource) {
 	s := q.side
 	if q.intent.Roots[0].Name == "" && s.run.Decision.restricted() {
-		if selected := s.run.Decision.Output(id); !selected {
+		if !s.run.Decision.reportsFailure(id) {
 			return
 		}
 	}
@@ -162,7 +239,7 @@ func (q *requiredSelection) seedOther(other *selectionSide) {
 	s := q.side
 	for _, id := range other.roots {
 		if s.run.Decision.restricted() {
-			if selected := other.run.Decision.Output(id); selected {
+			if other.run.Decision.reportsFailure(id) {
 				q.add(id)
 			}
 		}
@@ -197,6 +274,14 @@ func (q *requiredSelection) expandPrerequisites() {
 			q.add(parent)
 		}
 		for dep := range q.side.run.Store.RequiredInputs(id) {
+			q.add(dep)
+		}
+		if decision := q.side.run.Decision; decision != nil {
+			for _, edge := range decision.ordering[id] {
+				q.add(edge.Target)
+			}
+		}
+		for _, dep := range q.side.run.Blocked[id] {
 			q.add(dep)
 		}
 	}

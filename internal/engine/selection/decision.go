@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -15,17 +16,57 @@ const (
 	ordinary
 	promoted
 	namedLookup
+	readiness
+	fatal
 )
 
 const decisionBuckets = 64
 
 // Decision MUST remain immutable after publication, including every borrowed bucket.
 type Decision struct {
-	seed         maphash.Seed
-	buckets      [decisionBuckets]map[manifest.NamedResource]uint8
-	revision     uint64
-	execution    bool
-	unrestricted bool
+	seed                 maphash.Seed
+	buckets              [decisionBuckets]map[manifest.NamedResource]uint8
+	revision             uint64
+	ordering             map[manifest.NamedResource][]store.OrderingEdge
+	orderingDeclarations map[manifest.NamedResource]orderingDeclaration
+	execution            bool
+	unrestricted         bool
+	changedOnly          bool
+}
+
+type orderingDeclaration struct {
+	declarationIdentity
+
+	object manifest.BaseManifest
+	source manifest.NamedResource
+	owner  manifest.NamedResource
+}
+
+// OrderingDeclaration keeps indexed evidence subordinate to accepted producer ownership.
+func (d *Decision) OrderingDeclaration(
+	reads *store.ReadSet, id manifest.NamedResource, expressionOperand bool,
+) manifest.BaseManifest {
+	if obj := reads.GetDeclaration(id); obj != nil {
+		return obj
+	}
+	if !d.EvaluationOnly(id) {
+		return nil
+	}
+	evidence := d.orderingDeclarations[id]
+	if evidence.object == nil || expressionOperand && evidence.owner != (manifest.NamedResource{}) {
+		return nil
+	}
+	for _, owner := range reads.DeclarationProducers(id) {
+		reads.ControllerDemand(owner)
+		if reads.ProducerPublished(owner) || d.OrdinaryDemand(owner) && reads.GetDeclaration(owner) != nil {
+			return nil
+		}
+	}
+	if input := reads.GetArtifact(evidence.source, store.ArtifactContent); input != evidence.artifact ||
+		!reads.SourceAdmission(id, evidence.source) || reads.ProducerPublished(evidence.owner) {
+		return nil
+	}
+	return evidence.object
 }
 
 func (d *Decision) roles(id manifest.NamedResource) uint8 {
@@ -38,6 +79,11 @@ func (d *Decision) roles(id manifest.NamedResource) uint8 {
 // Reconcile admits every identity when the decision is nil.
 func (d *Decision) Reconcile(id manifest.NamedResource) bool {
 	return d == nil || d.unrestricted || d.roles(id)&needed != 0
+}
+
+// Assess also dispatches readers reached only for failure reporting.
+func (d *Decision) Assess(id manifest.NamedResource) bool {
+	return d.Reconcile(id) || d.roles(id)&fatal != 0
 }
 
 // Output includes every identity when the decision is nil.
@@ -55,9 +101,18 @@ func (d *Decision) OrdinaryDemand(id manifest.NamedResource) bool {
 	return d == nil || d.unrestricted || d.roles(id)&ordinary != 0
 }
 
-// Ordering preserves missing external dependency validation without admitting excluded inventory.
-func (d *Decision) Ordering(id manifest.NamedResource, present, indexed bool) bool {
-	return d == nil || d.Reconcile(id) || !present && !indexed
+// ReadinessDemand includes prerequisites that can fail without contributing output.
+func (d *Decision) ReadinessDemand(id manifest.NamedResource) bool {
+	return d != nil && !d.unrestricted && d.roles(id)&readiness != 0
+}
+
+// EvaluationOnly applies the change boundary to ordering prerequisites.
+func (d *Decision) EvaluationOnly(id manifest.NamedResource) bool {
+	return d != nil && d.changedOnly && !d.OrdinaryDemand(id)
+}
+
+func (d *Decision) reportsFailure(id manifest.NamedResource) bool {
+	return d.Output(id) || d.roles(id)&fatal != 0
 }
 
 func (d *Decision) namespaces() map[string]struct{} {
@@ -67,7 +122,7 @@ func (d *Decision) namespaces() map[string]struct{} {
 	var result map[string]struct{}
 	for _, bucket := range d.buckets {
 		for id, roles := range bucket {
-			if roles&selected == 0 || id.ReportHidden() || id.Namespace == "" {
+			if roles&(selected|fatal) == 0 || id.ReportHidden() || id.Namespace == "" {
 				continue
 			}
 			if result == nil {
@@ -89,9 +144,9 @@ func (d *Decision) include(update *Admission, execution bool) (*Decision, []mani
 	}
 	var copied [decisionBuckets]bool
 	var included []manifest.NamedResource
-	nextExecution := d.execution || execution
-	changed := d.execution != nextExecution
-	for _, axis := range [5]struct {
+	next.execution = execution
+	changed := d.execution != execution
+	for _, axis := range [7]struct {
 		ids  []manifest.NamedResource
 		role uint8
 	}{
@@ -100,6 +155,8 @@ func (d *Decision) include(update *Admission, execution bool) (*Decision, []mani
 		{update.Selected, selected},
 		{update.Dirty, dirty},
 		{update.lookups, namedLookup},
+		{update.Readiness, readiness},
+		{update.Fatal, fatal},
 	} {
 		if !execution && (axis.role == selected || axis.role == dirty) {
 			continue
@@ -115,10 +172,12 @@ func (d *Decision) include(update *Admission, execution bool) (*Decision, []mani
 			}
 		}
 	}
-	if !changed {
+	orderingChanged, included := d.updateOrdering(&next, update, &copied, included)
+	declarationsChanged := next.replaceOrderingDeclarations(update.orderingDeclarations)
+	if !changed && !orderingChanged && !declarationsChanged {
 		return d, nil
 	}
-	next.execution, next.revision = nextExecution, d.revision+1
+	next.revision = d.revision + 1
 	slices.SortFunc(included, manifest.NamedResource.Compare)
 	return &next, slices.Compact(included)
 }
@@ -129,7 +188,10 @@ func (d *Decision) includeRole(
 ) (bool, bool) {
 	bucket := maphash.Comparable(d.seed, id) % decisionBuckets
 	previous := next.buckets[bucket][id]
-	roles := previous | needed | role
+	roles := previous | role
+	if !d.changedOnly || role != readiness && role != fatal {
+		roles |= needed
+	}
 	if role == selected {
 		roles |= ordinary
 	}
@@ -137,7 +199,8 @@ func (d *Decision) includeRole(
 	if d.execution {
 		committed = d.roles(id)
 	}
-	if committed&needed != 0 && committed&ordinary == 0 && roles&ordinary != 0 && execution && roles&dirty == 0 {
+	addsOrdinaryDemand := committed&ordinary == 0 && roles&ordinary != 0
+	if committed&needed != 0 && addsOrdinaryDemand && execution && roles&dirty == 0 {
 		roles |= dirty | promoted
 	}
 	if role == dirty {
@@ -146,14 +209,136 @@ func (d *Decision) includeRole(
 	if previous == roles {
 		return false, false
 	}
+	next.setRoles(copied, id, roles)
+	newlyDirty := committed&dirty == 0 && roles&dirty != 0
+	demandChanged := committed&(ordinary|readiness) != roles&(ordinary|readiness)
+	needsDispatch := committed&(needed|fatal) == 0 || demandChanged || newlyDirty
+	return true, execution && roles&(needed|fatal) != 0 && needsDispatch
+}
+
+func (d *Decision) setRoles(copied *[decisionBuckets]bool, id manifest.NamedResource, roles uint8) {
+	bucket := maphash.Comparable(d.seed, id) % decisionBuckets
 	if !copied[bucket] {
-		next.buckets[bucket] = maps.Clone(next.buckets[bucket])
-		if next.buckets[bucket] == nil {
-			next.buckets[bucket] = map[manifest.NamedResource]uint8{}
+		d.buckets[bucket] = maps.Clone(d.buckets[bucket])
+		if d.buckets[bucket] == nil {
+			d.buckets[bucket] = map[manifest.NamedResource]uint8{}
 		}
 		copied[bucket] = true
 	}
-	next.buckets[bucket][id] = roles
-	return true, execution &&
-		(committed&needed == 0 || committed&ordinary != roles&ordinary || committed&dirty == 0 && roles&dirty != 0)
+	d.buckets[bucket][id] = roles
+}
+
+// MatchesOrdering rejects stale authored edges after effective inputs are available.
+func (d *Decision) MatchesOrdering(reads *store.ReadSet) bool {
+	if !d.restricted() || !reads.OrderingAssessed() {
+		return true
+	}
+	existing := d.ordering[reads.ID()]
+	count := 0
+	for target := range reads.Ordering() {
+		if _, known := slices.BinarySearchFunc(existing, target, store.OrderingEdge.Compare); !known {
+			return false
+		}
+		count++
+	}
+	return count == len(existing)
+}
+
+// HasOrdering avoids capturing prior inventories when no ordering edges can be withdrawn.
+func (d *Decision) HasOrdering() bool { return d != nil && len(d.ordering) != 0 }
+
+func (d *Decision) updateOrdering(
+	next *Decision, update *Admission, copied *[decisionBuckets]bool,
+	included []manifest.NamedResource,
+) (bool, []manifest.NamedResource) {
+	if !next.execution || d.unrestricted || len(update.ordering) == 0 && !d.HasOrdering() {
+		return false, included
+	}
+	changed := next.replaceOrdering(update.ordering)
+	if !changed && len(included) == 0 && len(update.Fatal) == 0 {
+		return false, included
+	}
+	targets := next.orderingTargets()
+	for _, bucket := range next.buckets {
+		for id, roles := range bucket {
+			want := targets[id] || roles&fatal != 0
+			if want == (roles&readiness != 0) {
+				continue
+			}
+			roles ^= readiness
+			next.setRoles(copied, id, roles)
+			if roles&needed != 0 {
+				included = append(included, id)
+			}
+			changed = true
+		}
+	}
+	return changed, included
+}
+
+func (d *Decision) replaceOrdering(changes map[manifest.NamedResource][]store.OrderingEdge) bool {
+	changed := false
+	for reader, targets := range changes {
+		if slices.Equal(targets, d.ordering[reader]) {
+			continue
+		}
+		if !changed {
+			d.ordering = maps.Clone(d.ordering)
+			if d.ordering == nil {
+				d.ordering = make(map[manifest.NamedResource][]store.OrderingEdge)
+			}
+			changed = true
+		}
+		if len(targets) == 0 {
+			delete(d.ordering, reader)
+		} else {
+			d.ordering[reader] = targets
+		}
+	}
+	return changed
+}
+
+func (d *Decision) replaceOrderingDeclarations(changes map[manifest.NamedResource]orderingDeclaration) bool {
+	changed := false
+	for id := range changes {
+		evidence := changes[id]
+		prior := d.orderingDeclarations[id]
+		if prior.source == evidence.source && prior.owner == evidence.owner &&
+			prior.declarationIdentity == evidence.declarationIdentity && manifest.Equal(prior.object, evidence.object) {
+			continue
+		}
+		if !changed {
+			d.orderingDeclarations = maps.Clone(d.orderingDeclarations)
+			if d.orderingDeclarations == nil {
+				d.orderingDeclarations = make(map[manifest.NamedResource]orderingDeclaration)
+			}
+			changed = true
+		}
+		if evidence.object == nil {
+			delete(d.orderingDeclarations, id)
+		} else {
+			d.orderingDeclarations[id] = evidence
+		}
+	}
+	return changed
+}
+
+func (d *Decision) orderingTargets() map[manifest.NamedResource]bool {
+	var work []manifest.NamedResource
+	needed := make(map[manifest.NamedResource]bool)
+	for reader := range d.ordering {
+		if d.roles(reader)&(ordinary|fatal) != 0 {
+			work = append(work, reader)
+		}
+	}
+	for i := 0; i < len(work); i++ {
+		for _, edge := range d.ordering[work[i]] {
+			target := edge.Target
+			if !needed[target] {
+				needed[target] = true
+				work = append(work, target)
+			}
+		}
+	}
+	return needed
 }

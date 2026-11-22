@@ -42,25 +42,24 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	}
 }
 
-func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
+func TestController_CollectHRDepsOrderingParity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name                      string
 		active, selected, indexed bool
 		present                   bool
 		status                    store.Status
-		retain                    bool
 	}{
-		{name: "unfiltered missing", retain: true},
-		{name: "known file excluded", active: true, indexed: true},
-		{name: "render generated excluded", active: true, present: true},
-		{name: "unknown retained", active: true, retain: true},
-		{name: "selected ready", active: true, selected: true, present: true, status: store.StatusReady, retain: true},
-		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed, retain: true},
+		{name: "unfiltered missing"},
+		{name: "known indexed target", active: true, indexed: true},
+		{name: "generated target", active: true, present: true},
+		{name: "unknown retained", active: true},
+		{name: "selected ready", active: true, selected: true, present: true, status: store.StatusReady},
+		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testControllerCollectHRDepsOrderingFilterCase(
+			testControllerCollectHRDepsOrderingParityCase(
 				t,
 				&tc,
 			)
@@ -89,9 +88,9 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 		t,
 		got,
 		[]manifest.DependencyRef{
-			{NamedResource: testutil.HelmReleaseID("default", "other")},
-			{NamedResource: testutil.HelmReleaseID("default", "second")},
-			{NamedResource: testutil.HelmReleaseID("default", "third")},
+			{NamedResource: testutil.HelmReleaseID("default", "other"), RequiresDeclaration: true},
+			{NamedResource: testutil.HelmReleaseID("default", "second"), RequiresDeclaration: true},
+			{NamedResource: testutil.HelmReleaseID("default", "third"), RequiresDeclaration: true},
 		},
 	)
 	got[0].Name = "mutated"
@@ -122,12 +121,13 @@ func TestDependencies_HelmRelease_ArtifactStages(t *testing.T) {
 			c := gateExecution(New(store.New(), nil), manifest.NamedResource{})
 			want := []manifest.DependencyRef{{
 				Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart",
-				Artifact: tc.artifact, ChartSource: true,
+				Artifact: tc.artifact, ChartSource: true, RequiresDeclaration: true,
 			}}
 			if tc.stage == manifest.GateInputs {
 				want = append(want, manifest.DependencyRef{
-					NamedResource: testutil.HelmReleaseID("apps", "ordered"),
-					ReadyExpr:     new("dep.spec.suspend == false"),
+					NamedResource:       testutil.HelmReleaseID("apps", "ordered"),
+					ReadyExpr:           new("dep.spec.suspend == false"),
+					RequiresDeclaration: true,
 				})
 			}
 			got := collectGates(c, hr, tc.stage)
@@ -178,7 +178,7 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 	)
 }
 
-func testControllerCollectHRDepsOrderingFilterCase(
+func testControllerCollectHRDepsOrderingParityCase(
 	t *testing.T,
 	testCaseInput *struct {
 		name string
@@ -188,7 +188,6 @@ func testControllerCollectHRDepsOrderingFilterCase(
 		indexed  bool
 		present  bool
 		status   store.Status
-		retain   bool
 	},
 ) {
 	t.Helper()
@@ -247,12 +246,9 @@ func testControllerCollectHRDepsOrderingFilterCase(
 		)
 	}
 	decision := filter.Snapshot()
-	var want []manifest.DependencyRef
-	if testCaseInput.retain {
-		want = []manifest.DependencyRef{
-			{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")},
-		}
-	}
+	want := []manifest.DependencyRef{{
+		NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false"), RequiresDeclaration: true,
+	}}
 	assert.Diff(t, sortedDependencies(collectGates(c, hr, manifest.GateInputs)), sortedDependencies(want))
 	assert.ErrorIf(
 		t,

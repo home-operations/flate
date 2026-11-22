@@ -3,6 +3,7 @@ package selection
 import (
 	"cmp"
 	"iter"
+	"maps"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -11,13 +12,16 @@ import (
 
 // Predictions retains diagnostic membership without admitting declarations for execution.
 func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[manifest.Reference]] {
-	if len(s.Failed) == 0 || s.Facts == nil {
+	if s.Facts == nil || len(s.Failed) == 0 && (s.Decision == nil || len(s.Decision.orderingDeclarations) == 0) {
 		return func(func(manifest.NamedResource, iter.Seq[manifest.Reference]) bool) {}
 	}
 	return func(yield func(manifest.NamedResource, iter.Seq[manifest.Reference]) bool) {
 		var reads store.ReadSet
 		reads.Init(s.Store, manifest.BootstrapSourceID, nil)
 		defer reads.Retire()
+		if !s.yieldOrderingPredictions(&reads, yield) || len(s.Failed) == 0 {
+			return
+		}
 		for id := range s.Index.Files() {
 			references := s.predictionReferences(id, &reads)
 			if len(references) != 0 && !yield(id, slices.Values(references)) {
@@ -25,6 +29,34 @@ func (s *Snapshot) Predictions() iter.Seq2[manifest.NamedResource, iter.Seq[mani
 			}
 		}
 	}
+}
+
+func (s *Snapshot) yieldOrderingPredictions(
+	reads *store.ReadSet, yield func(manifest.NamedResource, iter.Seq[manifest.Reference]) bool,
+) bool {
+	if s.Decision == nil {
+		return true
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(s.Decision.orderingDeclarations), manifest.NamedResource.Compare) {
+		obj := s.Decision.OrderingDeclaration(reads, id, false)
+		if obj == nil || obj.Suspended() {
+			continue
+		}
+		if !s.Decision.EvaluationOnly(id) || !s.Decision.reportsFailure(id) || s.Failed[id].Status != "" {
+			continue
+		}
+		refs := func(yield func(manifest.Reference) bool) {
+			for ref := range manifest.References(obj, manifest.ReferenceAll) {
+				if ref.Ordering && !yield(ref) {
+					return
+				}
+			}
+		}
+		if !yield(id, refs) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Snapshot) predictionReferences(id manifest.NamedResource, reads *store.ReadSet) []manifest.Reference {

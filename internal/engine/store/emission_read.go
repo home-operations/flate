@@ -54,15 +54,6 @@ func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedRe
 		})
 }
 
-func (cv *capture) declaration() manifest.BaseManifest {
-	c := *cv
-	accepted := c.independent || c.accepted || c.classified || c.owner != nil
-	if accepted || c.child.policy.reference() {
-		return c.child.Obj
-	}
-	return nil
-}
-
 // GetEmission borrows valid accepted inventory and binds an attempt to its current input.
 // The captured document remains available while declaration authority is parked.
 // Render identity is available through Emission.Replay.
@@ -328,6 +319,7 @@ type productionResult struct {
 	captureTarget bool
 	incoming      *Child
 	watch         bool
+	retainOmitted bool
 }
 
 func (r *productionResult) add(p *manifest.Production) {
@@ -735,21 +727,23 @@ func (r *productionResult) addVisibleProduction(
 	p *manifest.Production,
 	reads *ReadSet,
 ) {
+	var omitted bool
 	if c := s.coverage[p.Owner]; c != nil {
-		accepted := c.slot.current.Load()
+		accepted, binding := c.slot.current.Load(), c.binding(p.Source)
 		if reads != nil {
 			reads.sample(id, c.slot, accepted, r.watch)
 		}
-		binding := c.binding(p.Source)
-		shadowed := accepted.shadows(binding)
-		if shadowed && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
+		omitted = accepted.shadows(binding)
+		if omitted && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
 			r.open = false
 		}
-		if c.slot.hidden.Load() || shadowed {
+		otherDeclaration := p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
+		if c.slot.hidden.Load() || omitted && (!r.retainOmitted || otherDeclaration) {
 			return
 		}
 	}
-	if !r.hideEvidence && (!r.retiredStatic || p.Owner != (manifest.NamedResource{}) && p.Owner != id) {
+	externalOwner := p.Owner != (manifest.NamedResource{}) && p.Owner != id
+	if omitted || !r.hideEvidence && (!r.retiredStatic || externalOwner) {
 		r.add(p)
 	}
 }

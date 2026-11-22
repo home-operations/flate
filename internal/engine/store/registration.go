@@ -28,7 +28,7 @@ type headKey struct {
 
 type registrationHead struct {
 	generation     atomic.Uint64
-	ordinary       atomic.Bool
+	demand         atomic.Uint32
 	first          atomic.Pointer[registration]
 	selected       atomic.Pointer[producerSlot]
 	position       atomic.Int64
@@ -65,14 +65,14 @@ func (h *registrationHead) stamp() uint64 {
 }
 
 const (
-	demandUnread uint32 = iota
-	demandQualification
+	demandCaptured uint32 = 1 << iota
 	demandOrdinary
+	demandReadiness
 )
 
 type registration struct {
 	consumed   atomic.Bool
-	ordinary   atomic.Uint32
+	demand     atomic.Uint32
 	head       *registrationHead
 	generation atomic.Uint64
 	owner      *ReadSet
@@ -239,7 +239,7 @@ func (c *registration) current() bool {
 	if c == nil || c.head == nil {
 		return true
 	}
-	if !c.ordinaryCurrent() {
+	if !c.demandCurrent() {
 		return false
 	}
 	if c.consumed.Load() {
@@ -254,15 +254,15 @@ func (c *registration) current() bool {
 	return c.head.generation.Load() == c.generation.Load()
 }
 
-func (c *registration) ordinaryCurrent() bool {
-	demand := c.ordinary.Load()
-	return demand == demandUnread || c.absent != nil || (demand == demandOrdinary) == c.head.ordinary.Load()
+func (c *registration) demandCurrent() bool {
+	demand := c.demand.Load()
+	return demand == 0 || c.absent != nil || demand&^demandCaptured == c.head.demand.Load()
 }
 
 func (in *Input) objectCurrent() bool {
 	cell := &in.object
 	if in.view.owner != nil && cell.head != nil && cell.absent == nil {
-		return cell.ordinaryCurrent() && cell.head.stamp() == cell.generation.Load()
+		return cell.demandCurrent() && cell.head.stamp() == cell.generation.Load()
 	}
 	return cell.current()
 }
@@ -444,7 +444,7 @@ func sweepRegistrations(
 	requeue := false
 	for cell := first; cell != nil; {
 		next := cell.next.Load()
-		changed := cell.generation.Load() != cutoff || !cell.ordinaryCurrent()
+		changed := cell.generation.Load() != cutoff || !cell.demandCurrent()
 		if cell.absent != nil {
 			generation := cell.generation.Load()
 			changed = generation != 0 && generation <= cutoff

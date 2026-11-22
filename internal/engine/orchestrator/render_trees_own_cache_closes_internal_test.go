@@ -97,6 +97,10 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 
 func TestRenderTrees_HeadOnly(t *testing.T) {
 	t.Parallel()
+	t.Run("unrelated-base-charts", func(t *testing.T) {
+		t.Parallel()
+		assertHeadOnlyOrderingWork(t, true)
+	})
 
 	for _, headFailure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("head_failure_%t", headFailure), func(t *testing.T) {

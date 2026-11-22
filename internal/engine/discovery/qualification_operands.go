@@ -315,17 +315,27 @@ func (a *Admission) generatorInventories(ctx context.Context) ([]*declarationRen
 
 // Physical package members start work without publishing an aggregate.
 func (w *qualificationWalk) admitOperandPackage(operands []selection.OccurrenceFacts) {
+	var decision *selection.Decision
+	if w.q.changedOnly {
+		decision = w.q.loader.Options.Session.Snapshot()
+	}
 	for i := range operands {
 		operand := &operands[i]
 		obj := occurrenceObject(operand)
 		if obj == nil || obj.Suspended() || operand.RequiresBuild {
 			continue
 		}
-		if w.store.GetDeclaration(obj.Named()) == nil {
+		id := obj.Named()
+		evaluationOnly := decision.ReadinessDemand(id) && decision.EvaluationOnly(id)
+		hasPackageEvidence := operand.Structural != nil || operand.HasPath
+		if evaluationOnly && !hasPackageEvidence && len(w.q.loader.ProjectedObjects(obj)) == 0 {
+			continue
+		}
+		if w.store.GetDeclaration(id) == nil {
 			w.reads.AdmitOperand(obj, manifest.BootstrapSourceID)
 		}
 		if manifest.KindOf(obj).Parent {
-			w.q.active = append(w.q.active, obj.Named())
+			w.q.active = append(w.q.active, id)
 		}
 	}
 }

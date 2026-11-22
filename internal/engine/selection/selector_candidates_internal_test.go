@@ -241,7 +241,7 @@ func TestAdmission_SelectorMembership(t *testing.T) {
 
 			var seeds admissionSeeds
 			links := 0
-			seeds.scanReferences(&closure, reader.Named(), reader, func(from, to manifest.NamedResource) {
+			seeds.scanReferences(&closure, reader.Named(), reader, func(from, to manifest.NamedResource, _ bool) {
 				assert.Equal(t, from, provider.Named())
 				assert.Equal(t, to, reader.Named())
 				links++
@@ -249,7 +249,7 @@ func TestAdmission_SelectorMembership(t *testing.T) {
 			assert.Equal(t, links != 0, tc.match)
 			assert.Equal(t, len(seeds), 0)
 			assert.Equal(t, closure.reverseInputRole(reader.Named(), admissionRole{}, true).dirty, tc.match)
-			assert.NoError(t, closure.selectInputReader(provider.Named(), reader.Named()))
+			assert.NoError(t, closure.selectInputReader(provider.Named(), reader.Named(), false))
 			assert.Equal(t, closure.role(reader.Named()).dirty, tc.match)
 			assert.Equal(t, closure.productionRole(reader.Named(), admissionRole{}, true).dirty, true)
 		})

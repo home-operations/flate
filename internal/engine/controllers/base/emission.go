@@ -52,9 +52,10 @@ func (e *Execution) emit(
 	next *store.Emission,
 	payloads map[manifest.NamedResource]*store.SourceArtifact,
 ) error {
-	if len(next.Children) != 0 && next.Reads.Valid() {
+	updatesOrdering := next.Complete && e.selection.Snapshot().HasOrdering() && e.Store.HasInventory(id)
+	if (len(next.Children) != 0 || updatesOrdering) && next.Reads.Valid() {
 		if _, err := e.KeepEmitted(ctx, id, selection.PrepareRequest{
-			Generation:    next.Children,
+			Generation: next.Children, CompleteGeneration: next.Complete,
 			Reads:         next.Reads,
 			Preparation:   &e.AdmissionPreparation,
 			AwaitEmission: !e.construction,

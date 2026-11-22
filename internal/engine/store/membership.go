@@ -1,13 +1,18 @@
 package store
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (c *objectCell) ordinaryDemand() bool {
-	return c.ordinary || c.inclusion == inclusionUnset
+func (c *objectCell) demand() uint8 {
+	purpose := c.purpose
+	if c.inclusion == inclusionUnset {
+		purpose |= uint8(demandOrdinary)
+	}
+	return purpose
 }
 
 type capture struct {
@@ -18,7 +23,7 @@ type capture struct {
 	accepted       bool
 	independent    bool
 	classified     bool
-	ordinary       bool
+	demand         uint8
 	bound          bool
 	preflightCycle bool
 	binding        *Input
@@ -41,6 +46,14 @@ type capturePayload struct {
 	reference     *Declaration
 }
 
+func (c *capture) declaration() manifest.BaseManifest {
+	authorized := c.independent || c.accepted || c.classified || c.owner != nil
+	if authorized || c.child.policy.reference() {
+		return c.child.Obj
+	}
+	return nil
+}
+
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	cell := sh.cells[id]
 	if !sh.derived && cell.binding == nil && (cell.static != nil || cell.reference == nil) {
@@ -60,7 +73,7 @@ func (sh *shard) captureLocked(
 		*view = capture{
 			composed:       cell.composed,
 			classified:     cell.classified && !cell.retired && cell.bound(),
-			ordinary:       cell.ordinaryDemand(),
+			demand:         cell.demand(),
 			independent:    cell.independent,
 			accepted:       cell.rooted,
 			generation:     cell.generation,
@@ -715,4 +728,70 @@ func (c *capturedChild) input() Child {
 		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
 		Origin: c.Origin, Generated: c.Generated, VisibleGeneration: c.VisibleGeneration, policy: c.policy,
 	}
+}
+
+// SetIncluded MUST never exclude an object after this Store invocation admits it.
+//
+//nolint:revive // Admission purposes and declaration authority share one publication.
+func (s *Store) SetIncluded(
+	id manifest.NamedResource, included, ordinary, readiness bool, incoming ...manifest.BaseManifest,
+) {
+	expected := cmp.Or(incoming...)
+	included = included || ordinary || readiness
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	cell := sh.cells[id]
+	if !included && cell.inclusion != inclusionUnset {
+		sh.mu.Unlock()
+		return
+	}
+	var condition authority
+	var reset bool
+	next := inclusionExcluded
+	if included {
+		next = inclusionIncluded
+		record := sh.conditions[id]
+		info, _ := record.statusInfo()
+		reset = info.Outcome() == OutcomeUnchanged
+		if reset {
+			condition = record.stamp()
+		}
+	}
+	purpose := inclusionPurpose(cell.purpose, ordinary, readiness)
+	if cell.inclusion == inclusionIncluded && !reset && purpose == cell.purpose {
+		sh.mu.Unlock()
+		return
+	}
+	if (cell.inclusion == inclusionExcluded) == included || reset {
+		sh.requireCapacityLocked(cell.authority, condition)
+		cell.authority = sh.advanceLocked(cell.current())
+	}
+	cell.inclusion, cell.purpose = next, purpose
+	if cell.links != nil {
+		cell.links.demand.Store(uint32(cell.demand()))
+		sh.queue(cell.links)
+	}
+	sh.cells[id] = cell
+	var dispatch eventDispatch
+	if reset {
+		dispatch = sh.resetInclusion(s, id, &cell)
+	} else if included && !cell.hidden {
+		// Publication wakes the child after replacing its provisional declaration.
+		if obj := sh.objectLocked(id); obj != nil && cmp.Or(expected, obj) == obj {
+			dispatch = fireUnderLock(s, EventObjectAdded, id)
+			dispatch.payload = obj
+		}
+	}
+	sh.mu.Unlock()
+	dispatch.run()
+}
+
+func inclusionPurpose(previous uint8, ordinary, readiness bool) uint8 {
+	if ordinary {
+		previous |= uint8(demandOrdinary)
+	}
+	if readiness {
+		return previous | uint8(demandReadiness)
+	}
+	return previous &^ uint8(demandReadiness)
 }

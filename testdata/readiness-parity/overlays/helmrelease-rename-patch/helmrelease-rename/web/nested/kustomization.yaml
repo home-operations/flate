@@ -1,0 +1,8 @@
+namespace: web
+resources: [web.yaml]
+patches:
+  - target: {kind: HelmRelease, name: web}
+    patch: |-
+      - op: add
+        path: /metadata/labels
+        value: {stage: test}

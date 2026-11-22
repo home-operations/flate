@@ -2,6 +2,7 @@ package selection
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -68,12 +69,12 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	c.objects, c.proposal.reads = &reads, &reads
 	concreteOwner := rootOwnerFact(owner.Kustomization, c.rootReader())
 	unrelated := facts.index.Records[inputs[0]]
-	assert.Equal(t, c.bootstrapInputRequired(&concreteOwner, inputs[0], &unrelated), false)
+	assert.Equal(t, c.bootstrapInputRequired(&concreteOwner, inputs[0], &unrelated, targetedClaimScope), false)
 	assert.Equal(t, len(c.ownerClaims), 0)
 
 	coordinates := rootOwnerFact(owner, c.rootReader())
 	missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
-	assert.Equal(t, c.coversDeclaration(&coordinates, missing), false)
+	assert.Equal(t, c.coversDeclaration(&coordinates, missing, targetedClaimScope), false)
 	assert.Equal(t, len(c.ownerClaims), 0)
 	assert.Equal(t, c.materializerTargetsMatch(
 		owner.Named(),
@@ -81,8 +82,14 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 		&materializerDemand{target: inputs[0]},
 	), true)
 	assert.Equal(t, len(c.ownerClaims), 0)
+	assert.Equal(
+		t,
+		c.bootstrapInputRequired(&coordinates, inputs[0], new(facts.index.Records[inputs[0]]), targetedClaimScope),
+		false,
+	)
+	assert.Equal(t, len(c.ownerClaims), 0)
 	for _, id := range inputs {
-		assert.Equal(t, c.coversDeclaration(&coordinates, id), true)
+		assert.Equal(t, c.coversDeclaration(&coordinates, id, targetedClaimScope), true)
 		assert.Equal(t, counted.occurrences[id], 1)
 	}
 	assert.Equal(t, len(c.ownerClaims), 1)
@@ -91,7 +98,7 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	coordinates = rootOwnerFact(owner, c.rootReader())
 	assert.Equal(t, coordinates.Path, "")
 	for _, id := range inputs {
-		assert.Equal(t, c.coversDeclaration(&coordinates, id), false)
+		assert.Equal(t, c.coversDeclaration(&coordinates, id, targetedClaimScope), false)
 	}
 	assert.Equal(t, owner.paths, 2)
 	owner.paths = 0
@@ -113,28 +120,168 @@ func TestAdmission_OwnerClaimsReuse(t *testing.T) {
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
 	)
-	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-	owner.Path = "."
+	owner := &manifest.Kustomization{
+		Name: "owner", Namespace: "apps", Path: "app",
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "input"},
+			{Kind: manifest.KindConfigMap, Name: "physical"},
+			{Kind: manifest.KindConfigMap, Name: "outside"},
+			{Kind: manifest.KindConfigMap, Name: "omitted"},
+		}},
+	}
+	factory := (&manifest.ResourceSet{Name: "factory", Namespace: "apps"}).Named()
+	st.AddObject(owner)
 	facts := &solverFacts{
-		store: st, index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+		store: st, index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			owner.Named(): {Productions: []manifest.Production{{Owner: factory}}},
+		}},
 		occurrences: map[manifest.NamedResource]OccurrenceFacts{},
+		roots:       map[manifest.NamedResource]RootEvidence{},
 	}
 	facts.context.Root = root
+	declaration := func(name, file string) manifest.NamedResource {
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}
+		record := manifest.DiscoveryRecord{Path: filepath.Join(root, file), File: file, Authored: id}
+		occurrence := OccurrenceFacts{
+			Identity: id, Authored: id, CatalogKnown: true,
+			Declaration: OccurrenceID{Source: root, File: file},
+		}
+		facts.index.Records[id], facts.occurrences[id] = record, occurrence
+		facts.roots[id] = RootEvidence{
+			Identity: id, Occurrence: occurrence, Record: RootRecordFrom(&record),
+			Scope: RootScopeFacts{NamespaceEligible: true, Initial: true},
+		}
+		return id
+	}
+	input := declaration("input", "app/input.yaml")
+	physical := declaration("physical", "app/physical.yaml")
+	unrelated := declaration("unrelated", "app/unrelated.yaml")
+	outside := declaration("outside", "../outside.yaml")
+	generator := declaration("generator", "app/kustomization.yaml")
+	omitted := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "omitted"}
+	facts.index.Records[omitted] = manifest.DiscoveryRecord{
+		Productions: []manifest.Production{{Owner: generator, Source: manifest.BootstrapSourceID}},
+	}
+	st.RecordEmitted(generator, &store.Emission{Complete: true}, nil)
+	physicalRoot := facts.roots[physical]
+	physicalRoot.Scope.Owners = []RootOwnerFacts{{Identity: owner.Named()}}
+	facts.roots[physical] = physicalRoot
+
 	c := solverClosure(t, st, facts)
 	c.context.Root = root
-	coordinates := rootOwnerFact(owner, c.rootReader())
-	first := c.rootOwnerClaims(&coordinates)
-	repeated := c.rootOwnerClaims(&coordinates)
-	assert.Equal(t, repeated == first, true)
-	added := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "added"}
-	facts.index.Records[added] = manifest.DiscoveryRecord{Path: filepath.Join(root, "added.yaml")}
+	assert.Equal(t, c.bootstrapPrerequisite(unrelated), false)
+	assert.Equal(t, len(c.ownerCandidates), 1)
+	assert.Equal(t, c.bootstrapPrerequisite(outside), false)
+	assert.Equal(t, c.bootstrapPrerequisite(generator), false)
+	assert.Equal(t, c.ownerCandidates[0].claims, nil)
+	assert.Equal(t, len(c.ownerClaims), 0)
+
+	assert.Equal(t, c.bootstrapPrerequisite(physical), true)
+	assert.Equal(t, c.ownerCandidates[0].claims, nil)
+	assert.Equal(t, len(c.ownerClaims), 1)
+	first := c.ownerClaims[c.ownerCandidates[0].claimKey(root)]
+	assert.Equal(t, first != nil, true)
+	assert.Equal(t, c.bootstrapPrerequisite(physical), true)
+	live := c.rootSupport(input)
+	assert.Equal(t, Root(live).Owner, owner.Named())
+	assert.Equal(t, c.ownerCandidates[0].claims == first, true)
+	assert.Equal(t, c.bootstrapPrerequisite(input), true)
+	assert.Equal(t, c.bootstrapPrerequisite(input), true)
+	assert.Equal(t, c.ownerCandidates[0].claims == first, true)
+	assert.Equal(t, len(c.ownerClaims), 1)
+
+	invalid := RootCoveringOwner{Object: owner, Identity: owner.Named()}
+	borrowed := c.rootOwnerClaims(&invalid, root, targetedClaimScope)
+	assert.Equal(t, borrowed == &facts.index, true)
+	assert.Equal(t, c.ownerClaims[invalid.claimKey(root)] == borrowed, true)
+	assert.Equal(t, c.rootOwnerClaims(&invalid, root, targetedClaimScope) == borrowed, true)
+
+	replacement := owner.Clone()
+	replacement.Path = "other"
+	st.AddObject(replacement)
+	updated := *facts
+	updated.index.Records = maps.Clone(facts.index.Records)
+	facts = &updated
+	c.facts = facts
+	added := declaration("added", "other/added.yaml")
 	assert.NoError(t, c.refreshPrerequisites(t.Context(), nil, &PrepareRequest{}))
-	refreshed := c.rootOwnerClaims(&coordinates)
-	assert.Equal(t, refreshed == first, false)
+	assert.Equal(t, c.bootstrapPrerequisite(input), false)
+	refreshed := c.ownerCandidates[0].claims
+	assert.Equal(t, refreshed != first, true)
 	_, previous := first.Records[added]
 	_, current := refreshed.Records[added]
 	assert.Equal(t, previous, false)
 	assert.Equal(t, current, true)
+	_, borrowedBefore := borrowed.Records[added]
+	assert.Equal(t, borrowedBefore, false)
+	assert.Equal(t, c.ownerCandidates[0].Object, manifest.BaseManifest(replacement))
+	assert.Equal(t, Root(live).Owner, owner.Named())
+	assert.Diff(t, live.Scope.Claims["app/"], []manifest.NamedResource{owner.Named()})
+	assert.Diff(t, refreshed.Claims["other/"], []manifest.NamedResource{owner.Named()})
+}
+
+func TestAdmission_BootstrapClaimScopes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		subdir string
+	}{
+		{name: "same root"},
+		{name: "different roots", subdir: "checkout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			contextRoot := t.TempDir()
+			root := filepath.Join(contextRoot, tc.subdir)
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			owner := &manifest.Kustomization{
+				Name: "owner", Namespace: "apps", Path: "app",
+				DependsOn: []kustomizev1.DependencyReference{{Name: "subject"}},
+			}
+			subject := &manifest.Kustomization{Name: "subject", Namespace: "apps", Path: "app"}
+			factory := (&manifest.ResourceSet{Name: "factory", Namespace: "apps"}).Named()
+			productions := []manifest.Production{{Owner: factory}}
+			id := subject.Named()
+			record := manifest.DiscoveryRecord{
+				Path: filepath.Join(root, "app", "subject.yaml"),
+				File: "app/subject.yaml", Authored: id, Productions: productions,
+			}
+			occurrence := OccurrenceFacts{
+				Identity: id, Authored: id, CatalogKnown: true,
+				Declaration: OccurrenceID{Source: root, File: record.File},
+			}
+			facts := &solverFacts{
+				store: st, index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					owner.Named(): {Productions: productions}, id: record,
+				}},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{id: occurrence},
+				roots: map[manifest.NamedResource]RootEvidence{id: {
+					Identity: id, Occurrence: occurrence, Record: RootRecordFrom(&record),
+					Scope: RootScopeFacts{NamespaceEligible: true, Initial: true},
+				}},
+			}
+			facts.context.Root = contextRoot
+			st.AddObject(owner)
+			st.AddObject(subject)
+			c := solverClosure(t, st, facts)
+			c.context.Root = contextRoot
+
+			coordinates := rootOwnerFact(owner, c.rootReader())
+			assert.Equal(t, c.coversDeclaration(&coordinates, id, targetedClaimScope), true)
+			targeted := c.ownerClaims[coordinates.claimKey(contextRoot)]
+			targetedPrefix := filepath.ToSlash(filepath.Join(tc.subdir, "app")) + "/"
+			assert.Diff(t, targeted.Claims[targetedPrefix], []manifest.NamedResource{owner.Named()})
+			assert.Equal(t, c.bootstrapPrerequisite(id), false)
+			full := c.ownerCandidates[0].claims
+			assert.Equal(t, full != targeted, true)
+			assert.Diff(t, full.Claims["app/"], []manifest.NamedResource{owner.Named(), id})
+			assert.Equal(t, c.rootEvidence(id).Independent, true)
+			assert.Equal(t, c.ownerCandidates[0].claims == full, true)
+			assert.Equal(t, c.coversDeclaration(&coordinates, id, targetedClaimScope), true)
+			assert.Equal(t, c.ownerClaims[coordinates.claimKey(contextRoot)] == targeted, true)
+		})
+	}
 }
 
 func TestAdmission_EmptyRootOwnerInventoryShared(t *testing.T) {

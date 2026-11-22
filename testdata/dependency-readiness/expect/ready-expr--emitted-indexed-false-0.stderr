@@ -1,5 +1,10 @@
 
+  ✗  Kustomization  apps/config  not found
+         required by apps/child
+
   ⚠ warnings (<PERSISTENCE:1|2>)
 <PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
 >    [OrphanedResource] Kustomization apps/config: resource orphaned
       kubernetes/hegira/indexed/config.yaml, dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/indexer: declaration not emitted
+
+  ✗ 1 failed · 1 blocked

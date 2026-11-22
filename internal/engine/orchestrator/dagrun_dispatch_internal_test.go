@@ -322,7 +322,7 @@ data: {key: fixed}
 			wantUnresolved = false
 		}
 	case "preflight failure":
-		s.SetPreflight(rs.Named(), "cycle")
+		s.SetPreflight(rs.Named(), store.PreflightFailure{Message: "cycle", DependencyCycle: true})
 	case "filter skip":
 		opts.Loader, opts.Session = admissiontest.New(
 			t,

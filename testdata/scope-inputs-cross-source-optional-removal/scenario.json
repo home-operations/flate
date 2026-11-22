@@ -55,7 +55,7 @@
       "parents": [],
       "refs": [
         "refs/heads/cross-source-optional-removal-baseline-selected",
-        "refs/heads/selected"
+        "refs/tags/selected"
       ]
     },
     {
@@ -82,7 +82,7 @@
       "parents": [],
       "refs": [
         "refs/heads/cross-source-optional-removal-repo-selected",
-        "refs/heads/selected"
+        "refs/tags/selected"
       ]
     },
     {

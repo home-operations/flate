@@ -102,8 +102,16 @@ spec:
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n",
 	)
 
-	renderedSingleton1, err := renderTreesForTest(context.Background(), t,
-		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+	renderedSingleton1, err := renderTreesForTest(
+		context.Background(),
+		t,
+		[]Tree{
+			{
+				Path:     dir,
+				SelfURLs: []string{"https://example.test/cluster.git"},
+				ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+			},
+		},
 		Config{},
 	)
 

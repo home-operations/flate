@@ -92,7 +92,10 @@ func (f *inputCacheFixture) run(t *testing.T, want int, persistent bool) {
 	)
 	assert.NoError(t, err)
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: f.root, FS: view})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: f.root, FS: view},
+	)
 	l := New(st)
 	defer l.Close()
 	l.SourceRoot, l.Options.Cache = f.root, owner
@@ -211,7 +214,10 @@ func TestInputCache_RejectsChangedPublication(t *testing.T) {
 	assert.NoError(t, err)
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
+	)
 	l := New(st)
 	defer l.Close()
 	l.SourceRoot, l.Options.Cache = root, owner
@@ -237,7 +243,10 @@ func cachedFixtureLoader(tb testing.TB, root string, files fstest.MapFS, owner *
 	)
 	assert.NoError(tb, err)
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
+	)
 	l := New(st)
 	l.SourceRoot, l.Options.Cache = root, owner
 	configureSelection(tb, l, selection.Request{Changed: true})
@@ -467,7 +476,10 @@ func TestInputCache_NestedMountOverridesParentFrame(t *testing.T) {
 		)
 		assert.NoError(t, err)
 		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: parent})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parent},
+		)
 		source := &manifest.GitRepository{Name: "nested", Namespace: "apps"}
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: nested, FS: child})
@@ -573,7 +585,10 @@ func TestInputCache_NestedMountInvalidatesTraversals(t *testing.T) {
 		)
 		assert.NoError(t, err)
 		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: parent})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parent},
+		)
 		source := &manifest.GitRepository{Name: "nested", Namespace: "apps"}
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: nested, FS: child})
@@ -675,7 +690,10 @@ func testInputCacheNewMountMatchesCold(t *testing.T, testCase mountedInputCase) 
 		)
 		assert.NoError(t, err)
 		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: parent})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parent},
+		)
 		source := &manifest.GitRepository{Name: "nested", Namespace: "apps"}
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: nested, FS: child})

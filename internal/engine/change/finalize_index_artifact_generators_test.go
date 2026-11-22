@@ -61,7 +61,13 @@ func detectChanges(tb testing.TB, before, after []string) *change.Set {
 func admitForFilter(s *store.Store, root string) {
 	s.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			Kind:      manifest.KindGitRepository,
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        os.DirFS(root),
+		},
 	)
 }
 
@@ -308,10 +314,10 @@ func testFinalizeIndexArtifactGeneratorsCase(
 		s.SetArtifact(
 			source,
 			&store.SourceArtifact{
-				LocalRoot:  root,
-				LocalPath:  filepath.Join(t.TempDir(), "alias"),
-				InputAlias: true,
-				FS:         os.DirFS(root),
+				LocalRoot: root,
+				LocalPath: filepath.Join(t.TempDir(), "alias"),
+				Provider:  store.ProviderAlias,
+				FS:        os.DirFS(root),
 			},
 		)
 	}

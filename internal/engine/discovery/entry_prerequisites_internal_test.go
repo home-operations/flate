@@ -44,7 +44,7 @@ func TestEntryCandidateReady_UnconditionalBootstrap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}}
 			owner := &manifest.Kustomization{
 				Name: "owner", Namespace: manifest.DefaultNamespace, Path: "./missing",
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{
@@ -58,25 +58,25 @@ func TestEntryCandidateReady_UnconditionalBootstrap(t *testing.T) {
 				owner.DependsOn = []kustomizev1.DependencyReference{{Name: "dependency"}}
 			}
 			sourceID := owner.EffectiveSourceID()
-			selected := entryResolution{input: input, artifact: input, pinned: tc.pinned}
+			selected := entryResolution{input: input, artifact: input}
 			if !tc.canonical {
 				git := &manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace}
 				git.SparseCheckout = tc.sparse
 				object := *git
 				object.Include = tc.includes
 				selected.git, selected.object = git, &object
-				artifact, _, unfiltered, err := new(Admission).entrySourceView(t.Context(), &selected)
+				artifact, _, err := new(Admission).entrySourceView(t.Context(), &selected)
 				assert.NoError(t, err)
-				selected.artifact, selected.unfiltered = artifact, unfiltered
+				selected.artifact = artifact
 			}
 			source := selected.artifact
 			if tc.pinned {
-				source.InputAlias, source.Content = false, "commit"
+				source.Provider, source.Content = store.ProviderCommit, "commit"
 			}
 			if tc.replaced {
 				source = &store.SourceArtifact{
 					Kind: source.Kind, LocalPath: source.LocalPath, LocalRoot: source.LocalRoot,
-					FS: source.FS, InputAlias: true,
+					FS: source.FS, Provider: store.ProviderAlias,
 				}
 			}
 			st := store.New()
@@ -109,7 +109,7 @@ func TestRun_EntryPreparationFailure(t *testing.T) {
 	}
 	encoded, err := json.Marshal(testutil.ObjectDocument(owner))
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, first.yaml, second.yaml]\n")},
 		"entry/owner.yaml":         {Data: encoded},
 		"entry/first.yaml":         {Data: []byte(configMap)},

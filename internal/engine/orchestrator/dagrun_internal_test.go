@@ -34,7 +34,7 @@ import (
 func TestAdmitEntry_CancellationDuringRound(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: []\n")},
 	}}
 	st := store.New()

@@ -37,13 +37,16 @@ func TestRun_RejectedPreparationRetiresSupport(t *testing.T) {
 	testutil.WriteFile(t, root, "entry/ready.yaml", testutil.KustomizationYAML("ready", "apps", "  path: ./ready\n"))
 	testutil.WriteFile(t, root, "ready/kustomization.yaml", "resources: []\n")
 	st := store.New()
-	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	result, err := Run(t.Context(), testConfig(t, Config{
 		Input: source, Path: filepath.Join(root, "entry"), Store: st,
 	}))
 	assert.NoError(t, err)
 	assert.Equal(t, result.Binding.Producer.ReportHidden(), true)
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root + "-replacement", FS: source.FS})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root + "-replacement", FS: source.FS},
+	)
 	assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), testutil.KustomizationID("apps", "owner")), false)
 }
 
@@ -52,7 +55,7 @@ func TestPrepareDocuments_ReplacementRetiresSupport(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
 	st := store.New()
-	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
 	owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "first"}
 	first := owner.SourceID()
@@ -93,7 +96,8 @@ func TestPrepareDocuments_ImplicitSourceIgnore(t *testing.T) {
 			)
 			st := store.New()
 			source := &store.SourceArtifact{
-				LocalPath: root, LocalRoot: root, FS: os.DirFS(root), Content: "snapshot", InputAlias: false,
+				Provider:  store.ProviderInput,
+				LocalPath: root, LocalRoot: root, FS: os.DirFS(root), Content: "snapshot",
 			}
 			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
 				gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
@@ -140,7 +144,7 @@ func TestPreparePendingProducer_ReferencedSubstitutionSupport(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [child.yaml]\n")
 	testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./${TARGET}\n"))
 	st := store.New()
-	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
 	owner.PostBuild = &kustomizev1.PostBuild{
@@ -180,7 +184,7 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
 			st := store.New()
-			source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+			source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
 			st.AddObject(owner)
@@ -221,7 +225,7 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 			d.Close()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root + "-replacement", FS: source.FS},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root + "-replacement", FS: source.FS},
 			)
 			assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), owner.Named()), false)
 		})
@@ -237,6 +241,7 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 	fixture := testReceiptTrees(t, t.TempDir(), sourcecache.RenderPersistenceDisabledReason() == "")
 	st := store.New()
 	source := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		Kind:      manifest.KindGitRepository,
 		URL:       "https://fixture.invalid/first",
 		LocalPath: root,
@@ -278,7 +283,7 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	priorSources := []manifest.SourceEvidence{{
-		Source: source.HistoryIdentity(manifest.BootstrapSourceID), Path: "cm.yaml",
+		Source: source.HistoryIdentity(), Path: "cm.yaml",
 	}}
 	delete(d.prepared, owner.Named())
 	defer initial.retire(st)

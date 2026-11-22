@@ -58,7 +58,10 @@ func duplicateAdmissionInputPair(t *testing.T, scenario string) ([2]*Loader, [2]
 		assert.NoError(t, err)
 		st := store.New()
 		stores[side] = st
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
+		)
 		l := New(st)
 		loaders[side] = l
 		l.SourceRoot = root
@@ -145,7 +148,10 @@ func admissionVisibilityPair(t *testing.T, policy string, hide bool) ([2]*Loader
 			input, _, err = gittree.New(t.Context(), nil, plumbing.ZeroHash, view)
 			assert.NoError(t, err)
 		}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+		)
 		l := New(st)
 		loaders[side] = l
 		l.SourceRoot = root

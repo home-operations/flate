@@ -23,7 +23,7 @@ func TestRecordRender_EngineProjection(t *testing.T) {
 	renderer := newTestTreeCache(t, t.TempDir())
 	spec := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
 	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
-	source := request.Source.HistoryIdentity(spec.EffectiveSourceID())
+	source := request.Source.HistoryIdentity()
 	var previous []byte
 	for _, state := range []string{"cold", "cached"} {
 		t.Run(state, func(t *testing.T) {

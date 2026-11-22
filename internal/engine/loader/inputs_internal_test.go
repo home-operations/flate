@@ -444,7 +444,7 @@ func testFinalizeIndexConfigurationBoundariesCase(
 	s.AddObject(owner)
 	s.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: parent, LocalRoot: parent, FS: input},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: parent, LocalRoot: parent, FS: input},
 	)
 	if *testCaseInput {
 		source := &manifest.GitRepository{Name: "foreign", Namespace: "apps"}

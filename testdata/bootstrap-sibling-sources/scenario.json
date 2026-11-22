@@ -1,0 +1,273 @@
+{
+  "source": {
+    "repository": "tyzbit/fleet-infra",
+    "revision": "87c199e34e96df4e475c5bb1a29b9aff035730e3",
+    "paths": [
+      "clusters/dragon",
+      "clusters/corpus/flux"
+    ],
+    "reductions": "Keep repeated Flux identities, a patched bootstrap package, and equivalent SSH and HTTPS remotes. A separate Git source uses the same target path."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/tyzbit/fleet-infra.git"
+        }
+      ]
+    },
+    {
+      "name": "upstream",
+      "directory": "upstream",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://upstream.example.invalid/fleet-overlay.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "upstream",
+      "name": "upstream",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "edit",
+      "directory": "overlays/edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "ssh-origin",
+      "description": "Build two sibling entries and render one changed workload.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "upstream"
+        },
+        {
+          "overlay": "edit"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,GitRepository,HelmRepository,HelmRelease"
+            ],
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "",
+              "--only-kinds",
+              "ConfigMap,GitRepository",
+              "--base",
+              "HEAD"
+            ],
+            "expect": {
+              "stdout": "expect/changed.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/clusters/left/flux-system/kustomization.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Keep the sibling entry package independent."
+    },
+    {
+      "path": "repo/clusters/left/flux-system/gotk-sync.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Give each sibling the same source and entry identities."
+    },
+    {
+      "path": "repo/clusters/left/apps.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Reach the workload through the sibling source."
+    },
+    {
+      "path": "repo/workloads/left/kustomization.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Build the workload through Kustomize."
+    },
+    {
+      "path": "repo/workloads/left/workload.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Identify the workload selected by this sibling."
+    },
+    {
+      "path": "repo/clusters/right/flux-system/kustomization.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Keep the sibling entry package independent."
+    },
+    {
+      "path": "repo/clusters/right/flux-system/gotk-sync.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Give each sibling the same source and entry identities."
+    },
+    {
+      "path": "repo/clusters/right/apps.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Reach the workload through the sibling source."
+    },
+    {
+      "path": "repo/workloads/right/kustomization.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Build the workload through Kustomize."
+    },
+    {
+      "path": "repo/workloads/right/workload.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Identify the workload selected by this sibling."
+    },
+    {
+      "path": "overlays/edit/repo/workloads/left/workload.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Change only the left workload."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Record each selected workload and source declaration."
+    },
+    {
+      "path": "expect/changed.stdout",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Record changed workload output and the unchanged sibling scope."
+    },
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Record both cluster status lines."
+    },
+    {
+      "path": "repo/clusters/left/flux-system/upstream.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Use a separate Git publication at the same path."
+    },
+    {
+      "path": "upstream/clusters/left/workload.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Identify the real upstream payload."
+    },
+    {
+      "path": "repo/clusters/left/flux-system/charts.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Give each scope its own chart repository and a policy that the bootstrap package patches."
+    },
+    {
+      "path": "repo/workloads/left/release.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Reference the repeated chart repository identity without fetching a chart."
+    },
+    {
+      "path": "repo/clusters/right/flux-system/charts.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Give each scope its own chart repository and a policy that the bootstrap package patches."
+    },
+    {
+      "path": "repo/workloads/right/release.yaml",
+      "cases": [
+        "ssh-origin"
+      ],
+      "purpose": "Reference the repeated chart repository identity without fetching a chart."
+    }
+  ]
+}

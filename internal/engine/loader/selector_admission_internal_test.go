@@ -26,22 +26,27 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 	})
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
-			"metadata: {name: app, namespace: apps}\n" +
-			"spec:\n" +
-			"  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n" +
-			"  resourcesTemplate: 'apiVersion: v1'\n")},
-		"chosen.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSetInputProvider\n" +
-			"metadata: {name: chosen, namespace: apps, labels: {app: selected}}\n" +
-			"spec: {type: Static}\n")},
-		"other.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSetInputProvider\n" +
-			"metadata: {name: other, namespace: apps, labels: {app: other}}\n" +
-			"spec: {type: Static}\n")},
-		"foreign.yaml": {Data: []byte("apiVersion: foreign.example/v1\n" + "kind: ResourceSetInputProvider\n" +
-			"metadata: {name: foreign, namespace: apps, labels: {app: selected}}\n" +
-			"spec: {type: Static}\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
+				"metadata: {name: app, namespace: apps}\n" +
+				"spec:\n" +
+				"  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n" +
+				"  resourcesTemplate: 'apiVersion: v1'\n")},
+			"chosen.yaml": {
+				Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSetInputProvider\n" +
+					"metadata: {name: chosen, namespace: apps, labels: {app: selected}}\n" +
+					"spec: {type: Static}\n"),
+			},
+			"other.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSetInputProvider\n" +
+				"metadata: {name: other, namespace: apps, labels: {app: other}}\n" +
+				"spec: {type: Static}\n")},
+			"foreign.yaml": {Data: []byte("apiVersion: foreign.example/v1\n" + "kind: ResourceSetInputProvider\n" +
+				"metadata: {name: foreign, namespace: apps, labels: {app: selected}}\n" +
+				"spec: {type: Static}\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -78,19 +83,22 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	})
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"parent.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec: {path: ./workload}\n",
-			),
-		},
-		"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
-		"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
-			"metadata: {name: app, namespace: apps}\n" +
-			"spec:\n" +
-			"  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n" +
-			"  resourcesTemplate: 'apiVersion: v1'\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"parent.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec: {path: ./workload}\n",
+				),
+			},
+			"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
+			"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
+				"metadata: {name: app, namespace: apps}\n" +
+				"spec:\n" +
+				"  inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchLabels: {app: selected}}}]\n" +
+				"  resourcesTemplate: 'apiVersion: v1'\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -142,7 +150,10 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -220,7 +231,7 @@ func selectorAdmissionPair(t *testing.T, selectedSide manifest.TreeSide) (
 		if manifest.TreeSide(side) == selectedSide {
 			label = "selected"
 		}
-		artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		artifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"chosen.yaml": {
 				Data: []byte(
 					fmt.Sprintf(
@@ -363,10 +374,8 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 					historyOwners := map[manifest.NamedResource][]manifest.SourceEvidence{
 						producer.Named(): {
 							{
-								Source: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
-									manifest.BootstrapSourceID,
-								),
-								Path: "input.yaml",
+								Source: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(),
+								Path:   "input.yaml",
 							},
 						},
 					}
@@ -381,7 +390,11 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 					if manifest.TreeSide(side) != tc.side {
 						stores[side].SetArtifact(
 							manifest.BootstrapSourceID,
-							&store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}},
+							&store.SourceArtifact{
+								Provider:  store.ProviderInput,
+								LocalPath: l.SourceRoot,
+								FS:        fstest.MapFS{},
+							},
 						)
 						proposal, err = prepareSelection(t.Context(), t, l, selection.PrepareRequest{
 							Changes:    l.Options.Changes,
@@ -447,7 +460,10 @@ func selectorVisibilityPair(t *testing.T, incoming bool, visibleSide manifest.Tr
 				))}
 			}
 		}
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+		)
 		l := New(st)
 		l.SourceRoot = root
 		configureSelection(t, l, selection.Request{
@@ -504,19 +520,22 @@ func TestAdmission_CompactSelectorInputs(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		st := store.New()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"kustomization.yaml": {Data: []byte("resources: [a.yaml, z.yaml]\nnamePrefix: built-\n")},
-			"a.yaml": {
-				Data: []byte(
-					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: a, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
-				),
-			},
-			"z.yaml": {
-				Data: []byte(
-					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: z, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
-				),
-			},
-		}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml": {Data: []byte("resources: [a.yaml, z.yaml]\nnamePrefix: built-\n")},
+				"a.yaml": {
+					Data: []byte(
+						"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: a, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
+					),
+				},
+				"z.yaml": {
+					Data: []byte(
+						"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: z, namespace: apps, labels: {app: selected}}\nspec: {type: Static}\n",
+					),
+				},
+			}},
+		)
 		l := New(st)
 		l.SourceRoot = root
 		configureSelection(t, l, selection.Request{Changed: true})

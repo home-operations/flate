@@ -93,8 +93,15 @@ func Qualify(ctx context.Context, changes *Set, pair SourcePair, work manifest.W
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
+	if pair.Stores[0] == nil {
+		return changes.qualifyLocalCommits(ctx, pair.Stores[1], 1, work)
+	}
+	if pair.Stores[1] == nil {
+		return changes.qualifyLocalCommits(ctx, pair.Stores[0], 0, work)
+	}
 	ids := sourceIDs(pair.Stores)
 	out := &Set{sources: make(map[manifest.NamedResource]sourceDelta, len(ids)), paired: true}
+	unchanged := changes != nil && changes.paired && len(changes.sources) != 0
 	compared := map[readerPair]*Set{}
 	for _, id := range slices.SortedFunc(maps.Keys(ids), manifest.NamedResource.Compare) {
 		evidence := sourceEvidence(pair, id)
@@ -104,31 +111,136 @@ func Qualify(ctx context.Context, changes *Set, pair SourcePair, work manifest.W
 			return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 		case evidence.generated:
 			out.sources[id] = evidence
+			unchanged = unchanged && evidence == changes.sources[id]
 			continue
 		default:
 			continue
 		}
-		delta, err := changes.qualifySource(ctx, &evidence, id, work)
-		if delta == nil && err == nil {
-			delta, err = evidence.compare(ctx, id, compared, work)
+		delta := changes.qualifyDelta(id, &evidence)
+		var err error
+		if delta == nil {
+			delta, err = changes.qualifySource(ctx, &evidence, id, work)
+			if delta == nil && err == nil {
+				delta, err = evidence.compare(ctx, id, compared, work)
+			}
 		}
 		if err != nil {
 			return nil, err
 		}
-		evidence.changes = delta
-		out.sources[id] = evidence
-		if id == manifest.BootstrapSourceID {
-			out.paths, out.origins = delta.paths, evidence.artifacts
-		}
+		out.recordQualifiedSource(id, &evidence, delta, changes)
+		unchanged = unchanged && out.sources[id] == changes.sources[id]
 	}
-	if out.paths == nil && changes != nil {
-		out.paths = make(map[string][2]filePresence, len(changes.paths))
-		for file := range changes.paths {
-			out.paths[file] = [2]filePresence{}
-		}
+	if unchanged && len(out.sources) == len(changes.sources) {
+		return changes, ctx.Err()
 	}
+	out.preserveMissingPaths(changes)
 	out.groupSources()
 	return out, nil
+}
+
+func (s *Set) preserveMissingPaths(supplied *Set) {
+	if s.paths != nil || supplied == nil {
+		return
+	}
+	s.paths = make(map[string][2]filePresence, len(supplied.paths))
+	for file := range supplied.paths {
+		s.paths[file] = [2]filePresence{}
+	}
+}
+
+func (s *Set) recordQualifiedSource(id manifest.NamedResource, evidence *sourceDelta, delta, supplied *Set) {
+	evidence.changes = delta.sourceLocalChanges()
+	s.sources[id] = *evidence
+	if id != manifest.BootstrapSourceID {
+		return
+	}
+	s.paths = delta.paths
+	for side, input := range evidence.artifacts {
+		if supplied != nil && supplied.origins[side] != nil {
+			input = supplied.origins[side]
+		}
+		s.origins[side] = input
+	}
+}
+
+func (s *Set) qualifyLocalCommits(
+	ctx context.Context,
+	st *store.Store,
+	side int,
+	work manifest.WorkScope,
+) (*Set, error) {
+	if s.Len() == 0 || st == nil {
+		return s, nil
+	}
+	current, opposite := s.origins[side], s.origins[1-side]
+	if current == nil || opposite == nil {
+		return s, nil
+	}
+	revision := current.Revision
+	var qualified *Set
+	var candidates map[string]bool
+	ids := st.SourceArtifactIDs()
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	for _, id := range ids {
+		artifact, _ := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		// A standalone view can compare the admitted checkout's paths against its selected commit.
+		pinned := artifact != nil && artifact.Provider == store.ProviderCommit
+		if !pinned || !artifact.Available() || artifact.LocalRoot != current.LocalPath ||
+			s.sources[id].changes != nil {
+			continue
+		}
+		if revision == "" {
+			revision = checkoutRevision(current)
+		}
+		switch {
+		case revision == "":
+			return s, nil
+		case artifact.Revision != revision:
+			continue
+		}
+		if candidates == nil {
+			candidates = s.changedCandidates()
+		}
+		inputs := s.origins
+		inputs[side] = artifact
+		delta, err := detect(ctx, inputs, DetectConfig{Candidates: candidates, Work: work.Source(id)}, false)
+		if err != nil {
+			return nil, err
+		}
+		if qualified == nil {
+			qualified = new(*s)
+			qualified.sources = make(map[manifest.NamedResource]sourceDelta, len(s.sources)+1)
+			maps.Copy(qualified.sources, s.sources)
+		}
+		evidence := sourceDelta{changes: delta, artifacts: inputs}
+		evidence.declarations[side] = st.GetObject(id)
+		qualified.sources[id] = evidence
+	}
+	if qualified == nil {
+		return s, nil
+	}
+	qualified.groupSources()
+	return qualified, nil
+}
+
+func checkoutRevision(current *store.SourceArtifact) string {
+	input, _ := inputprojection.Authored(current).FS.(*gittree.FS)
+	if input == nil || input.Location() == nil || input.Location().Repository == nil {
+		return ""
+	}
+	head, err := input.Location().Repository.Head()
+	if err != nil {
+		return ""
+	}
+	return head.Hash().String()
+}
+
+func (s *Set) changedCandidates() map[string]bool {
+	candidates := make(map[string]bool, len(s.paths))
+	for file := range s.paths {
+		candidates[file] = false
+	}
+	return candidates
 }
 
 func (s *Set) qualifySource(
@@ -137,13 +249,7 @@ func (s *Set) qualifySource(
 	id manifest.NamedResource,
 	work manifest.WorkScope,
 ) (*Set, error) {
-	switch delta := s.qualifyDelta(id, evidence); {
-	case delta != nil:
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context: %w", err)
-		}
-		return delta.sourceLocalChanges(), nil
-	case s == nil || id != manifest.BootstrapSourceID || s.sources[id].changes != nil:
+	if s == nil || id != manifest.BootstrapSourceID || s.sources[id].changes != nil {
 		return nil, nil //nolint:nilnil // Existing qualified sources use their admitted comparison.
 	}
 	inputs := [2]*store.SourceArtifact{
@@ -158,10 +264,7 @@ func (s *Set) qualifySource(
 	full := beforePolicy != afterPolicy || compareAll
 	var candidates map[string]bool
 	if !compareAll {
-		candidates = make(map[string]bool, len(s.paths))
-		for file := range s.paths {
-			candidates[file] = false
-		}
+		candidates = s.changedCandidates()
 	}
 	scanned, err := scanInputs(ctx, inputs,
 		[2]scanEvidence{
@@ -207,10 +310,8 @@ func (s *Set) sourceLocalChanges() *Set {
 func sourceIDs(stores [2]*store.Store) map[manifest.NamedResource]struct{} {
 	ids := map[manifest.NamedResource]struct{}{manifest.BootstrapSourceID: {}}
 	for _, st := range stores {
-		for _, obj := range st.Objects() {
-			if _, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.SourceArtifact); ok {
-				ids[obj.Named()] = struct{}{}
-			}
+		for _, id := range st.SourceArtifactIDs() {
+			ids[id] = struct{}{}
 		}
 	}
 	return ids

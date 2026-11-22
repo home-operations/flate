@@ -18,7 +18,10 @@ func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
 			st.AddObject(source)
 			owner := &manifest.Kustomization{Name: "factory", Namespace: "apps", Path: "application"}
@@ -54,7 +57,7 @@ func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
 			for range 2 {
 				root := t.TempDir()
 				st := store.New()
-				input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+				input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 				st.SetArtifact(manifest.BootstrapSourceID, input)
 				source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
 				st.AddObject(source)
@@ -64,7 +67,7 @@ func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
 kind: FluxInstance
 metadata: {name: flux}
 spec:
-  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: main, path: ./flux}
+  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./flux}
 `
 				owner := producer.WithNamespace("apps").Named()
 				projection, _ := manifest.ProjectProducer(producer, nil)

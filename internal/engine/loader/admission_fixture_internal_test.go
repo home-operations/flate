@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil/filtertest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -71,8 +72,8 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 		l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	}
 	l.Options.Changes = changes
-	configureSelection(tb, l, selection.Request{Changed: changes != nil})
 	if changes != nil {
+		l.SourceProvider = filtertest.CheckoutProvider(st, l.SourceProvider)
 		_, snapshots, _ := changes.ForSource(manifest.BootstrapSourceID)
 		for side, snapshot := range snapshots {
 			if snapshot != nil && snapshot == st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) {
@@ -80,6 +81,7 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 			}
 		}
 	}
+	configureSelection(tb, l, selection.Request{Changed: changes != nil})
 	f := &admissionFixture{tb: tb, loader: l, objs: inventory}
 	if changes != nil {
 		f.prepare(selection.PrepareRequest{Invocation: true}, false)
@@ -309,7 +311,7 @@ func testInput(root string) *store.SourceArtifact {
 	if root == "" {
 		return nil
 	}
-	return &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	return &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 }
 
 func projectedProducerForTest(object manifest.BaseManifest) manifest.TemplateProjection {

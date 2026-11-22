@@ -21,7 +21,7 @@ func TestSourceArtifact_HistoryInput(t *testing.T) {
 	assert.Equal(t, (*SourceArtifact)(nil).HistoryInput(), ArtifactHistory{})
 	artifact := &SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "first", Key: "family", Content: "generation",
-		Revision: "revision", Digest: "digest", LocalPath: "/source", LocalRoot: "/origin", InputAlias: true,
+		Revision: "revision", Digest: "digest", LocalPath: "/source", LocalRoot: "/origin", Provider: ProviderAlias,
 		FS: fstest.MapFS{}, Metadata: map[string]string{"org.opencontainers.image.revision": "origin"},
 		Reads: &ReadSet{}, ContentFingerprint: func(context.Context, fs.FS) (string, error) {
 			t.Fatal("history projection evaluated content")
@@ -38,7 +38,7 @@ func TestSourceArtifact_HistoryInput(t *testing.T) {
 		Digest:        "digest",
 		LocalRoot:     "/origin",
 		LocalPath:     "/source",
-		InputAlias:    true,
+		Provider:      ProviderAlias,
 		Revision:      "revision",
 		Origin:        "origin",
 		OriginPresent: true, URL: "first",
@@ -68,8 +68,8 @@ func TestSourceArtifact_Coordinates(t *testing.T) {
 		{name: "source directory", root: "/work", input: &SourceArtifact{LocalPath: "/work/nested"}, source: ".", index: "nested", known: true},
 		{name: "index directory", root: "/work/nested", input: &SourceArtifact{LocalPath: "/work"}, source: "nested", index: ".", known: true},
 		{name: "empty source directory", root: "/work", input: &SourceArtifact{LocalPath: "/work/nested"}, index: "nested", known: true},
-		{name: "alias", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", InputAlias: true, Content: "pinned"}, source: "nested/file", index: "file", known: true},
-		{name: "mutable", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work"}, source: "nested/file", index: "file", known: true},
+		{name: "alias", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", Provider: ProviderAlias, Content: "pinned"}, source: "nested/file", index: "file", known: true},
+		{name: "mutable", root: "/work/nested", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", Provider: ProviderInput}, source: "nested/file", index: "file", known: true},
 		{name: "pinned", root: "/work", input: &SourceArtifact{LocalPath: "/cache", LocalRoot: "/work", Content: "pinned"}, source: "file", index: "../cache/file", known: true},
 		{name: "external", root: "/work/nested", input: &SourceArtifact{LocalPath: "/other"}, source: "file", index: "../../other/file", known: true},
 		{name: "absent discovery root", input: &SourceArtifact{LocalPath: "/work"}, source: "dir/../file", index: "file", known: true},
@@ -157,7 +157,7 @@ func TestSourceArtifact_SameMaterial(t *testing.T) {
 		{"digest", func(a *SourceArtifact) { a.Digest = "other" }, ArtifactContent},
 		{"local root", func(a *SourceArtifact) { a.LocalRoot = "other" }, ArtifactContent},
 		{"local path", func(a *SourceArtifact) { a.LocalPath = "other" }, ArtifactContent},
-		{"alias", func(a *SourceArtifact) { a.InputAlias = true }, ArtifactContent},
+		{"provider", func(a *SourceArtifact) { a.Provider = ProviderCommit }, ArtifactContent},
 		{"availability", func(a *SourceArtifact) { a.FS = nil }, ArtifactContent},
 		{"revision", func(a *SourceArtifact) { a.Revision = "other" }, ArtifactRevision},
 		{"origin presence", func(a *SourceArtifact) { a.Metadata = map[string]string{"org.opencontainers.image.revision": ""} }, ArtifactOrigin},
@@ -223,7 +223,7 @@ func TestArtifactValueEqual_SourceFacts(t *testing.T) {
 		{name: "size", change: func(a *SourceArtifact) { a.Size++ }},
 		{name: "local root", change: func(a *SourceArtifact) { a.LocalRoot = "other" }},
 		{name: "key", change: func(a *SourceArtifact) { a.Key = "other" }},
-		{name: "input alias", change: func(a *SourceArtifact) { a.InputAlias = true }},
+		{name: "input alias", change: func(a *SourceArtifact) { a.Provider = ProviderAlias }},
 		{name: "metadata value", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"origin": "other"} }},
 		{name: "metadata key", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"other": "revision"} }},
 		{name: "equal metadata", change: func(a *SourceArtifact) { a.Metadata = map[string]string{"origin": "revision"} }, equal: true},
@@ -416,6 +416,27 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	}
 }
 
+func TestSetArtifact_ProviderReplacesEqualContent(t *testing.T) {
+	t.Parallel()
+	st := New()
+	id := manifest.BootstrapSourceID
+	working := &SourceArtifact{
+		Provider: ProviderAlias, Content: "bytes", Revision: "revision", FS: fstest.MapFS{},
+	}
+	st.SetArtifact(id, working)
+	var reads ReadSet
+	reads.Init(st, manifest.NamedResource{}, nil)
+	defer reads.Retire()
+	assert.Equal(t, reads.GetArtifact(id, ArtifactContent), Artifact(working))
+	assert.Equal(t, reads.Valid(), true)
+
+	committed := *working
+	committed.Provider = ProviderCommit
+	st.SetArtifact(id, &committed)
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, st.GetArtifact(id, ArtifactContent), Artifact(&committed))
+}
+
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 	t.Parallel()
 	s := New()
@@ -508,7 +529,7 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 		next.Key = "other-pin"
 	}
 	if (*testCaseInput.mode) == "alias" {
-		input.InputAlias, next.InputAlias = true, true
+		input.Provider, next.Provider = ProviderAlias, ProviderAlias
 		input.LocalRoot, next.LocalRoot = "/origin", "/origin"
 	}
 	if (*testCaseInput.mode) == "foreign" {
@@ -528,10 +549,10 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 		st.AddObject(&manifest.ConfigMap{Name: "input", Data: map[string]any{"value": "changed"}})
 		next.Reads = &reads
 	}
-	identity := next.HistoryIdentity((*testCaseInput.id))
+	identity := next.HistoryIdentity()
 	assert.Equal(
 		t,
-		identity == input.HistoryIdentity((*testCaseInput.id)),
+		identity == input.HistoryIdentity(),
 		(*testCaseInput.mode) == "generation" || (*testCaseInput.mode) == "alias" || *testCaseInput.mode == "composed",
 	)
 	assert.Equal(
@@ -541,6 +562,6 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 	)
 	if (*testCaseInput.mode) == "alias" {
 		bootstrap := &SourceArtifact{LocalPath: "/origin", FS: fstest.MapFS{}}
-		assert.Equal(t, identity, bootstrap.HistoryIdentity(manifest.BootstrapSourceID))
+		assert.Equal(t, identity, bootstrap.HistoryIdentity())
 	}
 }

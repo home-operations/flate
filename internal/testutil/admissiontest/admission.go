@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil/filtertest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -55,6 +56,9 @@ func New(tb testing.TB, cfg Config) (*loader.Loader, *selection.Session) {
 	}
 	l := loader.New(st)
 	l.SourceRoot, l.Options.Changes = root, cfg.Changes
+	if cfg.Changes != nil {
+		l.SourceProvider = filtertest.CheckoutProvider(st, l.SourceProvider)
+	}
 	if cfg.Index != nil {
 		l.Index = cfg.Index
 	}

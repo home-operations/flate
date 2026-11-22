@@ -82,7 +82,12 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 				cause := errors.New("fixture exact hydration failed")
 				inputFS := &admissionErrorFS{FS: os.DirFS(root), cause: cause}
-				input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS}
+				input := &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        inputFS,
+				}
 				var missingKinds []string
 				if tc.allowMissing {
 					missingKinds = []string{manifest.KindSecret}

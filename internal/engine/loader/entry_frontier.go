@@ -20,8 +20,17 @@ func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact,
 	if input == nil || input.FS == nil || !input.Reads.Valid() {
 		return true, nil
 	}
-	l.refreshSources(input)
+	if !l.frozen {
+		l.refreshSources(input)
+	}
 	reader := l.documents
+	mounted := reader.artifacts[input.LocalPath]
+	if !input.SameMaterial(mounted, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
+		// A qualification probe MUST NOT invalidate frozen ownership evidence.
+		reader.cache = map[string]document{}
+		reader.views, reader.artifacts = nil, nil
+		reader.setSources(map[string]*store.SourceArtifact{input.LocalPath: input})
+	}
 	reader.intent = manifest.ApplicationDocuments
 	dir := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(path))
 	if !safepath.Contains(input.LocalPath, dir) {

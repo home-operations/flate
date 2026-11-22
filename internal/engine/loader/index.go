@@ -279,6 +279,7 @@ func (l *Loader) Close() {
 	l.constructionPurpose.Store(nil)
 	l.projections.Clear()
 	l.catalog, l.scopeRoots = nil, nil
+	l.SourceProvider = nil
 	l.locations, l.candidates, l.roots = nil, nil, rootInventory{}
 	l.builtRoots = nil
 }
@@ -414,8 +415,7 @@ func (l *Loader) completeIndexInputs(repoRoot string) error {
 			root := new(l.documents).mountedRoot(file)
 			for source := range l.Index.CompleteSources {
 				input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-				if source == manifest.BootstrapSourceID && root == repoRoot ||
-					input != nil && input.LocalPath == root {
+				if input != nil && input.LocalPath == root {
 					delete(l.Index.CompleteSources, source)
 				}
 			}

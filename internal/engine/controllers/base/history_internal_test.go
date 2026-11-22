@@ -25,8 +25,10 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 			root := t.TempDir()
 			mutable := mode == "mutable"
 			localPath, localRoot, key, content := root, "", "", ""
+			provider := store.ProviderAlias
 			if !mutable {
 				localPath, localRoot, key, content = "/selected", root, "commit", "generation"
+				provider = store.ProviderCommit
 			}
 			source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
 			owner := testutil.KustomizationID("apps", "emitter")
@@ -46,6 +48,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					LocalRoot: localRoot,
 					Key:       key,
 					Content:   content,
+					Provider:  provider,
 				}
 				st.SetArtifact(source.Named(), art)
 				l, _ := admissiontest.New(
@@ -135,7 +138,11 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	for _, source := range []*manifest.GitRepository{oldSource, newSource} {
 		st.SetArtifact(
 			source.Named(),
-			&store.SourceArtifact{FS: fstest.MapFS{"apps/red/file": {Data: []byte("value")}}, LocalPath: root},
+			&store.SourceArtifact{
+				FS:        fstest.MapFS{"apps/red/file": {Data: []byte("value")}},
+				LocalPath: root,
+				Provider:  store.ProviderAlias,
+			},
 		)
 	}
 	child := &manifest.Kustomization{

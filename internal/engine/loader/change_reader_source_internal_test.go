@@ -38,7 +38,7 @@ func optionalSupplierPair(
 		st.AddObject(source)
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
 				"flux/consumer.yaml":      {Data: []byte("unchanged consumer")},
 				"apps/kustomization.yaml": {Data: []byte("resources: [output.yaml]\n")},
 				"apps/output.yaml":        {Data: []byte("unchanged output")},
@@ -152,7 +152,7 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 				}
 				st.SetArtifact(
 					manifest.BootstrapSourceID,
-					&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: files},
 				)
 				origin := manifest.BootstrapSourceID
 				if foreign {
@@ -343,7 +343,10 @@ func readSourcePair(t *testing.T, mode string, reader *manifest.Kustomization) (
 		roots[side] = root
 		st := store.New()
 		stores[side] = st
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)},
+		)
 		reads := make([]manifest.FileReader, 0, 2)
 		for _, name := range []string{"unchanged", "changed"} {
 			source := &manifest.GitRepository{Name: name, Namespace: "apps"}
@@ -356,7 +359,7 @@ func readSourcePair(t *testing.T, mode string, reader *manifest.Kustomization) (
 			st.SetArtifact(
 				source.Named(),
 				&store.SourceArtifact{
-					LocalPath: filepath.Join(root, ".selected"),
+					Provider: store.ProviderCommit, LocalPath: filepath.Join(root, ".selected"),
 					LocalRoot: root,
 					Key:       fmt.Sprintf("%s-%d", name, side),
 					Content:   fmt.Sprintf("%s-%d", name, side),
@@ -425,7 +428,7 @@ spec:
 		st.AddObject(source)
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
 		)
 		value := side
 		if state == "unchanged_collision" {
@@ -434,7 +437,7 @@ spec:
 		st.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
-				LocalPath: filepath.Join(root, ".selected"),
+				Provider: store.ProviderCommit, LocalPath: filepath.Join(root, ".selected"),
 				LocalRoot: root,
 				Key:       strconv.Itoa(side),
 				Content:   strconv.Itoa(side),
@@ -542,7 +545,7 @@ func crossSourceSupplierPair(t *testing.T, namespace, mode string) (
 		for side, st := range stores {
 			artifact := *st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			artifact.LocalPath, artifact.LocalRoot = t.TempDir(), filepath.Join(roots[side], "nested")
-			artifact.InputAlias = true
+			artifact.Provider = store.ProviderAlias
 			st.SetArtifact(source.Named(), &artifact)
 			observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
 			if (side == 0) == (mode == "nested_removed") {

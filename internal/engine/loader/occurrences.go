@@ -336,7 +336,7 @@ func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) (
 	if repoRoot == "" {
 		repoRoot = root
 	}
-	location := sourceView(manifest.NamedResource{}, repoRoot, l.documents.artifacts[root], nil)
+	location := sourceLocation(l.documents.artifacts[root], repoRoot, false)
 	if !new(l.documents).scopeCoordinates(&visit, repoRoot, location.Pinned, location.External) {
 		return nil, nil
 	}
@@ -510,6 +510,9 @@ func (l *Loader) OccurrenceObject(
 	input *store.SourceArtifact,
 ) (store.Child, error) {
 	occurrence := *occurrenceValue
+	if occurrence.Declaration.File == "" {
+		return store.Child{}, nil
+	}
 	coordinate := occurrenceID{
 		Source: occurrence.Declaration.Source, File: occurrence.Declaration.File,
 		Document: occurrence.Declaration.Document, item: occurrence.Declaration.Item,
@@ -562,13 +565,10 @@ func (l *Loader) OccurrenceObject(
 			"",
 		)
 	}
-	if len(children) != 1 {
+	if len(children) != 1 || children[0].Obj == nil || children[0].Obj.Named() != occurrence.Authored {
 		return store.Child{}, nil
 	}
 	child = children[0]
-	if child.Obj == nil || child.Obj.Named() != occurrence.Authored {
-		return store.Child{}, nil
-	}
 	if facts.hydrated.values != nil {
 		facts.hydrated.values[coordinate] = child
 	}

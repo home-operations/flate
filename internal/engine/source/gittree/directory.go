@@ -94,8 +94,13 @@ func openDirectory(
 	input := newLocal(root, false, &localPolicy{})
 	input.location, input.membership = location, d.membership
 	d.artifact = &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root, LocalRoot: root,
-		FS: input, ContentFingerprint: ContentFingerprint,
+		Kind:               manifest.KindGitRepository,
+		URL:                "file://" + root,
+		LocalPath:          root,
+		LocalRoot:          root,
+		Provider:           store.ProviderInput,
+		FS:                 input,
+		ContentFingerprint: ContentFingerprint,
 	}
 	return d, nil
 }

@@ -14,6 +14,7 @@ type Catalog struct {
 
 	buckets       [64]*map[manifest.BaseManifest]producerFact
 	retainedRoots rootInventory
+	provider      func(manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex) store.SourceProvider
 }
 
 type physicalView struct {
@@ -33,7 +34,7 @@ type physicalView struct {
 // DetachCatalog keeps borrowed catalog facts alive beyond Loader.Close.
 func (l *Loader) DetachCatalog() *Catalog {
 	if l.catalog == nil {
-		l.catalog = &Catalog{physicalView: l.physicalView()}
+		l.catalog = &Catalog{physicalView: l.physicalView(), provider: l.SourceProvider}
 		l.catalog.retainedRoots = l.roots
 		l.catalog.roots = &l.catalog.retainedRoots
 		l.catalog.projections = &l.catalog.buckets
@@ -178,9 +179,13 @@ func (v *physicalView) applicationScope(evidence *selection.RootEvidence, object
 	if !evidence.Scope.Application {
 		return
 	}
-	location := SourceView(objects, evidence.Scope.ApplicationSource, v.sourceRoot)
-	evidence.Scope.LocalApplication = !location.Pinned && !location.External
 	input, _ := objects.GetArtifact(evidence.Scope.ApplicationSource, store.ArtifactContent).(*store.SourceArtifact)
+	evidence.Scope.LocalApplication = input.WorkingTree()
+	evidence.Scope.InputApplication = input != nil && input.Provider == store.ProviderInput
+	if evidence.Scope.LocalApplication && input.Provider == store.ProviderAlias {
+		origin, known := input.IndexPath(v.sourceRoot, ".")
+		evidence.Scope.LocalApplication = known && filepath.IsLocal(origin)
+	}
 	evidence.Scope.Claim = ""
 	if coordinate, known := input.IndexPath(v.sourceRoot, evidence.Scope.ApplicationPath); known {
 		evidence.Scope.Claim = coordinate + "/"
@@ -328,16 +333,27 @@ func (v *physicalView) captureApplication(
 	evidence.scope.ApplicationSource, evidence.scope.ApplicationPath = application.Source, application.Path
 	retained, known := doc.rootApplications[id]
 	if live != nil && (!live.frozen || !known) {
-		location := SourceView(live.Store, application.Source, v.sourceRoot)
-		bootstrap, _ := live.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-		source, _ := live.Store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
-		target := filepath.Join(location.Path, manifest.NormalizeClaimBase(application.Path))
-		retained = rootApplication{
-			local:      !location.Pinned && !location.External,
-			sameOrigin: sameOriginPath(bootstrap, source, live.entryPath, target),
-		}
+		retained = live.rootFactsForApplication(&application)
 	}
-	evidence.scope.LocalApplication, evidence.scope.SameEntryOrigin = retained.local, retained.sameOrigin
+	evidence.scope.LocalApplication, evidence.scope.InputApplication = retained.local, retained.input
+	evidence.scope.SameEntryOrigin = retained.sameOrigin
+}
+
+func (l *Loader) rootFactsForApplication(application *manifest.EntryApplication) rootApplication {
+	input, _ := l.Store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
+	target := input.ApplicationOrigin(application.Path)
+	if target == "" {
+		return rootApplication{}
+	}
+	bootstrap := l.Options.ConfiguredInput
+	if bootstrap == nil {
+		bootstrap, _ = l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	}
+	return rootApplication{
+		local:      true,
+		input:      input.Provider == store.ProviderInput,
+		sameOrigin: bootstrap.OriginPath(l.entryPath) == target,
+	}
 }
 
 func rootNamespaceEligible(id manifest.NamedResource, object manifest.BaseManifest) bool {
@@ -346,10 +362,11 @@ func rootNamespaceEligible(id manifest.NamedResource, object manifest.BaseManife
 
 type rootApplication struct {
 	local      bool
+	input      bool
 	sameOrigin bool
 }
 
 // SourceExternal uses the caller's capture so replacement invalidates the observation.
 func (c *Catalog) SourceExternal(id manifest.NamedResource, reads *store.ReadSet) bool {
-	return c != nil && reads != nil && SourceView(reads, id, c.sourceRoot).External
+	return c != nil && reads != nil && c.provider != nil && c.provider(id, reads, c.index) == store.ProviderFetch
 }

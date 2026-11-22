@@ -66,7 +66,7 @@ func (l *Loader) visitRootScopes(repoRoot string, kss []store.Child) {
 	for _, dir := range l.scopes.roots {
 		v := graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource}
 		claimed := false
-		for range l.Index.ClaimOwners(dir+"/", manifest.BootstrapSourceID, manifest.NamedResource{}, nil) {
+		for range l.Index.ClaimOwners(dir+"/", store.CheckoutClaimSource(), manifest.NamedResource{}, nil) {
 			claimed = true
 			break
 		}

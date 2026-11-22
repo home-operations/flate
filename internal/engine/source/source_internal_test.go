@@ -71,7 +71,7 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 
 	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
 	reads := testReadSet(repo)
-	admitted := &store.SourceArtifact{InputAlias: true}
+	admitted := &store.SourceArtifact{Provider: store.ProviderAlias}
 	prepareCtx, cancelPrepare := context.WithCancel(t.Context())
 	defer cancelPrepare()
 	fetchCtx, cancelFetch := context.WithCancel(t.Context())

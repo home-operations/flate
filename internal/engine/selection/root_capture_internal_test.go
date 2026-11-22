@@ -27,7 +27,7 @@ func TestCaptureRoot_ProspectiveSupport(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			root := t.TempDir()
-			oldInput := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			oldInput := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			st.SetArtifact(manifest.BootstrapSourceID, oldInput)
 			owner := &manifest.ResourceSet{Name: "factory", Namespace: "apps"}
 			st.AddObject(owner)
@@ -44,10 +44,10 @@ func TestCaptureRoot_ProspectiveSupport(t *testing.T) {
 			defer reads.Retire()
 			c.objects, c.proposal.reads = &reads, &reads
 			newInput := &store.SourceArtifact{
-				LocalPath:  t.TempDir(),
-				LocalRoot:  root,
-				InputAlias: true,
-				FS:         fstest.MapFS{},
+				LocalPath: t.TempDir(),
+				LocalRoot: root,
+				Provider:  store.ProviderAlias,
+				FS:        fstest.MapFS{},
 			}
 			c.sourceReads = &reads
 			c.sourceFacts = map[manifest.NamedResource]*SourceFacts{
@@ -119,7 +119,10 @@ func TestCaptureRoot_ProspectiveComponentClaim(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	factory := &manifest.ResourceSet{Name: "factory", Namespace: "apps"}
 	st.AddObject(factory)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "app"}
@@ -185,7 +188,10 @@ func TestCaptureRoot_ApplicationClaimPeers(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			root := t.TempDir()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			application := &manifest.Kustomization{Name: "application", Namespace: "apps", Path: "apps"}
 			peer := &manifest.Kustomization{Name: "peer", Namespace: "apps"}
 			index := manifest.DiscoveryIndex{Claims: map[string][]manifest.NamedResource{}}
@@ -199,6 +205,39 @@ func TestCaptureRoot_ApplicationClaimPeers(t *testing.T) {
 			c.captureRootApplication(&evidence, application)
 			assert.Equal(t, evidence.Scope.LocalApplication, true)
 			assert.Equal(t, publicRootPeer(&evidence, peer.Named()), tc.peer)
+		})
+	}
+}
+
+func TestClaimContains_SourceOrigin(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"fleet", "flux-system"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			source := (&manifest.GitRepository{Name: name, Namespace: "flux-system"}).Named()
+			local := (&manifest.Kustomization{Name: "checkout", Namespace: "apps"}).Named()
+			pinned := (&manifest.Kustomization{Name: "pinned", Namespace: "apps"}).Named()
+			index := &manifest.DiscoveryIndex{
+				Claims: map[string][]manifest.NamedResource{
+					"": {local}, "apps/": {pinned}, "../mount/apps/": {pinned},
+				},
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{pinned: {Pinned: true}},
+			}
+			checkout := RootCoveringOwner{
+				Identity: local, Source: source,
+				Input: &store.SourceArtifact{Provider: store.ProviderAlias, FS: fstest.MapFS{}},
+			}
+			mounted := RootCoveringOwner{
+				Identity: pinned, Source: source,
+				Input: &store.SourceArtifact{Provider: store.ProviderCommit, FS: fstest.MapFS{}},
+			}
+			subject := manifest.NamedResource{}
+			assert.Equal(t, claimContains(index, "apps/file.yaml", subject, &checkout), true)
+			checkout.Identity = pinned
+			assert.Equal(t, claimContains(index, "apps/file.yaml", subject, &checkout), false)
+			assert.Equal(t, claimContains(index, "../mount/apps/file.yaml", subject, &mounted), true)
+			mounted.Identity = local
+			assert.Equal(t, claimContains(index, "../mount/apps/file.yaml", subject, &mounted), false)
 		})
 	}
 }

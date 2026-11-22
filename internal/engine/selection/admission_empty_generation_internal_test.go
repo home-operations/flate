@@ -11,7 +11,10 @@ import (
 func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	st.AddObject(parent)

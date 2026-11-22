@@ -33,7 +33,7 @@ func testRecordEmittedInvocationSourceWithdrawal(t *testing.T, tc invocationWith
 	seed := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://fixture.invalid/self"}
 	replacement := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://fixture.invalid/foreign"}
 	s.AddObject(owner)
-	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "input"})
+	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Key: "input"})
 	var construction ReadSet
 	construction.Init(s, manifest.BootstrapSourceID, nil)
 	defer construction.Retire()

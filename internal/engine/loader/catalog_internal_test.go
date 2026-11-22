@@ -49,7 +49,7 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 					Data: []byte(testutil.KustomizationYAML("literal", "apps", "  path: ./hidden\n")),
 				},
 			}, denied: &denied, calls: &calls}
-			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: files}
 			st := store.New()
 			source := &manifest.GitRepository{Name: "local", Namespace: "sources"}
 			external := &manifest.GitRepository{Name: "remote", Namespace: "sources"}
@@ -103,6 +103,14 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 				&store.Emission{Children: []store.Child{{Obj: unrelated}}, Complete: true},
 				nil,
 			)
+			l.SourceProvider = func(
+				id manifest.NamedResource, reads *store.ReadSet, _ *manifest.DiscoveryIndex,
+			) store.SourceProvider {
+				if material, ok := reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
+					return material.Provider
+				}
+				return store.ProviderFetch
+			}
 			catalog := l.DetachCatalog()
 			assert.Equal(t, l.DetachCatalog(), catalog)
 			var before store.ReadSet
@@ -597,7 +605,7 @@ func TestSession_RootOwnerInventoryShared(t *testing.T) {
 			)
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: files},
 			)
 			l := New(st)
 			defer l.Close()

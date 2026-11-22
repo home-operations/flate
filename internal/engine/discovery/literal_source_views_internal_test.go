@@ -138,7 +138,7 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 	t.Helper()
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -165,9 +165,9 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 		st.AddObject(source)
 		applier := []string{"z", "a"}[i]
 		f.views[i] = &store.SourceArtifact{
-			LocalPath:  filepath.Join(root, name),
-			LocalRoot:  root,
-			InputAlias: true,
+			LocalPath: filepath.Join(root, name),
+			LocalRoot: root,
+			Provider:  store.ProviderAlias,
 			FS: fstest.MapFS{
 				"outer/kustomization.yaml": {Data: []byte("resources: [applier.yaml]\n")},
 				"outer/applier.yaml": {

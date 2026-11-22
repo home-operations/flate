@@ -39,10 +39,10 @@ type SourceArtifact struct {
 	// Key identifies the source family across acquired content generations.
 	// Empty Content with FS denotes mutable content requiring cache validation.
 	// Nonempty Key without FS requires acquisition before reading.
-	Key string
-	// InputAlias marks source shaping derived from the selected bootstrap input,
-	// rather than an authored committed source pin.
-	InputAlias bool
+	Key          string
+	Provider     SourceProvider
+	Extent       SourceExtent
+	ComposedFrom *SourceArtifact `json:"-"`
 	// FS supplies acquired content; LocalPath and LocalRoot are coordinates only.
 	// Nil FS is unavailable or existence-only, regardless of Key or LocalPath.
 	FS fs.FS
@@ -51,6 +51,62 @@ type SourceArtifact struct {
 	// ContentFingerprint lazily identifies selected bytes at their source owner.
 	// Nil or an empty result supplies no equality evidence; acquisition identity stays separate.
 	ContentFingerprint func(context.Context, fs.FS) (string, error) `json:"-"`
+}
+
+// SourceProvider identifies the accepted origin of source content.
+type SourceProvider uint8
+
+// Acquired artifacts default to ProviderFetch until discovery records another provider.
+const (
+	ProviderFetch SourceProvider = iota
+	ProviderInput
+	ProviderAlias
+	ProviderCommit
+	ProviderGenerator
+	ProviderAbsent
+)
+
+// SourceExtent distinguishes an admitted input, a filtered view, and composed material.
+type SourceExtent uint8
+
+// ExtentInput permits reuse with other complete views of the same checkout.
+const (
+	ExtentInput SourceExtent = iota
+	ExtentFiltered
+	ExtentComposed
+)
+
+// WorkingTree reports whether discovery selected checkout bytes for this artifact.
+func (a *SourceArtifact) WorkingTree() bool {
+	return a != nil && a.Provider.WorkingTree()
+}
+
+// WorkingTree reports whether the provider selects checkout bytes.
+func (p SourceProvider) WorkingTree() bool {
+	return p == ProviderInput || p == ProviderAlias
+}
+
+// CheckoutView requires checkout origin without a remount for composition.
+func (a *SourceArtifact) CheckoutView() bool {
+	return a.WorkingTree() && a.Extent != ExtentComposed
+}
+
+// CheckoutClaimSource supplies the claim domain for a direct checkout observation.
+func CheckoutClaimSource() manifest.NamedResource {
+	return manifest.NamedResource{Kind: manifest.KindGitRepository}
+}
+
+// ClaimSource projects an accepted material origin onto the claim query's domain.
+func (a *SourceArtifact) ClaimSource(source manifest.NamedResource) manifest.NamedResource {
+	if a.CheckoutView() && a.Available() {
+		return CheckoutClaimSource()
+	}
+	return source
+}
+
+// Available requires material from the current acquisition.
+func (a *SourceArtifact) Available() bool {
+	return a != nil && a.FS != nil && a.Reads.Valid()
 }
 
 func (*SourceArtifact) artifact() {}
@@ -110,18 +166,19 @@ const (
 
 // ArtifactInput is the comparable projection of selected source facts.
 type ArtifactInput struct {
-	Present       bool   `json:"Present"`
-	Readable      bool   `json:"Readable"`
-	Kind          string `json:"Kind"`
-	Key           string `json:"Key"`
-	Content       string `json:"Content"`
-	Digest        string `json:"Digest"`
-	LocalRoot     string `json:"LocalRoot"`
-	LocalPath     string `json:"LocalPath"`
-	InputAlias    bool   `json:"InputAlias"`
-	Revision      string `json:"Revision"`
-	Origin        string `json:"Origin"`
-	OriginPresent bool   `json:"OriginPresent"`
+	Present       bool           `json:"Present"`
+	Readable      bool           `json:"Readable"`
+	Kind          string         `json:"Kind"`
+	Key           string         `json:"Key"`
+	Content       string         `json:"Content"`
+	Digest        string         `json:"Digest"`
+	LocalRoot     string         `json:"LocalRoot"`
+	LocalPath     string         `json:"LocalPath"`
+	Provider      SourceProvider `json:"Provider"`
+	Extent        SourceExtent   `json:"Extent"`
+	Revision      string         `json:"Revision"`
+	Origin        string         `json:"Origin"`
+	OriginPresent bool           `json:"OriginPresent"`
 }
 
 // ArtifactHistory MUST exclude execution registrations and mutable acquisition state.
@@ -148,15 +205,16 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	var input ArtifactInput
 	if read&ArtifactContent != 0 {
 		input = ArtifactInput{
-			Present:    true,
-			Readable:   a.FS != nil,
-			Kind:       a.Kind,
-			Key:        a.Key,
-			Content:    a.Content,
-			Digest:     a.Digest,
-			LocalRoot:  a.LocalRoot,
-			LocalPath:  a.LocalPath,
-			InputAlias: a.InputAlias,
+			Present:   true,
+			Readable:  a.FS != nil,
+			Kind:      a.Kind,
+			Key:       a.Key,
+			Content:   a.Content,
+			Digest:    a.Digest,
+			LocalRoot: a.LocalRoot,
+			LocalPath: a.LocalPath,
+			Provider:  a.Provider,
+			Extent:    a.Extent,
 		}
 	}
 	if read&ArtifactRevision != 0 {
@@ -236,6 +294,21 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	record.effective = value
 	return changed&(ArtifactContent|ArtifactRevision|ArtifactOrigin) != 0 ||
 		acquisitionChanged && record.acquisitionHead.links != nil && record.acquisitionHead.links.pending.Load()
+}
+
+// SourceArtifactIDs includes material published before its declaration becomes visible.
+func (s *Store) SourceArtifactIDs() []manifest.NamedResource {
+	s.rLockAll()
+	defer s.rUnlockAll()
+	var ids []manifest.NamedResource
+	for _, shard := range s.shards {
+		for id := range shard.artifacts {
+			if _, ok := shard.artifacts[id].effective.(*SourceArtifact); ok && !shard.cells[id].hidden {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
@@ -323,18 +396,20 @@ func artifactValueEqual(prev, next Artifact) bool {
 	}
 	a, aok := prev.(*SourceArtifact)
 	b, bok := next.(*SourceArtifact)
-	if aok && bok && (a == nil || b == nil) {
+	return aok && bok && sourceArtifactEqual(a, b)
+}
+
+func sourceArtifactEqual(a, b *SourceArtifact) bool {
+	if a == nil || b == nil {
 		return a == b
-	}
-	if !aok || !bok {
-		return false
 	}
 	if (a.FS == nil) != (b.FS == nil) || a.FS != nil && (a.Content == "" || b.Content == "") {
 		return false
 	}
 	identityEqual := a.Kind == b.Kind && a.URL == b.URL && a.Revision == b.Revision && a.Key == b.Key
 	contentEqual := a.Content == b.Content && a.Digest == b.Digest && a.Size == b.Size
-	originEqual := a.LocalPath == b.LocalPath && a.LocalRoot == b.LocalRoot && a.InputAlias == b.InputAlias
+	originEqual := a.LocalPath == b.LocalPath && a.LocalRoot == b.LocalRoot && a.Provider == b.Provider &&
+		a.Extent == b.Extent
 	metadataEqual := (a.Metadata == nil) == (b.Metadata == nil) && maps.Equal(a.Metadata, b.Metadata)
 	return identityEqual && contentEqual && originEqual && metadataEqual
 }
@@ -389,7 +464,7 @@ func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
 // OriginPath projects mutable inputs and aliases onto their physical input origin.
 // file MUST be within the admitted artifact's LocalPath.
 func (a *SourceArtifact) OriginPath(file string) string {
-	if a != nil && a.LocalRoot != "" && (a.InputAlias || a.Content == "") {
+	if a != nil && a.LocalRoot != "" && a.Extent != ExtentComposed && a.projectsCheckout() {
 		if a.LocalRoot == a.LocalPath {
 			return filepath.Clean(file)
 		}
@@ -400,6 +475,25 @@ func (a *SourceArtifact) OriginPath(file string) string {
 		return filepath.Join(a.LocalRoot, rel)
 	}
 	return file
+}
+
+func (a *SourceArtifact) projectsCheckout() bool {
+	return a.Provider == ProviderAlias || a.Provider == ProviderInput && a.Revision == ""
+}
+
+// ApplicationOrigin resolves a checkout application through its accepted source origin.
+func (a *SourceArtifact) ApplicationOrigin(path string) string {
+	if !a.WorkingTree() || a.FS == nil {
+		return ""
+	}
+	path = filepath.Clean(manifest.NormalizeClaimBase(path))
+	if !filepath.IsLocal(path) {
+		return ""
+	}
+	if a.ComposedFrom != nil {
+		a = a.ComposedFrom
+	}
+	return a.OriginPath(filepath.Join(a.LocalPath, path))
 }
 
 // IndexPath maps source coordinates without granting filesystem access.
@@ -434,11 +528,11 @@ func (a *SourceArtifact) coordinatePath(root, path string, toIndex bool) (string
 }
 
 // HistoryIdentity identifies a qualified source family across changed filesystem generations.
-func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest.SourceIdentity {
+func (a *SourceArtifact) HistoryIdentity() manifest.SourceIdentity {
 	if a == nil || a.FS == nil || !a.Reads.Valid() {
 		return manifest.SourceIdentity{}
 	}
-	if source.Name == "" || source.Kind == "" || source == manifest.BootstrapSourceID || a.InputAlias {
+	if a.WorkingTree() {
 		return manifest.SourceIdentity{Root: a.OriginPath(a.LocalPath)}
 	}
 	identity := manifest.SourceIdentity{Kind: a.Kind, URL: a.URL, Key: a.Key}

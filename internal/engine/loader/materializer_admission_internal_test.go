@@ -22,7 +22,10 @@ func TestAdmission_ProjectedReaderNamespace(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+	)
 	input := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
 	consumer := &manifest.Kustomization{
 		Name:      "consumer",
@@ -149,7 +152,7 @@ func testAdmissionMaterializerInventoryAuthorityNamespaceGeneratedRoot(t *testin
 
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"indexed.yaml": {
 			Data: []byte(
 				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: indexed, namespace: apps}\nspec: {path: ./payload}\n",
@@ -198,18 +201,21 @@ func runMaterializerMode(t *testing.T, testCaseInput *string, mode string) {
 	t.Helper()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n",
-			),
-		},
-		"producer.yaml": {
-			Data: []byte(
-				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n",
+				),
+			},
+			"producer.yaml": {
+				Data: []byte(
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: producer, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
+				),
+			},
+		}},
+	)
 	input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	files := input.FS.(fstest.MapFS)
 	files["demo/Chart.yaml"] = &fstest.MapFile{
@@ -359,6 +365,7 @@ func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS: fstest.MapFS{"flux/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -368,7 +375,7 @@ spec: {path: ./application}
 kind: FluxInstance
 metadata: {name: flux, namespace: apps}
 spec:
-  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: main, path: ./flux}
+  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./flux}
 `)}},
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -423,6 +430,7 @@ spec:
 				root := t.TempDir()
 				st := store.New()
 				input := &store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root,
 					FS: fstest.MapFS{
 						"application/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [set.yaml]\n")},
@@ -436,7 +444,7 @@ spec:
     kind: FluxInstance
     metadata: {name: flux}
     spec:
-      sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: main, path: ./flux}
+      sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./flux}
 `, namespace)},
 					},
 				}

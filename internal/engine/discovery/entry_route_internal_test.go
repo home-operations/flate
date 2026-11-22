@@ -22,7 +22,10 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			st := store.New()
 			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 			st.AddObject(bootstrap)
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root},
+			)
 			l := loader.New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})

@@ -227,7 +227,7 @@ func writeClusters(t *testing.T, root string, clusters []string, head bool) {
 	for _, cluster := range clusters {
 		entry := "kubernetes/clusters/" + cluster
 		write(t, root, entry+"/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://fixture.invalid/sdk}\n")
-		write(t, root, entry+"/instance.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: flux-system}\nspec:\n  sync: {kind: GitRepository, name: cluster, url: https://fixture.invalid/sdk, ref: main, path: ./"+entry+"}\n")
+		write(t, root, entry+"/instance.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: flux-system}\nspec:\n  sync: {kind: GitRepository, name: cluster, url: https://fixture.invalid/sdk, ref: refs/heads/main, path: ./"+entry+"}\n")
 		write(t, root, entry+"/apps.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: cluster-apps, namespace: flux-system, labels: {fixture: selected}}\nspec:\n  interval: 1m\n  path: ./kubernetes/apps/"+cluster+"\n  sourceRef: {kind: GitRepository, name: cluster}\n")
 		resource := "cm.yaml"
 		if head && cluster == "test" {

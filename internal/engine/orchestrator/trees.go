@@ -385,13 +385,23 @@ func (r *Invocation) qualifyConstructionReaders(
 }
 
 func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	current := r.results[i].Orchestrator
 	other, j, found := r.opposite(i)
 	if other != nil && j < i {
 		return nil
 	}
 	changes := current.cfg.ExternalChanges
-	if current.hasComparison(other, changes) {
+	if other == nil && !found {
+		qualified, err := current.qualifyLocalCommits(ctx)
+		if err != nil {
+			r.stopDeclarationFailures(i, j, found, err)
+			return nil
+		}
+		changes = qualified
+	} else if current.hasComparison(other, changes) {
 		base, head := current, other
 		if current.cfg.ID.Side == manifest.TreeHead {
 			base, head = other, current
@@ -419,25 +429,11 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 		r.stopDeclarationFailures(i, j, found, err)
 		return nil
 	}
-	before, after := current.index, (*manifest.DiscoveryIndex)(nil)
-	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{}
-	if current.loader != nil {
-		inputs[0] = current.loader.InputContent
-	}
-	if other != nil {
-		after = other.index
-		if other.loader != nil {
-			inputs[1] = other.loader.InputContent
-		}
-	}
-	if r.results[i].ID.Side == manifest.TreeHead {
-		before, after = after, before
-		inputs[0], inputs[1] = inputs[1], inputs[0]
-	}
+	readers := current.readerInputs(other, r.results[i].ID.Side)
 	resolved, err := changes.WithReaders(
 		ctx,
-		[2]*manifest.DiscoveryIndex{before, after},
-		inputs,
+		readers.indexes,
+		readers.inputs,
 		current.cfg.work.Scope(),
 	)
 	if err != nil {
@@ -452,7 +448,30 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 }
 
 func (o *Orchestrator) hasComparison(peer *Orchestrator, changes *change.Set) bool {
-	return peer != nil && (changes != nil || o.cfg.BaseInput != o.cfg.Input && o.cfg.Input != peer.cfg.Input)
+	if peer == nil || changes != nil {
+		return peer != nil
+	}
+	return o.cfg.Input != peer.cfg.Input &&
+		(o.cfg.BaseInput != o.cfg.Input || peer.cfg.BaseInput != peer.cfg.Input)
+}
+
+type readerInputs struct {
+	indexes [2]*manifest.DiscoveryIndex
+	inputs  [2]map[manifest.NamedResource]inputprojection.Projection
+}
+
+func (o *Orchestrator) readerInputs(other *Orchestrator, side manifest.TreeSide) readerInputs {
+	var readers readerInputs
+	for _, current := range []*Orchestrator{o, other} {
+		if current != nil {
+			readers.indexes[side] = current.index
+			if current.loader != nil {
+				readers.inputs[side] = current.loader.InputContent
+			}
+		}
+		side = 1 - side
+	}
+	return readers
 }
 
 func (r *Invocation) prepareSession(ctx context.Context, i int) {
@@ -523,22 +542,7 @@ func (r *Invocation) qualifyDeclarations(ctx context.Context) error {
 		if other != nil && j < i {
 			continue
 		}
-		base, head := o.store, (*store.Store)(nil)
-		if other != nil {
-			head = other.store
-		}
-		if o.cfg.ID.Side == manifest.TreeHead {
-			base, head = head, base
-		}
-		prepared := o.declarationChildren(other, base, head)
-		changes, err := o.cfg.ExternalChanges.WithDeclarations(
-			ctx,
-			change.DeclarationInputs{Stores: [2]*store.Store{base, head}, Prepared: prepared, Work: o.cfg.work.Scope()},
-		)
-		if err == nil {
-			err = o.bindDeclaredReaders(ctx, other, changes)
-		}
-		if err != nil {
+		if err := o.qualifyDeclarationPair(ctx, other); err != nil {
 			r.stopDeclarationFailures(i, j, found, err)
 			if err := ctx.Err(); err != nil {
 				return err
@@ -624,24 +628,15 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 	if err := o.completeDeclarations(ctx, other, changes); err != nil {
 		return err
 	}
-	before, after := o.index, (*manifest.DiscoveryIndex)(nil)
-	inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, nil}
-	if other != nil {
-		after = other.index
-		inputs[1] = other.loader.InputContent
-	}
-	if o.cfg.ID.Side == manifest.TreeHead {
-		before, after = after, before
-		inputs[0], inputs[1] = inputs[1], inputs[0]
-	}
+	readers := o.readerInputs(other, o.cfg.ID.Side)
 	for _, current := range []*Orchestrator{o, other} {
 		if current == nil {
 			continue
 		}
 		resolved, err := changes.WithReaders(
 			ctx,
-			[2]*manifest.DiscoveryIndex{before, after},
-			inputs,
+			readers.indexes,
+			readers.inputs,
 			current.cfg.work.Scope(),
 		)
 		if err != nil {

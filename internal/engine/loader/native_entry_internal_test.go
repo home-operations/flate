@@ -28,6 +28,7 @@ func TestAdmission_NativeEntryNeedsOwnObligation(t *testing.T) {
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
 				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root,
 					FS: fstest.MapFS{"entry/kustomization.yaml": {Data: []byte(`resources: [child.yaml, missing]
 patches: [{path: patch.yaml}]
@@ -70,7 +71,10 @@ spec: {interval: 1h}
 			t.Parallel()
 			st := store.New()
 			root := t.TempDir()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"}
 			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./workload"}
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", owner.Named())
@@ -118,6 +122,7 @@ func TestAdmission_UnreferencedEntryFile(t *testing.T) {
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
 				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root,
 					FS: fstest.MapFS{
 						"entry/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
@@ -178,7 +183,7 @@ func TestAdmission_NamedDemandRequiresNativeOwner(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: [apps.yaml]\n")},
 		"entry/apps.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -249,7 +254,7 @@ func TestAdmission_BuiltParentRequiresNativeOwner(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"entry/kustomization.yaml": {Data: []byte("resources: [apps.yaml]\n" + tc.transformation)},
 				"entry/apps.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -350,7 +355,12 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 			}
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root, FS: input.FS, Content: "replacement"},
+				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					FS:        input.FS,
+					Content:   "replacement",
+				},
 			)
 			_, current := l.BuiltChildren(filepath.Join(root, "entry"), native.Named(), nil)
 			assert.Equal(t, current, false)

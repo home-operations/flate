@@ -36,7 +36,7 @@ func TestReadSet_PreflightAuthority(t *testing.T) {
 			var captured ReadSet
 			captured.Init(st, id, nil)
 			t.Cleanup(captured.Close)
-			assert.Equal(t, captured.Preflight(), "")
+			assert.Equal(t, captured.Preflight(captured.ID()).Message, "")
 			assert.Equal(t, captured.input(id).view.owner != nil, tc.emitted)
 			if tc.accepted {
 				captured.Accept(AssessmentReconciled)
@@ -47,20 +47,20 @@ func TestReadSet_PreflightAuthority(t *testing.T) {
 			peerPublished, complete := make(chan struct{}), make(chan struct{})
 			var publishers sync.WaitGroup
 			publishers.Go(func() {
-				st.SetPreflight(peer, "peer cycle")
+				st.SetPreflight(peer, PreflightFailure{Message: "peer cycle", DependencyCycle: true})
 				close(peerPublished)
 			})
 			publishers.Go(func() {
 				<-complete
-				st.SetPreflight(id, "member cycle")
+				st.SetPreflight(id, PreflightFailure{Message: "member cycle", DependencyCycle: true})
 			})
 			<-peerPublished
-			partialValid, partialMessage := captured.Valid(), captured.Preflight()
+			partialValid, partialMessage := captured.Valid(), captured.Preflight(captured.ID()).Message
 			close(complete)
 			publishers.Wait()
 			assert.Equal(t, partialValid, true)
 			assert.Equal(t, partialMessage, "")
-			assert.Equal(t, captured.Preflight(), "")
+			assert.Equal(t, captured.Preflight(captured.ID()).Message, "")
 			assert.Equal(t, captured.Valid(), false)
 			captured.Accept(AssessmentReconciled)
 			assert.Equal(t, head.assessments[0].Load(), previous)
@@ -68,19 +68,19 @@ func TestReadSet_PreflightAuthority(t *testing.T) {
 			var current ReadSet
 			current.Init(st, id, nil)
 			t.Cleanup(current.Close)
-			assert.Equal(t, current.Preflight(), "member cycle")
+			assert.Equal(t, current.Preflight(current.ID()).Message, "member cycle")
 			assert.Equal(t, current.ReplacesInvalid(), tc.accepted)
 			current.Accept(AssessmentReconciled)
 			assert.Equal(t, head.assessments[0].Load().reads, &current)
-			st.SetPreflight(id, "")
-			assert.Equal(t, current.Preflight(), "member cycle")
+			st.SetPreflight(id, PreflightFailure{})
+			assert.Equal(t, current.Preflight(current.ID()).Message, "member cycle")
 			assert.Equal(t, current.Valid(), false)
 			assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{id})
 			assert.Equal(t, st.GetObject(id), manifest.BaseManifest(object))
 			var cleared ReadSet
 			cleared.Init(st, id, nil)
 			t.Cleanup(cleared.Close)
-			assert.Equal(t, cleared.Preflight(), "")
+			assert.Equal(t, cleared.Preflight(cleared.ID()).Message, "")
 			assert.Equal(t, cleared.ReplacesInvalid(), true)
 			cleared.Accept(AssessmentReconciled)
 			assert.Equal(t, cleared.Valid(), true)
@@ -95,7 +95,7 @@ func TestReadSet_PreflightWithConsumedAdmission(t *testing.T) {
 	object := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	child := emissionChild("parked", "raw")
 	st.AddObject(object)
-	st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+	st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "source"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		child.Obj.Named(): {
 			BuilderOwner: ownerID("builder"),
@@ -110,7 +110,7 @@ func TestReadSet_PreflightWithConsumedAdmission(t *testing.T) {
 	var captured ReadSet
 	captured.Init(st, object.Named(), nil)
 	t.Cleanup(captured.Close)
-	assert.Equal(t, captured.Preflight(), "")
+	assert.Equal(t, captured.Preflight(captured.ID()).Message, "")
 	assert.Equal(t, captured.GetDeclaration(child.Obj.Named()), manifest.BaseManifest(nil))
 	child.SourceSupport = manifest.BootstrapSourceID
 	captured.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
@@ -119,7 +119,7 @@ func TestReadSet_PreflightWithConsumedAdmission(t *testing.T) {
 	assert.Equal(t, captured.Valid(), true)
 	captured.Accept(AssessmentReconciled)
 	assert.Equal(t, captured.accepted.Load(), true)
-	st.SetPreflight(object.Named(), "consumer cycle")
+	st.SetPreflight(object.Named(), PreflightFailure{Message: "consumer cycle", DependencyCycle: true})
 	assert.Equal(t, captured.Valid(), false)
 	assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{object.Named()})
 }

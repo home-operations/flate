@@ -2557,7 +2557,7 @@
       "cases": [
         "imported-shared-unread"
       ],
-      "purpose": "Retain the disclosure for skipped generated artifact consumers."
+      "purpose": "Report persistence status for skipped local artifact consumers."
     }
   ]
 }

@@ -89,6 +89,7 @@ func (s staticScope) Contribution(i int) selection.StaticContribution {
 	return selection.StaticContribution{
 		Owner:          c.owner,
 		Source:         c.source,
+		ClaimSource:    s.loader.documents.artifacts[c.context.root].ClaimSource(c.source),
 		Visits:         len(c.visits),
 		Unshared:       c.unshared,
 		MembershipOnly: c.membershipOnly,

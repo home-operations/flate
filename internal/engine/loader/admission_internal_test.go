@@ -44,7 +44,10 @@ metadata: {name: values, namespace: apps}
 data: {values.yaml: '{}'}
 `)}}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	app := manifest.NamedResource{
 		Group:     manifest.HelmReleaseDomain,
@@ -110,6 +113,7 @@ func TestAdmission_EmptyDelta(t *testing.T) {
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			LocalPath: root,
 			FS: fstest.MapFS{
 				"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\n")},
@@ -139,27 +143,30 @@ func TestAdmission_UncertainProducerKeepsExactOwner(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"app.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: app, namespace: apps}\n" +
-			"spec:\n" +
-			"  interval: 1m\n" +
-			"  path: ./consumer\n" +
-			"  postBuild:\n" +
-			"    substituteFrom: [{kind: Secret, name: vars}]\n")},
-		"owner.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: owner, namespace: apps}\n" +
-			"spec: {interval: 1m, path: ./producer, targetNamespace: apps}\n")},
-		"unrelated.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: unrelated, namespace: apps}\n" +
-			"spec: {interval: 1m, path: ./other, targetNamespace: apps}\n")},
-		"producer/kustomization.yaml": {Data: []byte("resources: [external.yaml]\n")},
-		"producer/external.yaml": {Data: []byte("apiVersion: external-secrets.io/v1\n" + "kind: ExternalSecret\n" +
-			"metadata: {name: '${CLUSTER_NAME:=biohazard}-vars', namespace: apps}\n" +
-			"spec: {target: {name: vars}}\n")},
-		"consumer/kustomization.yaml": {Data: []byte("resources: []\n")},
-		"other/kustomization.yaml":    {Data: []byte("resources: []\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"app.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: app, namespace: apps}\n" +
+				"spec:\n" +
+				"  interval: 1m\n" +
+				"  path: ./consumer\n" +
+				"  postBuild:\n" +
+				"    substituteFrom: [{kind: Secret, name: vars}]\n")},
+			"owner.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: owner, namespace: apps}\n" +
+				"spec: {interval: 1m, path: ./producer, targetNamespace: apps}\n")},
+			"unrelated.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: unrelated, namespace: apps}\n" +
+				"spec: {interval: 1m, path: ./other, targetNamespace: apps}\n")},
+			"producer/kustomization.yaml": {Data: []byte("resources: [external.yaml]\n")},
+			"producer/external.yaml": {Data: []byte("apiVersion: external-secrets.io/v1\n" + "kind: ExternalSecret\n" +
+				"metadata: {name: '${CLUSTER_NAME:=biohazard}-vars', namespace: apps}\n" +
+				"spec: {target: {name: vars}}\n")},
+			"consumer/kustomization.yaml": {Data: []byte("resources: []\n")},
+			"other/kustomization.yaml":    {Data: []byte("resources: []\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -198,21 +205,24 @@ func TestAdmission_AncestorRetainsSupportRole(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"parent.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: parent, namespace: apps}\n" +
-			"spec: {interval: 1m, path: ./apps}\n")},
-		"apps/kustomization.yaml": {Data: []byte("resources: [app.yaml]\n")},
-		"apps/app.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: app, namespace: apps}\n" +
-			"spec: {interval: 1m, path: ./apps/child}\n")},
-		"apps/child/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"apps/child/cm.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {key: changed}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"parent.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: parent, namespace: apps}\n" +
+				"spec: {interval: 1m, path: ./apps}\n")},
+			"apps/kustomization.yaml": {Data: []byte("resources: [app.yaml]\n")},
+			"apps/app.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: app, namespace: apps}\n" +
+				"spec: {interval: 1m, path: ./apps/child}\n")},
+			"apps/child/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+			"apps/child/cm.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {key: changed}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -329,19 +339,22 @@ func TestAdmission_UnchangedInputDoesNotCaptureConsumers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"input.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {VALUE: stable}\n",
-			),
-		},
-		"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
-			"metadata: {name: consumer, namespace: apps}\n" +
-			"spec:\n" +
-			"  path: ./app\n" +
-			"  postBuild:\n" +
-			"    substituteFrom: [{kind: ConfigMap, name: input}]\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"input.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {VALUE: stable}\n",
+				),
+			},
+			"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\n" + "kind: Kustomization\n" +
+				"metadata: {name: consumer, namespace: apps}\n" +
+				"spec:\n" +
+				"  path: ./app\n" +
+				"  postBuild:\n" +
+				"    substituteFrom: [{kind: ConfigMap, name: input}]\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -542,7 +555,7 @@ func admissionReferencePair(t *testing.T, keys []string) ([2]*store.Store, [2]*L
 	}
 	for side, st := range stores {
 		root := t.TempDir()
-		artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+		artifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 		st.SetArtifact(manifest.BootstrapSourceID, artifact)
 		obj := &manifest.HelmRelease{Name: consumer.Name, Namespace: consumer.Namespace}
 		for _, key := range keys {

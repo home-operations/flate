@@ -311,7 +311,7 @@ func (c *admissionClosure) historyOwnerRequired(id manifest.NamedResource) bool 
 		matchesInput := func(input *store.SourceArtifact) bool {
 			return input != nil && input.Reads.Valid() &&
 				slices.ContainsFunc(c.historyOwners[id], func(evidence manifest.SourceEvidence) bool {
-					return evidence.Source == input.HistoryIdentity(source)
+					return evidence.Source == input.HistoryIdentity()
 				})
 		}
 		if matchesInput(input) {

@@ -41,7 +41,10 @@ func TestResolveAuthored_CancellationDuringRound(t *testing.T) {
 		}, cancel: cancel, target: "round/kustomization.yaml",
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot, l.entryPath, l.entry = root, root, entryKustomize
 	l.mountSources()

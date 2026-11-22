@@ -26,7 +26,7 @@ func (o *Orchestrator) reportingIndex() *manifest.DiscoveryIndex {
 		}
 	}
 	slices.SortFunc(candidates, func(a, b *manifest.Kustomization) int { return a.Named().Compare(b.Named()) })
-	return loader.Claims(o.store, o.repoRoot, candidates)
+	return loader.Claims(o.store, o.repoRoot, candidates, o.index)
 }
 
 // detectOrphans finds failed resources a successful covering parent never emitted.
@@ -36,6 +36,9 @@ func (o *Orchestrator) detectOrphans(
 	index *manifest.DiscoveryIndex,
 ) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
+	var reads store.ReadSet
+	reads.Init(o.store, manifest.NamedResource{}, nil)
+	defer reads.Retire()
 	for id, info := range failed {
 		if !id.KindInfo().Render {
 			continue
@@ -57,7 +60,7 @@ func (o *Orchestrator) detectOrphans(
 		for owners := range index.ClaimOwners(file, manifest.NamedResource{}, id, func(owner manifest.NamedResource) bool {
 			object := index.Records[owner].Declaration
 			source, _, _ := object.SourcePath()
-			return !loader.SourceView(o.store, source, o.repoRoot).External
+			return o.admission.Provider(source, &reads, index) != store.ProviderFetch
 		}) {
 			parent = owners[0]
 			break

@@ -128,6 +128,7 @@ spec:
 			}
 			var directories atomic.Int64
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS:        parsedReadFS{FS: files, reads: reads, directories: &directories},
 			}
@@ -196,7 +197,7 @@ func TestEntryFrontier_RequiredDocumentCoverage(t *testing.T) {
 				"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: pinned, namespace: apps}\nspec: {url: https://example.test/repo, ref: {tag: pin}}\n",
 		)},
 	}
-	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parsedReadFS{
 		FS: files, reads: map[string]*atomic.Int64{"objects.yaml": &reads}, directories: &directories,
 	}}
 	st := store.New()
@@ -231,7 +232,7 @@ func TestEntryFrontier_SourceLifetime(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	var reads atomic.Int64
-	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parsedReadFS{
 		FS: fstest.MapFS{
 			"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
 			"object.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ordinary}\n")},
@@ -245,7 +246,7 @@ func TestEntryFrontier_SourceLifetime(t *testing.T) {
 		assert.Equal(t, possible, false)
 	}
 	assert.Equal(t, reads.Load(), int64(1))
-	replacement := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	replacement := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
 		"object.yaml":        {Data: []byte(testutil.KustomizationYAML("applier", "apps", "  path: ./entry\n"))},
 	}}
@@ -256,4 +257,38 @@ func TestEntryFrontier_SourceLifetime(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, possible, false)
 	assert.Equal(t, reads.Load(), int64(2))
+}
+
+func TestEntryFrontier_FrozenOwnership(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := filepath.Join(root, "source.yaml")
+	input := &store.SourceArtifact{
+		Provider: store.ProviderInput, LocalPath: root,
+		FS: fstest.MapFS{"source.yaml": {Data: []byte(
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\n",
+		)}},
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := New(st)
+	l.documents.setSources(map[string]*store.SourceArtifact{root: input})
+	owners := []selection.RootOwnerFacts{{Identity: testutil.KustomizationID("apps", "blocked")}}
+	l.documents.cache[file] = document{eligible: selection.RootEligible, rootOwners: owners, rootKnown: true}
+	l.frozen = true
+	replacement := &store.SourceArtifact{
+		Provider: store.ProviderAlias, LocalPath: root,
+		FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: [entry.yaml]\n")},
+			"entry.yaml":         {Data: []byte(testutil.KustomizationYAML("entry", "apps", "  path: ./cluster\n"))},
+		},
+	}
+
+	possible, err := l.EntryFrontier(t.Context(), replacement, ".")
+	assert.NoError(t, err)
+	assert.Equal(t, possible, true)
+	assert.Equal(t, l.documents.artifacts[root], input)
+	frozen := l.documents.cache[file]
+	assert.Equal(t, frozen.eligible, selection.RootEligible)
+	assert.Diff(t, frozen.rootOwners, owners)
 }

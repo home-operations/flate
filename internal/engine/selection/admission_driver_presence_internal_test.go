@@ -13,7 +13,12 @@ import (
 func TestAdmit_FirstPresenceSurvivesIdentityPruning(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: t.TempDir(), Content: "before", FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: t.TempDir(),
+		Content:   "before",
+		FS:        fstest.MapFS{},
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	present := &manifest.Kustomization{Name: "z-present", Namespace: "apps", Path: "payload"}
 	st.AddObject(present)
@@ -58,7 +63,12 @@ func TestAdmit_FirstPresenceSurvivesIdentityPruning(t *testing.T) {
 func TestAdmit_RejectedPublicationDiscardsPresence(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: t.TempDir(), Content: "before", FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: t.TempDir(),
+		Content:   "before",
+		FS:        fstest.MapFS{},
+	}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	session := newSolverSession(t, st, nil, Request{Changed: true})
 	trigger := &manifest.ConfigMap{Name: "trigger", Namespace: "apps"}

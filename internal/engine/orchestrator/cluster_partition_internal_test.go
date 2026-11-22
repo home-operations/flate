@@ -38,7 +38,7 @@ func writePartitionClusters(t *testing.T, root string, clusters []string, change
 			entry+"/instance.yaml",
 			"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\n"+
 				"metadata: {name: flux, namespace: flux-system}\nspec:\n"+
-				"  sync: {kind: GitRepository, name: cluster, url: "+selfURL+", ref: main, path: ./"+entry+"}\n",
+				"  sync: {kind: GitRepository, name: cluster, url: "+selfURL+", ref: refs/heads/main, path: ./"+entry+"}\n",
 		)
 		testutil.WriteFile(t, root, entry+"/apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system",
 			"  path: ./kubernetes/apps/"+cluster+"\n  sourceRef: {kind: GitRepository, name: cluster}\n"+
@@ -95,7 +95,7 @@ func TestRenderTrees_ClusterPartitionRoot(t *testing.T) {
 			artifact, ok := source.(*store.SourceArtifact)
 			assert.FatalIf(t, !ok, "cluster %s source content is unavailable", cluster)
 			assert.Equal(t, artifact.LocalRoot, root)
-			assert.Equal(t, artifact.InputAlias, true)
+			assert.Equal(t, (artifact.Provider == store.ProviderAlias), true)
 			docs := outputByParent(run.Result.Manifests)[owner]
 			assert.FatalIf(t, len(docs) != 1, "rendered %d workload documents, want 1", len(docs))
 			assert.Diff(t, docs[0]["data"], map[string]any{"cluster": cluster, "value": "before"})

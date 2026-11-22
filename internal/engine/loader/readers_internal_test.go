@@ -94,7 +94,11 @@ func TestReaderFinalizer_ConfinedSubtrees(t *testing.T) {
 				st.SetArtifact(source, &store.SourceArtifact{LocalPath: sourceRoot, LocalRoot: root})
 			default:
 				st.SetArtifact(source, &store.SourceArtifact{
-					LocalPath: sourceRoot, LocalRoot: root, Content: "captured", FS: os.DirFS(sourceRoot),
+					Provider:  store.ProviderCommit,
+					LocalPath: sourceRoot,
+					LocalRoot: root,
+					Content:   "captured",
+					FS:        os.DirFS(sourceRoot),
 				})
 			}
 			l := New(st)
@@ -200,7 +204,7 @@ func TestFilter_CopiedInputsPairedSides(t *testing.T) {
 				}
 				mount := fmt.Sprintf(".inputs-%d", side)
 				st.SetArtifact(source.Named(), &store.SourceArtifact{
-					LocalPath: filepath.Join(root, mount), LocalRoot: root,
+					Provider: store.ProviderCommit, LocalPath: filepath.Join(root, mount), LocalRoot: root,
 					Content: strconv.Itoa(side), FS: files,
 				})
 				l := New(st)
@@ -320,6 +324,14 @@ func TestFilter_UnavailableArtifactSource(t *testing.T) {
 			assert.Equal(t, len(slices.Collect(l.Index.ReadersOfFile("renamed-artifact/cm.yaml"))), 0)
 			changes := detectChanges(t, []string{"renamed-artifact/cm.yaml"}, []string{"renamed-artifact/cm.yaml"})
 			l.Options.Changes = changes
+			l.SourceProvider = func(
+				id manifest.NamedResource, _ *store.ReadSet, _ *manifest.DiscoveryIndex,
+			) store.SourceProvider {
+				if id == source.Named() {
+					return store.ProviderFetch
+				}
+				return store.ProviderAbsent
+			}
 			facts := l.SourceFacts(source.Named(), nil)
 			assert.Equal(t, facts.External, true)
 			assert.Equal(t, facts.Delta.Len(), 0)

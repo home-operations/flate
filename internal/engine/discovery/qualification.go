@@ -137,15 +137,6 @@ func (a *Admission) applicationSource(
 	return resolved
 }
 
-func (r *entryResolution) GetObject(manifest.NamedResource) manifest.BaseManifest { return r.object }
-
-func (r *entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
-	if r.artifact == nil {
-		return nil
-	}
-	return r.artifact
-}
-
 func acceptedApplicationOutput(reads *store.ReadSet, owner manifest.NamedResource) (*store.Emission, bool) {
 	if reads.GetDeclaration(owner) == nil {
 		return nil, false
@@ -193,7 +184,7 @@ func (a *Admission) readApplication(
 	}
 	if resolved.artifact == nil && resolved.object != nil && len(resolved.object.Composition().Includes) != 0 {
 		evidence.source = resolved
-		if !evidence.private && a.applicationApplies(&application, &resolved, a.path) {
+		if !evidence.private && a.reachesEntry(&application, nil) {
 			reads.RequireData(application.Source)
 			if q := a.qualification; q != nil {
 				q.pending, q.candidates = true, []manifest.NamedResource{application.Source}
@@ -211,7 +202,7 @@ func (a *Admission) readApplication(
 				reference: sourceReference(evidence.object, application.Source),
 				reads:     reads,
 				work:      reads.WorkScope(),
-				entry:     a.appliesEntry(&application),
+				entry:     a.reachesEntry(&application, nil),
 				projected: resolved.object != nil && resolved.object == evidence.generatedSource,
 			},
 		)
@@ -223,7 +214,7 @@ func (a *Admission) readApplication(
 	if evidence.object.Named().ReportHidden() {
 		return false, nil
 	}
-	entry, target := a.input.OriginPath(a.path), a.applicationEntryOrigin(&application, &resolved)
+	entry, target := a.input.OriginPath(a.path), a.entryOrigin(&application, resolved.artifact)
 	switch {
 	case target == "":
 		return false, nil
@@ -535,8 +526,7 @@ func (w *qualificationWalk) execution(
 	if resolved.artifact == nil {
 		return nil, nil
 	}
-	location := loader.SourceView(resolved, application.Source, w.admission.input.LocalPath)
-	if location.Pinned || location.External {
+	if !resolved.artifact.WorkingTree() {
 		return nil, nil
 	}
 	possible, err := w.q.loader.EntryFrontier(ctx, resolved.artifact, application.Path)
@@ -577,7 +567,7 @@ func (w *qualificationWalk) commit(ctx context.Context, request *selection.Prepa
 		for i := range request.Generation {
 			child := &request.Generation[i]
 			if child.Obj != nil {
-				request.Reads.Admit(*child, manifest.BootstrapSourceID, manifest.NamedResource{})
+				request.Reads.AdmitConstructed(child)
 			}
 		}
 		return request.Reads.Valid(), nil
@@ -675,9 +665,6 @@ func (w *qualificationWalk) runtimeFrontier(
 	source, relative, applies := execution.SourcePath()
 	if !applies {
 		return qualificationBatch{}, nil
-	}
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
 	}
 	input := evidence.source.artifact
 	if input == nil {

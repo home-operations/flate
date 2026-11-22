@@ -45,7 +45,7 @@ func TestLoader_PreferExistingPreparedSource(t *testing.T) {
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	st.AddObject(source)
-	artifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), InputAlias: true}
+	artifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), Provider: store.ProviderAlias}
 	st.SetArtifact(source.Named(), artifact)
 	l := New(st)
 	l.SourceRoot, l.PreferExisting = root, true

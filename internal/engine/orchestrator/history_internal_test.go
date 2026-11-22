@@ -488,7 +488,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	reopened := cachetest.New(t, o.cfg.CacheDir, sourcecache.New)
 	bootstrap := o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	query := []manifest.SourceEvidence{
-		{Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID), Path: "entry/kustomization.yaml"},
+		{Source: bootstrap.HistoryIdentity(), Path: "entry/kustomization.yaml"},
 	}
 	owners, err := reopened.ProducersForPaths(t.Context(), query)
 	assert.NoError(t, err)
@@ -574,6 +574,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 					Root:      root,
 				},
 			)
+			admissionLoader.SourceProvider = o.admission.Provider
 			proposal, failure := admissiontest.Prepare(
 				t.Context(),
 				t,
@@ -644,7 +645,11 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		Tree{
 			Path:     filepath.Join((*testCaseInput.root), "entry"),
 			RepoRoot: (*testCaseInput.root),
-			Input:    &store.SourceArtifact{LocalPath: (*testCaseInput.root), FS: (*testCaseInput.input)},
+			Input: &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: (*testCaseInput.root),
+				FS:        (*testCaseInput.input),
+			},
 		},
 		Config{CacheDir: (*testCaseInput.cacheDir), Concurrency: 2},
 	)
@@ -710,7 +715,7 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		t.Context(),
 		[]manifest.SourceEvidence{
 			{
-				Source: bootstrap.HistoryIdentity(manifest.BootstrapSourceID),
+				Source: bootstrap.HistoryIdentity(),
 				Path:   "entry/kustomization.yaml",
 			},
 		},

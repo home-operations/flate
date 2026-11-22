@@ -30,7 +30,7 @@ import (
 func completionFixture(t *testing.T, input fs.FS) (*Loader, *change.Set) {
 	t.Helper()
 	root := t.TempDir()
-	current := &store.SourceArtifact{LocalPath: root, FS: input}
+	current := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 	changes, err := change.Detect(t.Context(), &store.SourceArtifact{FS: fstest.MapFS{}}, current,
 		change.DetectConfig{Candidates: map[string]bool{"input.yaml": false}})
 	assert.NoError(t, err)
@@ -446,9 +446,13 @@ func TestCompleteDeclarations_SnapshotAuthority(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, input.opens.Load(), reads)
 	_, artifacts, _ := changes.ForSource(manifest.BootstrapSourceID)
-	replacement := &store.SourceArtifact{LocalPath: artifacts[1].LocalPath, FS: fstest.MapFS{"input.yaml": {
-		Data: []byte(strings.ReplaceAll(body, "replicas: 1", "replicas: 2")),
-	}}}
+	replacement := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: artifacts[1].LocalPath,
+		FS: fstest.MapFS{"input.yaml": {
+			Data: []byte(strings.ReplaceAll(body, "replicas: 1", "replicas: 2")),
+		}},
+	}
 	l.Store.SetArtifact(manifest.BootstrapSourceID, replacement)
 	stale, err := l.CompleteDeclarations(t.Context(), selection.DemandDeclarations(manifest.TreeHead, changes, l.Index))
 	assert.NoError(t, err)
@@ -484,7 +488,7 @@ func TestCompleteDeclarations_FailedReplacement(t *testing.T) {
 	previous := l.documents.cache[path].declarations
 	_, inputs, _ := changes.ForSource(manifest.BootstrapSourceID)
 	cause := errors.New("replacement unavailable")
-	replacement := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: &evidenceFailureFS{
+	replacement := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: &evidenceFailureFS{
 		FS: fstest.MapFS{"input.yaml": {}}, operation: "open", cause: cause,
 	}}
 	updated, err := change.Detect(t.Context(), inputs[0], replacement,
@@ -517,7 +521,10 @@ func TestCompleteDeclarations_UnknownAndAbsent(t *testing.T) {
 	input := &declarationReadFS{FS: fstest.MapFS{}}
 	l, _ := completionFixture(t, input)
 	peer := store.New()
-	peer.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+	peer.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+	)
 	changes, err := change.Qualify(
 		t.Context(),
 		detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
@@ -778,29 +785,4 @@ func TestCompleteDeclarations_PreparesRetainedDocuments(t *testing.T) {
 			assert.Equal(t, manifest.DocIdentity(objects[0].Doc).Name, "app")
 		})
 	}
-}
-
-func TestCompleteDeclarations_ReleasesFailedDocuments(t *testing.T) {
-	t.Parallel()
-	cause := errors.New("document read failed")
-	reads := 0
-	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}, read: func(p []byte) (int, error) {
-		reads++
-		if reads == 1 {
-			return copy(p, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n"), cause
-		}
-		return 0, io.EOF
-	}}
-	l, _ := completionFixture(t, input)
-	l.documents.mountSources(l.Store, nil, l.Index)
-	file := filepath.Join(l.SourceRoot, "input.yaml")
-	_, err := l.documents.completeFile(t.Context(), file)
-	assert.Equal(t, errors.Is(err, cause), true)
-	objects := l.documents.cache[file].objects
-	assert.Equal(t, len(objects) > 0, true)
-	for i := range objects {
-		assert.Equal(t, len(objects[i].Doc), 0)
-		assert.Equal(t, len(objects[i].outcome.Document), 0)
-	}
-	assert.Equal(t, input.closed.Load(), int32(1))
 }

@@ -46,7 +46,9 @@ func TestClusterRoots_PinnedOwnership(t *testing.T) {
 					)
 				}
 			}
-			d := &Session{cfg: Config{Input: &store.SourceArtifact{LocalPath: t.TempDir()}}}
+			d := &Session{
+				cfg: Config{Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir()}},
+			}
 			paths := func(roots []clusterRoot) []string {
 				result := make([]string, len(roots))
 				for i := range roots {
@@ -209,7 +211,7 @@ func TestPlan_AncestorBootstrapSiblingApplication(t *testing.T) {
 	cfg := testConfig(
 		t,
 		Config{
-			Input:    &store.SourceArtifact{LocalPath: root, FS: files},
+			Input:    &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
 			Path:     filepath.Join(root, "entry"),
 			RepoRoot: root,
 			SelfURLs: []string{"https://fixture.invalid/repo"},
@@ -241,7 +243,7 @@ func TestPlan_CustomBootstrapSource(t *testing.T) {
 			source := manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "fleet",
 			}
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"clusters/dev/flux-system/kustomization.yaml": {Data: []byte("resources: [sync.yaml]\n")},
 				"clusters/dev/flux-system/sync.yaml": {Data: []byte(
 					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n" +
@@ -264,7 +266,7 @@ func TestPlan_CustomBootstrapSource(t *testing.T) {
 			assert.Equal(t, binding.object.Named(), source)
 			assert.Equal(t, binding.entry, true)
 			assert.Equal(t, binding.input, input)
-			assert.Equal(t, binding.artifact.InputAlias, true)
+			assert.Equal(t, (binding.artifact.Provider == store.ProviderAlias), true)
 			assert.Equal(t, binding.artifact.OriginPath(binding.artifact.LocalPath), root)
 			assert.Equal(t, binding.artifact.LocalPath == root, false)
 		})
@@ -291,7 +293,7 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			st := store.New()
 			fleet := &manifest.GitRepository{Name: "fleet", Namespace: manifest.DefaultNamespace}
 			fleet.URL = "https://fixture.invalid/fleet.git"
@@ -314,7 +316,7 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 			var binding *store.SourceArtifact
 			if tc.competing {
 				binding = &store.SourceArtifact{
-					LocalPath: t.TempDir(), LocalRoot: root, FS: input.FS, InputAlias: true,
+					LocalPath: t.TempDir(), LocalRoot: root, FS: input.FS, Provider: store.ProviderAlias,
 				}
 				st.AddObject(existing)
 				st.SetArtifact(existing.Named(), binding)
@@ -329,8 +331,9 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 			planner := entryPlanner{session: d, scope: rootScope{occurrences: occurrences}}
 			application, valid := owner.EntryApplication()
 			assert.Equal(t, valid, true)
+			entry := planner.scopedEntry(application.Source, fleet, &planner.scope)
 			resolved, err := admission.resolve(t.Context(), fleet.Named(), &sourceRequest{
-				object: fleet, entry: planner.appliesEntry(&application, fleet),
+				object: fleet, entry: entry == entryAccepted,
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, resolved.artifact != nil, tc.bound)
@@ -353,7 +356,7 @@ func TestPlan_ExternalURLBootstrapSource(t *testing.T) {
 				Namespace: "flux-system",
 				Name:      "external",
 			}
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"tenants/x/ks.yaml": {Data: []byte(testutil.KustomizationYAML("sync", source.Namespace,
 					"  path: ./\n  sourceRef: {kind: GitRepository, name: external}\n",
 				))},
@@ -367,7 +370,7 @@ func TestPlan_ExternalURLBootstrapSource(t *testing.T) {
 			assert.FatalIf(t, len(entries) != 1, "got %d planned entries, want one", len(entries))
 			binding := entries[0].prepared.sources[source]
 			assert.FatalIf(t, binding.artifact == nil, "no checkout binding for %s", source)
-			assert.Equal(t, binding.artifact.InputAlias, true)
+			assert.Equal(t, (binding.artifact.Provider == store.ProviderAlias), true)
 			assert.Equal(t, binding.artifact.OriginPath(binding.artifact.LocalPath), root)
 		})
 	}

@@ -53,7 +53,10 @@ func TestAdmit_CancellationDuringRound(t *testing.T) {
 		"next/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}, target: "kustomization.yaml"}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	defer l.Close()
 	l.SourceRoot = root
@@ -87,7 +90,10 @@ func TestAdmit_CancellationDuringProjection(t *testing.T) {
 				"overlay/transformer/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}, target: "overlay/transformer/kustomization.yaml"}
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+			)
 			l := New(st)
 			defer l.Close()
 			l.SourceRoot = root
@@ -135,7 +141,7 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 				"next/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}}
 			st := store.New()
-			source := &store.SourceArtifact{LocalPath: root, FS: input}
+			source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			other := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
@@ -188,11 +194,14 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 			assert.Equal(t, l.builtBatches[manifest.NamedResource{}].input.Support, retained)
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root, FS: input, Content: "changed"},
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input, Content: "changed"},
 			)
 			assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{want})
 			l.Close()
-			st.SetArtifact(other, &store.SourceArtifact{LocalPath: root, FS: input, Content: "changed"})
+			st.SetArtifact(
+				other,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input, Content: "changed"},
+			)
 			assert.Equal(t, len(slices.Collect(st.Sweep())), 0)
 		})
 	}
@@ -207,7 +216,10 @@ func TestFinalizeIndex_AdmissionCancellation(t *testing.T) {
 		"kustomization.yaml": {Data: []byte("resources: []\n")},
 	}, target: "kustomization.yaml", cancel: cancel}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	defer l.Close()
 	configureSelection(t, l, selection.Request{})

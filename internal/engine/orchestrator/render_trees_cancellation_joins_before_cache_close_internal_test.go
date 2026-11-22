@@ -124,6 +124,7 @@ func (f *countedChartFetcher) Fetch(
 				return nil, err
 			}
 			artifact.Kind, artifact.Digest, artifact.Revision, artifact.Key = manifest.KindOCIRepository, digest, "1.0.0@"+digest, digest
+			artifact.Provider = store.ProviderFetch
 			if f.incomplete {
 				artifact.ContentFingerprint = nil
 			}
@@ -252,15 +253,25 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 		release := make(chan struct{})
 		headEntered := make(chan struct{})
 		failure := errors.New("baseline discovery failed")
-		baseInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
-			<-release
-			return failure
-		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
+		baseInput := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: t.TempDir(),
+			FS: &joinedTreeFS{acquire: func() error {
+				<-release
+				return failure
+			}},
+			Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}},
+		}
 		headFailure := errors.New("head discovery failed")
-		headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
-			close(headEntered)
-			return headFailure
-		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
+		headInput := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: t.TempDir(),
+			FS: &joinedTreeFS{acquire: func() error {
+				close(headEntered)
+				return headFailure
+			}},
+			Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}},
+		}
 		var baseRef, head Rendered
 		done := make(chan error, 1)
 		go func() {

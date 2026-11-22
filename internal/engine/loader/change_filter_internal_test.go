@@ -229,7 +229,7 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	for _, object := range []manifest.BaseManifest{meta, plex, atuin, release, source, independent} {
 		objects.AddObject(object)
 	}
-	input := &store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: "/repo", FS: fstest.MapFS{}}
 	objects.SetArtifact(manifest.BootstrapSourceID, input)
 	objects.SetArtifact(source.Named(), input)
 	for _, file := range []string{"apps/media/plex/app/helmrelease.yaml", "charts/plex/templates/cm.yaml"} {

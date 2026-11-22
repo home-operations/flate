@@ -81,14 +81,11 @@ func (p *sourcePathProjection) addRoots(object manifest.BaseManifest) {
 	if !applies {
 		return
 	}
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
 	artifact, _ := p.store.GetArtifact(source, ArtifactContent).(*SourceArtifact)
 	if artifact == nil {
 		return
 	}
-	identity := artifact.HistoryIdentity(source)
+	identity := artifact.HistoryIdentity()
 	for root := range manifest.SourceRoots(object) {
 		p.paths = append(
 			p.paths,
@@ -109,7 +106,7 @@ func (p *sourcePathProjection) addReadPaths(reads *ReadSet) {
 				production := productionValues[productionIndex]
 				if production.File != "" && production.Source == binding.source && binding.artifact != nil {
 					p.paths = append(p.paths, manifest.SourceEvidence{
-						Source: binding.artifact.HistoryIdentity(binding.source),
+						Source: binding.artifact.HistoryIdentity(),
 						Path:   filepath.ToSlash(production.File),
 					},
 					)
@@ -132,7 +129,7 @@ func (p *sourcePathProjection) addEntryPaths(entries []admission) {
 					if production.File != "" && production.Source == entry.binding.source &&
 						entry.binding.artifact != nil {
 						p.paths = append(p.paths, manifest.SourceEvidence{
-							Source: entry.binding.artifact.HistoryIdentity(entry.binding.source),
+							Source: entry.binding.artifact.HistoryIdentity(),
 							Path:   filepath.ToSlash(production.File),
 						},
 						)
@@ -160,7 +157,7 @@ func (p *sourcePathProjection) addReferencePaths(object manifest.BaseManifest) {
 				artifact, _ := p.store.GetArtifact(production.Source, ArtifactContent).(*SourceArtifact)
 				if artifact != nil {
 					p.paths = append(p.paths, manifest.SourceEvidence{
-						Source: artifact.HistoryIdentity(production.Source),
+						Source: artifact.HistoryIdentity(),
 						Path:   filepath.ToSlash(production.File),
 					},
 					)

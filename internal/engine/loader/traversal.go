@@ -61,8 +61,12 @@ func (r documentReader) references(
 	yield func(kustomizeinput.Reference, string) bool,
 ) bool {
 	doc := r.cache[dir]
-	record := !doc.edgesKnown && doc.traversed && body != nil &&
-		new(r).mountedRoot(dir) == new(r).mountedRoot(r.bootstrap)
+	root := new(r).mountedRoot(dir)
+	record := !doc.edgesKnown && doc.traversed && body != nil
+	if record {
+		localMount := r.artifacts[root].WorkingTree() || root == new(r).mountedRoot(r.bootstrap)
+		record = localMount
+	}
 	for ref := range kustomizeinput.Kustomization(body) {
 		var target string
 		if (record || resolve) && ref.Role != kustomizeinput.File && !ref.Inline {

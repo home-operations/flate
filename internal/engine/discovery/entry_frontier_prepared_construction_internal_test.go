@@ -145,7 +145,7 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 		patch = "      - op: replace\n        path: /spec/dependsOn/0/name\n        value: prod-config\n"
 		dependency = "  dependsOn: [{name: unpatched, namespace: '${TEAM}'}]\n"
 	}
-	source := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"parent/kustomization.yaml": {
 			Data: []byte(
 				"resources: [" + resources + "]\npatches:\n  - target: {kind: Kustomization, name: applier}\n    patch: |-\n      - op: replace\n        path: /spec/path\n        value: ./entry\n" + patch,
@@ -194,8 +194,6 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	st.SetArtifact(parent.SourceID(), source)
 	st.AddObject(parent, parsed.Document)
-	sourceObject, _ := parent.SourceID().BindLocal(root)
-	st.AddObject(sourceObject)
 	fixture := &preparedConstructionFixture{
 		parent:       parent,
 		dependencies: inputs,

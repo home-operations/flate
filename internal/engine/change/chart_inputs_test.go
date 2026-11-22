@@ -92,6 +92,7 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 		st.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				LocalRoot: root,
 				FS:        fstest.MapFS{"Chart.yaml": {}, "templates/cm.yaml": {}},
@@ -213,10 +214,13 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: observed},
+	)
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: observed},
 	)
 	release := &manifest.HelmRelease{
 		Name:             "demo",

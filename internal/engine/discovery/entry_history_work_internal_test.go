@@ -25,8 +25,16 @@ func TestEntryReceipt_RecordsHistory(t *testing.T) {
 	recorder := &manifest.WorkRecorder{Key: manifest.WorkKey{Source: manifest.BootstrapSourceID}}
 	scope := recorder.Scope()
 	d := Session{loader: &loader.Loader{}, cfg: Config{
-		Path: root, Input: &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root, LocalRoot: root},
-		Cache: owner, Trees: kustomize.NewTreeCache(owner, nil, nil), Work: scope,
+		Path: root,
+		Input: &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			FS:        os.DirFS(root),
+			LocalPath: root,
+			LocalRoot: root,
+		},
+		Cache: owner,
+		Trees: kustomize.NewTreeCache(owner, nil, nil),
+		Work:  scope,
 	}}
 	admission := &Admission{qualification: &entryQualification{}}
 	d.entryReceipt(t.Context(), admission, d.cfg.Input)

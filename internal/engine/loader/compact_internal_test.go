@@ -35,12 +35,20 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 		"payload/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\n")},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	source := &manifest.GitRepository{Name: "cluster", Namespace: "apps"}
 	st.AddObject(source)
 	st.SetArtifact(
 		source.Named(),
-		&store.SourceArtifact{LocalPath: filepath.Join(root, "mounted"), LocalRoot: root, InputAlias: true, FS: input},
+		&store.SourceArtifact{
+			LocalPath: filepath.Join(root, "mounted"),
+			LocalRoot: root,
+			Provider:  store.ProviderAlias,
+			FS:        input,
+		},
 	)
 	l := New(st)
 	l.SourceRoot = root
@@ -71,11 +79,16 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 	configureSelection(t, l, selection.Request{Changed: true})
 	first := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first", Namespace: "apps"}
 	for _, name := range []string{"first", "second"} {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-			"kustomization.yaml": {
-				Data: []byte("namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n"),
-			},
-		}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml": {
+					Data: []byte(
+						"namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n",
+					),
+				},
+			}},
+		)
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -100,7 +113,10 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 		},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -119,13 +135,16 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 		assert.Equal(t, child.Obj, first)
 	}
 	assert.Equal(t, st.GetObject(first.Named()), nil)
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"source.yaml": {
-			Data: []byte(
-				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/second.git, secretRef: {name: second-auth}}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"source.yaml": {
+				Data: []byte(
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/second.git, secretRef: {name: second-auth}}\n",
+				),
+			},
+		}},
+	)
 	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.Admit(t.Context(), root))
@@ -170,7 +189,10 @@ items:
     values: {unrelated: value}
 `)}}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -213,7 +235,10 @@ spec:
   target: {name: rendered-secret}
 `)}}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -272,16 +297,19 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 				},
 			}
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+			)
 			source := &manifest.GitRepository{Name: "cluster", Namespace: "apps"}
 			st.AddObject(source)
 			st.SetArtifact(
 				source.Named(),
 				&store.SourceArtifact{
-					LocalPath:  filepath.Join(root, "mounted"),
-					LocalRoot:  root,
-					InputAlias: true,
-					FS:         input,
+					LocalPath: filepath.Join(root, "mounted"),
+					LocalRoot: root,
+					Provider:  store.ProviderAlias,
+					FS:        input,
 				},
 			)
 			l := New(st)
@@ -354,12 +382,15 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
-		"cm.yaml": {
-			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n"),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+			"cm.yaml": {
+				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n"),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -385,6 +416,7 @@ func TestLoader_CompactPinnedDeclaration(t *testing.T) {
 	source := &manifest.GitRepository{Name: "pin", Namespace: "apps"}
 	st.AddObject(source)
 	st.SetArtifact(source.Named(), &store.SourceArtifact{
+		Provider:  store.ProviderCommit,
 		LocalPath: filepath.Join(root, "pin"), LocalRoot: root, Content: "pin", FS: fstest.MapFS{},
 	})
 	l := New(st)

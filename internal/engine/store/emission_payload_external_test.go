@@ -116,7 +116,7 @@ func testRecordEmittedPayloadPrecedenceCase(t *testing.T, testCaseInput *struct 
 		}
 	}
 	first, last := acquire("a"), acquire("z")
-	first.Size, last.Size, last.InputAlias = 1, 2, true
+	first.Size, last.Size, last.Provider = 1, 2, store.ProviderAlias
 	peer := store.New()
 	peer.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
 	peer.RecordEmitted(

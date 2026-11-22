@@ -292,6 +292,7 @@ func TestDAGSweep_ClassifiesBeforeTermination(t *testing.T) {
 			map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"},
 		),
 	}
+	o.admission = discoveryAdmissionForTest(t, st, t.TempDir())
 	o.controllers.Kustomization = kustomizationctrl.New(st, nil, nil)
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)
@@ -412,6 +413,7 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
+	o.admission = discoveryAdmissionForTest(t, st, t.TempDir())
 	o.controllers.Kustomization = kustomizationctrl.New(st, nil, nil)
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)

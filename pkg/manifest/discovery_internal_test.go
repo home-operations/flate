@@ -248,6 +248,9 @@ func TestClaimOwners_SourceQualifiedGroups(t *testing.T) {
 	projected := parent
 	projected.Name = "projected"
 	child := NamedResource{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: "apps", Name: "child"}
+	checkout := NamedResource{Kind: KindGitRepository}
+	fleet := BootstrapSourceID
+	fleet.Name = "fleet"
 	for _, tc := range []struct {
 		name            string
 		file            string
@@ -255,9 +258,10 @@ func TestClaimOwners_SourceQualifiedGroups(t *testing.T) {
 		records         map[NamedResource]DiscoveryRecord
 		excluded        NamedResource
 		want            [][]NamedResource
+		rootClaim       bool
 	}{
 		{name: "deleted descendant and sorted ties", file: "apps/deep/deleted.yaml", want: [][]NamedResource{{deep, peer}, {parent}}},
-		{name: "excluded deeper group falls through", file: "apps/deep/deleted.yaml", excluded: deep, records: map[NamedResource]DiscoveryRecord{peer: {Pinned: true}}, source: BootstrapSourceID, want: [][]NamedResource{{parent}}},
+		{name: "excluded deeper group falls through", file: "apps/deep/deleted.yaml", excluded: deep, records: map[NamedResource]DiscoveryRecord{peer: {Pinned: true}}, source: checkout, want: [][]NamedResource{{parent}}},
 		{name: "unqualified namespaced owners", file: "apps/deep/child.yaml", records: map[NamedResource]DiscoveryRecord{
 			deep: {Declaration: &Kustomization{TargetNamespace: "other"}}, peer: {Declaration: &Kustomization{TargetNamespace: "other"}},
 		}, want: [][]NamedResource{{deep, peer}, {parent}}},
@@ -272,8 +276,12 @@ func TestClaimOwners_SourceQualifiedGroups(t *testing.T) {
 		{name: "first source coordinate", file: "../source-a/apps/deleted.yaml", want: [][]NamedResource{{parent}}},
 		{name: "second source coordinate", file: "../source-b/apps/deleted.yaml", want: [][]NamedResource{{other}}},
 		{name: "source boundary excludes checkout root", file: "../source-c/deleted.yaml"},
-		{name: "pinned claim excludes working tree", file: "apps/deep/deleted.yaml", source: BootstrapSourceID, records: map[NamedResource]DiscoveryRecord{deep: {Pinned: true}, peer: {Pinned: true}}, want: [][]NamedResource{{parent}}},
+		{name: "pinned claim excludes working tree", file: "apps/deep/deleted.yaml", source: checkout, records: map[NamedResource]DiscoveryRecord{deep: {Pinned: true}, peer: {Pinned: true}}, want: [][]NamedResource{{parent}}},
 		{name: "pinned artifact retains claim", file: "../source-a/apps/deleted.yaml", source: other, records: map[NamedResource]DiscoveryRecord{parent: {Pinned: true}}, want: [][]NamedResource{{parent}}},
+		{name: "fleet checkout", file: "apps/deep/deleted.yaml", source: checkout, rootClaim: true, records: map[NamedResource]DiscoveryRecord{deep: {Pinned: true}, peer: {Pinned: true}}, want: [][]NamedResource{{parent}, {other}}},
+		{name: "flux-system checkout", file: "apps/deep/deleted.yaml", source: checkout, rootClaim: true, records: map[NamedResource]DiscoveryRecord{deep: {Pinned: true}, peer: {Pinned: true}}, want: [][]NamedResource{{parent}, {other}}},
+		{name: "fleet mounted", file: "../source-a/apps/deleted.yaml", source: fleet, rootClaim: true, records: map[NamedResource]DiscoveryRecord{parent: {Pinned: true}}, want: [][]NamedResource{{parent}}},
+		{name: "flux-system mounted", file: "../source-a/apps/deleted.yaml", source: BootstrapSourceID, rootClaim: true, records: map[NamedResource]DiscoveryRecord{parent: {Pinned: true}}, want: [][]NamedResource{{parent}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -282,7 +290,7 @@ func TestClaimOwners_SourceQualifiedGroups(t *testing.T) {
 				"../source-a/apps/": {parent}, "../source-b/apps/": {other}, "": {other},
 			}}
 			// The checkout-root claim must not cover mounted artifact coordinates.
-			if filepath.IsLocal(tc.file) {
+			if !tc.rootClaim && filepath.IsLocal(tc.file) {
 				delete(index.Claims, "")
 			}
 			before := slices.Clone(index.Claims["apps/deep/"])
@@ -323,7 +331,7 @@ func TestClaimOwners_BorrowedPrefixes(t *testing.T) {
 	} {
 		t.Run(tc.coordinate, func(t *testing.T) {
 			t.Parallel()
-			query := index.ClaimOwners(tc.coordinate, BootstrapSourceID, NamedResource{}, nil)
+			query := index.ClaimOwners(tc.coordinate, NamedResource{Kind: KindGitRepository}, NamedResource{}, nil)
 			for range 2 {
 				var got []string
 				for group := range query {
@@ -348,7 +356,7 @@ func TestClaimOwners_EarlyStop(t *testing.T) {
 	calls := 0
 	index.ClaimOwners(
 		"apps/nested/file.yaml",
-		BootstrapSourceID,
+		NamedResource{Kind: KindGitRepository},
 		NamedResource{},
 		nil,
 	)(
@@ -369,7 +377,7 @@ func TestClaimOwners_NoAllocations(t *testing.T) {
 	for _, stop := range []bool{false, true} {
 		allocations := testing.AllocsPerRun(100, func() {
 			count := 0
-			for group := range index.ClaimOwners(coordinate, BootstrapSourceID, NamedResource{}, nil) {
+			for group := range index.ClaimOwners(coordinate, NamedResource{Kind: KindGitRepository}, NamedResource{}, nil) {
 				count += len(group)
 				if stop {
 					break

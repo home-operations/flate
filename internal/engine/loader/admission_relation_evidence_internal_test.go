@@ -29,10 +29,10 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 		head.AddObject(object)
 	}
 	current := &store.SourceArtifact{
-		LocalPath:  "/head",
-		LocalRoot:  "/head",
-		InputAlias: true,
-		FS:         fstest.MapFS{"apps/cm.yaml": {Data: []byte("B\n")}},
+		LocalPath: "/head",
+		LocalRoot: "/head",
+		Provider:  store.ProviderAlias,
+		FS:        fstest.MapFS{"apps/cm.yaml": {Data: []byte("B\n")}},
 	}
 	head.SetArtifact(source.Named(), current)
 	head.SetArtifact(manifest.BootstrapSourceID, current)
@@ -61,6 +61,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 			before.AddObject(object)
 		}
 		input := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			LocalPath: "/base",
 			LocalRoot: "/base",
 			FS:        fstest.MapFS{"apps/cm.yaml": {Data: []byte("A\n")}},
@@ -69,6 +70,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 		before.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
+				Provider:  store.ProviderCommit,
 				LocalPath: "/selected",
 				LocalRoot: "/base",
 				Key:       "committed",

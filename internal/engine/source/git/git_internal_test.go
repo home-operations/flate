@@ -330,10 +330,11 @@ func TestFetcher_References(t *testing.T) {
 			localAcquisitions: 1,
 		},
 		{
-			name:              "semver",
+			name:              "tag precedes semver",
 			ref:               &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
-			want:              tip,
-			files:             []string{"version.txt"},
+			want:              first,
+			files:             []string{"hello.txt"},
+			absent:            []string{"version.txt"},
 			localAcquisitions: 1,
 		},
 		{

@@ -90,7 +90,7 @@ func admissionMembershipFixture(
 	st.AddObject(
 		&manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace},
 	)
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
 		"declarations/child.yaml": {
 			Data: []byte(
 				testutil.KustomizationYAML(
@@ -159,11 +159,12 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 				}
 				switch tc.mode {
 				case "alias":
-					other.InputAlias, other.LocalRoot, other.FS = true, local.LocalRoot, local.FS
+					other.Provider, other.LocalRoot, other.FS = store.ProviderAlias, local.LocalRoot, local.FS
 				case "pinned":
+					other.Provider = store.ProviderCommit
 					other.Content, other.Key, other.LocalRoot = "pinned-content", "pinned-key", local.LocalRoot
 				case "failed":
-					other.InputAlias, other.LocalRoot = true, "relative"
+					other.Provider, other.LocalRoot = store.ProviderAlias, "relative"
 				}
 				l.Store.SetArtifact(source.Named(), &other)
 			}
@@ -446,6 +447,7 @@ func TestEntryRoots_NativeOperand(t *testing.T) {
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
 				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					Kind:      manifest.KindGitRepository,
 					LocalPath: root,
 					LocalRoot: root,
@@ -484,7 +486,10 @@ func TestEntryRoots_UnavailableOutputCapturesAvailability(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "first"})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, Content: "first"},
+	)
 	object := &manifest.ConfigMap{Name: "static", Namespace: "apps"}
 	st.AddObject(object)
 	id := object.Named()
@@ -504,7 +509,10 @@ func TestEntryRoots_UnavailableOutputCapturesAvailability(t *testing.T) {
 	unavailable.Init(st, manifest.NamedResource{}, nil)
 	defer unavailable.Retire()
 	assert.Equal(t, len(l.EntryRoots(nil, &unavailable)), 0)
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "second"})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, Content: "second"},
+	)
 	assert.Equal(t, unavailable.Valid(), true)
 	st.RecordEmitted(id, &store.Emission{Complete: true}, nil)
 	assert.Equal(t, unavailable.Valid(), false)
@@ -514,6 +522,9 @@ func TestEntryRoots_UnavailableOutputCapturesAvailability(t *testing.T) {
 	roots := l.EntryRoots(nil, &available)
 	assert.Equal(t, len(roots), 1)
 	assert.Equal(t, roots[0].Identity, id)
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "third"})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, Content: "third"},
+	)
 	assert.Equal(t, available.Valid(), false)
 }

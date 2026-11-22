@@ -818,6 +818,7 @@ func TestDesiredAuthored_NamespacePredictionLifetime(t *testing.T) {
 	}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        parsedReadFS{FS: files, reads: map[string]*atomic.Int64{"transformers/transformer.yaml": &reads}},
 	})

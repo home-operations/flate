@@ -58,7 +58,7 @@ func TestDiscovery_IndexedIncludeDeclaration(t *testing.T) {
 					),
 				}
 			}
-			bootstrap := &store.SourceArtifact{LocalPath: root, FS: files}
+			bootstrap := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 			st.SetArtifact(
 				reference.NamedResource,
@@ -233,7 +233,7 @@ func TestDiscovery_ComposedSeedOwnership(t *testing.T) {
 				st.AddObject(including)
 			}
 			cfg := Config{
-				Input:    &store.SourceArtifact{LocalPath: root, FS: base},
+				Input:    &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: base},
 				Path:     root,
 				RepoRoot: root,
 				SelfURLs: []string{"https://self.invalid/repo"},
@@ -309,7 +309,7 @@ func TestDiscovery_ComposedSeedOwnership(t *testing.T) {
 			assert.Equal(t, completed.LocalPath == otherArtifact.LocalPath, false)
 			assert.Equal(
 				t,
-				completed.HistoryIdentity(including.Named()) == otherArtifact.HistoryIdentity(otherSource.Named()),
+				completed.HistoryIdentity() == otherArtifact.HistoryIdentity(),
 				false,
 			)
 			for _, owned := range []struct {
@@ -370,12 +370,12 @@ func TestDiscovery_ComposedBootstrapWaitsForInputs(t *testing.T) {
 	for _, object := range []manifest.BaseManifest{input, including, owner} {
 		st.AddObject(object)
 	}
-	bootstrap := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	bootstrap := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	selected := &store.SourceArtifact{
-		LocalPath:  filepath.Join(root, "selected"),
-		LocalRoot:  root,
-		InputAlias: true,
-		FS:         fstest.MapFS{},
+		LocalPath: filepath.Join(root, "selected"),
+		LocalRoot: root,
+		Provider:  store.ProviderAlias,
+		FS:        fstest.MapFS{},
 	}
 	a := &Admission{
 		store: st,
@@ -407,7 +407,7 @@ func TestDiscovery_ComposedBootstrapWaitsForInputs(t *testing.T) {
 		support.Init(st, including.Named(), nil)
 		t.Cleanup(support.Retire)
 		support.GetArtifact(input.Named(), store.ArtifactContent)
-		completed := (&store.SourceArtifact{Content: value, LocalPath: filepath.Join(root, "virtual"), LocalRoot: filepath.Join(root, "virtual"), FS: fstest.MapFS{
+		completed := (&store.SourceArtifact{Provider: store.ProviderAlias, Extent: store.ExtentComposed, ComposedFrom: selected, Content: value, LocalPath: filepath.Join(root, "virtual"), LocalRoot: filepath.Join(root, "virtual"), FS: fstest.MapFS{
 			"entry/kustomization.yaml": {Data: []byte("resources: [included.yaml]\n")},
 			"entry/included.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: included}\ndata: {value: " + value + "}\n")},
 		}}).WithReads(
@@ -422,7 +422,7 @@ func TestDiscovery_ComposedBootstrapWaitsForInputs(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, matched, true)
 		assert.Equal(t, evidence.source.artifact, completed)
-		assert.Equal(t, a.appliesEntry(&evidence.application), true)
+		assert.Equal(t, a.reachesEntry(&evidence.application, nil), true)
 		if value == "before" {
 			binding := completed.Input(store.ArtifactContent | store.ArtifactRevision)
 			binding.LocalPath, binding.LocalRoot = "", ""
@@ -530,7 +530,11 @@ func TestAdmission_PublishRequiredDeclaration(t *testing.T) {
 				}
 			}
 			st.AddObject(owner)
-			bootstrap := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+			bootstrap := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: t.TempDir(),
+				FS:        fstest.MapFS{},
+			}
 			a := &Admission{
 				store: st,
 				input: bootstrap,
@@ -584,7 +588,7 @@ func TestAdmission_RequiredIncludeCannotRestoreAlias(t *testing.T) {
 			assert.Equal(t, groups[required.NamedResource].reference.RequiresDeclaration, true)
 		})
 	}
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	old, _ := required.NamedResource.BindLocal(root)
 	previous := entryResolution{object: old, input: input, synthetic: true}
 	a := &Admission{
@@ -642,7 +646,7 @@ spec:
 `)},
 				"leaf/kustomization.yaml": {Data: []byte("resources: [copied.yaml]\n")},
 			}
-			bootstrap := &store.SourceArtifact{LocalPath: root, FS: files}
+			bootstrap := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 			d, err := Begin(t.Context(), Config{
 				Path: filepath.Join(root, "entry"), Input: bootstrap, Store: st,
 				SelfURLs: []string{"https://self.invalid/repo"}, Cache: cacheOwner, Trees: trees,

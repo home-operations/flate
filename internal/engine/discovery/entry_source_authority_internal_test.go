@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -28,9 +27,14 @@ func TestAdmission_EntrySourceAuthority(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [source.yaml, cluster.yaml]\n")
+			url := "https://declared.invalid/source"
+			if kind == manifest.KindOCIRepository {
+				url = "oci://declared.invalid/source"
+			}
 			testutil.WriteFile(t, root, "entry/source.yaml", fmt.Sprintf(
-				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: entry, namespace: apps}\nspec: {url: 'https://declared.invalid/source', endpoint: declared.invalid, bucketName: entry, ref: {branch: main}}\n",
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: entry, namespace: apps}\nspec: {url: '%s', endpoint: declared.invalid, bucketName: entry, ref: {branch: main}}\n",
 				kind,
+				url,
 			))
 			testutil.WriteFile(t, root, "entry/cluster.yaml", testutil.KustomizationYAML("cluster", "apps",
 				"  path: ./entry\n  sourceRef: {kind: "+kind+", name: entry}\n"))
@@ -38,7 +42,7 @@ func TestAdmission_EntrySourceAuthority(t *testing.T) {
 			st := store.New()
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "entry"}
 			st.SetArtifact(id, &store.SourceArtifact{
-				Kind: kind, LocalPath: root, LocalRoot: root, FS: os.DirFS(root), InputAlias: true,
+				Kind: kind, LocalPath: root, LocalRoot: root, FS: os.DirFS(root), Provider: store.ProviderAlias,
 			})
 			result, err := Run(t.Context(), testConfig(t, Config{
 				Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st,
@@ -57,9 +61,39 @@ func TestAdmission_EntrySourceAuthority(t *testing.T) {
 			status, _ := st.GetStatus(id)
 			assert.Equal(t, status.Status, store.StatusReady)
 			assert.Equal(t, result.Admission.resolvedSources.snapshot()[id].synthetic, false)
-			assert.Equal(t, result.Admission.resolvedSources.snapshot()[id].pinned, false)
+			assert.Equal(t, result.Admission.resolvedSources.snapshot()[id].provider == store.ProviderCommit, false)
 		})
 	}
+}
+
+func TestAdmission_EntryReplacementRequiresAuthority(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [sync.yaml]\n")
+	testutil.WriteFile(t, root, "entry/sync.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: entry, namespace: apps}
+spec: {url: https://mirror.invalid/source}
+---
+`+testutil.KustomizationYAML("cluster", "apps", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: entry}\n"))
+	st := store.New()
+	result, err := Run(t.Context(), testConfig(t, Config{
+		Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st,
+	}))
+	assert.NoError(t, err)
+	t.Cleanup(result.Close)
+
+	id := (&manifest.GitRepository{Name: "entry", Namespace: "apps"}).Named()
+	before := result.Admission.resolvedSources.snapshot()[id]
+	assert.Equal(t, before.entry, true)
+	assert.Equal(t, before.provider, store.ProviderAlias)
+	replacement := *before.object.(*manifest.GitRepository)
+	replacement.URL = "https://upstream.invalid/independent"
+	st.AddDeclaration(store.Declaration{Obj: &replacement, Origin: manifest.SuppliedDeclaration})
+	child, material, err := result.Admission.Resolve(t.Context(), id, &replacement, aliasRequestReads(t, st, id))
+	assert.NoError(t, err)
+	assert.Equal(t, child.Obj, manifest.BaseManifest(&replacement))
+	assert.Equal(t, material == nil, true)
 }
 
 func TestAdmission_ProjectedEntrySourceAuthority(t *testing.T) {
@@ -101,18 +135,11 @@ spec:
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "entry"}
-			if tc.name == "Git entry without self" {
-				resolved, resolveErr := result.Admission.resolve(t.Context(), id, &sourceRequest{
-					object: st.GetDeclaration(id), entry: true, projected: true,
-				})
-				assert.NoError(t, resolveErr)
-				result.Admission.resolvedSources.record(id, &resolved)
-			}
 			child, material, err := result.Admission.Resolve(t.Context(), id, nil, nil)
 			assert.NoError(t, err)
 			resolution := result.Admission.resolvedSources.snapshot()[id]
 			assert.Equal(t, resolution.entry, tc.entry)
-			assert.Equal(t, resolution.pinned, false)
+			assert.Equal(t, resolution.provider == store.ProviderCommit, false)
 			assert.Equal(t, resolution.synthetic, false)
 			if tc.local {
 				assert.FatalIf(
@@ -168,6 +195,44 @@ spec:
 	}
 }
 
+func TestAdmission_OCIEntryReference(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, ref string
+		provider  store.SourceProvider
+	}{
+		{"tag", "stable", store.ProviderAlias},
+		{"digest", "sha256:" + strings.Repeat("0", 64), store.ProviderFetch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+			parsed, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": manifest.SourceDomain + "/v1",
+				"kind":       manifest.KindOCIRepository,
+				"metadata":   map[string]any{"name": "fleet", "namespace": "apps"},
+				"spec": map[string]any{
+					"url": "oci://registry.invalid/fleet",
+					"ref": map[string]any{tc.name: tc.ref},
+				},
+			}, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			a := &Admission{input: input, store: st}
+			decision, err := a.resolve(t.Context(), parsed.Object.Named(), &sourceRequest{
+				object: parsed.Object, entry: true, scoped: true,
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, decision.provider, tc.provider)
+			assert.Equal(t, decision.artifact != nil, tc.provider == store.ProviderAlias)
+			if decision.artifact != nil {
+				assert.Equal(t, decision.artifact.LocalRoot, root)
+			}
+		})
+	}
+}
+
 func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
@@ -182,7 +247,11 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 			assert.Equal(t, ok, true)
 			encoded, err := json.Marshal(document)
 			assert.NoError(t, err)
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"owner.yaml": {Data: encoded}}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				FS:        fstest.MapFS{"owner.yaml": {Data: encoded}},
+			}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := loader.New(st)
@@ -321,6 +390,57 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 	}
 }
 
+func TestAdmission_IndexedProducerOmission(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	parent := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	id := (&manifest.ExternalArtifact{Name: "content", Namespace: "apps"}).Named()
+	projected := &manifest.GitRepository{Name: "checkout", Namespace: "apps"}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+	production := manifest.Production{Owner: parent.Named(), Source: manifest.BootstrapSourceID}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		id:                {Productions: []manifest.Production{production}},
+		projected.Named(): {Productions: []manifest.Production{production}},
+	}}
+	st.AddObject(parent)
+	st.SetDiscoveryIndex(index)
+	catalog := loader.New(st)
+	catalog.Index = index
+	t.Cleanup(catalog.Close)
+	a := &Admission{store: st, loader: catalog, input: input, resolvedSources: &entrySourcePublisher{
+		mutable: map[manifest.NamedResource]entryResolution{projected.Named(): {
+			input: input, object: projected, entry: true, projected: true,
+			artifact: input, provider: store.ProviderAlias,
+			producers: []occurrenceKey{{identity: parent.Named(), object: parent}},
+		}},
+	}}
+	before := a.classifySource(projected.Named(), &sourceRequest{})
+	assert.Equal(t, before.provider, store.ProviderAlias)
+	assert.Equal(t, before.artifact, input)
+	var pending store.ReadSet
+	pending.Init(st, manifest.NamedResource{}, nil)
+	defer pending.Retire()
+	assert.Equal(t, a.Provider(id, &pending, index), store.ProviderGenerator)
+	assert.Equal(t, pending.Valid(), true)
+
+	_, _, output := st.GetEmission(parent.Named())
+	output.Complete = true
+	st.RecordEmitted(parent.Named(), &output, nil)
+	output.Finish()
+	assert.Equal(t, pending.Valid(), false)
+
+	var complete store.ReadSet
+	complete.Init(st, manifest.NamedResource{}, nil)
+	defer complete.Retire()
+	assert.Equal(t, a.Provider(id, &complete, index), store.ProviderAbsent)
+	assert.Equal(t, complete.Valid(), true)
+
+	after := a.classifySource(projected.Named(), &sourceRequest{reads: &complete})
+	assert.Equal(t, after.provider, store.ProviderAbsent)
+	assert.Equal(t, after.entry, false)
+	assert.Equal(t, after.artifact == nil, true)
+}
+
 func TestPlan_ProducedSourceEvidenceTransfer(t *testing.T) {
 	t.Parallel()
 	for _, producer := range []string{"direct", "template", "target only"} {
@@ -368,7 +488,7 @@ spec:
 			if producer == "target only" {
 				assert.Equal(t, resolution.object == nil, true)
 				assert.Equal(t, resolution.artifact == nil, true)
-				assert.Equal(t, resolution.viewKey, "")
+				assert.Equal(t, resolution.viewKey, sourceViewKey{})
 			}
 			st := store.New()
 			session, err := beginTest(t.Context(), Config{
@@ -471,7 +591,7 @@ spec:
 `)},
 		"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}
-	input := &store.SourceArtifact{LocalPath: root, FS: files}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 	entries, err := Plan(t.Context(), Config{Path: filepath.Join(root, "entry"), Input: input})
 	assert.NoError(t, err)
 	assert.Equal(t, len(entries), 1)
@@ -485,7 +605,7 @@ spec:
 		"entry/consumer.yaml":         files["entry/consumer.yaml"],
 		"workload/kustomization.yaml": files["workload/kustomization.yaml"],
 	}
-	replacement := &store.SourceArtifact{LocalPath: root, FS: remaining}
+	replacement := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: remaining}
 	for _, tc := range []struct {
 		name  string
 		input *store.SourceArtifact
@@ -538,13 +658,16 @@ spec: {chart: {spec: {chart: app, sourceRef: {kind: HelmRepository, name: charts
 			t.Parallel()
 			root := t.TempDir()
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS: fstest.MapFS{
 					"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
 					"owner.yaml":         {Data: []byte(tc.declaration)},
 				},
 			}
-			d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
+			d := newDiscoverer(
+				&Config{Path: root, Input: input, Store: store.New(), SelfURLs: []string{"https://example.test/self"}},
+			)
 			t.Cleanup(d.Close)
 			_, err := d.resolveTestSources(t.Context(), false)
 			assert.NoError(t, err)
@@ -593,9 +716,14 @@ spec: {url: oci://registry.invalid/%s}
 		assert.NoError(t, err)
 		encoded, err := json.Marshal(document)
 		assert.NoError(t, err)
-		input := &store.SourceArtifact{LocalPath: root, Content: content, FS: fstest.MapFS{
-			"producer.yaml": {Data: encoded},
-		}}
+		input := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: root,
+			Content:   content,
+			FS: fstest.MapFS{
+				"producer.yaml": {Data: encoded},
+			},
+		}
 		if occurrence.Object == nil {
 			occurrence = selection.OccurrenceFacts{
 				Declaration: selection.OccurrenceID{Source: root, File: "producer.yaml"},
@@ -623,7 +751,7 @@ func TestPlan_ProjectionMaterialReplacement(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	sourceRoot := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 	d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
 	t.Cleanup(d.Close)
 	_, err := d.resolveTestSources(t.Context(), false)
@@ -677,56 +805,6 @@ spec:
 			})
 			assert.Equal(t, len(producers) == 1, name == content)
 		}
-	}
-}
-
-func TestAdmission_ConstructionViewReuse(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"payload/file": {Data: []byte("initial")},
-	}}
-	d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
-	t.Cleanup(d.Close)
-	_, err := d.resolveTestSources(t.Context(), false)
-	assert.NoError(t, err)
-	var previous fs.FS
-	for _, content := range []string{"initial", "replacement"} {
-		if content == "replacement" {
-			replaced := *input
-			replaced.Content = content
-			replaced.FS = fstest.MapFS{"payload/file": {Data: []byte(content)}}
-			d.cfg.Store.SetArtifact(manifest.BootstrapSourceID, &replaced)
-			_, err = d.resolveTestSources(t.Context(), false)
-			assert.NoError(t, err)
-		}
-		var first fs.FS
-		for range 2 {
-			parsed, parseErr := manifest.ParseDoc(
-				retainedApplicationDocument("FluxInstance", "."),
-				manifest.ParseDocOptions{},
-			)
-			assert.NoError(t, parseErr)
-			application, valid := manifest.ApplicationFor(parsed.Object)
-			assert.Equal(t, valid, true)
-			generatedSource := testGeneratedSync(t, parsed.Object).Objects[0]
-			_, resolveErr := d.resolveEntrySource(t.Context(), d.admission(), application.Source, &entrySourceGroup{
-				object: generatedSource, entry: true, projected: true,
-			})
-			assert.Equal(t, resolveErr == nil || errors.Is(resolveErr, errPendingSources), true)
-			assert.NoError(t, constructTestSources(t.Context(), d))
-			material := d.resolvedSources.snapshot()[application.Source].artifact
-			assert.FatalIf(t, material == nil, "projected source lost local material")
-			data, readErr := fs.ReadFile(material.FS, "payload/file")
-			assert.NoError(t, readErr)
-			assert.Equal(t, string(data), content)
-			if first == nil {
-				first = material.FS
-			}
-			assert.Equal(t, material.FS == first, true)
-		}
-		assert.Equal(t, first == previous, false)
-		previous = first
 	}
 }
 

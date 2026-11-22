@@ -158,8 +158,8 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 		assert.NoError(t, err)
 		if (*(*statementInput.testCaseInput)) != "selected_payload_only" {
 			assert.Equal(t, payload.Len(), 0)
-			assert.Equal(t, left.InputAlias, false)
-			assert.Equal(t, right.InputAlias, true)
+			assert.Equal(t, (left.Provider == store.ProviderAlias), true)
+			assert.Equal(t, (right.Provider == store.ProviderAlias), true)
 		}
 		for side, rendered := range []Rendered{base, head} {
 			assertSelectedAliasConfigMaps(t, statementInput, &rendered)
@@ -291,6 +291,7 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 		LocalPath: (*statementInput.headRoot),
 		LocalRoot: (*statementInput.headRoot),
 		FS:        files,
+		Provider:  store.ProviderInput,
 	}
 	statementInput.cfg.ExternalChanges = detectChanges(t, []string{"ks-a.yaml"}, []string{"ks-a.yaml"})
 	o, err := newTestOrchestrator(t, statementInput.cfg.Tree, statementInput.cfg.Config)
@@ -302,7 +303,11 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 	o.store.
 		SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: (*statementInput.headRoot), FS: os.DirFS((*statementInput.headRoot))},
+			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: (*statementInput.headRoot),
+				FS:        os.DirFS((*statementInput.headRoot)),
+			},
 		)
 	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.FatalIf(
@@ -347,6 +352,13 @@ func selectedAliasRepository(
 	repo := testutil.GitInit(t, (*statementInput.headRoot))
 	var old plumbing.Hash
 	for i, value := range []string{"A", "B"} {
+		ref := ", ref: {name: refs/heads/selected}, sparseCheckout: [apps]"
+		if *(*statementInput.testCaseInput) == "selected_payload_only" {
+			ref = ""
+		} else {
+			testutil.WriteFile(t, *statementInput.headRoot, "outside-source.txt", value)
+			value = "B"
+		}
 		writeCluster(t, (*statementInput.headRoot), value, "same")
 		testutil.WriteFile(
 			t,
@@ -367,10 +379,6 @@ func selectedAliasRepository(
 					"name: cluster, namespace: flux-system",
 				),
 			)
-		}
-		ref := ", ref: {name: refs/heads/selected}"
-		if (*(*statementInput.testCaseInput)) == "selected_payload_only" {
-			ref = ""
 		}
 		interval := "1m"
 		if (*(*statementInput.testCaseInput)) == "source_declaration_equal" && i == 1 {

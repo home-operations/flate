@@ -95,7 +95,7 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 	result, err := discovery.Run(
 		t.Context(),
 		discovery.Config{
-			Input: &store.SourceArtifact{LocalPath: root, FS: input},
+			Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:  root,
 			Store: st,
 			Cache: owner, Trees: trees,

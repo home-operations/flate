@@ -20,7 +20,7 @@ func testResolveEntrySourcesIdentitySeparateIdentities(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
 			"kubernetes/clusters/c0/entry": {}, "kubernetes/apps/x/file": {},
 		}},
 	)

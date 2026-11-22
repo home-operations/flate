@@ -29,7 +29,7 @@ func capturedPreflight(s *store.Store, id manifest.NamedResource) (string, bool)
 	var reads store.ReadSet
 	reads.Init(s, id, nil)
 	defer reads.Retire()
-	message := reads.Preflight()
+	message := reads.Preflight(reads.ID()).Message
 	return message, message != ""
 }
 
@@ -176,7 +176,7 @@ func TestFailDependsOnCycles_EmittedAfterCapture(t *testing.T) {
 				e,
 				func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
 					if id == a.Named() && early.CompareAndSwap(false, true) {
-						assert.Equal(t, e.Reads.Preflight(), "")
+						assert.Equal(t, e.Reads.Preflight(e.Reads.ID()).Message, "")
 						close(captured)
 						tasks.YieldSlot(func() { <-peerSettled })
 						assert.Equal(t, e.Valid(), false)

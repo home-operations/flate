@@ -137,10 +137,10 @@ func testSelectionPromotionBubble(
 		URL:       "git://fixture.invalid/before",
 	}
 	artifact := &store.SourceArtifact{
-		LocalPath:  filepath.Join(root, ".source"),
-		LocalRoot:  root,
-		InputAlias: true,
-		FS:         fstest.MapFS{"consumer/config.yaml": {Data: []byte("before")}},
+		LocalPath: filepath.Join(root, ".source"),
+		LocalRoot: root,
+		Provider:  store.ProviderAlias,
+		FS:        fstest.MapFS{"consumer/config.yaml": {Data: []byte("before")}},
 	}
 	replacement := *source
 	replacement.URL = "git://fixture.invalid/after"
@@ -164,11 +164,11 @@ func testSelectionPromotionBubble(
 		peer.SetArtifact(source.Named(), artifact)
 		s.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
 		)
 		peer.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
 		)
 		index.Records[source.Named()] = manifest.DiscoveryRecord{File: "old-source.yaml"}
 		if testCaseInput.mode.upfront {

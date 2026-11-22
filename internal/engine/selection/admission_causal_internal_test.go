@@ -18,7 +18,10 @@ func TestAdmission_SourceObservationKeepsPreparedComparison(t *testing.T) {
 	stores := [2]*store.Store{store.New(), store.New()}
 	releases := [2]*manifest.HelmRelease{}
 	for side, st := range stores {
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+		)
 		releases[side] = &manifest.HelmRelease{
 			Name:       "demo",
 			Namespace:  "apps",

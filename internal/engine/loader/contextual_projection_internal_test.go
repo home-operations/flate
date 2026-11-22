@@ -146,7 +146,7 @@ func TestSubstitutionResolution_RestoredCoverage(t *testing.T) {
 	fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "child.yaml"}
 	file := filepath.Join(l.SourceRoot, "child.yaml")
 	inputFS := &declarationReadFS{FS: fstest.MapFS{}}
-	input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: inputFS}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: inputFS}
 	l.documents.setSources(map[string]*store.SourceArtifact{l.SourceRoot: input})
 	l.documents.parsed = &ParsedInputs{
 		compact: true,

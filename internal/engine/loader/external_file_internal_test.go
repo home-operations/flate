@@ -39,7 +39,7 @@ func TestFinalizeIndex_ExternalFileStructuralClosure(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, FS: externalFileHelmReleaseFiles(t)},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: externalFileHelmReleaseFiles(t)},
 	)
 	l := New(st)
 	defer l.Close()

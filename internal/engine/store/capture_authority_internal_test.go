@@ -299,7 +299,7 @@ func testReadSetBoundDeclarationAuthorityCase(
 	var admission ReadSet
 	if *testCaseInput == "classified external builder" || *testCaseInput == "preclassified external builder" ||
 		*testCaseInput == "classified unchanged external builder" || *testCaseInput == "preclassified unchanged external builder" {
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "source"})
+		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Key: "source"})
 		admission.Init(st, owner.Named(), nil)
 		defer admission.Retire()
 	}

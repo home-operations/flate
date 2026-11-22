@@ -56,7 +56,13 @@ func testFinalizeIndexOwnersOfFileDanglingResourceCase(
 	}
 	s.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input},
+		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			Kind:      manifest.KindGitRepository,
+			LocalPath: dir,
+			LocalRoot: dir,
+			FS:        input,
+		},
 	)
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
@@ -119,7 +125,13 @@ func testFinalizeIndexOwnersOfFileDanglingResourceCase(
 	}
 	s.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input},
+		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			Kind:      manifest.KindGitRepository,
+			LocalPath: dir,
+			LocalRoot: dir,
+			FS:        input,
+		},
 	)
 	{
 		err := l.FinalizeIndex(t.Context(), dir, true)

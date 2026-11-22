@@ -23,18 +23,21 @@ func TestAdmission_InputGate(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {
-			Data: []byte(
-				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: consumer, namespace: apps}\nspec: {dependsOn: [{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, name: gate}]}\n",
-			),
-		},
-		"gate.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: gate, namespace: apps}\nspec: {path: ./gate}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {
+				Data: []byte(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: consumer, namespace: apps}\nspec: {dependsOn: [{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, name: gate}]}\n",
+				),
+			},
+			"gate.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: gate, namespace: apps}\nspec: {path: ./gate}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -60,18 +63,21 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"input.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {replicas: '2'}\n",
-			),
-		},
-		"producer.yaml": {
-			Data: []byte(
-				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: templates, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: helm.toolkit.fluxcd.io/v2\n    kind: HelmRelease\n    metadata: {name: child}\n    spec: {interval: 1m, valuesFrom: [{kind: ConfigMap, name: values}]}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"input.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {replicas: '2'}\n",
+				),
+			},
+			"producer.yaml": {
+				Data: []byte(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: templates, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: helm.toolkit.fluxcd.io/v2\n    kind: HelmRelease\n    metadata: {name: child}\n    spec: {interval: 1m, valuesFrom: [{kind: ConfigMap, name: values}]}\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -94,10 +100,8 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	historyOwners := map[manifest.NamedResource][]manifest.SourceEvidence{
 		producer: {
 			{
-				Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
-					manifest.BootstrapSourceID,
-				),
-				Path: "input.yaml",
+				Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(),
+				Path:   "input.yaml",
 			},
 		},
 	}
@@ -333,7 +337,7 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	source := (&manifest.GitRepository{Name: "local", Namespace: "apps"}).Named()
-	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	st.SetArtifact(source, &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}})
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -412,7 +416,7 @@ func testAdmissionUnreferencedInputCollisionCase(
 		st := store.New()
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: files},
 		)
 		l := New(st)
 		l.SourceRoot = root

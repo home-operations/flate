@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: external, namespace: flux-system}
+spec:
+  url: https://upstream.example.invalid/fleet-overlay.git
+  ref: {branch: main}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: external, namespace: flux-system}
+spec:
+  path: ./clusters/left
+  sourceRef: {kind: GitRepository, name: external}

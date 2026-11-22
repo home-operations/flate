@@ -78,7 +78,7 @@ func TestPreparation_RetireReleasesCapturedState(t *testing.T) {
 func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	input := &store.SourceArtifact{Content: "same", Digest: "same", Revision: "before"}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, Content: "same", Digest: "same", Revision: "before"}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./before"}
 	st.AddObject(owner)
@@ -164,7 +164,7 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 			producer := previous
 			if tc.bound {
 				producer = native
-				input = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
+				input = &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}}
 				session.store.SetArtifact(manifest.BootstrapSourceID, input)
 				session.store.AddObject(
 					manifest.NewEntryKustomization(entry.Source, entry.Path, manifest.NamedResource{}),
@@ -183,7 +183,7 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 			if tc.owner != (manifest.NamedResource{}) {
 				evidence := manifest.SourceEvidence{Path: "entry/child.yaml"}
 				if input != nil {
-					evidence.Source = input.HistoryIdentity(manifest.BootstrapSourceID)
+					evidence.Source = input.HistoryIdentity()
 				}
 				request.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{tc.owner: {evidence}}
 			}

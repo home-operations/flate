@@ -123,8 +123,8 @@ type Session struct {
 	cfg                    Config
 	loader                 *loader.Loader
 	resolvedSources        *entrySourcePublisher
-	remotes                map[string]struct{}
-	aliasViews             map[string]*store.SourceArtifact
+	remotes                []string
+	aliasViews             sourceViews
 	hasPins                bool
 	result                 *Result
 	ownsLoader             bool
@@ -251,7 +251,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 		admission.qualification = nil
 	}
 	if admission.qualification != nil && d.cfg.Trees != nil && d.cfg.Selection.Changed && d.binding == (Binding{}) {
-		d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
+		d.entryReceipt(ctx, admission, admission.Input())
 		if d.entryReceiptRequest != nil {
 			admission.entryDemand = true
 			admission.qualification.closed = false
@@ -320,7 +320,7 @@ func newDiscoverer(config *Config) *Session {
 		l.Options.Changes = cfg.Changes
 	}
 	d := &Session{
-		cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{},
+		cfg: cfg, loader: l, aliasViews: sourceViews{},
 		ownsLoader: cfg.Loader == nil,
 	}
 	d.cfg.Entry = nil
@@ -526,7 +526,7 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 	if q := admission.qualification; q != nil && q.previous.Receipt == nil && d.cfg.Trees != nil {
 		needsHistory := d.hasEntryOperands() || d.entryReceiptRequest != nil || !d.hasEntryBuilder()
 		if needsHistory {
-			d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
+			d.entryReceipt(ctx, admission, admission.Input())
 		}
 	}
 	for {
@@ -644,8 +644,8 @@ func (d *Session) entryCandidateReady(
 		return len(candidate.DependsOn) == 0
 	}
 	selected := d.resolvedSources.snapshot()[candidate.EffectiveSourceID()]
-	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact) ||
-		selected.usesUnfilteredInput(d.bootstrapInput, artifact)
+	workingInput := artifact.WorkingTree() && artifact.Extent == store.ExtentInput && artifact.Reads.Valid() &&
+		artifact.SameMaterial(selected.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
 	// An independent bootstrap entry stays eligible even when its preparation fails.
 	if workingInput && !hasEntryPrerequisites(candidate) {
 		return true
@@ -808,13 +808,12 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 		if !prepared.registered || prepared.err != nil {
 			continue
 		}
-		sourceID := ks.EffectiveSourceID()
 		input := prepared.source
 		if err := d.cfg.Cache.RecordRender(ctx, cache.RenderAcceptance{
 			Reads: &prepared.support,
 			Work:  prepared.work,
 			Owner: ks.Named(), Receipt: prepared.receipt, Content: prepared.content,
-			Source:  input.HistoryIdentity(sourceID),
+			Source:  input.HistoryIdentity(),
 			Records: d.cfg.Store.ChildFootprint(ks.Named(), prepared.children, d.loader.Index),
 			Sources: d.cfg.Store.ChildSourcePaths(ks.Named(), prepared.children, d.loader.Index),
 		}); err != nil {

@@ -109,7 +109,7 @@ func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
 	mount := filepath.Join(t.TempDir(), "alias")
 	st.SetArtifact(
 		source.Named(),
-		&store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)},
+		&store.SourceArtifact{LocalPath: mount, LocalRoot: root, Provider: store.ProviderAlias, FS: os.DirFS(root)},
 	)
 	for _, dir := range []string{root, filepath.Join(mount, "target")} {
 		_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
@@ -302,11 +302,11 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 	st.SetArtifact(
 		source.Named(),
 		&store.SourceArtifact{
-			Kind:       manifest.KindOCIRepository,
-			LocalRoot:  filepath.Join(root, "kubernetes"),
-			LocalPath:  mount,
-			InputAlias: true,
-			FS:         view,
+			Kind:      manifest.KindOCIRepository,
+			LocalRoot: filepath.Join(root, "kubernetes"),
+			LocalPath: mount,
+			Provider:  store.ProviderAlias,
+			FS:        view,
 		},
 	)
 	{

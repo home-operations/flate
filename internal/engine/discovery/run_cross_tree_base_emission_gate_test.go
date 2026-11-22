@@ -705,7 +705,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	assert.FatalIf(
 		t,
-		!ok || !artifact.InputAlias || !strings.HasPrefix(artifact.URL, "file://"),
+		!ok || (artifact.Provider != store.ProviderAlias) || !strings.HasPrefix(artifact.URL, "file://"),
 		"matched source artifact = %+v",
 		artifact,
 	)
@@ -716,7 +716,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	{
 		artifact, ok := st.GetArtifact(pinned.Named(), store.ArtifactContent).(*store.SourceArtifact)
 		assert.FatalIf(t, !ok ||
-			artifact.InputAlias ||
+			(artifact.Provider == store.ProviderAlias) ||
 			artifact.Key == "" ||
 			st.GetObject(pinned.Named()) != pinned, "committed source artifact = %+v", artifact)
 	}

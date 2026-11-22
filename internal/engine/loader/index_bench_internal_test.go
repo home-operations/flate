@@ -48,7 +48,10 @@ func BenchmarkFinalizeIndex_LocalChart(b *testing.B) {
 	st := store.New()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+	st.SetArtifact(
+		source.Named(),
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
+	)
 	files := make(map[manifest.NamedResource]string, 100)
 	for i := range 100 {
 		hr := &manifest.HelmRelease{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -68,14 +69,14 @@ func (o *Orchestrator) syncPreflightFailures(ctx context.Context) error {
 		}
 
 		for id, message := range failures {
-			o.store.SetPreflight(id, message)
+			o.store.SetPreflight(id, store.PreflightFailure{Message: message, DependencyCycle: paths[id] != nil})
 		}
 		for _, id := range cleared {
-			o.store.SetPreflight(id, "")
+			o.store.SetPreflight(id, store.PreflightFailure{})
 		}
 		// A newer publisher can clear the shared map before these stale writes finish.
 		for id := range previous {
-			o.store.SetPreflight(id, failures[id])
+			o.store.SetPreflight(id, store.PreflightFailure{Message: failures[id], DependencyCycle: paths[id] != nil})
 		}
 		if o.depGraph.failuresCurrent(paths) {
 			return nil

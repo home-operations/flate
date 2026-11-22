@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-git/v6"
@@ -209,4 +210,159 @@ spec:
 			assert.Diff(t, result.stdout, want.String())
 		})
 	}
+}
+
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
+func TestRun_Diff_BranchBootstrapReach(t *testing.T) {
+	root := t.TempDir()
+	const url = "https://example.invalid/home-ops.git"
+	testutil.WriteFile(t, root, "kube/flux/kustomization.yaml",
+		"resources: [sync.yaml, ../apps/selected, ../apps/idle]\n")
+	testutil.WriteFile(t, root, "kube/flux/sync.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec:
+  url: https://example.invalid/home-ops.git
+  ref: {branch: main}
+  ignore: |
+    /*
+    !/kube
+---
+`+testutil.KustomizationYAML("cluster", "flux-system",
+		`  path: ./kube/flux
+  sourceRef: {kind: GitRepository, name: flux-system}
+`))
+	owner := func(name, namespace, substitution string) string {
+		return testutil.KustomizationYAML(name+"-app", namespace, fmt.Sprintf(`  path: ./kube/apps/%[1]s/app
+  targetNamespace: %[1]s
+  components: [../../../shared]
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+%[2]s`, name, substitution))
+	}
+	const release = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: %s}
+spec:
+  chart:
+    spec:
+      chart: kube/chart
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values: {greeting: "%s"}
+`
+	const postBuild = "  postBuild:\n    substitute: {GREETING: %s}\n"
+	testutil.WriteFile(
+		t,
+		root,
+		"kube/apps/selected/ks.yaml",
+		owner("selected", "selected", fmt.Sprintf(postBuild, "before")),
+	)
+	testutil.WriteFile(t, root, "kube/apps/idle/ks.yaml", owner("idle", "flux-system", ""))
+	testutil.WriteFile(t, root, "kube/apps/selected/app/release.yaml", fmt.Sprintf(release, "selected", "${GREETING}"))
+	testutil.WriteFile(t, root, "kube/apps/idle/app/release.yaml", fmt.Sprintf(release, "idle", "before"))
+	for _, name := range []string{"selected", "idle"} {
+		testutil.WriteFile(t, root, "kube/apps/"+name+"/kustomization.yaml", "resources: [ks.yaml]\n")
+	}
+	testutil.WriteFile(t, root, "kube/shared/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources: [alert.yaml]
+`)
+	testutil.WriteFile(t, root, "kube/shared/alert.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: shared-alert}
+`)
+	testutil.WriteFile(t, root, "kube/chart/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "kube/chart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}', namespace: '{{ .Release.Namespace }}'}
+data: {greeting: '{{ .Values.greeting }}'}
+`)
+	testutil.WriteFile(t, root, "ignore.txt", "outside the source\n")
+	repo := testutil.GitInit(t, root)
+	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	assert.NoError(t, err)
+	base := testutil.GitCommitAll(t, repo, "base", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	assert.NoError(
+		t,
+		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), base)),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"kube/apps/selected/ks.yaml",
+		owner("selected", "selected", fmt.Sprintf(postBuild, "after")),
+	)
+
+	result := runCLI(t, "diff", "all", "--path", filepath.Join(root, "kube", "flux"), "--base", base.String(),
+		"--cache-dir", t.TempDir(), "--concurrency", "2", "--log-level", "debug", "--output", "diff")
+	assert.FatalIf(t, result.code != 0, "diff exited %d: %s", result.code, result.stderr)
+	const want = `--- ConfigMap selected/selected
++++ ConfigMap selected/selected
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  greeting: before
++  greeting: after
+ kind: ConfigMap
+ metadata:
+   labels:
+
+--- Kustomization selected/selected-app (kube/flux)
++++ Kustomization selected/selected-app (kube/flux)
+@@ -12,7 +12,7 @@
+   path: ./kube/apps/selected/app
+   postBuild:
+     substitute:
+-      GREETING: before
++      GREETING: after
+   sourceRef:
+     kind: GitRepository
+     name: flux-system
+
+--- HelmRelease selected/selected (kube/apps/selected/app)
++++ HelmRelease selected/selected (kube/apps/selected/app)
+@@ -15,5 +15,5 @@
+         name: flux-system
+         namespace: flux-system
+   values:
+-    greeting: before
++    greeting: after
+` + " \n"
+	assert.Diff(t, result.stdout, want)
+	var discoveries, summaries, renders int
+	for line := range strings.Lines(result.stderr) {
+		switch {
+		case strings.Contains(line, "discovery: loaded objects") && !strings.Contains(line, " count=0 "):
+			discoveries++
+			// Each side reads the four declarations once through its checkout mount.
+			if !strings.Contains(line, " count=4 rounds=1 ") {
+				t.Errorf("unexpected discovery work: %s", line)
+			}
+		case strings.Contains(line, "orchestrator: reconcile complete"):
+			summaries++
+			summary, _, _ := strings.Cut(line, " work=")
+			if !strings.Contains(summary, "helm_releases=1 ") {
+				t.Errorf("unexpected release reach: %s", summary)
+			}
+		case strings.Contains(line, "kustomize: build"):
+			if strings.Contains(line, "path=./kube/apps/idle") {
+				t.Errorf("unexpected owner build: %s", line)
+			}
+		case strings.Contains(line, "helm: render"):
+			renders++
+			assert.FatalIf(
+				t,
+				!strings.HasSuffix(
+					strings.TrimSpace(line),
+					"release=HelmRelease.helm.toolkit.fluxcd.io/selected/selected",
+				),
+				"unexpected Helm template: %s",
+				line,
+			)
+		}
+	}
+	assert.Equal(t, discoveries, 2)
+	assert.Equal(t, summaries, 2)
+	assert.Equal(t, renders, 2)
 }

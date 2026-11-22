@@ -55,7 +55,10 @@ spec: {type: Static}
 					gittree.ViewOptions{Mode: gittree.Direct, Current: after})
 				assert.NoError(t, err)
 				st := store.New()
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
+				)
 				l := New(st)
 				t.Cleanup(l.Close)
 				l.SourceRoot = root
@@ -139,7 +142,10 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 							gittree.ViewOptions{Mode: gittree.Direct, Current: files})
 						assert.NoError(t, viewErr)
 						st := store.New()
-						st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+						st.SetArtifact(
+							manifest.BootstrapSourceID,
+							&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
+						)
 						l := New(st)
 						t.Cleanup(l.Close)
 						l.SourceRoot = root
@@ -272,7 +278,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 						assert.NoError(t, viewErr)
 						restored.Store.SetArtifact(
 							manifest.BootstrapSourceID,
-							&store.SourceArtifact{LocalPath: root, FS: view},
+							&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view},
 						)
 						_, loadErr := restored.Load(
 							t.Context(),

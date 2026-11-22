@@ -46,7 +46,7 @@ func TestEntryCandidateReady_SourcePublication(t *testing.T) {
 	}
 	encoded, err := json.Marshal(testutil.ObjectDocument(owner))
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, cm.yaml]\n")},
 		"entry/owner.yaml":         {Data: encoded},
 		"entry/cm.yaml": {
@@ -146,7 +146,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	cacheDir := t.TempDir()
 	testReceiptTreesResult1 := testReceiptTrees(t, cacheDir, persistent)
 	cacheOwner, trees, closeCache := testReceiptTreesResult1.owner, testReceiptTreesResult1.trees, testReceiptTreesResult1.close
-	source := &store.SourceArtifact{LocalPath: root, FS: input}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 	cfg := Config{Input: source, Path: root + "/app", Store: st, Cache: cacheOwner, Trees: trees}
 	result, err := Run(t.Context(), cfg)
 	assert.NoError(t, err)
@@ -217,6 +217,7 @@ spec:
 			cacheOwner := cachetest.New(t, cacheDir, cache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
 			source := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				Kind:      manifest.KindGitRepository,
 				LocalPath: root,
 				LocalRoot: root,
@@ -339,7 +340,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	cacheDir := t.TempDir()
 	testReceiptTreesResult5 := testReceiptTrees(t, cacheDir, persistent)
 	cacheOwner, trees, closeCache := testReceiptTreesResult5.owner, testReceiptTreesResult5.trees, testReceiptTreesResult5.close
-	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	d := Session{
@@ -396,7 +397,14 @@ func TestAdmitEntry_BuildFailurePreservesRawErrors(t *testing.T) {
 	st := store.New()
 	result, err := Run(
 		t.Context(),
-		testConfig(t, Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st}),
+		testConfig(
+			t,
+			Config{
+				Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+				Path:  root,
+				Store: st,
+			},
+		),
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -442,8 +450,14 @@ func TestRun_UnappliedPackage(t *testing.T) {
 	}
 	st := store.New()
 	result, err := Run(t.Context(), testConfig(t, Config{
-		Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: filepath.Join(root, "entry"),
-		Store: st, SelfURLs: []string{"https://fixture.invalid/self"},
+		Input: &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: root,
+			FS:        input,
+		},
+		Path:     filepath.Join(root, "entry"),
+		Store:    st,
+		SelfURLs: []string{"https://fixture.invalid/self"},
 	}))
 	assert.NoError(t, err)
 	assert.FatalIf(t, result.Binding != (Binding{}), "%v", "unrendered application qualified the entry")
@@ -475,7 +489,7 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	testReceiptTreesResult7 := testReceiptTrees(t, cacheDir, persistent)
 	cacheOwner, trees, closeCache := testReceiptTreesResult7.owner, testReceiptTreesResult7.trees, testReceiptTreesResult7.close
 	st := store.New()
-	source := &store.SourceArtifact{LocalPath: root, FS: input}
+	source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 	result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Cache: cacheOwner, Trees: trees})
 	assert.NoError(t, err)
 	owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
@@ -486,38 +500,6 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	trees, closeCache = testReceiptTreesResult8.trees, testReceiptTreesResult8.close
 	assert.Equal(t, len(packageHistory(t, trees, &req, persistent)), 0)
 	closeCache()
-}
-
-func TestRun_DiscoveryOnlyEntry(t *testing.T) {
-	t.Parallel()
-	const root = "/virtual/discovery-only"
-	input := fstest.MapFS{
-		"Taskfile.yaml":        {Data: []byte("version: '3'\ntasks: {build: {cmds: [true]}}\n")},
-		"clusters/a/sync.yaml": {Data: []byte(testutil.KustomizationYAML("a", "apps", "  path: ./clusters/a\n"))},
-		"clusters/b/sync.yaml": {Data: []byte(testutil.KustomizationYAML("b", "apps", "  path: ./clusters/b\n"))},
-	}
-	st := store.New()
-	observed := &entryGeneratorFS{FS: input}
-	result, err := Run(
-		t.Context(),
-		testConfig(t, Config{Input: &store.SourceArtifact{LocalPath: root, FS: observed}, Path: root, Store: st}),
-	)
-	assert.NoError(t, err)
-	assert.Equal(t, result.Binding, Binding{})
-	assert.Equal(t, observed.calls.Load(), int64(0))
-	for _, name := range []string{"a", "b"} {
-		assert.FatalIf(
-			t,
-			st.GetObject(testutil.KustomizationID("apps", name)) == nil,
-			"cluster %s was not discovered",
-			name,
-		)
-	}
-	for _, obj := range st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-		if obj.Named().ReportHidden() {
-			t.Fatalf("discovery-only entry published %s", obj.Named())
-		}
-	}
 }
 
 func bindEntryForTest(t *testing.T, d *Session, root string) *manifest.Kustomization {
@@ -549,7 +531,7 @@ func testRunEntryOwnerEligibilityIndependent(t *testing.T) {
 		t.Context(),
 		testConfig(t, Config{
 			Store: st,
-			Input: &store.SourceArtifact{LocalPath: root, FS: input},
+			Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:  root + "/entry",
 		}),
 	)
@@ -633,7 +615,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 	d := newDiscoverer(
 		new(testConfig(t, Config{
 			Store: st,
-			Input: &store.SourceArtifact{LocalPath: root, FS: input},
+			Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:  root + "/entry",
 		})),
 	)

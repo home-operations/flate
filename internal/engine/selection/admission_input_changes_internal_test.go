@@ -17,7 +17,10 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			changes := detectChanges(t, []string{changed}, []string{changed})
 			facts := &solverFacts{
 				store:   st,
@@ -78,7 +81,10 @@ func TestAdmission_ContentPathsSettleBeforeReach(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			changes := detectChanges(t, []string{"changed/file.yaml"}, []string{"changed/file.yaml"})
 			facts := &solverFacts{store: st, changes: changes}
 			facts.context.Root = root
@@ -134,7 +140,10 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps/owner"}
 			st.AddObject(owner)
 			reader := manifest.FileReader{Reader: owner.Named(), Source: manifest.BootstrapSourceID}

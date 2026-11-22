@@ -50,7 +50,7 @@ func (a *Admission) captureApplication(
 	c.queue = []manifest.NamedResource{support}
 	if owner.owner == (manifest.NamedResource{}) {
 		source := owner.application.Source
-		if artifact := owner.source.artifact; artifact != nil && artifact.InputAlias {
+		if artifact := owner.source.artifact; artifact.WorkingTree() && artifact.Extent == store.ExtentInput {
 			// An input alias already reads the captured repository content.
 			c.seen[source] = true
 		} else {
@@ -66,7 +66,7 @@ func (a *Admission) captureApplication(
 		children = output.Children
 	}
 	request := a.entryRequest
-	request.Source, request.SubPath = a.bootstrapArtifact(), a.entryPath()
+	request.Source, request.SubPath = a.Input(), a.entryPath()
 	evidence, err := q.trees.ApplicationReceipt(ctx, request, kustomize.EntryEvidence{
 		Producer:    producer,
 		Application: owner.document,
@@ -127,7 +127,7 @@ func (c *entryCapture) visit(id manifest.NamedResource) bool {
 		return false
 	}
 	record, _ := q.loader.Index.Lookup(id)
-	if source && !artifact.InputAlias && id != manifest.BootstrapSourceID && record.Path == "" {
+	if source && !artifact.WorkingTree() && record.Path == "" {
 		slog.Debug(
 			"discovery: entry application evidence incomplete",
 			"resource",
@@ -156,9 +156,7 @@ func (c *entryCapture) captureSource(id manifest.NamedResource, artifact *store.
 	if !source || artifact.FS == nil || !artifact.Reads.Valid() {
 		return false
 	}
-	a := c.admission
-	if id != manifest.BootstrapSourceID && !artifact.InputAlias &&
-		artifact.OriginPath(artifact.LocalPath) != a.input.OriginPath(a.input.LocalPath) {
+	if !artifact.WorkingTree() || artifact.Extent != store.ExtentInput {
 		c.inputs = append(c.inputs, kustomize.EntryInput{Resource: id, Artifact: artifact})
 	}
 	return true
@@ -229,7 +227,7 @@ func (c *entryCapture) mapFile(absolute string) (string, bool) {
 	a := c.admission
 	for id := range a.resolvedSources.snapshot() {
 		artifact, _ := c.reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if artifact == nil || !artifact.InputAlias || !safepath.Contains(artifact.LocalPath, absolute) {
+		if !artifact.WorkingTree() || !safepath.Contains(artifact.LocalPath, absolute) {
 			continue
 		}
 		origin := artifact.OriginPath(absolute)
@@ -306,7 +304,9 @@ func (a *Admission) qualifyEntry(
 	}
 	if a.qualification == nil {
 		if a.loader == nil {
+			a.store = st
 			a.loader = loader.New(st)
+			a.loader.SourceProvider = a.Provider
 			a.loader.SourceRoot = a.input.LocalPath
 			a.entryDemand = true
 		}
@@ -315,7 +315,7 @@ func (a *Admission) qualifyEntry(
 			loader:  a.loader,
 			trees:   a.trees,
 			session: session,
-			closed:  a.entryBound.Load() || !a.entryDemand,
+			closed:  !a.entryDemand || a.entryBound.Load() && (session == nil || a.assessment.Valid()),
 		}
 	}
 	if a.entryEvidence != nil {
@@ -443,7 +443,7 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 
 //nolint:nilnil // A directory without a builder supplies no literal entry.
 func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, error) {
-	input := a.bootstrapArtifact().FS
+	input := a.Input().FS
 	if overlay, ok := input.(*inputprojection.Overlay); ok && !a.entryDemand {
 		input = overlay.Authored.FS
 	}
@@ -472,7 +472,8 @@ func (a *Admission) applicationEntry(
 		selected.object.Named(),
 	)
 	if candidate, ok := selected.object.(*manifest.Kustomization); ok {
-		if selected.visibleGeneration || a.reuseEntry(ctx, reads, selected, candidate) {
+		if !reads.Preflight(candidate.Named()).DependencyCycle &&
+			(selected.visibleGeneration || a.reuseEntry(ctx, reads, selected, candidate)) {
 			root = candidate
 		}
 	}

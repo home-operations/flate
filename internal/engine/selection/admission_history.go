@@ -200,8 +200,9 @@ func (c *admissionClosure) resolveHistoricalRecord(owner manifest.NamedResource,
 		for _, root := range roots {
 			base, ok, _ := c.resolveRoot(source, root)
 			if !ok {
-				// Unavailable external content MUST NOT invalidate complete declaration history.
-				if !c.boundSource(source).External || !c.producerPending(source) {
+				// Pending material MUST NOT invalidate complete declaration history.
+				facts := c.boundSource(source)
+				if !c.producerPending(source) || !facts.External && !facts.PendingGeneration {
 					c.replace[owner] = false
 				}
 				base = root

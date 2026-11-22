@@ -89,7 +89,7 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		st := store.New()
-		input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"entry/kustomization.yaml": {Data: []byte("resources: [factory.yaml]\nnamePrefix: built-\n")},
 			"entry/factory.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -146,7 +146,10 @@ spec:
 		assert.Equal(t, st.GetObject(id), nil)
 		assert.Equal(t, st.GetObject(child), nil)
 		assert.Equal(t, l.Index.Records[id].Builder, "")
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+		)
 		l.mountSources()
 		_, retained := l.catalogOccurrence(id)
 		assert.Equal(t, retained, false)
@@ -156,7 +159,10 @@ spec:
 	testutil.WriteFile(t, root, "kustomization.yaml", "namePrefix: pre-\nnameSuffix: -post\nresources: [object.yaml]\n")
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -169,7 +175,10 @@ spec:
 	assert.Equal(t, len(old.projections[0])+len(old.projections[1]), 1)
 	oldProjections := old.projections
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)},
+	)
 	l.mountSources()
 	assert.FatalIf(
 		t,

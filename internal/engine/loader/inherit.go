@@ -395,11 +395,12 @@ func (l *Loader) recordNamespaces(rArg *manifest.DiscoveryRecord, forced string)
 	r := *rArg
 
 	var owners []manifest.NamedResource
-	source := manifest.BootstrapSourceID
+	source := store.CheckoutClaimSource()
 	for i := range r.Productions {
 		production := &r.Productions[i]
 		if production.Source != (manifest.NamedResource{}) {
-			source = production.Source
+			artifact, _ := l.Store.GetArtifact(production.Source, store.ArtifactContent).(*store.SourceArtifact)
+			source = artifact.ClaimSource(production.Source)
 			break
 		}
 	}

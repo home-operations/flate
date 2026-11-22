@@ -90,11 +90,11 @@ func testGetDeclarationIndependenceLifecycleCase(
 		if (*testCaseInput.route) == "included" {
 			st.SetIncluded(raw.Named(), false, false)
 		} else {
-			st.SetPreflight(raw.Named(), "preflight")
+			st.SetPreflight(raw.Named(), PreflightFailure{Message: "preflight"})
 		}
 		st.AddObject(raw)
 	case "readset":
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "source"})
+		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Key: "source"})
 		var reads ReadSet
 		reads.Init(st, owner.Named(), nil)
 		defer reads.Retire()
@@ -169,7 +169,7 @@ func testRecordEmittedIndependencePublicationCase(
 	assert.FatalIf(t, present, "%s", "index manufactured an absent object cell")
 	if (*testCaseInput.route) == "metadata" {
 		st.SetIncluded(id, false, false)
-		st.SetPreflight(id, "preflight")
+		st.SetPreflight(id, PreflightFailure{Message: "preflight"})
 	}
 	var absent ReadSet
 	absent.Init(st, ownerID("absent"), nil)

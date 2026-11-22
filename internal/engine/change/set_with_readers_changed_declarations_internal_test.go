@@ -117,16 +117,16 @@ func TestSet_InputVisibilityAvailability(t *testing.T) {
 			set, err := Detect(
 				t.Context(),
 				&store.SourceArtifact{
-					LocalPath:  "/before/selected",
-					LocalRoot:  "/before",
-					InputAlias: true,
-					FS:         fstest.MapFS{".krmignore": {Data: []byte("before")}},
+					LocalPath: "/before/selected",
+					LocalRoot: "/before",
+					Provider:  store.ProviderAlias,
+					FS:        fstest.MapFS{".krmignore": {Data: []byte("before")}},
 				},
 				&store.SourceArtifact{
-					LocalPath:  "/after/selected",
-					LocalRoot:  "/after",
-					InputAlias: true,
-					FS:         fstest.MapFS{".krmignore": {Data: []byte("after")}},
+					LocalPath: "/after/selected",
+					LocalRoot: "/after",
+					Provider:  store.ProviderAlias,
+					FS:        fstest.MapFS{".krmignore": {Data: []byte("after")}},
 				},
 				DetectConfig{},
 			)
@@ -455,7 +455,10 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n"),
 			}
 		}
-		stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
+		stores[side].SetArtifact(
+			manifest.BootstrapSourceID,
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: files},
+		)
 	}
 	raw, err := Qualify(
 		t.Context(),
@@ -509,7 +512,11 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 	for _, st := range stores {
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"unchanged.txt": {Data: []byte("same")}}},
+			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: t.TempDir(),
+				FS:        fstest.MapFS{"unchanged.txt": {Data: []byte("same")}},
+			},
 		)
 	}
 	replaced, err := Qualify(
@@ -587,11 +594,21 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 		t.Context(),
 		admitTestSource(
 			t,
-			&store.SourceArtifact{LocalPath: "/before/selected", LocalRoot: "/before", InputAlias: true, FS: before},
+			&store.SourceArtifact{
+				LocalPath: "/before/selected",
+				LocalRoot: "/before",
+				Provider:  store.ProviderAlias,
+				FS:        before,
+			},
 		),
 		admitTestSource(
 			t,
-			&store.SourceArtifact{LocalPath: "/after/selected", LocalRoot: "/after", InputAlias: true, FS: after},
+			&store.SourceArtifact{
+				LocalPath: "/after/selected",
+				LocalRoot: "/after",
+				Provider:  store.ProviderAlias,
+				FS:        after,
+			},
 		),
 		DetectConfig{},
 	)

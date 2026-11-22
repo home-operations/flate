@@ -92,7 +92,7 @@ func (c *Client) describeChart(
 		return chartDescription{}, err
 	}
 	selector := chartSelector{Pin: pin, Path: location, Auto: auto}
-	loaded, err := c.describeInput(ctx, input, selector, art.LocalPath)
+	loaded, err := c.describeInput(ctx, input, selector, art.OriginPath(art.LocalPath))
 	if err != nil {
 		return chartDescription{}, err
 	}
@@ -276,7 +276,7 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription, input *Re
 		}
 		label := d.location
 		if d.artifact.LocalPath != "" {
-			label = filepath.Join(d.artifact.LocalPath, filepath.FromSlash(d.location))
+			label = d.artifact.OriginPath(filepath.Join(d.artifact.LocalPath, filepath.FromSlash(d.location)))
 		}
 		return fmt.Errorf("load chart %s: %w", label, err)
 	}

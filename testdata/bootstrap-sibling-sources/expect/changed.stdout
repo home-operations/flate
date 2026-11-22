@@ -1,0 +1,13 @@
+# Cluster: clusters/left
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: left-workload
+  namespace: flux-system
+# Cluster: clusters/right

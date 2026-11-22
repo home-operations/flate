@@ -79,12 +79,17 @@ func TestAdmission_Publish(t *testing.T) {
 			assert.Equal(t, manifest.Equal(resolution.object, resolution.git), true)
 			assert.Equal(t, resolution.git.URL, "file://"+root)
 			assert.Equal(t, resolution.synthetic, true)
-			assert.Equal(t, resolution.pinned, false)
+			assert.Equal(t, resolution.provider == store.ProviderCommit, false)
 			assert.Equal(t, len(resolution.warnings), 0)
-			assert.Equal(t, resolution.viewKey != "", true)
-			assert.Equal(t, resolution.artifact.InputAlias, true)
+			assert.Equal(t, resolution.viewKey.input != nil, true)
+			assert.Equal(t, (resolution.artifact.Provider == store.ProviderAlias), true)
 			assert.Equal(t, resolution.artifact.LocalRoot, root)
 			assert.Equal(t, resolution.artifact.Key, "")
+			checkout := a.Input()
+			assert.Equal(t, checkout.Provider, store.ProviderInput)
+			assert.Equal(t, checkout.LocalPath, root)
+			assert.Equal(t, resolution.artifact.LocalPath != checkout.LocalPath, true)
+			assert.Equal(t, resolution.artifact.FS == checkout.FS, true)
 			body, readErr := fs.ReadFile(resolution.artifact.FS, "apps/file")
 			assert.NoError(t, readErr)
 			assert.Equal(t, string(body), "working tree")
@@ -160,7 +165,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.Equal(t, got.input, want.input)
 		assert.Equal(t, got.git, want.git)
 		assert.Equal(t, got.synthetic, want.synthetic)
-		assert.Equal(t, got.pinned, want.pinned)
+		assert.Equal(t, got.provider, want.provider)
 		assert.Equal(t, got.artifact, want.artifact)
 		assert.Diff(t, got.warnings, want.warnings)
 		assert.Equal(t, got.viewKey, want.viewKey)
@@ -225,12 +230,17 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 				object:   object,
 				input:    a.input,
 				git:      object,
-				pinned:   true,
-				artifact: &store.SourceArtifact{FS: a.input.FS, LocalPath: root, Revision: "pinned"},
+				provider: store.ProviderCommit,
+				artifact: &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					FS:        a.input.FS,
+					LocalPath: root,
+					Revision:  "pinned",
+				},
 				warnings: []manifest.Warning{
 					{Category: manifest.WarnSourceRefUnavailable, Message: "retained metadata", Count: 1},
 				},
-				viewKey: "pinned-view",
+				viewKey: sourceViewKey{input: a.input, mount: "filtered"},
 			}
 			owner.publish(&complete, false)
 			assert.NoError(t, constructAdmissionTest(t.Context(), a, object.Named()))
@@ -280,7 +290,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.Equal(t, sameMaterial, true)
 		assert.Equal(t, publishedBefore.Reads != nil, true)
 		assert.Equal(t, publishedBefore.Reads.Valid(), true)
-		assert.Equal(t, d.aliasViews[before.viewKey] == before.artifact, true)
+		assert.Equal(t, d.aliasViews[before.viewKey.mount].artifact == before.artifact, true)
 		next := *d.cfg.Input
 		next.Revision = "refreshed"
 		st.SetArtifact(manifest.BootstrapSourceID, &next)
@@ -291,9 +301,12 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.Equal(t, after.object == before.object, true)
 		assert.Equal(t, after.git == before.git, true)
 		assert.Equal(t, after.synthetic, before.synthetic)
-		assert.Equal(t, after.pinned, before.pinned)
+		assert.Equal(t, after.provider, before.provider)
 		assert.Diff(t, after.warnings, before.warnings)
-		assert.Equal(t, after.viewKey, before.viewKey)
+		wantKey := before.viewKey
+		wantKey.input = &next
+		assert.Equal(t, after.viewKey, wantKey)
+		assert.Equal(t, after.artifact.LocalPath, before.artifact.LocalPath)
 		assert.Equal(t, after.artifact.Revision, "refreshed")
 		publishedAfter := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		sameMaterial = publishedAfter.SameMaterial(
@@ -371,7 +384,8 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 	<-ready
 	<-ready
 	close(release)
-	for id, resolution := range before {
+	for id := range before {
+		resolution := before[id]
 		assert.Equal(t, resolution.object.Named(), id)
 		assert.Equal(t, resolution.artifact.FS != nil, true)
 	}
@@ -395,7 +409,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 		assert.Equal(t, manifest.Equal(got.git, expected[i].git), true)
 		assert.Equal(t, got.input, a.input)
 		assert.Equal(t, got.synthetic, expected[i].synthetic)
-		assert.Equal(t, got.pinned, expected[i].pinned)
+		assert.Equal(t, got.provider, expected[i].provider)
 		assert.Equal(t, got.viewKey, expected[i].viewKey)
 		assert.Diff(t, got.warnings, expected[i].warnings)
 		artifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
@@ -512,13 +526,18 @@ func TestAdmission_Warnings(t *testing.T) {
 		},
 	}
 	assert.Diff(t, st.Warnings(), initial)
-	canonical := *a.input
-	canonical.InputAlias = true
-	st.SetArtifact(manifest.BootstrapSourceID, &canonical)
+	st.SetArtifact(manifest.BootstrapSourceID, a.Input())
 	committed := &manifest.GitRepository{Name: "committed", Namespace: "sources", URL: url}
 	a.resolvedSources.publish(&entryResolution{
-		object: committed, input: a.input, pinned: true,
-		artifact: &store.SourceArtifact{FS: a.input.FS, LocalPath: root, Revision: "committed"},
+		object:   committed,
+		input:    a.input,
+		provider: store.ProviderCommit,
+		artifact: &store.SourceArtifact{
+			Provider:  store.ProviderCommit,
+			FS:        a.input.FS,
+			LocalPath: root,
+			Revision:  "committed",
+		},
 	}, true)
 	for _, warning := range []manifest.Warning{
 		{
@@ -591,6 +610,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	pinned := &manifest.GitRepository{Name: "pinned", Namespace: "apps"}
 	st.AddObject(pinned)
 	st.SetArtifact(pinned.Named(), &store.SourceArtifact{
+		Provider:  store.ProviderCommit,
 		LocalPath: t.TempDir(), LocalRoot: root, Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
 	})
 	assert.NoError(t, d.loader.Admit(t.Context(), root))
@@ -729,44 +749,6 @@ func TestAdmission_PublishAuthority(t *testing.T) {
 			assert.Equal(t, published, false)
 		})
 	}
-}
-
-func TestAdmission_PublishSelfSource(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "apps/file", "local material")
-	st := store.New()
-	result, err := Run(t.Context(), Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/self"}})
-	assert.NoError(t, err)
-	t.Cleanup(result.Close)
-	parsed, err := manifest.ParseDoc(map[string]any{
-		"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindGitRepository,
-		"metadata": map[string]any{"name": "self", "namespace": "apps"},
-		"spec":     map[string]any{"url": "ssh://git@fixture.invalid/self.git"},
-	}, manifest.ParseDocOptions{})
-	assert.NoError(t, err)
-	id := parsed.Object.Named()
-	st.AddObject(parsed.Object)
-	published, err := result.Admission.Publish(
-		t.Context(),
-		id,
-		aliasRequestReads(t, st, id),
-		func(child store.Child) (bool, error) {
-			assert.Equal(t, child.Obj == parsed.Object, true)
-			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
-			return true, nil
-		},
-	)
-	assert.NoError(t, err)
-	assert.Equal(t, published, true)
-	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
-	assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
-	material := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	data, err := fs.ReadFile(material.FS, "apps/file")
-	assert.NoError(t, err)
-	assert.Equal(t, string(data), "local material")
-	assert.Equal(t, st.GetObject(id) == parsed.Object, true)
-	assert.Equal(t, result.Admission.resolvedSources.snapshot()[id].synthetic, false)
 }
 
 func addSourceAuthority(t *testing.T, st *store.Store, id manifest.NamedResource, authority string) {

@@ -72,7 +72,7 @@ func promotionReadsForTest(tb testing.TB, st *store.Store, options *PromoteOptio
 	tb.Helper()
 	if options.Reads == nil && options.Record.Source == (manifest.NamedResource{}) &&
 		st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) == nil {
-		input := &store.SourceArtifact{LocalPath: tb.TempDir(), FS: fstest.MapFS{}}
+		input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: tb.TempDir(), FS: fstest.MapFS{}}
 		if options.Record.Path != "" {
 			input.LocalPath = filepath.Dir(options.Record.Path)
 			input.FS = os.DirFS(input.LocalPath)

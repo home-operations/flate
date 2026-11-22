@@ -20,30 +20,33 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"parent.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec:\n  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
-					),
-				},
-				"apps/kustomization.yaml": {Data: []byte("resources: [changed.yaml, stable.yaml, vars.yaml]\n")},
-				"apps/changed.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: changed, namespace: apps}\nspec: {path: ./payload}\n",
-					),
-				},
-				"apps/stable.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: stable, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
-					),
-				},
-				"apps/vars.yaml": {
-					Data: []byte(
-						"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: declaration, namespace: apps}\nspec:\n  target: {name: vars}\n  data: [{secretKey: VALUE, remoteRef: {key: fixture}}]\n",
-					),
-				},
-				"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
-			}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"parent.yaml": {
+						Data: []byte(
+							"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec:\n  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
+						),
+					},
+					"apps/kustomization.yaml": {Data: []byte("resources: [changed.yaml, stable.yaml, vars.yaml]\n")},
+					"apps/changed.yaml": {
+						Data: []byte(
+							"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: changed, namespace: apps}\nspec: {path: ./payload}\n",
+						),
+					},
+					"apps/stable.yaml": {
+						Data: []byte(
+							"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: stable, namespace: apps}\nspec:\n  path: ./payload\n  postBuild: {substituteFrom: [{kind: Secret, name: vars}]}\n",
+						),
+					},
+					"apps/vars.yaml": {
+						Data: []byte(
+							"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: declaration, namespace: apps}\nspec:\n  target: {name: vars}\n  data: [{secretKey: VALUE, remoteRef: {key: fixture}}]\n",
+						),
+					},
+					"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
+				}},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: true})
@@ -132,18 +135,21 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"input.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n",
-			),
-		},
-		"unrelated.yaml": {
-			Data: []byte(
-				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"input.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n",
+				),
+			},
+			"unrelated.yaml": {
+				Data: []byte(
+					"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n",
+				),
+			},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 
@@ -220,7 +226,10 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 			),
 		))}
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	if scenario != "unowned only" {
 		l.AdmitDeclarations(
@@ -302,10 +311,8 @@ func assertAdmissionUnrelatedMembership(
 	historyOwners := map[manifest.NamedResource][]manifest.SourceEvidence{
 		producer: {
 			{
-				Source: l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
-					manifest.BootstrapSourceID,
-				),
-				Path: "input.yaml",
+				Source: l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(),
+				Path:   "input.yaml",
 			},
 		},
 	}
@@ -327,30 +334,33 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"provider.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: provider, namespace: apps}\nspec:\n  path: ./provider\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
-			),
-		},
-		"consumer.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./consumer\n  dependsOn: [{name: provider}]\n",
-			),
-		},
-		"settings.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: old}\n",
-			),
-		},
-		"new-settings.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: new-settings, namespace: apps}\ndata: {VALUE: current}\n",
-			),
-		},
-		"provider/kustomization.yaml": {Data: []byte("resources: []\n")},
-		"consumer/kustomization.yaml": {Data: []byte("resources: []\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"provider.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: provider, namespace: apps}\nspec:\n  path: ./provider\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n",
+				),
+			},
+			"consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./consumer\n  dependsOn: [{name: provider}]\n",
+				),
+			},
+			"settings.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: old}\n",
+				),
+			},
+			"new-settings.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: new-settings, namespace: apps}\ndata: {VALUE: current}\n",
+				),
+			},
+			"provider/kustomization.yaml": {Data: []byte("resources: []\n")},
+			"consumer/kustomization.yaml": {Data: []byte("resources: []\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)

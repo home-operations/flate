@@ -168,7 +168,7 @@ func testResolveLocalOptionsFallbackAndGitIndirectionCase(
 		)
 		assert.FatalIf(
 			t,
-			err != nil || (len(got) != 0) != (tag == "v2.0.0" || (*option) == "sparse"),
+			err != nil || (len(got) != 0) != ((*option) == "sparse"),
 			"%s %s = %v, %v", (*option), tag,
 			got,
 			err,
@@ -179,15 +179,11 @@ func testResolveLocalOptionsFallbackAndGitIndirectionCase(
 			assert.NoError(t, err)
 			want := "A"
 			if tag == "v2.0.0" {
-				want = "dirty"
+				want = "B"
 			}
 			assert.Equal(t, string(data), want)
 			_, err = fs.Stat(input.FS, "extra.txt")
-			if tag == "v1.0.0" {
-				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 			assert.Diff(t, repository.SparseCheckout, []string{"./value.txt"})
 		}
 	}

@@ -57,7 +57,7 @@ func TestCompleteDeclarations_Demand(t *testing.T) {
 		t.Run(strconv.FormatBool(indexed), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			before := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			before := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"input.yaml": {
 					Data: []byte(
 						"apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: work}\nspec: {replicas: 1}\n",
@@ -71,7 +71,7 @@ func TestCompleteDeclarations_Demand(t *testing.T) {
 					),
 				},
 			}}
-			after := &store.SourceArtifact{LocalPath: root, FS: input}
+			after := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 			changes, err := change.Detect(t.Context(), before, after, change.DetectConfig{})
 			assert.NoError(t, err)
 			st := store.New()
@@ -142,7 +142,10 @@ func TestCompleteDeclarations_QualifiedWithoutBootstrap(t *testing.T) {
 		}}
 		stores[side] = store.New()
 		stores[side].AddObject(source)
-		stores[side].SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: inputs[side]})
+		stores[side].SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: inputs[side]},
+		)
 	}
 	changes, err := change.Qualify(
 		t.Context(),

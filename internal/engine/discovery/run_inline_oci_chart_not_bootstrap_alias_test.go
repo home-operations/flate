@@ -77,7 +77,7 @@ spec:
 				artifact, ok := st.GetArtifact(ordinary, store.ArtifactContent).(*store.SourceArtifact)
 				assert.FatalIf(
 					t,
-					!ok || !artifact.InputAlias || st.GetObject(ordinary) == nil,
+					!ok || (artifact.Provider != store.ProviderAlias) || st.GetObject(ordinary) == nil,
 					"tree source was not aliased: %+v",
 					artifact,
 				)

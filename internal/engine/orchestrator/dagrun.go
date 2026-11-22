@@ -214,7 +214,7 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		}
 		o.admission.AddApplication(o.store, obj)
 		if err := o.visitNodes(obj, false, sched.OnArrival); err != nil {
-			o.store.SetPreflight(id, err.Error())
+			o.store.SetPreflight(id, store.PreflightFailure{Message: err.Error()})
 			sched.OnArrival(id, true)
 		}
 	}, false)

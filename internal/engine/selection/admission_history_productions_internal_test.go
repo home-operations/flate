@@ -58,6 +58,7 @@ func TestAdmission_HistoryProductionRefresh(t *testing.T) {
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			LocalPath: root,
 			FS: fstest.MapFS{
 				"owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./payload\n"))},

@@ -405,7 +405,7 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 		"initial output was not published",
 	)
 	const cycle = "dependency cycle detected"
-	st.SetPreflight(id, cycle)
+	st.SetPreflight(id, store.PreflightFailure{Message: cycle, DependencyCycle: true})
 	attempts.Store(0)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, d)
 	if info.Status != store.StatusFailed || info.Message != cycle || !latest.Valid() ||
@@ -439,7 +439,7 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 			output,
 		)
 	}
-	st.SetPreflight(id, "")
+	st.SetPreflight(id, store.PreflightFailure{})
 	attempts.Store(0)
 	info = controllertest.DispatchToFixpoint(t.Context(), t, d)
 	if info.Status != store.StatusReady || info.Message != "" || !latest.Valid() || attempts.Load() != 1 ||

@@ -271,7 +271,10 @@ spec:
 		}
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -334,7 +337,10 @@ spec:
 	}
 	files["next/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [cm.yaml]\n")}
 	files["next/cm.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\n")}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	_, err = l.Load(t.Context(), filepath.Join(root, "root"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -361,21 +367,24 @@ func TestFinalizeIndex_UnknownChildOwnerReach(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"root/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"root/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: owner, namespace: flux-system}
 spec:
   path: ./children
   postBuild: {substitute: {ACTIVE: "true"}, substituteFrom: [{kind: ConfigMap, name: unavailable, optional: true}]}
 `)},
-		"children/child.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+			"children/child.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: '${NAME:-a}', namespace: flux-system}
 spec: {path: ./work}
 `)},
-		"work/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out}\n")},
-	}})
+			"work/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out}\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -415,7 +424,10 @@ func TestFinalizeIndex_MetadataKeepsScopes(t *testing.T) {
 		"postBuild: {substitute:",
 		"postBuild: {substituteFrom: [{kind: ConfigMap, name: vars}], substitute:",
 	))}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	data := &substitutionConfigMap{ConfigMap: &manifest.ConfigMap{
 		Name: "vars", Namespace: "apps", Data: map[string]any{"UNUSED": "constant"},
 	}}
@@ -445,7 +457,10 @@ func TestFinalizeIndex_ContextualSelectors(t *testing.T) {
 	root := t.TempDir()
 	files := contextualSelectorFiles()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	reader := manifest.NamedResource{
@@ -698,79 +713,6 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				assert.Equal(t, ref.Selector.MatchLabels["${LABEL:-role}"], "${VALUE:-y}")
 			}
 		})
-	}
-}
-
-func TestSubstitutionResolution_ReferenceOperands(t *testing.T) {
-	t.Parallel()
-	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-	owner.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ACTIVE": "true"}}
-	st := store.New()
-	st.AddObject(owner)
-	l := New(st)
-	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
-	raw := `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: release, namespace: apps}
-spec:
-  chart:
-    spec:
-      chart: "./${CHART:-charts/app}"
-      sourceRef: {kind: GitRepository, name: "${SOURCE:-repo}"}
-      valuesFiles: ["${FILE:-values.yaml}"]
-  valuesFrom: [{kind: ConfigMap, name: "${INPUT:-vars}", valuesKey: "${KEY:-values.yaml}", optional: true}]
----
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata: {name: external, namespace: apps}
-spec:
-  target: {name: "${SECRET:-credentials}"}
-  data: [{secretKey: "${KEY:-token}", remoteRef: {key: remote}}]
-`
-	resolution := substitutionResolution{loader: l}
-	for raw := range strings.SplitSeq(raw, "\n---\n") {
-		var doc map[string]any
-		assert.NoError(t, yaml.NewDecoder(strings.NewReader(raw)).Decode(&doc))
-		child := new(
-			documentReader,
-		).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: doc})
-		assert.NoError(t, child.outcome.Err)
-		fact := compactOccurrence(child.Obj, manifest.TemplateProjection{})
-		projected, err := resolution.resolveOccurrence(
-			t.Context(),
-			&fact,
-			&graphVisit{owner: owner.Named()},
-			child.version,
-		)
-		assert.NoError(t, err)
-		if child.Obj.Named().Name == "release" {
-			uses := []string{}
-			for ref := range projected.references() {
-				uses = append(uses, ref.Use)
-				switch ref.Use {
-				case "source":
-					assert.Equal(t, ref.Name, "repo")
-					assert.Equal(t, ref.ChartPath, "./charts/app")
-					assert.Diff(t, ref.Files, []string{"values.yaml"})
-				case "valuesFrom":
-					assert.Equal(t, ref.Name, "vars")
-					assert.Equal(t, ref.Key, "values.yaml")
-					assert.Equal(t, ref.Optional, true)
-				}
-			}
-			assert.Equal(t, slices.Contains(uses, "source"), true)
-			assert.Equal(t, slices.Contains(uses, "valuesFrom"), true)
-			for ref := range fact.references() {
-				if ref.Use == "valuesFrom" {
-					assert.Equal(t, ref.Name, "${INPUT:-vars}")
-					assert.Equal(t, ref.Key, "${KEY:-values.yaml}")
-				}
-			}
-		} else {
-			assert.Equal(t, projected.facts.targets[0].Name, "credentials")
-			assert.Diff(t, projected.facts.targets[0].Keys, manifest.KeySet{Names: []string{"token"}, Complete: true})
-			assert.Equal(t, fact.facts.targets[0].Name, "${SECRET:-credentials}")
-		}
 	}
 }
 

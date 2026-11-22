@@ -303,7 +303,13 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, pin == "", false)
-		art := &store.SourceArtifact{FS: input, Key: "untrusted", InputAlias: true, LocalPath: root, Revision: id}
+		art := &store.SourceArtifact{
+			FS:        input,
+			Key:       "untrusted",
+			Provider:  store.ProviderAlias,
+			LocalPath: root,
+			Revision:  id,
+		}
 		st.SetArtifact(hr.ChartSource(), art)
 		first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)

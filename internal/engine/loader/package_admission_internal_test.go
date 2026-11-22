@@ -175,7 +175,10 @@ func packageAdmissionLoaderForTest(t *testing.T, contents map[string]string, com
 		files[name] = &fstest.MapFile{Data: []byte(body)}
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: compact})
@@ -228,11 +231,14 @@ func TestPackages_AliasApplicationOwnership(t *testing.T) {
 		"two/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: apps}\n")},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
 	st.AddObject(source)
 	st.SetArtifact(source.Named(), &store.SourceArtifact{
-		LocalPath: t.TempDir(), LocalRoot: root, InputAlias: true, FS: files,
+		LocalPath: t.TempDir(), LocalRoot: root, Provider: store.ProviderAlias, FS: files,
 	})
 	l := New(st)
 	defer l.Close()
@@ -309,7 +315,10 @@ func TestPackages_AdmissionRetiresWorkingTreeEvidence(t *testing.T) {
 			if tc.native {
 				files["apps/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [phantom.yaml]\n")}
 			}
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			configureSelection(t, l, selection.Request{Changed: tc.compact})
@@ -324,6 +333,7 @@ func TestPackages_AdmissionRetiresWorkingTreeEvidence(t *testing.T) {
 			}
 			pin := filepath.Join(root, ".pin")
 			st.SetArtifact(source.Named(), &store.SourceArtifact{
+				Provider:  store.ProviderCommit,
 				LocalPath: pin, LocalRoot: root, Content: "committed", FS: fstest.MapFS{
 					"apps/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 					"apps/cm.yaml": {
@@ -366,7 +376,11 @@ func TestOccurrenceObject_SourceDeclarations(t *testing.T) {
 			for name := range files {
 				reads[name] = &atomic.Int64{}
 			}
-			input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{FS: files, reads: reads}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				FS:        parsedReadFS{FS: files, reads: reads},
+			}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
@@ -469,13 +483,18 @@ func TestOccurrenceObject_SourceReplacement(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			input := func(side string) *store.SourceArtifact {
-				return &store.SourceArtifact{LocalPath: root, Content: side, FS: fstest.MapFS{
-					"source.yaml": {
-						Data: []byte(
-							"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: 'https://fixture.invalid/" + side + "'}\n",
-						),
+				return &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					Content:   side,
+					FS: fstest.MapFS{
+						"source.yaml": {
+							Data: []byte(
+								"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: 'https://fixture.invalid/" + side + "'}\n",
+							),
+						},
 					},
-				}}
+				}
 			}
 			first, second := input("first"), input("second")
 			st := store.New()
@@ -534,7 +553,10 @@ func TestEntryRoots_DeclarationCoordinates(t *testing.T) {
 			),
 		}
 	}
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)

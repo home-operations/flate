@@ -142,7 +142,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		retained := &manifest.ConfigMap{Name: "retained", Namespace: "apps"}
 		st.AddObject(origin)
 		st.AddObject(retained)
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "source"})
 		var proposal, binding, output ReadSet
 		var storage [2]Input
 		proposal.Init(st, manifest.NamedResource{}, storage[:])
@@ -201,7 +201,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		replay.Init(st, retained.Named(), nil)
 		t.Cleanup(replay.Retire)
 		assert.Equal(t, replay.Matches(&output), true)
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "replacement"})
+		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "replacement"})
 		assert.Equal(t, source.sourceCurrent(), false)
 		assert.Equal(t, binding.Valid(), false)
 		runtime.KeepAlive(&proposal)
@@ -221,7 +221,10 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		binding.Init(st, origin.Named(), nil)
 		t.Cleanup(binding.Close)
 		acquisition.GetObject(credential.Named())
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Reads: &acquisition, Content: "original"})
+		st.SetArtifact(
+			manifest.BootstrapSourceID,
+			&SourceArtifact{Provider: ProviderInput, Reads: &acquisition, Content: "original"},
+		)
 		binding.GetObject(origin.Named())
 		binding.GetArtifact(manifest.BootstrapSourceID, ArtifactContent|ArtifactRevision|ArtifactOrigin)
 		source := binding.input(manifest.BootstrapSourceID)
@@ -246,7 +249,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		)
 		close(replaced)
 		assert.Equal(t, <-observed, false)
-		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "replacement"})
+		st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Content: "replacement"})
 		assert.Equal(t, binding.Valid(), false)
 	})
 }

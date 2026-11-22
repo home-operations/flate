@@ -20,6 +20,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -129,6 +130,14 @@ func TestRenderTrees_MissingPath(t *testing.T) {
 	assert.FatalIf(t, !strings.Contains(err.Error(), "tree path is required"), "missing path diagnostic: %v", err)
 }
 
+func discoveryAdmissionForTest(t *testing.T, st *store.Store, root string) *discovery.Admission {
+	t.Helper()
+	session, err := discovery.Begin(t.Context(), discovery.Config{Store: st, Path: root})
+	assert.NoError(t, err)
+	t.Cleanup(session.Close)
+	return session.Admission()
+}
+
 func TestDetectOrphans(t *testing.T) {
 	t.Parallel()
 	parent := &manifest.Kustomization{
@@ -157,6 +166,7 @@ func TestDetectOrphans(t *testing.T) {
 			root.Named():         "kubernetes/standalone/ks.yaml",
 		}),
 	}
+	o.admission = discoveryAdmissionForTest(t, o.store, t.TempDir())
 	for _, ks := range []*manifest.Kustomization{parent, orphan, emittedChild, root} {
 		o.store.AddObject(ks)
 	}
@@ -213,6 +223,17 @@ func TestDetectOrphans(t *testing.T) {
 		}
 		assert.Diff(t, o.detectOrphans(failed, o.reportingIndex()), orphans)
 	}
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "flux-system"}
+	o.store.AddObject(producer)
+	generatedID := generated.EffectiveSourceID()
+	assert.Equal(t, o.store.DeleteObject(generatedID), true)
+	o.index.Records[generatedID] = manifest.DiscoveryRecord{
+		Productions: []manifest.Production{{Owner: producer.Named(), Source: manifest.BootstrapSourceID}},
+	}
+	assert.Diff(t, o.detectOrphans(failed, o.reportingIndex()), map[manifest.NamedResource]string{
+		orphan.Named(): "TIMEZONE undefined",
+		root.Named():   "broken",
+	})
 }
 
 // TestDetectOrphans_NonReconcilableKindsIgnored — ConfigMaps and
@@ -277,6 +298,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 			child.Named():  "kubernetes/apps/media/plex/ks.yaml",
 		}),
 	}
+	o.admission = discoveryAdmissionForTest(t, o.store, t.TempDir())
 	o.store.AddObject(parent)
 	o.store.AddObject(child)
 

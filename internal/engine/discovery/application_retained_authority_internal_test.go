@@ -31,7 +31,7 @@ func TestBindEntry_AuthoritativeReplacement(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			files := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
-			input := &store.SourceArtifact{LocalPath: root, FS: files}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 			st := store.New()
 			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 			st.AddObject(bootstrap)
@@ -121,7 +121,7 @@ func TestReadApplication_GeneratedRootCoverage(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			files := generatedRootCoverageFiles(t, tc.edge, tc.component, tc.ignored)
-			input := &store.SourceArtifact{LocalPath: root, FS: files}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
@@ -216,7 +216,11 @@ func TestBindEntry_IndexOnlyProducer(t *testing.T) {
 	document := retainedApplicationDocument("FluxInstance", ".")
 	encoded, err := json.Marshal(document)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"owner.yaml": {Data: encoded}}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		FS:        fstest.MapFS{"owner.yaml": {Data: encoded}},
+	}
 	st := store.New()
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
@@ -236,7 +240,7 @@ func TestBindEntry_IndexOnlyProducer(t *testing.T) {
 		Namespace: "apps",
 		Name:      "self",
 	}
-	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, InputAlias: true, FS: input.FS})
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, Provider: store.ProviderAlias, FS: input.FS})
 	a := &Admission{input: input, path: root, loader: l, entryDemand: true}
 	selected, binding, err := a.BindEntry(t.Context(), st)
 	defer st.Retire(binding.Reads)
@@ -278,7 +282,7 @@ func testBindEntryIndexOnlyGeneratorPackage(t *testing.T, mode string) {
 	owner := retainedApplicationDocument("FluxInstance", syncPath)
 	document, err := json.Marshal(owner)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"owner.yaml":                    {Data: document},
 		"apps/kustomization.yaml":       {Data: []byte("resources: [media]\n")},
 		"apps/media/kustomization.yaml": {Data: []byte("resources: [generator]\n")},
@@ -302,7 +306,7 @@ func testBindEntryIndexOnlyGeneratorPackage(t *testing.T, mode string) {
 	source := manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "self",
 	}
-	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, InputAlias: true, FS: input.FS})
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, Provider: store.ProviderAlias, FS: input.FS})
 	a := &Admission{input: input, path: filepath.Join(root, entry), loader: l, entryDemand: true}
 	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, entry, manifest.NamedResource{})
 	var recorder manifest.WorkRecorder
@@ -325,7 +329,7 @@ func testBindEntryIndexOnlyGeneratorPackage(t *testing.T, mode string) {
 		case "accepted history":
 			assert.NoError(t, fixture.owner.RecordRender(t.Context(), sourcecache.RenderAcceptance{
 				Owner: key.Named(), Receipt: frame.receipt, Content: frame.content,
-				Source:  input.HistoryIdentity(manifest.BootstrapSourceID),
+				Source:  input.HistoryIdentity(),
 				Sources: []manifest.SourceEvidence{},
 				Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
 			}))
@@ -391,6 +395,7 @@ func TestResolve_UnrelatedApplicationAdmission(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}},
 	}
@@ -399,11 +404,11 @@ func TestResolve_UnrelatedApplicationAdmission(t *testing.T) {
 	application := &manifest.Kustomization{Name: "unrelated", Namespace: "apps", Path: "./leaf"}
 	st.AddObject(source)
 	st.AddObject(application)
-	a := &Admission{store: st, input: input, path: root, remotes: map[string]struct{}{"example.test/self": {}}}
+	a := &Admission{store: st, input: input, path: root, remotes: []string{"https://example.test/self"}}
 	_, artifact, err := a.Resolve(t.Context(), source.Named(), source, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(t, artifact == nil, "bootstrap source did not resolve")
-	assert.Equal(t, artifact.InputAlias, true)
+	assert.Equal(t, (artifact.Provider == store.ProviderAlias), true)
 	st.SetArtifact(source.Named(), artifact)
 	var reads store.ReadSet
 	reads.Init(st, source.Named(), nil)
@@ -430,6 +435,7 @@ func TestBindEntry_TerminalBranchRemainsUnresolved(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS:        fstest.MapFS{"opaque/kustomization.yaml": {Data: []byte("generators: [generator.yaml]\n")}},
 			}
@@ -491,7 +497,7 @@ func TestApplications_RecapturesChangedQuery(t *testing.T) {
 	current := old.Clone()
 	current.Path = "./entry"
 	observed := &rebindingEntryFS{FS: fstest.MapFS{"outside/kustomization.yaml": {Data: []byte("resources: []\n")}}}
-	input := &store.SourceArtifact{LocalPath: root, FS: observed}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: observed}
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
 	st.AddObject(parent)
@@ -557,7 +563,7 @@ func testBindEntryPackageRootOrder(t *testing.T) {
 		t.Run(first+" publishes first", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 				"entry/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}}
 			st := store.New()
@@ -632,6 +638,7 @@ func retainedAcceptedRootOrder(t *testing.T, direct bool, order [2]string) []man
 	t.Helper()
 	root := t.TempDir()
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        fstest.MapFS{"elsewhere/kustomization.yaml": {Data: []byte("generators: [opaque.yaml]\n")}},
 	}
@@ -695,7 +702,11 @@ func testCurrentDeclarationPrecedesEvidence(t *testing.T, kind string, historyFi
 	document := retainedApplicationDocument(kind, ".")
 	encoded, err := json.Marshal(document)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"owner.yaml": {Data: encoded}}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		FS:        fstest.MapFS{"owner.yaml": {Data: encoded}},
+	}
 	st := store.New()
 	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 	st.AddObject(bootstrap)
@@ -706,7 +717,7 @@ func testCurrentDeclarationPrecedesEvidence(t *testing.T, kind string, historyFi
 		Namespace: "apps",
 		Name:      "self",
 	}
-	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, InputAlias: true, FS: input.FS})
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, Provider: store.ProviderAlias, FS: input.FS})
 	l := loader.New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -763,7 +774,7 @@ func testCurrentDeclarationPrecedesEvidence(t *testing.T, kind string, historyFi
 func TestBindEntry_PackageOperandTerminalFailure(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"kustomization.yaml": {Data: []byte("resources: []\n")},
 	}}
 	st := store.New()

@@ -83,7 +83,7 @@ func TestAdvance_ProducerDemandRejectsChangedAuthority(t *testing.T) {
 			replacement := owner.Clone()
 			replacement.Path = "replaced"
 			observed := &rebindingEntryFS{FS: os.DirFS(root)}
-			input := &store.SourceArtifact{LocalPath: root, FS: observed}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: observed}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			st.AddObject(owner)
 			var guard store.ReadSet

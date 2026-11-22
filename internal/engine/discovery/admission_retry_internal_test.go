@@ -53,7 +53,7 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: [marker.yaml]\n")},
 		"entry/marker.yaml": {
 			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker, namespace: apps}\n"),
@@ -65,8 +65,6 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 			),
 		},
 	}}
-	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
-	st.AddObject(bootstrap)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	l := loader.New(st)
 	l.SourceRoot = root
@@ -126,7 +124,7 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 	for _, entry := range []*manifest.EntryApplication{beforeReceipt, afterReceipt} {
 		owner := manifest.NewEntryKustomization(entry.Source, entry.Path, manifest.NamedResource{}).Named()
 		request.HistoryOwners[owner] = []manifest.SourceEvidence{
-			{Source: input.HistoryIdentity(manifest.BootstrapSourceID)},
+			{Source: input.HistoryIdentity()},
 		}
 	}
 	initial, err := l.Options.Session.Prepare(t.Context(), request)
@@ -244,7 +242,7 @@ func TestAdvance_InitiallyPresentApplicationDoesNotRefresh(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"entry/kustomization.yaml": {Data: []byte("resources: []\n")},
 		"marker.yaml":              {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker}\n")},
 	}}
@@ -279,7 +277,7 @@ func TestAdvance_EmptyRootHistory(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "payload"}
 			st.AddObject(owner)
@@ -295,7 +293,7 @@ func TestAdvance_EmptyRootHistory(t *testing.T) {
 			reads.RequireData(owner.Named())
 			var calls int
 			d.request.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
-				owner.Named(): {{Source: input.HistoryIdentity(manifest.BootstrapSourceID)}},
+				owner.Named(): {{Source: input.HistoryIdentity()}},
 			}
 			if available {
 				d.request.ReadHistory = func(_ context.Context, demand *selection.Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
@@ -342,7 +340,7 @@ func TestQualification_EmptyRootHistory(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "payload"}
 			st.AddObject(owner)
@@ -355,7 +353,7 @@ func TestQualification_EmptyRootHistory(t *testing.T) {
 			request := selection.PrepareRequest{
 				Missing: l.Options.Missing,
 				HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{
-					owner.Named(): {{Source: input.HistoryIdentity(manifest.BootstrapSourceID)}},
+					owner.Named(): {{Source: input.HistoryIdentity()}},
 				},
 			}
 			if construction {
@@ -401,19 +399,24 @@ func TestAdmit_AcceptedChildCiphertextSurvivesPublication(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-				"owner.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {interval: 1m, path: ./local, sourceRef: {kind: GitRepository, name: cluster}}\n",
-					),
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				LocalRoot: root,
+				FS: fstest.MapFS{
+					"owner.yaml": {
+						Data: []byte(
+							"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {interval: 1m, path: ./local, sourceRef: {kind: GitRepository, name: cluster}}\n",
+						),
+					},
+					"local/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
+					"local/secret.yaml": {
+						Data: []byte(
+							"apiVersion: v1\nkind: Secret\nmetadata: {name: input, namespace: apps}\nstringData: {identity: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n",
+						),
+					},
 				},
-				"local/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
-				"local/secret.yaml": {
-					Data: []byte(
-						"apiVersion: v1\nkind: Secret\nmetadata: {name: input, namespace: apps}\nstringData: {identity: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n",
-					),
-				},
-			}}
+			}
 			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 			st.AddObject(bootstrap)
 			st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -547,21 +550,26 @@ func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
 			}
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system", Path: "payload"}
 			consumer.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: target.Kind, Name: target.Name}
-			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-				"entry/kustomization.yaml":   {Data: []byte("resources: []\n")},
-				"factory/kustomization.yaml": {Data: []byte("resources: [generator.yaml, sibling.yaml]\n")},
-				"factory/generator.yaml": {
-					Data: []byte(
-						"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: flux-system}\nspec:\n  sources:\n  - {alias: git, kind: GitRepository, name: flux-system}\n  artifacts:\n  - name: bundle\n    copy:\n    - {from: '@git/payload/**', to: '@artifact/payload/'}\n",
-					),
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				LocalRoot: root,
+				FS: fstest.MapFS{
+					"entry/kustomization.yaml":   {Data: []byte("resources: []\n")},
+					"factory/kustomization.yaml": {Data: []byte("resources: [generator.yaml, sibling.yaml]\n")},
+					"factory/generator.yaml": {
+						Data: []byte(
+							"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: flux-system}\nspec:\n  sources:\n  - {alias: git, kind: GitRepository, name: flux-system}\n  artifacts:\n  - name: bundle\n    copy:\n    - {from: '@git/payload/**', to: '@artifact/payload/'}\n",
+						),
+					},
+					"factory/sibling.yaml": {
+						Data: []byte(
+							"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: sibling, namespace: flux-system}\nspec: {interval: 1m, path: other, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+						),
+					},
+					"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
 				},
-				"factory/sibling.yaml": {
-					Data: []byte(
-						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: sibling, namespace: flux-system}\nspec: {interval: 1m, path: other, sourceRef: {kind: GitRepository, name: flux-system}}\n",
-					),
-				},
-				"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
-			}}
+			}
 			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
 			st.AddObject(bootstrap)
 			st.SetArtifact(manifest.BootstrapSourceID, input)

@@ -48,14 +48,18 @@ func (g *GitRepository) Composition() ArtifactComposition {
 	return result
 }
 
-// Composition MUST remain empty because OCIRepository declares no composition inputs.
-func (*OCIRepository) Composition() ArtifactComposition { return ArtifactComposition{} }
+// Composition returns the OCIRepository's declared exclusions.
+func (o *OCIRepository) Composition() ArtifactComposition {
+	return ArtifactComposition{Ignore: *cmp.Or(o.Ignore, new(string))}
+}
 
 // Composition MUST remain empty because ExternalArtifact declares no composition inputs.
 func (*ExternalArtifact) Composition() ArtifactComposition { return ArtifactComposition{} }
 
-// Composition MUST remain empty because Bucket declares no composition inputs.
-func (*Bucket) Composition() ArtifactComposition { return ArtifactComposition{} }
+// Composition returns the Bucket's declared exclusions.
+func (b *Bucket) Composition() ArtifactComposition {
+	return ArtifactComposition{Ignore: *cmp.Or(b.Ignore, new(string))}
+}
 
 // Composition MUST remain empty because HelmRepository declares no composition inputs.
 func (*HelmRepository) Composition() ArtifactComposition { return ArtifactComposition{} }

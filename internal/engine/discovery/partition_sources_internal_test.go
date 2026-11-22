@@ -59,7 +59,7 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			input := &store.SourceArtifact{LocalPath: root, FS: view}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view}
 			cfg := Config{
 				Cache:     owner,
 				Input:     input,
@@ -171,7 +171,7 @@ func TestClusterRoots_SourceScope(t *testing.T) {
 					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: right-marker}\n"),
 				},
 			}
-			input := &store.SourceArtifact{LocalPath: root, FS: files}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
 			d := newDiscoverer(&Config{
 				Path: root, Input: input, Store: store.New(),
 				SelfURLs: []string{"https://example.invalid/left"}, Selection: selection.Request{Changed: tt.changed},
@@ -253,7 +253,7 @@ func TestClusterRoots_SourceConstruction(t *testing.T) {
 	}
 	st := store.New()
 	d, err := Begin(t.Context(), Config{
-		Path: root, Input: &store.SourceArtifact{LocalPath: root, FS: files}, Store: st,
+		Path: root, Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}, Store: st,
 		SelfURLs: []string{"https://example.invalid/left"},
 	})
 	assert.NoError(t, err)
@@ -330,11 +330,14 @@ func TestLoadExpansions_SourceContent(t *testing.T) {
 				t.Parallel()
 				root, mount := t.TempDir(), t.TempDir()
 				st := store.New()
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-					"apps/b/child.yaml": {
-						Data: []byte(testutil.KustomizationYAML("local-only", "apps", "  path: ./payload\n")),
-					},
-				}})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+						"apps/b/child.yaml": {
+							Data: []byte(testutil.KustomizationYAML("local-only", "apps", "  path: ./payload\n")),
+						},
+					}},
+				)
 				source := &manifest.OCIRepository{Name: "bundle", Namespace: "apps"}
 				st.AddObject(source)
 				ks := &manifest.Kustomization{

@@ -96,7 +96,7 @@ func testAdmittedCredentials(t *testing.T, endpoint, kind string, tc *admittedCr
 	var reads store.ReadSet
 	reads.Init(st, obj.Named(), nil)
 	defer reads.Retire()
-	admitted := &store.SourceArtifact{InputAlias: true, FS: fstest.MapFS{}}
+	admitted := &store.SourceArtifact{Provider: store.ProviderAlias, FS: fstest.MapFS{}}
 	got, err := fetchtest.Fetch(t.Context(), fetcher.Fetch, obj, &reads, &sourcecache.Policy{}, admitted)
 	assert.Equal(t, err != nil, tc.wantError)
 	assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
@@ -161,7 +161,7 @@ func TestFetcher_AdmittedLocalGitUnderRestriction(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, repo.Named(), nil)
 	defer reads.Retire()
-	admitted := &store.SourceArtifact{InputAlias: true, FS: fstest.MapFS{}}
+	admitted := &store.SourceArtifact{Provider: store.ProviderAlias, FS: fstest.MapFS{}}
 	f := &git.Fetcher{RestrictSchemes: true}
 	got, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, &reads, &sourcecache.Policy{}, admitted)
 	assert.NoError(t, err)
@@ -259,7 +259,7 @@ func TestFetcher_PreparedLocalContent(t *testing.T) {
 			assert.Equal(t, len(prepared.Inputs), 0)
 			assert.Equal(t, prepared.LocalUnavailable, (*source.MissingSecretError)(nil))
 			cancel()
-			local := &store.SourceArtifact{InputAlias: true, FS: fstest.MapFS{}}
+			local := &store.SourceArtifact{Provider: store.ProviderAlias, FS: fstest.MapFS{}}
 			artifact, err := prepared.Fetch(t.Context(), local)
 			assert.NoError(t, err)
 			assert.Equal(t, artifact, local)

@@ -266,9 +266,13 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
-				ID:    manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
-				Path:  root,
-				Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}},
+				ID:   manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+				Path: root,
+				Input: &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					Warnings:  []manifest.Warning{warning},
+				},
 			},
 		},
 		Config{Concurrency: 2},

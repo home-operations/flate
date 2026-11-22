@@ -14,8 +14,9 @@ var errPendingSources = errors.New("discovery: local sources require reconciliat
 // The caller MUST reconcile them before resuming Load, Plan, Advance, or Freeze.
 func (d *Session) PendingSources() []manifest.NamedResource {
 	d.pendingSources = d.pendingSources[:0]
-	for id, resolution := range d.resolvedSources.snapshot() {
-		if resolution.artifact != nil {
+	sources := d.resolvedSources.snapshot()
+	for id := range sources {
+		if sources[id].artifact != nil {
 			_ = d.requireSource(id)
 		}
 	}
@@ -42,14 +43,21 @@ func (d *Session) sourceMaterial(id manifest.NamedResource, selected *store.Sour
 		return nil
 	}
 	if selected == nil {
+		if candidate, known := d.resolvedSources.snapshot()[id]; known && artifact.Provider != candidate.provider {
+			return nil
+		}
 		return artifact
 	}
-	if object := d.cfg.Store.GetObject(id); object != nil && len(object.Composition().Includes) != 0 {
+	if object := d.cfg.Store.GetObject(id); object != nil && len(object.Composition().Includes) != 0 &&
+		artifact.ComposedFrom.SameMaterial(
+			selected,
+			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		) {
 		return artifact
 	}
 	status, _ := d.cfg.Store.GetStatus(id)
 	if status.Status == store.StatusReady &&
-		(artifact.SameMaterial(selected, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) || artifact.Reads == nil && id != manifest.BootstrapSourceID) {
+		artifact.SameMaterial(selected, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 		return artifact
 	}
 	return nil

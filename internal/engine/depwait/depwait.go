@@ -21,7 +21,7 @@ type stateReader interface {
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)
-	Preflight() string
+	Preflight(manifest.NamedResource) store.PreflightFailure
 	UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
 }
 

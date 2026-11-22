@@ -258,7 +258,12 @@ func TestRun_AdmittedScanCoordinates(t *testing.T) {
 		t.Parallel()
 		parent := t.TempDir()
 		root := filepath.Join(parent, "virtual")
-		input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
+		input := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: root,
+			LocalRoot: root,
+			FS:        fstest.MapFS{},
+		}
 		{
 			_, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
 				Input: input, Path: filepath.Join(parent, "outside"), Store: store.New(),
@@ -300,7 +305,12 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		"flux-system",
 		"  path: .\n  sourceRef: {kind: "+kind+", name: missing}\n",
 	)
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}}
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		LocalRoot: root,
+		FS:        fstest.MapFS{"ks.yaml": {Data: []byte(body)}},
+	}
 	source := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      kind,
@@ -350,7 +360,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 			alias, ok = st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			assert.FatalIf(
 				t,
-				!ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias,
+				!ok || alias.LocalRoot != root || alias.LocalPath == "" || alias.Provider != store.ProviderAlias,
 				"source artifact = %+v",
 				alias,
 			)
@@ -360,6 +370,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		{
 			diff := cmp.Diff(
 				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
 					LocalPath: root,
 					LocalRoot: root,
 					FS:        fstest.MapFS{"ks.yaml": {Data: []byte(body)}},

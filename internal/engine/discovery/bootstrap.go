@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -31,18 +30,19 @@ type entrySource interface {
 }
 
 type entryResolution struct {
-	producers  []occurrenceKey
-	object     manifest.BaseManifest
-	input      *store.SourceArtifact
-	git        *manifest.GitRepository
-	synthetic  bool
-	entry      bool
-	projected  bool
-	pinned     bool
-	unfiltered bool
-	artifact   *store.SourceArtifact
-	warnings   []manifest.Warning
-	viewKey    string
+	producers   []occurrenceKey
+	object      manifest.BaseManifest
+	placeholder *manifest.BaseManifest // Synthetic declaration retained until its producer emits.
+	input       *store.SourceArtifact
+	git         *manifest.GitRepository
+	synthetic   bool
+	entry       bool
+	entryScoped bool // A scoped denial is authoritative for the selected declaration.
+	projected   bool
+	provider    store.SourceProvider
+	artifact    *store.SourceArtifact
+	warnings    []manifest.Warning
+	viewKey     sourceViewKey
 }
 
 func (r *entryResolution) merge(next *entryResolution) {
@@ -54,7 +54,10 @@ func (r *entryResolution) merge(next *entryResolution) {
 	}
 	replace := r.object == nil && len(r.producers) == 0
 	if next.object != nil && !next.synthetic {
-		replace = r.object == nil || r.synthetic || r.projected
+		gainsEntry := next.entry && !r.entry
+		gainsScope := next.entryScoped && !r.entryScoped
+		replace = r.object == nil || r.synthetic || r.projected ||
+			r.sameDeclaration(next) && (gainsEntry || gainsScope)
 	}
 	if replace {
 		*r = *next
@@ -66,26 +69,19 @@ func (r *entryResolution) reusesSynthetic(candidate *entryResolution) bool {
 	return r.synthetic && candidate.synthetic && r.input == candidate.input && r.artifact != nil
 }
 
-func (r *entryResolution) usesUnfilteredInput(input, observed *store.SourceArtifact) bool {
-	if r.pinned ||
-		!observed.SameMaterial(r.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
+func (r *entryResolution) ownsDeclaration(object manifest.BaseManifest) bool {
+	if object == nil {
 		return false
 	}
-	if r.artifact == input {
-		return true
-	}
-	return r.input == input && observed.InputAlias && r.unfiltered
-}
-
-func (r *entryResolution) ownsDeclaration(object manifest.BaseManifest) bool {
-	return r.synthetic && object == r.object
+	return r.synthetic && object == r.object || r.placeholder != nil && object == *r.placeholder
 }
 
 type entrySourcePublisher struct {
-	store   *store.Store
-	root    string
-	mutable map[manifest.NamedResource]entryResolution
-	current atomic.Pointer[map[manifest.NamedResource]entryResolution]
+	bootstrap manifest.BaseManifest
+	store     *store.Store
+	root      string
+	mutable   map[manifest.NamedResource]entryResolution
+	current   atomic.Pointer[map[manifest.NamedResource]entryResolution]
 }
 
 func (p *entrySourcePublisher) snapshot() map[manifest.NamedResource]entryResolution {
@@ -176,6 +172,11 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 	if admitted.FS == nil || admitted.LocalPath == "" {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "bootstrap source input is unavailable")
 	}
+	if admitted.Provider != store.ProviderInput {
+		captured := *admitted
+		captured.Provider = store.ProviderInput
+		admitted = &captured
+	}
 	if d.cfg.Path == "" {
 		d.cfg.Path = admitted.LocalPath
 	} else {
@@ -185,13 +186,11 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 		}
 		d.cfg.Path = scanPath
 	}
-	d.remotes = make(map[string]struct{}, len(urls))
-	for _, raw := range urls {
-		if normalized := normalizeGitURL(raw); normalized != "" {
-			d.remotes[normalized] = struct{}{}
-		}
-	}
+	d.remotes = slices.Clone(urls)
 	d.cfg.Input = admitted
+	if d.loader != nil {
+		d.loader.Options.ConfiguredInput = admitted
+	}
 	return admitted, nil
 }
 
@@ -206,6 +205,9 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	}
 	admission := d.admission()
 	admission.input = bootstrap
+	if d.loader != nil {
+		d.loader.Options.ConfiguredInput = bootstrap
+	}
 	published := 0
 	var sourceIDs [8]manifest.NamedResource
 	ids := sourceIDs[:0]
@@ -252,16 +254,18 @@ func (d *Session) entrySourceObject(
 				store.Declaration{Obj: group.object, Doc: group.document},
 			)
 			return d.cfg.Store.GetObject(id)
-		} else if previous := d.resolvedSources.snapshot()[id]; !previous.ownsDeclaration(d.cfg.Store.GetObject(id)) {
+		}
+		object := d.cfg.Store.GetObject(id)
+		if previous := d.resolvedSources.snapshot()[id]; object != d.resolvedSources.bootstrap &&
+			!previous.ownsDeclaration(object) {
 			d.cfg.Store.DeleteObject(id)
 		}
 		return group.object
 	}
 	restricted := d.loader != nil && !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
 	obj := d.cfg.Store.GetObject(id)
-	if previous, seen := d.resolvedSources.snapshot()[id]; seen && previous.synthetic &&
-		obj == previous.object &&
-		group.object != nil {
+	if previous := d.resolvedSources.snapshot()[id]; group.object != nil && obj != nil &&
+		(obj == d.resolvedSources.bootstrap || previous.ownsDeclaration(obj)) {
 		obj = group.object
 		d.cfg.Store.AddDeclaration(store.Declaration{Obj: obj, Doc: group.document})
 	}
@@ -345,31 +349,30 @@ func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFro
 	// Parent-owned projections MUST wait for the parent emission.
 	projecting := d.finalized && candidate.projected && !projectedFromParent && d.cfg.Store.GetDeclaration(id) == nil
 	d.resolvedSources.publish(candidate, candidate.synthetic || replacing || projecting)
-	if id == manifest.BootstrapSourceID {
+	if candidate.viewKey.mount != "" {
+		if d.entryAdmission.aliasViews == nil {
+			d.entryAdmission.aliasViews = sourceViews{}
+		}
+		d.entryAdmission.aliasViews.remember(candidate.viewKey, candidate.artifact)
+	}
+	if id == manifest.BootstrapSourceID && candidate.artifact.WorkingTree() &&
+		candidate.artifact.LocalPath == candidate.input.LocalPath {
 		d.bindBootstrapArtifact(candidate)
 		return false
 	}
-	if candidate.viewKey != "" {
-		if d.entryAdmission.aliasViews == nil {
-			d.entryAdmission.aliasViews = map[string]*store.SourceArtifact{}
-		}
-		d.entryAdmission.aliasViews[candidate.viewKey] = candidate.artifact
-	}
-	published := !sameMaterial && id != manifest.BootstrapSourceID
+	published := !sameMaterial && candidate.provider != store.ProviderInput
+	d.hasPins = d.hasPins || candidate.provider == store.ProviderCommit
 	if sameMaterial || refresh {
 		return published
 	}
-	if candidate.pinned && !candidate.artifact.InputAlias {
-		d.hasPins = true
-	}
-	if candidate.viewKey == "" {
+	if candidate.viewKey.mount == "" {
 		return published
 	}
 	if d.aliasViews == nil {
-		d.aliasViews = map[string]*store.SourceArtifact{}
+		d.aliasViews = sourceViews{}
 	}
-	if d.aliasViews[candidate.viewKey] == nil {
-		d.aliasViews[candidate.viewKey] = candidate.artifact
+	if d.aliasViews[candidate.viewKey.mount].artifact == nil {
+		d.aliasViews.remember(candidate.viewKey, candidate.artifact)
 	}
 	return published
 }
@@ -400,9 +403,9 @@ type Admission struct {
 	resolvedSources    *entrySourcePublisher
 	input              *store.SourceArtifact
 	path               string
-	remotes            map[string]struct{}
+	remotes            []string
 	// Construction MUST finish all view writes before runtime admission.
-	aliasViews    map[string]*store.SourceArtifact
+	aliasViews    sourceViews
 	entryDemand   bool
 	qualification *entryQualification
 	store         *store.Store
@@ -413,9 +416,10 @@ type Admission struct {
 	session       *Session
 }
 
-func (a *Admission) bootstrapArtifact() *store.SourceArtifact {
+// Input returns the admitted checkout view at its original mount.
+func (a *Admission) Input() *store.SourceArtifact {
 	selected := a.resolvedSources.snapshot()[manifest.BootstrapSourceID]
-	if selected.artifact == nil {
+	if selected.artifact == nil || selected.artifact.LocalPath != a.input.LocalPath {
 		return a.input
 	}
 	if material, ok := a.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok &&
@@ -428,18 +432,9 @@ func (a *Admission) bootstrapArtifact() *store.SourceArtifact {
 }
 
 func (d *Session) admission() *Admission {
-	if d.entryAdmission != nil {
-		d.entryAdmission.entryDemand = d.requiresEntry()
-		if d.entryAdmission.entryDemand {
-			d.entryAdmission.session = d
-		}
-		if q := d.entryAdmission.qualification; q != nil && !d.entryAdmission.entryBound.Load() {
-			q.closed = !d.entryAdmission.entryDemand
-			if d.entryAdmission.entryDemand {
-				q.session = d
-			}
-		}
-		return d.entryAdmission
+	if admission := d.entryAdmission; admission != nil {
+		d.refreshAdmission(admission)
+		return admission
 	}
 	input := d.cfg.Input
 	if input == nil {
@@ -450,7 +445,7 @@ func (d *Session) admission() *Admission {
 		generatorPackages: d.generatorPackages,
 		input:             input,
 		path:              d.cfg.Path,
-		remotes:           maps.Clone(d.remotes),
+		remotes:           d.remotes,
 		aliasViews:        maps.Clone(d.aliasViews),
 		resolvedSources:   d.resolvedSources,
 		store:             d.cfg.Store,
@@ -472,8 +467,35 @@ func (d *Session) admission() *Admission {
 	d.entryState.closed = !admission.entryDemand
 	admission.qualification = &d.entryState
 	d.entryAdmission = admission
+	if d.loader != nil {
+		d.loader.SourceProvider = admission.Provider
+	}
 	admission.publishEntry(nil, manifest.NamedResource{})
 	return admission
+}
+
+func (d *Session) refreshAdmission(admission *Admission) {
+	admission.resolvedSources = d.resolvedSources
+	admission.entryDemand = d.requiresEntry()
+	if admission.entryDemand {
+		admission.session = d
+	}
+	if q := admission.qualification; q != nil && !admission.entryBound.Load() {
+		q.closed = !admission.entryDemand
+		if admission.entryDemand {
+			q.session = d
+		}
+	}
+}
+
+// CheckoutEntry reports whether the accepted source supplies its own entry declaration.
+func (a *Admission) CheckoutEntry(id manifest.NamedResource) bool {
+	if a == nil {
+		return false
+	}
+	resolution := a.resolvedSources.snapshot()[id]
+	entry := resolution.entry || resolution.projected
+	return resolution.provider == store.ProviderInput || resolution.provider == store.ProviderAlias && entry
 }
 
 // Resolve preserves the accepted classification for a known source.
@@ -496,18 +518,15 @@ func (a *Admission) Resolve(
 		work = reads.WorkScope()
 	}
 	resolved, err := a.resolve(ctx, id, &sourceRequest{object: object, reads: reads, work: work})
-	if resolved.artifact != nil {
-		if reads != nil && id != manifest.BootstrapSourceID {
-			reads.GetArtifact(
-				manifest.BootstrapSourceID,
-				store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
-			)
-		}
-		current, _ := a.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if current.SameMaterial(resolved.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
-			current.Reads.Valid() {
-			resolved.artifact = current
-		}
+	if reads != nil && id != manifest.BootstrapSourceID && resolved.artifact.WorkingTree() {
+		reads.GetArtifact(
+			manifest.BootstrapSourceID,
+			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+		)
+	}
+	current, _ := a.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	if current.Available() && resolved.reusesMaterial(current) {
+		resolved.artifact = current
 	}
 	if resolved.artifact != nil && len(resolved.warnings) != 0 {
 		captured := resolved.artifact.WithReads(resolved.artifact.Reads)
@@ -516,6 +535,13 @@ func (a *Admission) Resolve(
 	}
 
 	return store.Child{Obj: resolved.object}, resolved.artifact, err
+}
+
+func (r *entryResolution) reusesMaterial(current *store.SourceArtifact) bool {
+	if r.artifact == nil {
+		return current.Provider == store.ProviderGenerator
+	}
+	return current.SameMaterial(r.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
 }
 
 // Publish MUST complete acceptance before admitting a source declaration.
@@ -564,155 +590,231 @@ func (a *Admission) resolve(
 	request *sourceRequest,
 ) (entryResolution, error) {
 	candidate := a.classifySource(id, request)
-	if candidate.artifact != nil || !candidate.synthetic && !candidate.entry && candidate.git == nil {
+	if candidate.provider == store.ProviderInput && candidate.artifact == a.input && needsSourcePolicy(a.input) {
+		candidate.artifact = nil
+	}
+	if candidate.artifact != nil || candidate.provider == store.ProviderFetch ||
+		candidate.provider == store.ProviderGenerator || candidate.provider == store.ProviderAbsent {
 		return candidate, nil
 	}
 	bootstrap := candidate.input
-	if candidate.viewKey != "" {
-		artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
-		candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
-		return candidate, err
-	}
 	if candidate.synthetic && candidate.object == nil {
 		candidate.object, _ = id.BindLocal(bootstrap.LocalPath)
-		if behavior, ok := candidate.object.(entrySource); ok {
-			_, candidate.git = behavior.BootstrapAlias(bootstrap.LocalPath)
+		if source, ok := candidate.object.(entrySource); ok {
+			_, candidate.git = source.BootstrapAlias(bootstrap.LocalPath)
 		}
 	}
-	descriptor := candidate.git
-	if id == manifest.BootstrapSourceID || descriptor == nil || candidate.projected {
-		candidate.pinned = false
-		artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
-		candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
-		return candidate, err
-	}
-
-	var location *gitrepo.Location
-	if candidate.pinned {
-		if input, ok := inputprojection.Authored(bootstrap).FS.(*gittree.FS); ok {
-			location = input.Location()
-		}
-	}
-	artifacts, err := git.ResolveLocal(
+	if err := candidate.resolveGit(
 		ctx,
-		location,
-		[]*manifest.GitRepository{descriptor},
-		git.LocalOptions{Revision: bootstrap.Revision, Work: request.work},
-	)
-	if err != nil {
+		id,
+		request.work,
+	); err != nil || candidate.provider == store.ProviderFetch ||
+		candidate.artifact != nil {
 		return candidate, err
 	}
-	if candidate.pinned {
-		artifact := artifacts[id]
-		if artifact == nil {
-			candidate.warnings = []manifest.Warning{
-				{
-					Resource: id,
-					Category: manifest.WarnSourceRefUnavailable,
-					Message:  "declared source ref cannot be satisfied locally; using normal source fetch",
-					Detail: []string{
-						(*manifest.GitRepositoryRef)(descriptor.Reference).String(),
-						"ref unavailable in this tree's repository or checkout options require fetching",
-					},
-				},
-			}
-			return candidate, nil
+	if id == manifest.BootstrapSourceID && candidate.provider == store.ProviderAlias &&
+		candidate.usesFullGitCheckout() {
+		composition := candidate.object.Composition()
+		view := bootstrap
+		// Planned projections MUST retain their alias coordinates until runtime captures the declaration.
+		if request.reads != nil && needsSourcePolicy(bootstrap) && a.resolvedSources.snapshot()[id].input == bootstrap {
+			view = a.Input()
 		}
-		candidate.warnings = artifact.Warnings
-		if artifact.LocalPath != cmp.Or(bootstrap.LocalRoot, bootstrap.LocalPath) {
-			captured := *artifact
-			captured.LocalRoot = bootstrap.LocalPath
-			candidate.artifact = &captured
-			return candidate, nil
+		if view.Available() && gittree.PolicyKey(inputprojection.Authored(view).FS) == gittree.DefaultSourcePolicyKey &&
+			composition.Ignore == "" && len(composition.Includes) == 0 {
+			candidate.provider, candidate.artifact = store.ProviderInput, view
+			return candidate, ctx.Err()
 		}
 	}
-	artifact, key, unfiltered, err := a.entrySourceView(ctx, &candidate)
-	candidate.artifact, candidate.viewKey, candidate.unfiltered = artifact, key, unfiltered
+	artifact, key, err := a.entrySourceView(ctx, &candidate)
+	candidate.artifact, candidate.viewKey = artifact, key
 	return candidate, err
 }
 
-// Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
-//
-//nolint:gocritic // Callers need the view key and readiness decision on their own resolution.
+func (r *entryResolution) usesFullGitCheckout() bool {
+	return r.git != nil && len(r.git.SparseCheckout) == 0 && !r.git.RecurseSubmodules
+}
+
+func needsSourcePolicy(input *store.SourceArtifact) bool {
+	if input == nil {
+		return false
+	}
+	view, native := input.FS.(*gittree.FS)
+	return native && gittree.PolicyKey(view) == ""
+}
+
+func (r *entryResolution) resolveGit(ctx context.Context, id manifest.NamedResource, work manifest.WorkScope) error {
+	descriptor := r.git
+	if descriptor == nil {
+		return nil
+	}
+	ref := (*manifest.GitRepositoryRef)(descriptor.Reference)
+	if err := ref.Validate(); err != nil {
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve local git: %w", err), "")
+	}
+	if r.provider != store.ProviderCommit && !descriptor.RecurseSubmodules {
+		return nil
+	}
+	var location *gitrepo.Location
+	if input, ok := inputprojection.Authored(r.input).FS.(*gittree.FS); ok {
+		location = input.Location()
+	}
+	artifacts, err := git.ResolveLocal(ctx, location, []*manifest.GitRepository{descriptor},
+		git.LocalOptions{Revision: r.input.Revision, Work: work})
+	if err != nil {
+		return err
+	}
+	artifact := artifacts[id]
+	if artifact == nil || artifact.FS == nil {
+		r.provider = store.ProviderFetch
+		r.warnings = []manifest.Warning{{
+			Resource: id,
+			Category: manifest.WarnSourceRefUnavailable,
+			Message:  "declared source ref cannot be satisfied locally; using normal source fetch",
+			Detail: []string{
+				ref.String(),
+				"ref unavailable in this tree's repository or checkout options require fetching",
+			},
+		}}
+		return nil
+	}
+	if r.provider == store.ProviderCommit {
+		captured := *artifact
+		captured.Provider, captured.LocalRoot, captured.Extent = store.ProviderCommit, r.input.LocalPath, store.ExtentFiltered
+		r.artifact, r.warnings = &captured, artifact.Warnings
+	}
+	return nil
+}
+
+type sourceViewKey struct {
+	mount string
+	input *store.SourceArtifact
+	mode  gittree.ViewMode
+}
+
+type sourceView struct {
+	artifact *store.SourceArtifact
+	input    *store.SourceArtifact
+	mode     gittree.ViewMode
+}
+
+type sourceViews map[string]sourceView
+
+func (v sourceViews) remember(key sourceViewKey, artifact *store.SourceArtifact) {
+	v[key.mount] = sourceView{artifact: artifact, input: key.input, mode: key.mode}
+}
+
+func (v sourceView) reusable(input *store.SourceArtifact, mode gittree.ViewMode) *store.SourceArtifact {
+	if v.input == input && v.mode == mode {
+		return v.artifact
+	}
+	return nil
+}
+
 func (a *Admission) entrySourceView(
 	ctx context.Context,
 	candidate *entryResolution,
-) (*store.SourceArtifact, string, bool, error) {
+) (*store.SourceArtifact, sourceViewKey, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
 	id := candidate.object.Named()
-	ignore := ""
+	composition := candidate.object.Composition()
+	ignore := composition.Ignore
 	var sparse []string
 	recurse := false
 	if repo := candidate.git; repo != nil {
-		if repo.Ignore != nil {
-			ignore = *repo.Ignore
-		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
-	if id == manifest.BootstrapSourceID {
-		// The bootstrap MUST retain the admitted checkout's acquisition choices.
-		sparse, recurse = nil, false
-	}
 	mode := gittree.Source
-	if len(candidate.object.Composition().Includes) != 0 {
+	if len(composition.Includes) != 0 {
 		mode, ignore = gittree.Checkout, ""
 	}
-	label, viewKey := gittree.Label(
-		gittree.LabelOptions{Root: repoRoot, Mode: mode, Source: candidate.object.Named(), Content: struct {
-			Root, Origin, Key, Content, Digest string
-			Ignore                             string
-			Sparse                             []string `json:",omitempty"`
-			Recurse                            bool
-		}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}},
-	)
+	provider, otherProvider := store.ProviderAlias, store.ProviderInput
+	if candidate.provider == store.ProviderInput {
+		provider, otherProvider = otherProvider, provider
+	}
+	content := struct {
+		Root, Origin, Key, Content, Digest string
+		Ignore                             string
+		Sparse                             []string `json:",omitempty"`
+		Recurse                            bool
+		Provider                           store.SourceProvider
+	}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse, provider}
+	label, mount := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: mode, Source: id, Content: content})
+	key := sourceViewKey{mount: mount, input: bootstrap, mode: mode}
+	if artifact := a.aliasViews[mount].reusable(bootstrap, mode); artifact != nil {
+		label = a.checkoutMount(candidate, artifact.FS, label)
+		if artifact.LocalPath != label {
+			artifact = artifact.WithReads(artifact.Reads)
+			artifact.LocalPath, artifact.Kind = label, id.Kind
+		}
+		return artifact, key, ctx.Err()
+	}
 	var input fs.FS
 	var identity string
-	var err error
-	if id == manifest.BootstrapSourceID {
-		current := a.resolvedSources.snapshot()[manifest.BootstrapSourceID]
-		if current.input == bootstrap && current.viewKey == viewKey && current.artifact != nil {
-			return current.artifact, viewKey, current.unfiltered, ctx.Err()
-		}
-	}
-	cached := a.aliasViews[viewKey]
-	if cached != nil {
-		input, identity, err = cached.FS, cached.Content, ctx.Err()
+	content.Provider = otherProvider
+	if other := a.aliasViews[manifest.Fingerprint(content)].reusable(bootstrap, mode); other != nil {
+		input, identity = other.FS, other.Content
 	} else {
 		current, observed := a.loader.ProvisionalFS(bootstrap)
-		input, identity, err = gittree.New(
-			ctx,
-			nil,
-			plumbing.ZeroHash,
+		view, fingerprint, err := gittree.New(
+			ctx, nil, plumbing.ZeroHash,
 			gittree.ViewOptions{
-				Mode:            mode,
-				Current:         current,
-				CurrentObserved: observed,
-				CurrentContent:  bootstrap.Content,
-				Ignore:          ignore,
-				Sparse:          sparse,
+				Mode: mode, Current: current, CurrentObserved: observed,
+				CurrentContent: bootstrap.Content, Ignore: ignore, Sparse: sparse,
 			},
 		)
+		if err != nil {
+			return nil, sourceViewKey{}, err
+		}
+		input, identity = view, fingerprint
 	}
-	if err != nil {
-		return nil, "", candidate.unfiltered, err
-	}
-	artifact := bootstrap.WithReads(bootstrap.Reads)
-	if id == manifest.BootstrapSourceID {
+	label = a.checkoutMount(candidate, input, label)
+	var artifact *store.SourceArtifact
+	if label == repoRoot {
 		artifact = bootstrap.WithSourceView(input)
+	} else {
+		artifact = bootstrap.WithReads(bootstrap.Reads)
+		artifact.Key = ""
 	}
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+repoRoot, input
 	artifact.ContentFingerprint = gittree.ContentFingerprint
-	artifact.InputAlias, artifact.Key, artifact.Content = true, "", identity
+	artifact.Provider, artifact.Content = provider, identity
 	artifact.Warnings = nil
-	artifact.LocalPath = label
-	artifact.LocalRoot = repoRoot
-	if id == manifest.BootstrapSourceID {
-		artifact.InputAlias, artifact.Key, artifact.LocalPath = false, bootstrap.Key, bootstrap.LocalPath
+	artifact.LocalPath, artifact.LocalRoot = label, bootstrap.OriginPath(repoRoot)
+	if label == repoRoot && provider == store.ProviderInput {
 		artifact.LocalRoot = bootstrap.LocalRoot
 	}
-	unfiltered := mode == gittree.Source && ignore == "" && len(sparse) == 0 && !recurse
-	return artifact, viewKey, unfiltered, nil
+	_, sourceIgnoreErr := fs.Stat(bootstrap.FS, ".sourceignore")
+	declaredMembership := ignore != "" || len(sparse) != 0 || recurse
+	if mode != gittree.Source || declaredMembership || !errors.Is(sourceIgnoreErr, fs.ErrNotExist) {
+		artifact.Extent = store.ExtentFiltered
+	}
+	return artifact, key, ctx.Err()
+}
+
+func (a *Admission) checkoutMount(candidate *entryResolution, input fs.FS, alias string) string {
+	id := candidate.object.Named()
+	if id != manifest.BootstrapSourceID || candidate.projected {
+		return alias
+	}
+	root := candidate.input.LocalPath
+	// A view must retain the entry and its authored source declaration to replace the checkout mount.
+	if path := a.entryPath(); filepath.IsLocal(path) {
+		entry, err := fs.Stat(input, path)
+		if err != nil || !entry.IsDir() {
+			return alias
+		}
+	}
+	if a.loader != nil {
+		if record, _ := a.loader.Index.Lookup(id); record.File != "" {
+			file, _ := candidate.input.SourcePath(root, record.File)
+			if _, statErr := fs.Stat(input, file); statErr != nil {
+				return alias
+			}
+		}
+	}
+	return root
 }
 
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.
@@ -720,7 +822,8 @@ func (p *entrySourcePublisher) aliasWarning() *manifest.Warning {
 	var names []string
 	for id := range p.snapshot() {
 		artifact, _ := p.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if id != manifest.BootstrapSourceID && artifact != nil && artifact.InputAlias {
+		if id != manifest.BootstrapSourceID && artifact != nil && artifact.Provider == store.ProviderAlias &&
+			artifact.Reads.Valid() {
 			names = append(names, id.String())
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/filtertest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -151,11 +152,14 @@ func testChartDependencyChange(t *testing.T, tc chartDependencyChange) {
 		admitForTest(st, root)
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
 		)
 		source := &manifest.GitRepository{Name: "input", Namespace: "charts"}
 		st.AddObject(source)
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+		st.SetArtifact(
+			source.Named(),
+			&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
+		)
 		l := New(st)
 		l.SourceRoot = root
 		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
@@ -221,6 +225,7 @@ func TestReaderFinalizer_RepositoryProjection(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			l := New(st)
+			l.SourceProvider = filtertest.CheckoutProvider(st, l.SourceProvider)
 			l.Index.Readers = map[string][]manifest.FileReader{}
 			release := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
 			repository := &manifest.HelmRepository{

@@ -149,6 +149,11 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 	if o.session == nil {
 		return nil
 	}
+	changes, err := o.qualifyLocalCommits(ctx)
+	if err != nil {
+		return err
+	}
+	o.cfg.ExternalChanges = changes
 	for {
 		o.loader.Options.Changes = o.cfg.ExternalChanges
 		if err := o.lookupHistory(ctx); err != nil {

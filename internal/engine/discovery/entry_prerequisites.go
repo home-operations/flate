@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -94,19 +93,15 @@ func (e *entryPrerequisites) captureDependency(id manifest.NamedResource) bool {
 	if producer == nil {
 		producer = e.loader.CatalogObject(id)
 	}
-	var application manifest.EntryApplication
-	applies := false
-	if producer != nil {
-		application.Source, application.Path, applies = producer.SourcePath()
-		if application.Source.Name == "" || application.Source.Kind == "" {
-			application.Source = manifest.BootstrapSourceID
+	if application, applies := manifest.ApplicationFor(producer); applies {
+		input, _ := e.reads.GetArtifact(e.source, store.ArtifactContent).(*store.SourceArtifact)
+		source, _ := e.reads.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
+		if origin := source.ApplicationOrigin(
+			application.Path,
+		); origin != "" &&
+			origin == input.ApplicationOrigin(e.owner.Path) {
+			return true
 		}
-	}
-	input, _ := e.reads.GetArtifact(e.source, store.ArtifactContent).(*store.SourceArtifact)
-	if applies && input != nil && loader.AppliesToEntry(
-		e.reads, &application, input, filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(e.owner.Path)),
-	) {
-		return true
 	}
 	if e.exposed(id) {
 		return false

@@ -12,9 +12,73 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestPlan_AggregateBootstrapProbe(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"apps/kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+		"apps/owner.yaml": {Data: []byte(testutil.KustomizationYAML(
+			"app", "flux-system", "  path: ./missing\n  sourceRef: {kind: GitRepository, name: flux-system}\n",
+		))},
+	}
+	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+	assert.NoError(t, err)
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: view}
+	entries, err := Plan(t.Context(), Config{Input: input, Path: root})
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected a prepared aggregate: %v", entries)
+	entry := &entries[0]
+	bootstrap := entry.prepared.sources[manifest.BootstrapSourceID]
+	assert.FatalIf(
+		t, !bootstrap.synthetic || bootstrap.input == entry.Input,
+		"expected a bootstrap binding from planning",
+	)
+
+	replacement := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: root,
+		LocalRoot: root,
+		FS: fstest.MapFS{
+			"source.yaml": {Data: []byte(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: 'https://fixture.invalid/repo', ref: {branch: main}}
+`)},
+		},
+	}
+	for _, tc := range []struct {
+		name      string
+		input     *store.SourceArtifact
+		synthetic bool
+	}{
+		{name: "prepared aggregate", input: entry.Input, synthetic: true},
+		{name: "replacement input", input: replacement},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var work manifest.WorkRecorder
+			session, err := Begin(t.Context(), Config{
+				Store: store.New(), Path: entry.Path, Input: tc.input, Entry: entry, Work: work.Scope(),
+			})
+			assert.NoError(t, err)
+			t.Cleanup(session.Close)
+			var files uint64
+			for _, record := range work.Scope().Snapshot(0) {
+				files += record.Counts.FileEntries
+			}
+			assert.Equal(t, files == 0, tc.synthetic)
+			resolution := session.resolvedSources.snapshot()[manifest.BootstrapSourceID]
+			assert.Equal(t, resolution.synthetic, tc.synthetic)
+			assert.Equal(t, resolution.input, tc.input)
+		})
+	}
+}
 
 func TestPlan_ParsedInputHandoff(t *testing.T) {
 	t.Parallel()
@@ -47,7 +111,7 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 		gittree.ViewOptions{Mode: gittree.Direct, Current: entryReadFS{FS: files, reads: reads}},
 	)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: view}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view}
 	var recorder manifest.WorkRecorder
 	entries, err := Plan(t.Context(), Config{Input: input, Path: root, Work: recorder.Scope()})
 	var counts manifest.WorkCounts
@@ -121,7 +185,7 @@ func testPlanParsedInputHandoffCase1(t *testing.T, entries *[]Entry, input **sto
 				delete(d.aliasViews, key)
 				assert.FatalIf(
 					t,
-					entry.prepared.aliasViews[key] == nil,
+					entry.prepared.aliasViews[key].artifact == nil,
 					"%s",
 					"native admission mutated the prepared alias map",
 				)
@@ -153,7 +217,7 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 		gittree.ViewOptions{Mode: gittree.Direct, Current: files},
 	)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input})
 	assert.NoError(t, err)
 	for _, tc := range []struct {
@@ -181,7 +245,12 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 					}},
 				)
 				assert.NoError(t, err)
-				tc.input = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: other}
+				tc.input = &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					LocalRoot: root,
+					FS:        other,
+				}
 			}
 			st := store.New()
 			result, err := Run(t.Context(), testConfig(t, Config{Input: tc.input, Entry: &entries[0], Store: st}))

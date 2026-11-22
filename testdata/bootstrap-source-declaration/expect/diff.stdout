@@ -1,0 +1,61 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "cluster",
+        "path": "kubernetes/flux"
+      },
+      "apiVersion": "source.toolkit.fluxcd.io/v1",
+      "kind": "GitRepository",
+      "namespace": "flux-system",
+      "name": "theshire",
+      "status": "changed",
+      "old": {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "theshire",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "ignore": "/*\n!/kubernetes\n",
+          "interval": "30m",
+          "ref": {
+            "branch": "main"
+          },
+          "url": "https://mirror.example.invalid/theshire.git"
+        }
+      },
+      "new": {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "theshire",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "ignore": "/*\n!/kubernetes\n",
+          "interval": "31m",
+          "ref": {
+            "branch": "main"
+          },
+          "url": "https://mirror.example.invalid/theshire.git"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

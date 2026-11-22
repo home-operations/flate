@@ -112,7 +112,7 @@ func TestSource_IncludeWaitsForArtifact(t *testing.T) {
 	assert.Equal(t, artifact.Kind, "TestSource")
 	assert.Equal(t, artifact.URL, "original")
 	assert.Equal(t, artifact.Revision, "revision")
-	assert.Equal(t, artifact.InputAlias, false)
+	assert.Equal(t, (artifact.Provider == store.ProviderAlias), false)
 	assert.Equal(t, artifact.Reads.Valid(), true)
 	st.SetArtifact(
 		input.Named(),
@@ -162,7 +162,10 @@ func TestSource_IncludeDeclarationConvergesAfterWithdrawal(t *testing.T) {
 			{Authored: input.Named(), Source: manifest.BootstrapSourceID, File: "input.yaml"},
 		}},
 	}})
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Content: "before", FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, Content: "before", FS: fstest.MapFS{}},
+	)
 	var admission store.ReadSet
 	admission.Init(st, manifest.NamedResource{}, nil)
 	defer admission.Retire()
@@ -178,7 +181,10 @@ func TestSource_IncludeDeclarationConvergesAfterWithdrawal(t *testing.T) {
 	defer combined.Close()
 	before := st.GetArtifact(input.Named(), store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, before.Reads.Valid(), true)
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Content: "after", FS: fstest.MapFS{}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, Content: "after", FS: fstest.MapFS{}},
+	)
 	assert.Equal(t, before.Reads.Valid(), false)
 	assert.Equal(t, st.GetDeclaration(input.Named()), manifest.BaseManifest(nil))
 	dispatcher := &deferredDeclarationDispatcher{controller: c, publish: func() {
@@ -558,7 +564,7 @@ func TestSource_ComposedFamiliesShareBase(t *testing.T) {
 		assert.Equal(t, a.LocalPath == b.LocalPath, false)
 		assert.Equal(t, a.LocalRoot, a.LocalPath)
 		assert.Equal(t, b.LocalRoot, b.LocalPath)
-		assert.Equal(t, a.HistoryIdentity(first.Named()) == b.HistoryIdentity(second.Named()), false)
+		assert.Equal(t, a.HistoryIdentity() == b.HistoryIdentity(), false)
 		for _, read := range []struct {
 			artifact *store.SourceArtifact
 			file     string
@@ -587,7 +593,7 @@ func TestSource_ComposedFamiliesShareBase(t *testing.T) {
 			assert.Equal(t, initial.Key == a.Key, false)
 			assert.Equal(t, initial.LocalPath, a.LocalPath)
 			assert.Equal(t, initial.Reads.Valid(), false)
-			assert.Equal(t, evidence[0].Source, a.HistoryIdentity(first.Named()))
+			assert.Equal(t, evidence[0].Source, a.HistoryIdentity())
 			assert.Diff(t, accepted.SourcePaths(), evidence)
 			assert.Diff(t, st.ChildSourcePaths(producer.Named(), []store.Child{{Obj: child}}, nil), evidence)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -133,7 +134,7 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 
 func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 	t.Parallel()
-	fixture := newSelectedSelfFixture(t)
+	fixture := newSelectedSelfFixture(t, false)
 	fixture.assertBootstrap(t)
 	cfg, root, source := fixture.cfg, fixture.root, fixture.source
 	const url = "git://fixture.invalid/cluster"
@@ -172,6 +173,41 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 				assert.Diff(t, delta.Paths(), []string(nil))
 				t.Logf("paired run=%d side=%d unchanged root and source payload excluded", run, side)
 			}
+		}
+	}
+}
+
+func TestRenderTrees_SelectedSelfNamedBranch(t *testing.T) {
+	t.Parallel()
+	fixture := newSelectedSelfFixture(t, true)
+	cfg := fixture.cfg
+	inputs := [2]*store.SourceArtifact{cfg.BaseInput, cfg.Input}
+	trees := make([]Tree, len(inputs))
+	for side, input := range inputs {
+		trees[side] = Tree{
+			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+			RepoRoot: input.LocalPath, SelfURLs: cfg.SelfURLs,
+			Input: input, BaseInput: inputs[1-side], ExternalChanges: cfg.ExternalChanges,
+		}
+	}
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg.Config)
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(runs) != len(trees), "got %d comparison sides, want %d", len(runs), len(trees))
+	for side, want := range []string{"before", "after"} {
+		input, _ := runs[side].store.GetArtifact(fixture.source, store.ArtifactContent).(*store.SourceArtifact)
+		if input == nil {
+			t.Fatalf("side %d lost its source artifact", side)
+		}
+		assert.Equal(t, input.Provider, store.ProviderAlias)
+		output, err := fs.ReadFile(input.FS, "apps/cm.yaml")
+		assert.NoError(t, err)
+		if !strings.Contains(string(output), "data: {value: "+want+"}\n") {
+			t.Fatalf("side %d lost its preview: %s", side, output)
+		}
+		output, err = json.Marshal(runs[side].Result.Manifests)
+		assert.NoError(t, err)
+		if !strings.Contains(string(output), `"value":"`+want+`"`) {
+			t.Fatalf("side %d lost its rendered preview: %s", side, output)
 		}
 	}
 }
@@ -261,7 +297,7 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 		}
 		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 		input, _ := result.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		if input == nil || !input.InputAlias || input.LocalPath == trees[side].Input.LocalPath {
+		if input == nil || (input.Provider != store.ProviderAlias) || input.LocalPath == trees[side].Input.LocalPath {
 			t.Fatalf("side %d did not exercise a distinct admitted alias: %+v", side, input)
 		}
 	}
@@ -327,7 +363,7 @@ func (f *selectedSelfFixture) assertWork(t *testing.T, rendered Rendered, side i
 	f.assertPreparation(t, preparation, side)
 }
 
-func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
+func newSelectedSelfFixture(t *testing.T, namedBranch bool) selectedSelfFixture {
 	t.Helper()
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
@@ -348,12 +384,18 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 	)
 	var resources strings.Builder
 	resources.WriteString("resources:\n- source.yaml\n")
+	ref := plumbing.NewTagReferenceName("selected")
+	refSpec := "tag: selected"
+	if namedBranch {
+		ref = plumbing.NewBranchReferenceName("selected")
+		refSpec = "name: " + ref.String()
+	}
 	testutil.WriteFile(
 		t,
 		root,
 		"source.yaml",
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n"+
-			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {name: refs/heads/selected}}\n",
+			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {"+refSpec+"}}\n",
 	)
 	for i := range 145 {
 		name := fmt.Sprintf("app-%03d", i)
@@ -400,7 +442,7 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 	)
 	assert.NoError(
 		t,
-		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), headHash)),
+		repo.Storer.SetReference(plumbing.NewHashReference(ref, headHash)),
 	)
 	cache := cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(
@@ -474,32 +516,29 @@ func (f *selectedSelfFixture) assertPreparation(
 		Phase:  manifest.WorkPreparation,
 	}
 	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
-	files, readers := uint64(1478), uint64(2)
-	sourcePrepares, sourceEntries, sourceReaders := uint64(2), uint64(4), uint64(2)
-	rootReaders, rootEntries := uint64(438), uint64(1915)
+	files, rootEntries := uint64(1180), uint64(1915)
 	if side == 1 {
-		files, readers, rootReaders, rootEntries = 590, 1, 728, 1327
-		sourcePrepares, sourceEntries, sourceReaders = 1, 2, 1
+		files, rootEntries = 592, 1327
 	}
 	assertWitnessPreparations(
 		t,
 		preparation,
 		map[manifest.WorkKey]manifest.WorkCounts{
-			{Source: source, Phase: manifest.WorkPreparation}: {FileEntries: sourceEntries, ReaderEdges: sourceReaders},
+			{Source: source, Phase: manifest.WorkPreparation}: {FileEntries: 4, ReaderEdges: 2},
 			{Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
 				Attempts:       3,
 				Completed:      3,
 				FileEntries:    rootEntries,
-				ReaderEdges:    rootReaders,
+				ReaderEdges:    438,
 				OwnerPrepares:  3,
 				RawKeyPrepares: 0,
 			},
 			{Owner: source, Source: source, Phase: manifest.WorkPreparation}: {
-				Attempts:      sourcePrepares,
-				Completed:     sourcePrepares,
+				Attempts:      2,
+				Completed:     2,
 				FileEntries:   files,
-				ReaderEdges:   readers,
-				OwnerPrepares: sourcePrepares,
+				ReaderEdges:   2,
+				OwnerPrepares: 2,
 			},
 		},
 	)

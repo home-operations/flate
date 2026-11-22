@@ -119,6 +119,7 @@ data:
 			},
 			Path:     filepath.Join(dir, "kubernetes", "flux"),
 			RepoRoot: dir,
+			SelfURLs: []string{"https://example.test/cluster.git"},
 			ExternalChanges: detectChanges(
 				t,
 				[]string{"kubernetes/apps/media/plex/app/cm.yaml"},

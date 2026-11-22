@@ -40,7 +40,7 @@ func CrossSourceOptionalInputs(tb testing.TB) [2]string {
 		}
 		selected := GitCommitAll(tb, repo, "selected supplier", options)
 		if err := repo.Storer.SetReference(
-			plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), selected),
+			plumbing.NewHashReference(plumbing.NewTagReferenceName("selected"), selected),
 		); err != nil {
 			tb.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func CrossSourceOptionalInputs(tb testing.TB) [2]string {
 			tb,
 			root,
 			"flux/sources.yaml",
-			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://example.test/cluster.git}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: supplier, namespace: flux-system}\nspec: {url: https://example.test/cluster.git, ref: {name: refs/heads/selected}}\n",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://example.test/cluster.git}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: supplier, namespace: flux-system}\nspec: {url: https://example.test/cluster.git, ref: {tag: selected}}\n",
 		)
 		WriteFile(
 			tb,

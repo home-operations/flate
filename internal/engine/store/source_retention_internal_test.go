@@ -35,7 +35,7 @@ func testRecordEmittedSourceRetainsInvocation(t *testing.T, mode string) {
 	}
 	s.AddObject(source)
 	s.AddObject(owner)
-	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "input"})
+	s.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Provider: ProviderInput, Key: "input"})
 	var supplied ReadSet
 	supplied.Init(s, manifest.BootstrapSourceID, nil)
 	defer supplied.Retire()
@@ -50,7 +50,7 @@ func testRecordEmittedSourceRetainsInvocation(t *testing.T, mode string) {
 	defer alias.Retire()
 	assert.Equal(t, alias.GetDeclaration(source.Named()), manifest.BaseManifest(source))
 	alias.GetArtifact(manifest.BootstrapSourceID, ArtifactContent)
-	artifact := (&SourceArtifact{InputAlias: true, FS: fstest.MapFS{}}).WithReads(&alias)
+	artifact := (&SourceArtifact{Provider: ProviderAlias, FS: fstest.MapFS{}}).WithReads(&alias)
 	s.SetArtifact(source.Named(), artifact)
 	var reads ReadSet
 	reads.Init(s, owner.Named(), nil)

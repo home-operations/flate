@@ -36,7 +36,7 @@ func (i *DiscoveryIndex) CaptureClaims(inputs []ClaimInput) *DiscoveryIndex {
 		record.Declaration, record.Pinned = input.Declaration, input.Pinned
 		index.Records[id] = record
 		for _, claim := range input.claims() {
-			index.Claims[claim.Prefix] = appendUnique(index.Claims[claim.Prefix], id)
+			index.Claims[claim.Prefix] = append(index.Claims[claim.Prefix], id)
 		}
 	}
 	for prefix, owners := range i.Claims {
@@ -46,14 +46,15 @@ func (i *DiscoveryIndex) CaptureClaims(inputs []ClaimInput) *DiscoveryIndex {
 		}
 		for _, owner := range owners {
 			if !replaced[owner] {
-				index.Claims[prefix] = appendUnique(index.Claims[prefix], owner)
+				index.Claims[prefix] = append(index.Claims[prefix], owner)
 			}
 		}
 	}
-	for _, owners := range index.Claims {
+	for prefix, owners := range index.Claims {
 		if !slices.IsSortedFunc(owners, NamedResource.Compare) {
 			slices.SortFunc(owners, NamedResource.Compare)
 		}
+		index.Claims[prefix] = slices.Compact(owners)
 	}
 	return &index
 }

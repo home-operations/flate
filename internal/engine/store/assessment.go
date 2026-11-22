@@ -45,8 +45,18 @@ func (r *ReadSet) ReplacesInvalid() bool {
 // Admitted reports the captured changed-only disposition.
 func (r *ReadSet) Admitted() bool { r.GetObject(r.id); return !r.input(r.id).view.excluded }
 
+// PreflightFailure keeps cycle origin separate from the failure's display text.
+type PreflightFailure struct {
+	Message         string
+	DependencyCycle bool
+}
+
 // Preflight returns the captured structural admission failure.
-func (r *ReadSet) Preflight() string { r.GetObject(r.id); return r.input(r.id).view.preflight }
+func (r *ReadSet) Preflight(id manifest.NamedResource) PreflightFailure {
+	r.GetObject(id)
+	view := &r.input(id).view
+	return PreflightFailure{Message: view.preflight, DependencyCycle: view.preflightCycle}
+}
 
 // RequiredInputs enumerates a completed origin's accepted required footprint.
 func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq2[manifest.NamedResource, bool] {

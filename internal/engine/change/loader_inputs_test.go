@@ -256,12 +256,12 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 		},
 	}
 	s.AddObject(owner)
-	art := &store.SourceArtifact{LocalRoot: root, LocalPath: local, FS: input}
+	art := &store.SourceArtifact{Provider: store.ProviderInput, LocalRoot: root, LocalPath: local, FS: input}
 	if (*testCaseInput) == "alias" {
-		art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
+		art.Provider, art.LocalRoot = store.ProviderAlias, filepath.Join(root, "subtree")
 	}
 	if (*testCaseInput) == "pinned" {
-		art.Key, art.Content = "pinned", "pinned"
+		art.Provider, art.Key, art.Content = store.ProviderCommit, "pinned", "pinned"
 	}
 	s.SetArtifact(source.Named(), art)
 	l := loader.New(s)
@@ -370,7 +370,7 @@ spec:
 		source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 		chartFiles["config/prod.yaml"] = &fstest.MapFile{Data: []byte("invalid: [")}
 		input := &readerForFilter{FS: chartFiles, missing: "config/prod.yaml"}
-		art := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input}
+		art := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input}
 		want := []string{
 			"config/prod.yaml",
 			"config/missing.yaml",
@@ -384,13 +384,14 @@ spec:
 		case "alias-subtree":
 			art.LocalPath = filepath.Join(root, ".artifacts", "alias")
 			art.LocalRoot = filepath.Join(root, "subtree")
-			art.InputAlias, art.Key = true, "derived"
+			art.Provider, art.Key = store.ProviderAlias, "derived"
 			aliased := make([]string, 0, 2*len(want))
 			for _, file := range want {
 				aliased = append(aliased, path.Join(".artifacts/alias", file), path.Join("subtree", file))
 			}
 			want = aliased
 		case "committed":
+			art.Provider = store.ProviderCommit
 			art.LocalPath, art.Key, art.Content = filepath.Join(
 				root,
 				".artifacts",
@@ -400,6 +401,7 @@ spec:
 				want[i] = path.Join(".artifacts/commit", file)
 			}
 		case "external":
+			art.Provider = store.ProviderFetch
 			art.LocalPath, art.LocalRoot = filepath.Join(root, ".artifacts", "remote"), t.TempDir()
 			want = nil
 		case "unavailable":
@@ -511,10 +513,10 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	st.SetArtifact(
 		source.Named(),
 		&store.SourceArtifact{
-			LocalPath:  filepath.Join(root, ".selected"),
-			LocalRoot:  root,
-			InputAlias: true,
-			FS:         input,
+			LocalPath: filepath.Join(root, ".selected"),
+			LocalRoot: root,
+			Provider:  store.ProviderAlias,
+			FS:        input,
 		},
 	)
 	l := loader.New(st)

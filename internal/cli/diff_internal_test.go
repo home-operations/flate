@@ -52,6 +52,7 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
+		writeBaselineGit(t, path, "https://example.test/cluster.git")
 		testutil.WriteFile(
 			t,
 			path,
@@ -179,6 +180,7 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
+			writeBaselineGit(t, path, "https://example.test/cluster.git")
 			testutil.WriteFile(
 				t,
 				path,

@@ -138,28 +138,31 @@ func effectiveProviderHistoryLoader(t *testing.T) (*Loader, manifest.NamedResour
 	t.Helper()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"consumer.yaml": {
-			Data: []byte(
-				"apiVersion: kustomize.toolkit.fluxcd.io/v1\n" +
-					"kind: Kustomization\n" +
-					"metadata: {name: consumer, namespace: apps}\n" +
-					"spec:\n" +
-					" path: ./payload\n" +
-					" postBuild: {substituteFrom: [{kind: ConfigMap, name: wanted}]}\n",
-			),
-		},
-		"producer.yaml": {
-			Data: []byte(
-				"apiVersion: helm.toolkit.fluxcd.io/v2\n" +
-					"kind: HelmRelease\n" +
-					"metadata: {name: producer, namespace: apps}\n" +
-					"spec:\n" +
-					" interval: 1m\n" +
-					" chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"consumer.yaml": {
+				Data: []byte(
+					"apiVersion: kustomize.toolkit.fluxcd.io/v1\n" +
+						"kind: Kustomization\n" +
+						"metadata: {name: consumer, namespace: apps}\n" +
+						"spec:\n" +
+						" path: ./payload\n" +
+						" postBuild: {substituteFrom: [{kind: ConfigMap, name: wanted}]}\n",
+				),
+			},
+			"producer.yaml": {
+				Data: []byte(
+					"apiVersion: helm.toolkit.fluxcd.io/v2\n" +
+						"kind: HelmRelease\n" +
+						"metadata: {name: producer, namespace: apps}\n" +
+						"spec:\n" +
+						" interval: 1m\n" +
+						" chart: {spec: {chart: demo, sourceRef: {kind: GitRepository, name: charts}}}\n",
+				),
+			},
+		}},
+	)
 	input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	files := input.FS.(fstest.MapFS)
 	files["demo/Chart.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 0.1.0\n")}

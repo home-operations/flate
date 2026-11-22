@@ -317,7 +317,7 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 	}
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: inputFS},
 	)
 	l := New(st)
 	supplied := &manifest.Kustomization{Name: "supplied", Namespace: "default", Path: "."}

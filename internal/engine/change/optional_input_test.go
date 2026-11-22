@@ -55,7 +55,7 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 			input := selected[side]
 			assert.FatalIf(
 				t,
-				input == nil || input.FS == nil || input.LocalPath == root || input.InputAlias,
+				input == nil || input.FS == nil || input.LocalPath == root || (input.Provider == store.ProviderAlias),
 				"side %d did not prepare a distinct committed supplier: %+v",
 				side,
 				input,

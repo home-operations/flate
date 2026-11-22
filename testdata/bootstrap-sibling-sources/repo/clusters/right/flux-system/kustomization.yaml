@@ -1,0 +1,7 @@
+resources: [gotk-sync.yaml, charts.yaml]
+patches:
+  - target: {kind: NetworkPolicy, name: allow-egress}
+    patch: |
+      - op: replace
+        path: /spec/ingress
+        value: [{}]

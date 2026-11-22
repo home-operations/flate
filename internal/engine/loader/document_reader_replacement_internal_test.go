@@ -46,7 +46,10 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 					&replacement,
 				)
 			}
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: (*testCaseInput)})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: (*testCaseInput)},
+			)
 			{
 				_, err := loadForTest(t.Context(), t, l, (*testCaseInput))
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "nil replacement read host content: %v", err)
@@ -180,7 +183,7 @@ func replaceSourceView(
 	if fixture.name == "second" {
 		input["child/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: replacement\n")}
 	}
-	artifact := &store.SourceArtifact{LocalPath: (*fixture.root), FS: input}
+	artifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: (*fixture.root), FS: input}
 	if fixture.native {
 		backing := t.TempDir()
 		for file, contents := range input {

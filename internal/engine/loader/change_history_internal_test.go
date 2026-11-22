@@ -141,10 +141,10 @@ func TestRefineHistory_PeerContentSources(t *testing.T) {
 			st.SetArtifact(
 				source.Named(),
 				&store.SourceArtifact{
-					FS:         fstest.MapFS{"apps/red/file": {Data: []byte("value")}},
-					LocalPath:  "/mounted/" + source.Name,
-					LocalRoot:  filepath.Join(root, source.Name),
-					InputAlias: true,
+					FS:        fstest.MapFS{"apps/red/file": {Data: []byte("value")}},
+					LocalPath: "/mounted/" + source.Name,
+					LocalRoot: filepath.Join(root, source.Name),
+					Provider:  store.ProviderAlias,
 				},
 			)
 			history[owners[i]] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
@@ -294,6 +294,7 @@ type historyInput struct {
 func historySourceInput(t *testing.T, mode, root string) historyInput {
 	t.Helper()
 	art := &store.SourceArtifact{
+		Provider: store.ProviderInput,
 		FS: fstest.MapFS{
 			"apps/red/config.yaml": {Data: []byte("changed")},
 			"parts/shared/file":    {Data: []byte("component")},
@@ -303,14 +304,19 @@ func historySourceInput(t *testing.T, mode, root string) historyInput {
 	changed := "apps/red/config.yaml"
 	roots := []string{"apps/red"}
 	if mode == "alias" {
-		art.LocalPath, art.LocalRoot, art.InputAlias = "/mounted/content", filepath.Join(root, "subtree"), true
+		art.LocalPath, art.LocalRoot, art.Provider = "/mounted/content", filepath.Join(
+			root,
+			"subtree",
+		), store.ProviderAlias
 		changed = "subtree/" + changed
 	}
 	if mode == "pinned" || mode == "paired_pinned" {
+		art.Provider = store.ProviderCommit
 		art.LocalPath, art.LocalRoot, art.Key, art.Content = "/mounted/content", root, "commit", "commit"
 		changed = "mounted/content/apps/red/config.yaml"
 	}
 	if mode == "external" {
+		art.Provider = store.ProviderFetch
 		art.LocalPath, art.LocalRoot = "/external", "/external"
 	}
 	if mode == "unavailable" {
@@ -386,7 +392,11 @@ func testContributorReplacement(t *testing.T, mode string) {
 		consumerFile = "apps/consumer.yaml"
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
-			&store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{consumerFile: {Data: []byte("changed")}}},
+			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: "/repo",
+				FS:        fstest.MapFS{consumerFile: {Data: []byte("changed")}},
+			},
 		)
 		record := index.Records[consumer.Named()]
 		record.File = consumerFile
@@ -481,6 +491,7 @@ func testPeerReaderContentSources(t *testing.T) {
 		st.SetArtifact(
 			manifest.BootstrapSourceID,
 			&store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS: fstest.MapFS{
 					".selected/apps/red/removed.yaml": {Data: []byte("unchanged bootstrap collision")},

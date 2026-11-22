@@ -271,6 +271,7 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 		)
 	}
 	payload := &store.SourceArtifact{
+		Provider: store.ProviderGenerator,
 		Kind:     manifest.KindExternalArtifact,
 		FS:       input,
 		Content:  digest,

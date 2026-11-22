@@ -171,7 +171,7 @@ func (l *Loader) comparisonSide() (manifest.TreeSide, bool) {
 		input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 		_, snapshots, _ := l.Options.Changes.ForSource(manifest.BootstrapSourceID)
 		for side, snapshot := range snapshots {
-			if snapshot != nil && snapshot == input {
+			if snapshot != nil && (snapshot == input || snapshot == l.Options.ConfiguredInput) {
 				return manifest.TreeSide(side), true
 			}
 		}

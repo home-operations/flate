@@ -234,8 +234,8 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 ) {
 	t.Helper()
 
-	baseInput := &store.SourceArtifact{LocalPath: filepath.Join(t.TempDir(), "base")}
-	headInput := &store.SourceArtifact{LocalPath: filepath.Join(t.TempDir(), "head")}
+	baseInput := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: filepath.Join(t.TempDir(), "base")}
+	headInput := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: filepath.Join(t.TempDir(), "head")}
 	before := fstest.MapFS{
 		"flux/hr.yaml": {
 			Data: []byte(

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -164,7 +165,7 @@ func rootConstruction(root *NativeRootFacts) bool {
 		return false
 	}
 	if root.Entry {
-		for range root.Index.ClaimOwners(root.Path+"/", manifest.BootstrapSourceID, manifest.NamedResource{}, nil) {
+		for range root.Index.ClaimOwners(root.Path+"/", store.CheckoutClaimSource(), manifest.NamedResource{}, nil) {
 			return false
 		}
 		return true

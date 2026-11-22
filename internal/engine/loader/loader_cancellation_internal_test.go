@@ -110,7 +110,7 @@ func testLoaderRespectsCanceledContextCase(t *testing.T, testCaseInput *string,
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: root, FS: input},
 	)
 	l := New(st)
 	l.SourceRoot = root

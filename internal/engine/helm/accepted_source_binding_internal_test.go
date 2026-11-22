@@ -42,7 +42,9 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 		{"key", func(_ *manifest.HelmRelease, a *store.SourceArtifact) { a.Key = "foreign" }},
 		{"revision", func(_ *manifest.HelmRelease, a *store.SourceArtifact) { a.Revision = "foreign" }},
 		{"digest", func(_ *manifest.HelmRelease, a *store.SourceArtifact) { a.Digest = "foreign" }},
-		{"alias", func(_ *manifest.HelmRelease, a *store.SourceArtifact) { a.InputAlias = !a.InputAlias }},
+		{"alias", func(_ *manifest.HelmRelease, a *store.SourceArtifact) {
+			a.Provider = store.ProviderAlias
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

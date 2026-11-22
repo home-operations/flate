@@ -41,6 +41,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	s.SetArtifact(
 		sourceID,
 		&store.SourceArtifact{
+			Provider:  store.ProviderCommit,
 			LocalRoot: root,
 			LocalPath: artifactDir,
 			Key:       "pinned",
@@ -683,10 +684,10 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		st.SetArtifact(
 			source.Named(),
 			&store.SourceArtifact{
-				LocalRoot:  root,
-				LocalPath:  filepath.Join(t.TempDir(), "alias"),
-				InputAlias: true,
-				FS:         view,
+				LocalRoot: root,
+				LocalPath: filepath.Join(t.TempDir(), "alias"),
+				Provider:  store.ProviderAlias,
+				FS:        view,
 			},
 		)
 		_, err = loadForTest(t.Context(), t, l, filepath.Join(root, "flux"))

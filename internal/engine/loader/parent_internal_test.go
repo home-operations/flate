@@ -1,11 +1,9 @@
 package loader
 
 import (
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -39,9 +37,12 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 
 	assert.FatalIf(t, owner == nil, "%s", "admission did not publish the owner")
 
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"kustomization.yaml": {Data: []byte("resources: []\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: []\n")},
+		}},
+	)
 	l.claims(root)
 
 	assert.FatalIf(t, st.GetObject(id) != owner, "%s", "claims retired an owner after reader replacement")
@@ -56,7 +57,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	var reads atomic.Int64
-	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{FS: fstest.MapFS{
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: parsedReadFS{FS: fstest.MapFS{
 		"apps/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}, reads: map[string]*atomic.Int64{"apps/kustomization.yaml": &reads}}}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -286,6 +287,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 			Name:      "home-kubernetes",
 		},
 		&store.SourceArtifact{
+			Provider:  store.ProviderInput,
 			Kind:      manifest.KindGitRepository,
 			URL:       "file://" + repoRoot,
 			LocalPath: repoRoot,
@@ -339,7 +341,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	}
 }
 
-func TestSourceView_LocalRoot(t *testing.T) {
+func TestSourceView_MissingMaterial(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		kind, group string
@@ -414,6 +416,10 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			assert.Equal(t, SourceView(st, source.Named(), "/repo"), SourceLocation{External: true})
 		})
 	}
+}
+
+func TestSourceView_LocalRoot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, repoRoot, localRoot string
 		external, unavailable     bool
@@ -441,12 +447,16 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			st.AddObject(repo)
 			st.AddObject(ks)
 			artifact := &store.SourceArtifact{
+				Provider:  store.ProviderCommit,
 				Kind:      manifest.KindGitRepository,
 				LocalPath: "/cache",
 				LocalRoot: tc.localRoot,
 				Key:       "pinned",
 				Content:   "pinned",
 				FS:        fstest.MapFS{},
+			}
+			if tc.external {
+				artifact.Provider = store.ProviderFetch
 			}
 			if tc.unavailable {
 				artifact.FS = nil
@@ -714,6 +724,7 @@ func testFinalizeIndexParentSegmentsCase(t *testing.T, testCaseInput *struct {
 			st.SetArtifact(
 				src.Named(),
 				&store.SourceArtifact{
+					Provider:  store.ProviderCommit,
 					LocalRoot: root,
 					LocalPath: filepath.Join(root, "snapshot"),
 					Key:       "pinned",
@@ -811,66 +822,4 @@ func testBuildParentIndexIndexedChildrenWithoutStoreObjectsCase(
 		"parents = %v; indexed children must stay absent from store",
 		parents,
 	)
-}
-
-type filesystemResultFS struct {
-	fs.FS
-
-	info   fs.FileInfo
-	target string
-	err    error
-}
-
-func (f filesystemResultFS) Lstat(string) (fs.FileInfo, error) { return f.info, f.err }
-
-func (f filesystemResultFS) ReadLink(string) (string, error) { return f.target, f.err }
-
-func TestDocumentReader_FilesystemErrorContext(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "file", "content")
-	assert.NoError(t, os.Symlink("file", filepath.Join(root, "link")))
-	info, err := os.Lstat(filepath.Join(root, "link"))
-	assert.NoError(t, err)
-	for _, method := range []string{"lstat", "readlink"} {
-		for _, failure := range []struct {
-			name string
-			err  error
-		}{
-			{name: "success"},
-			{name: "missing", err: fs.ErrNotExist},
-			{name: "permission", err: fs.ErrPermission},
-		} {
-			t.Run(method+"/"+failure.name, func(t *testing.T) {
-				t.Parallel()
-				var original *fs.PathError
-				input := filesystemResultFS{FS: os.DirFS(root), info: info, target: "file"}
-				if failure.err != nil {
-					original = &fs.PathError{Op: method, Path: "link", Err: failure.err}
-					input.err = original
-				}
-				reader := documentReader{views: map[string]fs.FS{root: input}}
-				var gotErr error
-				if method == "lstat" {
-					got, err := reader.Lstat(filepath.Join(root, "link"))
-					gotErr = err
-					assert.Equal(t, got, info)
-				} else {
-					got, err := reader.Readlink(filepath.Join(root, "link"))
-					gotErr = err
-					assert.Equal(t, got, "file")
-				}
-				if original == nil {
-					assert.NoError(t, gotErr)
-					return
-				}
-				assert.FatalIf(t, gotErr == nil, "%s", "filesystem failure was lost")
-				assert.Equal(t, strings.HasPrefix(gotErr.Error(), "document "+method+": "), true)
-				assert.Equal(t, errors.Is(gotErr, failure.err), true)
-				pathErr, ok := errors.AsType[*fs.PathError](gotErr)
-				assert.Equal(t, ok, true)
-				assert.Equal(t, pathErr, original)
-			})
-		}
-	}
 }

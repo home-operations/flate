@@ -44,7 +44,7 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		gittree.ViewOptions{Mode: gittree.Direct, Current: parsedReadFS{FS: files, reads: reads}},
 	)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: view}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view}
 	newLoader := func(inputs *ParsedInputs) *Loader {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -112,6 +112,7 @@ func TestParsedInputs_PhysicalReplayLifetime(t *testing.T) {
 			root := t.TempDir()
 			var directories atomic.Int64
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root,
 				FS: parsedReadFS{directories: &directories, FS: fstest.MapFS{
 					"resource.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n")},
@@ -156,13 +157,16 @@ func TestOccurrences_NestedContextReplay(t *testing.T) {
 			st := store.New()
 			var recorder manifest.WorkRecorder
 			st.SetWorkTree(manifest.TreeID{}, recorder.Scope())
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-				"kustomization.yaml":       {Data: []byte("namespace: '" + namespace + "'\nresources: [child]\n")},
-				"child/kustomization.yaml": {Data: []byte("namespace: inner\nresources: [resource.yaml]\n")},
-				"child/resource.yaml": {
-					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n"),
-				},
-			}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"kustomization.yaml":       {Data: []byte("namespace: '" + namespace + "'\nresources: [child]\n")},
+					"child/kustomization.yaml": {Data: []byte("namespace: inner\nresources: [resource.yaml]\n")},
+					"child/resource.yaml": {
+						Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n"),
+					},
+				}},
+			)
 			l := New(st)
 			l.SourceRoot = root
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -189,13 +193,16 @@ func TestOccurrences_SharedSubtreeCompleteness(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"kustomization.yaml":        {Data: []byte("resources: [left, right]\n")},
-		"left/kustomization.yaml":   {Data: []byte("resources: [../shared]\n")},
-		"right/kustomization.yaml":  {Data: []byte("resources: [../shared]\n")},
-		"shared/kustomization.yaml": {Data: []byte("resources: [resource.yaml]\n")},
-		"shared/resource.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"kustomization.yaml":        {Data: []byte("resources: [left, right]\n")},
+			"left/kustomization.yaml":   {Data: []byte("resources: [../shared]\n")},
+			"right/kustomization.yaml":  {Data: []byte("resources: [../shared]\n")},
+			"shared/kustomization.yaml": {Data: []byte("resources: [resource.yaml]\n")},
+			"shared/resource.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -227,7 +234,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		gittree.ViewOptions{Mode: gittree.Direct, Current: unreadableInputFS{FS: files, denied: "unreadable.yaml"}},
 	)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: view}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view}
 	load := func(input *store.SourceArtifact, inputs *ParsedInputs) *Loader {
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -310,7 +317,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		}},
 	)
 	assert.NoError(t, err)
-	l = load(&store.SourceArtifact{LocalPath: root, FS: other}, inputs)
+	l = load(&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: other}, inputs)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, "secret.yaml")].objects[0].Obj.Named().Name, "authoritative")
 	current := l.documents.cache[filepath.Join(root, "secret.yaml")].declarations
 	prior := parsed.lookup(filepath.Join(root, "secret.yaml")).declarations
@@ -371,6 +378,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	}
 	var directories atomic.Int64
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        parsedReadFS{FS: files, reads: reads, directories: &directories},
 	}
@@ -476,7 +484,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		assert.Equal(t, len(l.Store.Warnings()), 0)
 	}
 
-	other := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+	other := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 		"only.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
 	}}
 	l := newLoader(other, parsed, "other")
@@ -506,7 +514,11 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"objects.yaml": {Data: []byte(body)}}},
+				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					FS:        fstest.MapFS{"objects.yaml": {Data: []byte(body)}},
+				},
 			)
 			l := New(st)
 			l.SourceRoot = root
@@ -590,10 +602,13 @@ func TestParsedInputs_SharesUnchangedDocuments(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"one.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: one}\n")},
-		"two.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: two}\n")},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"one.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: one}\n")},
+			"two.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: two}\n")},
+		}},
+	)
 	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
@@ -672,7 +687,10 @@ func TestParsedInputs_FactSnapshotIsolation(t *testing.T) {
 		"right/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: right}\n")},
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	l := New(st)
 	t.Cleanup(l.Close)
 	l.SourceRoot = root

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/controllers/artifactgenerator"
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/controllers/helmrelease"
@@ -295,9 +296,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		return err
 	}
 
-	if err := o.bindBootstrap(ctx, res.Admission); err != nil {
-		return err
-	}
+	o.bindBootstrap(res.Admission)
 
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
@@ -348,24 +347,24 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 			break
 		}
 	}
-	if err := o.bindBootstrap(ctx, o.admission); err != nil {
-		return err
-	}
+	o.bindBootstrap(o.admission)
 
 	o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
 	return nil
 }
 
-func (o *Orchestrator) bindBootstrap(ctx context.Context, admission *discovery.Admission) error {
-	_, input, err := admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
-	if err != nil {
-		return err
-	}
+func (o *Orchestrator) bindBootstrap(admission *discovery.Admission) {
+	input := admission.Input()
 	if o.cfg.Input != nil && o.cfg.BaseInput == o.cfg.Input {
 		o.cfg.BaseInput = input
 	}
 	o.cfg.Input = input
-	return nil
+}
+
+func (o *Orchestrator) qualifyLocalCommits(ctx context.Context) (*change.Set, error) {
+	var stores [2]*store.Store
+	stores[o.cfg.ID.Side] = o.store
+	return change.Qualify(ctx, o.cfg.ExternalChanges, change.SourcePair{Stores: stores}, o.cfg.work.Scope())
 }
 
 func (o *Orchestrator) completeBootstrap(ctx context.Context) error {

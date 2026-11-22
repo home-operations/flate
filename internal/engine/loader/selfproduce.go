@@ -447,8 +447,10 @@ func (b *selfProduceBuilder) recordApplication(l *Loader, declaration *producerD
 		object = manifest.CatalogObject(declaration.fact.facts.catalog, declaration.identity)
 	}
 	application, valid := manifest.ApplicationFor(object)
-	input, _ := b.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	if !valid || !AppliesToEntry(b.store, &application, input, l.entryPath) {
+	if !valid {
+		return
+	}
+	if !l.rootFactsForApplication(&application).sameOrigin {
 		return
 	}
 	relative, _ := filepath.Rel(l.SourceRoot, l.entryPath)

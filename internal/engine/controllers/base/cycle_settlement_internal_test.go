@@ -77,8 +77,8 @@ func TestExecution_PreflightInvalidatesSettlementRoutes(t *testing.T) {
 			const message = "dependency cycle detected: a → b → a"
 			published := make(chan struct{})
 			tasks.Go(t.Context(), "publish-cycle", func(context.Context) {
-				st.SetPreflight(peer.Named(), message)
-				st.SetPreflight(own.Named(), message)
+				st.SetPreflight(peer.Named(), store.PreflightFailure{Message: message, DependencyCycle: true})
+				st.SetPreflight(own.Named(), store.PreflightFailure{Message: message, DependencyCycle: true})
 				close(published)
 			})
 			<-published

@@ -23,11 +23,21 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st, peer := store.New(), store.New()
-			before := &store.SourceArtifact{LocalPath: root, Content: "before", FS: fstest.MapFS{}}
+			before := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				Content:   "before",
+				FS:        fstest.MapFS{},
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, before)
 			peer.SetArtifact(
 				manifest.BootstrapSourceID,
-				&store.SourceArtifact{LocalPath: root, Content: "peer", FS: fstest.MapFS{}},
+				&store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: root,
+					Content:   "peer",
+					FS:        fstest.MapFS{},
+				},
 			)
 			l := New(st)
 			l.SourceRoot = root
@@ -37,7 +47,12 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, observed.Input, before)
 			assert.Equal(t, observed.InitialKnown, false)
 			assert.Equal(t, observed.Initial, (*store.SourceArtifact)(nil))
-			input := &store.SourceArtifact{LocalPath: root, Content: "initial", FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				Content:   "initial",
+				FS:        fstest.MapFS{},
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			assert.Equal(t, l.SourceFacts(manifest.BootstrapSourceID, nil).Context.SideKnown, false)
@@ -81,7 +96,12 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, unconfigured.ConfiguredInput, (*store.SourceArtifact)(nil))
 			assert.Equal(t, unconfigured.Initial, input)
 			assert.Equal(t, unconfigured.Derived, false)
-			after := &store.SourceArtifact{LocalPath: root, Content: "replacement", FS: fstest.MapFS{}}
+			after := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				Content:   "replacement",
+				FS:        fstest.MapFS{},
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, after)
 			assert.Equal(t, reads.Valid(), false)
 			replacement := l.SourceFacts(manifest.BootstrapSourceID, nil)
@@ -101,7 +121,10 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			input := &store.SourceArtifact{LocalPath: mount, Content: "remote", FS: fstest.MapFS{}}
 			stores[availableSide].SetArtifact(id, input)
 			for _, st := range stores {
-				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+				st.SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+				)
 			}
 			changes, err := change.Qualify(
 				t.Context(),
@@ -113,6 +136,11 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			for side, st := range stores {
 				l := New(st)
 				l.SourceRoot, l.Options.Changes = root, changes
+				l.SourceProvider = func(
+					manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex,
+				) store.SourceProvider {
+					return store.ProviderFetch
+				}
 				l.Index.Records[id] = manifest.DiscoveryRecord{
 					File: "source.yaml", Path: filepath.Join(root, "source.yaml"), Authored: id, Declaration: source,
 				}
@@ -183,7 +211,12 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 		assert.Equal(t, absent.Valid(), true)
 		assert.Equal(t, l.sourceBinding(data) == nil, true)
 		bucket := l.sourceBucket(source).Load()
-		input := &store.SourceArtifact{LocalPath: l.SourceRoot, Content: "chart", FS: fstest.MapFS{}}
+		input := &store.SourceArtifact{
+			Provider:  store.ProviderInput,
+			LocalPath: l.SourceRoot,
+			Content:   "chart",
+			FS:        fstest.MapFS{},
+		}
 		l.Store.SetArtifact(source, input)
 		assert.Equal(t, absent.Valid(), false)
 		var reads [2]store.ReadSet
@@ -217,7 +250,12 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 			l.SourceRoot = t.TempDir()
 			declaration := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 			source := declaration.Named()
-			input := &store.SourceArtifact{LocalPath: l.SourceRoot, Content: "initial", FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: l.SourceRoot,
+				Content:   "initial",
+				FS:        fstest.MapFS{},
+			}
 			l.Store.AddObject(declaration)
 			l.Store.SetArtifact(source, input)
 			l.Index.CompleteSources = map[manifest.NamedResource]bool{source: true}
@@ -279,7 +317,7 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 	var workers sync.WaitGroup
 	for _, id := range ids {
 		workers.Go(func() {
-			input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
 			l.Store.SetArtifact(id, input)
 			facts := l.SourceFacts(id, nil)
 			assert.Equal(t, facts.Input, input)
@@ -295,7 +333,7 @@ func TestSourceFacts_PerSourcePublication(t *testing.T) {
 		assert.Equal(t, l.sourceBinding(id) == previous[i], false)
 	}
 	newSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "runtime", Namespace: "apps"}
-	input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
 	l.Store.SetArtifact(newSource, input)
 	assert.Equal(t, l.SourceFacts(newSource, nil).Input, input)
 	for i := range l.bindings {
@@ -334,7 +372,11 @@ func TestSourceFacts_InitializationRoutes(t *testing.T) {
 			}
 			if tc.changed {
 				peer := store.New()
-				input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+				input := &store.SourceArtifact{
+					Provider:  store.ProviderInput,
+					LocalPath: l.SourceRoot,
+					FS:        fstest.MapFS{},
+				}
 				for _, st := range []*store.Store{l.Store, peer} {
 					st.AddObject(declaration)
 					st.SetArtifact(source, input)
@@ -363,7 +405,7 @@ func TestSourceFacts_InitializationRoutes(t *testing.T) {
 			assert.Equal(t, initial.input, (*store.SourceArtifact)(nil))
 			l.seedSourceAuthority()
 			assert.Equal(t, l.sourceBinding(source) == initial, true)
-			input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
 			l.Store.SetArtifact(source, input)
 			l.seedSourceAuthority()
 			current := l.sourceBinding(source)
@@ -383,7 +425,7 @@ func TestSourceFacts_SweepPublication(t *testing.T) {
 	l.SourceRoot = t.TempDir()
 	declaration := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	source := declaration.Named()
-	input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
 	l.Store.AddObject(declaration)
 	l.Store.SetArtifact(source, input)
 	l.Index.CompleteSources = map[manifest.NamedResource]bool{source: true}
@@ -433,14 +475,20 @@ func TestSourceFacts_ChangedFileCoordinates(t *testing.T) {
 			l.SourceRoot = "/workspace/selected"
 			file := filepath.ToSlash(filepath.Clean(tc.file))
 			evidence := &admissionSource{
-				source: manifest.BootstrapSourceID, delta: detectChanges(t, []string{file}, []string{file}),
-				input:  &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: true},
-				origin: tc.origin, paired: tc.paired,
+				source: manifest.BootstrapSourceID,
+				delta:  detectChanges(t, []string{file}, []string{file}),
+				input: &store.SourceArtifact{
+					LocalPath: "/mounted",
+					LocalRoot: tc.origin,
+					Provider:  store.ProviderAlias,
+				},
+				origin: tc.origin,
+				paired: tc.paired,
 			}
 			if tc.pinned {
-				evidence.input.InputAlias, evidence.input.Content = false, "pinned"
+				evidence.input.Provider, evidence.input.Content = store.ProviderCommit, "pinned"
 			} else if tc.mutable {
-				evidence.input.InputAlias = false
+				evidence.input.Provider = store.ProviderInput
 			}
 			facts := l.sourceViewFacts(evidence, true)
 			assert.Diff(t, facts.Files, []selection.SourceFile{{Path: file, Indexed: tc.indexed}})

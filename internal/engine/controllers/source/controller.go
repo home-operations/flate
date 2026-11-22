@@ -30,6 +30,7 @@ import (
 )
 
 type localSources interface {
+	CheckoutEntry(manifest.NamedResource) bool
 	Resolve(
 		context.Context,
 		manifest.NamedResource,
@@ -212,8 +213,7 @@ func (c *execution) resolve(
 		}
 	}
 	artifact, _ := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-	if artifact != nil && artifact.FS != nil &&
-		(artifact.Reads.Valid() || c.run.Reads.Matches(artifact.Reads)) {
+	if c.reusableSource(artifact, resolved, composed) {
 		c.run.Reads.CarryAdvisories(artifact.Reads)
 		c.run.Disposition = store.AssessmentReused
 		return artifact, nil
@@ -243,6 +243,22 @@ func (c *execution) resolve(
 	}
 	c.SetPendingUnlessReady(id, "fetching")
 	return nil, nil
+}
+
+func (c *execution) reusableSource(artifact, resolved *store.SourceArtifact, composed bool) bool {
+	if artifact == nil || artifact.FS == nil {
+		return false
+	}
+	const reads = store.ArtifactContent | store.ArtifactRevision | store.ArtifactOrigin
+	selected := c.admission == nil
+	if !selected && resolved == nil {
+		selected = artifact.Provider == store.ProviderFetch
+	}
+	if !selected && resolved != nil {
+		selected = artifact.SameMaterial(resolved, reads) ||
+			composed && artifact.ComposedFrom.SameMaterial(resolved, reads)
+	}
+	return selected && (artifact.Reads.Valid() || c.run.Reads.Matches(artifact.Reads))
 }
 
 type fetchCompletion struct {
@@ -293,11 +309,19 @@ func (c *execution) completeFetch(
 }
 
 func (c *execution) publish(artifact *store.SourceArtifact) {
-	for range c.run.Reads.Inputs() {
-		artifact = artifact.WithReads(&c.run.Reads)
-		break
+	// The entry checkout MUST NOT depend on a declaration that the same entry applies.
+	id := c.run.Reads.ID()
+	checkout := artifact.CheckoutView() && c.admission != nil
+	if !checkout || !c.admission.CheckoutEntry(id) {
+		for input := range c.run.Reads.Inputs() {
+			if checkout && input == id {
+				continue
+			}
+			artifact = artifact.WithReads(&c.run.Reads)
+			break
+		}
 	}
-	c.Store.SetArtifact(c.run.Reads.ID(), artifact)
+	c.Store.SetArtifact(id, artifact)
 }
 
 func (c *execution) compose(
@@ -363,6 +387,7 @@ func (c *execution) compose(
 		)
 		completed.LocalRoot = completed.LocalPath
 	}
-	completed.InputAlias, completed.ContentFingerprint = false, nil
+	completed.ComposedFrom = artifact
+	completed.Extent, completed.ContentFingerprint = store.ExtentComposed, nil
 	return &completed, nil
 }

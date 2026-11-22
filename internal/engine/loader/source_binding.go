@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"cmp"
 	"hash/maphash"
 	"sync/atomic"
 
@@ -18,6 +17,7 @@ type admissionSource struct {
 	declarations             [2]manifest.BaseManifest
 	declaration              manifest.BaseManifest
 	input, initial           *store.SourceArtifact
+	provider                 store.SourceProvider
 	origin                   string
 	files                    []selection.SourceFile
 	bound, paired            bool
@@ -44,24 +44,20 @@ func (l *Loader) admissionSourceFacts(
 	reads *store.ReadSet,
 	initialize bool,
 ) selection.SourceFacts {
-	source = cmp.Or(source, manifest.BootstrapSourceID)
 	changes, snapshots, declarations := l.Options.Changes.ForSource(source)
 	side, sideKnown := l.comparisonSide()
 	evidence := admissionSource{
 		source: source, changes: changes, snapshots: snapshots, declarations: declarations,
 		frozen: l.frozen, sideKnown: sideKnown, side: side,
 	}
-	var objects interface {
-		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
-		GetObject(manifest.NamedResource) manifest.BaseManifest
-	} = l.Store
+	var objects sourceStore = l.Store
 	if reads != nil {
 		objects = reads
 	}
-	delta := changes
 	input, _ := objects.GetArtifact(source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 	declaration := objects.GetObject(source)
 	evidence.input, evidence.declaration = input, declaration
+	evidence.provider = l.SourceProvider(source, reads, l.Index)
 	if cached := l.sourceBinding(source); cached != nil {
 		if cached.reusable(l, &evidence, initialize) {
 			evidence = *cached
@@ -74,28 +70,29 @@ func (l *Loader) admissionSourceFacts(
 		evidence.initial, evidence.initialKnown = input, true
 	}
 	defer l.publishSource(source, &evidence)
-	evidence.delta, evidence.bound, evidence.paired = delta, true, false
+	evidence.bound = true
 	evidence.origin = l.SourceRoot
 	if input != nil {
 		evidence.origin = input.OriginPath(input.LocalPath)
 	}
 	for side, snapshot := range snapshots {
 		if evidence.pairsSnapshot(manifest.TreeSide(side), snapshot) {
+			evidence.delta = changes
 			evidence.paired = true
 			return l.sourceViewFacts(&evidence, true)
 		}
 	}
-	if source == manifest.BootstrapSourceID {
-		return l.sourceViewFacts(&evidence, true)
+	if evidence.checkoutComparison() {
+		evidence.delta, _, _ = l.Options.Changes.ForSource(manifest.BootstrapSourceID)
 	}
-	location := sourceView(source, l.SourceRoot, input, declaration)
-	if !location.Pinned && !location.External {
-		delta, _, _ = l.Options.Changes.ForSource(manifest.BootstrapSourceID)
-		evidence.delta = delta
-		return l.sourceViewFacts(&evidence, true)
-	}
-	evidence.delta = nil
 	return l.sourceViewFacts(&evidence, true)
+}
+
+func (e *admissionSource) checkoutComparison() bool {
+	if !e.input.Available() {
+		return e.provider == store.ProviderInput
+	}
+	return e.provider.WorkingTree() && e.input.Extent != store.ExtentComposed
 }
 
 func (e *admissionSource) pairsSnapshot(side manifest.TreeSide, snapshot *store.SourceArtifact) bool {
@@ -107,21 +104,19 @@ func (e *admissionSource) pairsSnapshot(side manifest.TreeSide, snapshot *store.
 		return snapshot == input && input.Reads.Valid()
 	}
 	const read = store.ArtifactContent | store.ArtifactRevision
-	eligible := e.sideKnown && side == e.side && (e.initial == input || snapshot.Content != "")
+	eligible := e.sideKnown && side == e.side &&
+		(snapshot.Content != "" || e.initial.SameMaterial(input, read|store.ArtifactOrigin))
 	return eligible && snapshot.Input(read) == input.Input(read) && input.Reads.Valid()
 }
 
 func (e *admissionSource) reusable(l *Loader, current *admissionSource, initialize bool) bool {
 	comparison := e.bound && e.changes == current.changes
-	if !e.paired && e.source != manifest.BootstrapSourceID {
-		location := sourceView(e.source, l.SourceRoot, e.input, e.declaration)
-		if !location.Pinned && !location.External {
-			delta, _, _ := l.Options.Changes.ForSource(manifest.BootstrapSourceID)
-			comparison = comparison && e.delta == delta
-		}
+	if !e.paired && e.checkoutComparison() {
+		delta, _, _ := l.Options.Changes.ForSource(manifest.BootstrapSourceID)
+		comparison = comparison && e.delta == delta
 	}
-	inputs := e.snapshots == current.snapshots && e.declarations == current.declarations &&
-		e.matchesInputs(current.input, current.declaration)
+	inputs := e.provider == current.provider && e.snapshots == current.snapshots &&
+		e.declarations == current.declarations && e.matchesInputs(current.input, current.declaration)
 	interpretation := e.frozen == current.frozen && e.sideKnown == current.sideKnown && e.side == current.side
 	initialized := !initialize || e.initialKnown
 	return comparison && inputs && interpretation && initialized
@@ -152,27 +147,32 @@ func (l *Loader) publishSource(source manifest.NamedResource, evidence *admissio
 }
 
 func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.SourceFacts {
-	location := sourceView(e.source, l.SourceRoot, e.input, e.declaration)
+	var location SourceLocation
+	available := e.input.Available()
+	if available {
+		location = sourceLocation(e.input, l.SourceRoot, false)
+	}
 	facts := selection.SourceFacts{
-		Context:         l.selectionContext(),
-		Comparison:      l.Options.Changes,
-		ConfiguredInput: l.Options.ConfiguredInput,
-		Source:          e.source,
-		Changes:         e.changes,
-		Delta:           e.delta,
-		Snapshots:       e.snapshots,
-		Declarations:    e.declarations,
-		Declaration:     e.declaration,
-		Input:           e.input,
-		Initial:         e.initial,
-		Origin:          e.origin,
-		Path:            location.Path,
-		Files:           e.files,
-		Paired:          e.paired,
-		InitialKnown:    e.initialKnown,
-		Pinned:          location.Pinned,
-		External:        location.External,
-		Derived:         derived,
+		Context:           l.selectionContext(),
+		Comparison:        l.Options.Changes,
+		ConfiguredInput:   l.Options.ConfiguredInput,
+		Source:            e.source,
+		Changes:           e.changes,
+		Delta:             e.delta,
+		Snapshots:         e.snapshots,
+		Declarations:      e.declarations,
+		Declaration:       e.declaration,
+		Input:             e.input,
+		Initial:           e.initial,
+		Origin:            e.origin,
+		Path:              location.Path,
+		Files:             e.files,
+		Paired:            e.paired,
+		InitialKnown:      e.initialKnown,
+		Pinned:            location.Pinned,
+		External:          e.provider == store.ProviderFetch,
+		PendingGeneration: e.provider == store.ProviderGenerator && !available,
+		Derived:           derived,
 	}
 	if !e.filesKnown {
 		paths := e.delta.Paths()

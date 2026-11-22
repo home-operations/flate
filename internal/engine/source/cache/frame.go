@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	frameVersion        = 1
+	frameVersion        = 2
 	framePrefix         = "flatefr1"
 	framePrefixSize     = 12
 	frameHeaderLimit    = 16 << 20

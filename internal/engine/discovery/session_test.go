@@ -40,7 +40,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	session, err := discovery.BeginTest(
 		t.Context(),
 		testConfig(t, discovery.Config{
-			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
+			Input:     &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 			Path:      root,
 			Store:     st,
 			Loader:    l,
@@ -129,7 +129,7 @@ func TestRun_RestrictedUsesSession(t *testing.T) {
 	one := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "one"}
 	two := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "two"}
 	result, err := discovery.Run(t.Context(), testConfig(t, discovery.Config{
-		Input: &store.SourceArtifact{LocalPath: root, FS: input},
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 		Path:  root, Store: st, Loader: l, Selection: selection.Request{Roots: []manifest.NamedResource{one}},
 	}))
 	assert.NoError(t, err)
@@ -169,10 +169,13 @@ spec: {path: ./workload}
 			st := store.New()
 			l := loader.New(st)
 			configureSelection(t, l, selection.Request{Changed: true})
-			source := &store.SourceArtifact{LocalPath: root, FS: input}
+			source := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			peer := store.New()
-			peer.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			peer.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
+			)
 			stores := [2]*store.Store{st, peer}
 			if side == 1 {
 				stores[0], stores[1] = stores[1], stores[0]

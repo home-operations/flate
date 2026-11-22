@@ -397,7 +397,7 @@ func (c *admissionClosure) compareGeneratedRead(
 		return change.Comparison{}, false
 	}
 	evidence := c.boundSource(source)
-	if evidence.Input != nil && evidence.Input.InputAlias && !evidence.External {
+	if evidence.Input != nil && evidence.Input.Provider == store.ProviderAlias && !evidence.External {
 		return change.Comparison{}, false
 	}
 	input := evidence.Input

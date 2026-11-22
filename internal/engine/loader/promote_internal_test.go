@@ -379,10 +379,15 @@ spec:
   artifacts: [{name: app}]
 `
 			st := store.New()
-			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
-				"generator.yaml": {Data: []byte(generator)},
-				"value.txt":      {Data: []byte("unchanged")},
-			}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				LocalRoot: root,
+				FS: fstest.MapFS{
+					"generator.yaml": {Data: []byte(generator)},
+					"value.txt":      {Data: []byte("unchanged")},
+				},
+			}
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
 			l.SourceRoot = root
@@ -390,7 +395,7 @@ spec:
 			assert.NoError(t, err)
 			current := *input
 			if failed {
-				current.InputAlias, current.LocalRoot = true, "relative"
+				current.Provider, current.LocalRoot = store.ProviderAlias, "relative"
 			}
 			l.Options.Changes, err = change.Detect(t.Context(), input, &current, change.DetectConfig{})
 			assert.NoError(t, err)

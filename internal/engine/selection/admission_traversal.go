@@ -86,15 +86,18 @@ func (c *admissionClosure) hydrationSource(
 	if mounted == nil {
 		return nil, manifest.NamedResource{}
 	}
+	input := c.facts.SourceFacts(manifest.BootstrapSourceID, nil)
 	source := manifest.BootstrapSourceID
-	if mounted != c.facts.SourceFacts(manifest.BootstrapSourceID, nil).Input {
+	if mounted != input.ConfiguredInput && mounted != input.Input {
 		source = c.source(id)
 	}
 	candidate, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-	if candidate == nil || candidate != mounted || !c.objects.SourceAdmission(id, source) {
+	// The canonical identity can publish authored material while the checkout still supplies declarations.
+	checkout := mounted == input.ConfiguredInput && candidate != nil && candidate.Provider != store.ProviderInput
+	if mounted != candidate && !checkout || !mounted.Reads.Valid() || !c.objects.SourceAdmission(id, source) {
 		return nil, manifest.NamedResource{}
 	}
-	return candidate, source
+	return mounted, source
 }
 
 func (c *admissionClosure) readerEmissionAllowed(id, readerID manifest.NamedResource) bool {
@@ -540,7 +543,7 @@ func (c *admissionClosure) hydrateDeclaration(
 	record := c.record(id)
 	if !evidence.independent {
 		role := c.role(id)
-		if !role.needed || !role.ordinary || !evidence.authored {
+		if !role.needed || !role.ordinary || !evidence.authored || evidence.awaitingPublication {
 			return obj, nil
 		}
 	}
@@ -584,13 +587,15 @@ func (c *admissionClosure) materializeEntryApplication(
 	record *manifest.DiscoveryRecord,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) bool {
-	if applicationSource.Name == "" || applicationSource == manifest.BootstrapSourceID ||
-		!c.context.PlainEntry ||
+	if !c.context.PlainEntry ||
 		!containsPath(c.context.EntryPath, record.Path) {
 		return false
 	}
 	location := c.boundSource(applicationSource)
-	if location.Pinned || location.External {
+	if !location.Input.WorkingTree() || location.Input.Provider == store.ProviderInput {
+		return false
+	}
+	if location.Input == c.boundSource(manifest.BootstrapSourceID).Input {
 		return false
 	}
 	return materializers(materializerDemand{

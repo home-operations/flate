@@ -20,7 +20,7 @@ func TestClassify_StructuralReaderPreflight(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	parent := testutil.KustomizationID("apps", "consumer")
-	s.SetPreflight(parent, "captured admission failure")
+	s.SetPreflight(parent, store.PreflightFailure{Message: "captured admission failure"})
 	var reads store.ReadSet
 	reads.Init(s, parent, nil)
 	defer reads.Retire()
@@ -63,13 +63,13 @@ func TestClassify_StructuralReaderPreservesAdmission(t *testing.T) {
 		Missing: NewMissingPolicy(
 			nil),
 	}
-	s.SetPreflight(parent, "captured admission failure")
+	s.SetPreflight(parent, store.PreflightFailure{Message: "captured admission failure"})
 	reads.Retire()
 	reads.Init(s, parent, nil)
 	got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainNone)
 	assert.Equal(t, errors.Is(got.Err, manifest.ErrInput), true)
 	assert.Equal(t, promotion.calls, 0)
-	s.SetPreflight(parent, "")
+	s.SetPreflight(parent, store.PreflightFailure{})
 	reads.Retire()
 	reads.Init(s, parent, nil)
 	got = w.Classify(t.Context(), manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainNone)
@@ -125,7 +125,7 @@ func TestAvailable_StructuralReaderPreflightPrecedesOmission(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	parent := testutil.KustomizationID("apps", "consumer")
-	s.SetPreflight(parent, "captured admission failure")
+	s.SetPreflight(parent, store.PreflightFailure{Message: "captured admission failure"})
 	var reads store.ReadSet
 	reads.Init(s, parent, nil)
 	defer reads.Retire()

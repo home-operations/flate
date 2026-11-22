@@ -160,7 +160,17 @@ type FileOwners struct {
 	Ancestors []NamedResource
 }
 
+type claimSubject struct {
+	owner, authored NamedResource
+	excludePinned   bool
+}
+
+func (s *claimSubject) excludes(record *DiscoveryRecord) bool {
+	return s.excludePinned && record.Pinned
+}
+
 // ClaimOwners requires an artifact index coordinate, never an unqualified source-relative path.
+// A kind without a resource name identifies the admitted checkout coordinate domain.
 // Eligibility MUST be applied before a caller chooses the deepest group.
 func (i *DiscoveryIndex) ClaimOwners(
 	file string,
@@ -171,13 +181,16 @@ func (i *DiscoveryIndex) ClaimOwners(
 		if i == nil {
 			return
 		}
-		query := Production{Owner: subject, Source: source, Authored: i.Records[subject].Authored, File: file}
-		if source == (NamedResource{}) && subject == (NamedResource{}) &&
-			!i.visitClaimGroup(file+"/", &query, eligible, yield) {
+		unqualified := source == (NamedResource{})
+		checkout := source.Kind != "" && source.Name == ""
+		local := filepath.IsLocal(file)
+		allowRoot := checkout || file == "/" || local
+		query := claimSubject{owner: subject, authored: i.Records[subject].Authored, excludePinned: checkout && local}
+		if unqualified && subject == (NamedResource{}) && !i.visitClaimGroup(file+"/", &query, eligible, yield) {
 			return
 		}
 		for end := len(file); ; {
-			if end == 0 && source != BootstrapSourceID && file != "/" && !filepath.IsLocal(file) {
+			if end == 0 && !allowRoot {
 				return
 			}
 			if !i.visitClaimGroup(file[:end], &query, eligible, yield) || end == 0 {
@@ -190,7 +203,7 @@ func (i *DiscoveryIndex) ClaimOwners(
 
 func (i *DiscoveryIndex) visitClaimGroup(
 	prefix string,
-	subject *Production,
+	subject *claimSubject,
 	eligible func(NamedResource) bool,
 	yield func([]NamedResource) bool,
 ) bool {
@@ -202,29 +215,30 @@ func (i *DiscoveryIndex) visitClaimGroup(
 	return len(owners) == 0 || yield(owners)
 }
 
-func ownsClaim(id NamedResource, r *DiscoveryRecord, subject *Production) bool {
-	own := id == subject.Owner
-	if subject.Authored != (NamedResource{}) {
-		own = own || id == subject.Authored || r.Authored == subject.Authored
+func ownsClaim(id NamedResource, r *DiscoveryRecord, subject *claimSubject) bool {
+	own := id == subject.owner
+	if subject.authored != (NamedResource{}) {
+		own = own || id == subject.authored || r.Authored == subject.authored
 	}
 	if r.Authored != (NamedResource{}) {
-		own = own || r.Authored == subject.Owner
+		own = own || r.Authored == subject.owner
 	}
 	return own
 }
 
 func (i *DiscoveryIndex) eligibleClaims(
 	group []NamedResource,
-	subject *Production,
+	subject *claimSubject,
 	eligible func(NamedResource) bool,
 ) []NamedResource {
 	var owners []NamedResource
 	filtered := false
 	for n, id := range group {
 		record, _ := i.Lookup(id)
-		allowed := claimAllowed(&record, subject) && (eligible == nil || eligible(id))
+		allowed := !subject.excludes(&record) && claimMatchesNamespace(&record, subject) &&
+			(eligible == nil || eligible(id))
 		own := ownsClaim(id, &record, subject)
-		if allowed && own && subject.Owner.KindInfo().Structural {
+		if allowed && own && subject.owner.KindInfo().Structural {
 			return nil
 		}
 		if !allowed || own {
@@ -308,10 +322,7 @@ func appendUnique(dst []NamedResource, id NamedResource) []NamedResource {
 	return dst
 }
 
-func claimAllowed(record *DiscoveryRecord, subject *Production) bool {
-	if record.Pinned && subject.Source == BootstrapSourceID && filepath.IsLocal(subject.File) {
-		return false
-	}
-	return subject.Owner == (NamedResource{}) || record.Declaration == nil ||
-		record.Declaration.EmissionPolicy().MatchesNamespace(subject.Owner)
+func claimMatchesNamespace(record *DiscoveryRecord, subject *claimSubject) bool {
+	return subject.owner == (NamedResource{}) || record.Declaration == nil ||
+		record.Declaration.EmissionPolicy().MatchesNamespace(subject.owner)
 }

@@ -120,7 +120,11 @@ spec:
 	for i := range entries {
 		callers.Go(func() {
 			root := filepath.Join(t.TempDir(), "plan")
-			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"set.yaml": {Data: []byte(document)}}}
+			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
+				LocalPath: root,
+				FS:        fstest.MapFS{"set.yaml": {Data: []byte(document)}},
+			}
 			entries[i], failures[i] = Plan(
 				t.Context(),
 				Config{
@@ -264,7 +268,7 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 	input["decoy.zip"] = &fstest.MapFile{Data: []byte("archive bytes are not manifest input")}
 	entries, err := Plan(
 		t.Context(),
-		Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root},
+		Config{Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}, Path: root},
 	)
 	assert.NoError(t, err)
 	want := 1
@@ -285,7 +289,10 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		}
 		changed, localErr := Plan(
 			t.Context(),
-			Config{Input: &store.SourceArtifact{LocalPath: root, FS: renamed}, Path: root},
+			Config{
+				Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: renamed},
+				Path:  root,
+			},
 		)
 		assert.NoError(t, localErr)
 		paths := make([]string, 0, len(changed))
@@ -304,7 +311,7 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 	}
 	independent, err := Plan(
 		t.Context(),
-		Config{Input: &store.SourceArtifact{LocalPath: root, FS: other}, Path: root},
+		Config{Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: other}, Path: root},
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -361,7 +368,7 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 		},
 	)
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, FS: view}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view}
 	request := selection.Request{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
 	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: request}
 	entries, err := Plan(t.Context(), cfg)

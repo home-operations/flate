@@ -1,0 +1,19 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: theshire, namespace: flux-system}
+spec:
+  url: https://mirror.example.invalid/theshire.git
+  interval: 30m
+  ref: {branch: main}
+  ignore: |
+    /*
+    !/kubernetes
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./kubernetes/flux
+  sourceRef: {kind: GitRepository, name: theshire}

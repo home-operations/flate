@@ -155,6 +155,47 @@ func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
 	)
 }
 
+func TestAliasBootstrapSources_AuthoredEntryNames(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"fleet", manifest.BootstrapSourceID.Name} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := discoveryRefFixture(t)
+			for _, tc := range []struct {
+				name, want string
+				ref        *sourcev1.GitRepositoryRef
+				provider   store.SourceProvider
+			}{
+				{"named branch", "dirty", &sourcev1.GitRepositoryRef{Name: "refs/heads/master"}, store.ProviderAlias},
+				{"tag at HEAD", "B", &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, store.ProviderCommit},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					repository := &manifest.GitRepository{Name: name, Namespace: manifest.BootstrapSourceID.Namespace}
+					repository.URL = "git://fixture.invalid/cluster"
+					repository.Reference = tc.ref
+					st := store.New()
+					st.AddObject(repository)
+					d := newDiscoverer(&Config{
+						Path: root, Store: st, SelfURLs: []string{repository.URL},
+					})
+					t.Cleanup(d.Close)
+					_, err := d.resolveTestSources(t.Context(), false)
+					assert.NoError(t, err)
+					artifact, ok := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
+					assert.FatalIf(t, !ok || artifact.FS == nil, "source has no readable material")
+					assert.Equal(t, artifact.Provider, tc.provider)
+					assert.Equal(t, artifact.LocalRoot, root)
+					content, err := fs.ReadFile(artifact.FS, "value.txt")
+					assert.NoError(t, err)
+					assert.Equal(t, string(content), tc.want)
+					assert.Equal(t, d.admission().input.Provider, store.ProviderInput)
+				})
+			}
+		})
+	}
+}
+
 func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 	t.Parallel()
 
@@ -167,10 +208,10 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 	}{
 		{name: "no-ref", head: true},
 		{name: "empty-ref", ref: &sourcev1.GitRepositoryRef{}, head: true},
-		{name: "head", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "head", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}},
 		{name: "older-base-head-tag", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}},
 		{name: "older-base-head-commit", base: "v1.0.0", commit: true},
-		{name: "matching-base-head", base: "v2.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "matching-base-head", base: "v2.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}},
 		{name: "older-base-head-sparse", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true},
 		{name: "older-base-head-submodules", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, submodules: true, fallback: true},
 		{name: "non-head", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}},
@@ -178,6 +219,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "missing-tag", ref: &sourcev1.GitRepositoryRef{Tag: "missing"}, fallback: true},
 		{name: "missing-name", ref: &sourcev1.GitRepositoryRef{Name: "refs/pull/9/head"}, fallback: true},
 		{name: "branch", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, head: true},
+		{name: "named-branch", ref: &sourcev1.GitRepositoryRef{Name: "refs/heads/master"}, head: true},
 		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, head: true},
 		{name: "older-base-head-branch-submodules", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, submodules: true, fallback: true},
 		{name: "recursive-missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, submodules: true, fallback: true},
@@ -190,7 +232,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "no-store-no-ref", noStore: true, head: true},
 		{name: "sparse", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true},
 		{name: "submodules", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, submodules: true, fallback: true},
-		{name: "head-sparse", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true, head: true},
+		{name: "head-sparse", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true},
 		{name: "missing-commit", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fallback: true},
 		{name: "missing-commit-branch", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, fallback: true},
 	} {
@@ -313,7 +355,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		Name:       "cluster",
 	}
 	st.AddObject(foreignSource)
-	foreignArtifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	foreignArtifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
 	st.SetArtifact(foreignSource.Named(), foreignArtifact)
 	scan := filepath.Join(root, "flux")
 	if testCaseInput.broad {
@@ -523,7 +565,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	bootstrap = d.bootstrapInput
 	if testCaseInput.base != "" {
 		want := "A"
-		if testCaseInput.head {
+		if testCaseInput.base == "v2.0.0" {
 			want = "B"
 		}
 		content, innerInnerInnerInnerLocalErr := fs.ReadFile(bootstrap.FS, "value.txt")

@@ -9,7 +9,7 @@ import (
 )
 
 func claimsForTest(s *store.Store, root string, candidates []*manifest.Kustomization) []manifest.KSClaim {
-	index := Claims(s, root, candidates)
+	index := Claims(s, root, candidates, nil)
 	var claims []manifest.KSClaim
 	for prefix, ids := range index.Claims {
 		for _, id := range ids {

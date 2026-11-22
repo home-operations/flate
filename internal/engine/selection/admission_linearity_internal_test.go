@@ -36,7 +36,10 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			facts := &solverFacts{
 				store:   st,
 				changes: detectChanges(t, []string{"unrelated.yaml"}, []string{"unrelated.yaml"}),
@@ -93,7 +96,10 @@ func TestAdmission_EmittedSourceVisitsItsPath(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
+			)
 			session := newSolverSession(t, st, detectChanges(t, nil, nil), Request{Changed: true})
 			facts := session.facts.(*solverFacts)
 			facts.context.Frozen = true
@@ -230,7 +236,10 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Session {
 		files[paths[i]] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML(name, "apps", "  suspend: true\n"))}
 	}
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+	)
 	facts := &solverFacts{
 		store:       st,
 		changes:     detectChanges(t, paths, paths),

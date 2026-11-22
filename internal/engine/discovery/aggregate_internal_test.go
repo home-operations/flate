@@ -45,6 +45,7 @@ func TestAggregateInput_PackageEvidence(t *testing.T) {
 				files["kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [plain.yaml]\n")}
 			}
 			input := &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root, LocalRoot: "/virtual/origin", Content: "immutable-original", FS: files,
 			}
 			packages := []loader.PackageEvidence{
@@ -89,7 +90,7 @@ func TestPlan_BootstrapRootClusters(t *testing.T) {
 			files := bootstrapRootFiles(style)
 			for range 2 {
 				entries, err := Plan(t.Context(), Config{
-					Input: &store.SourceArtifact{LocalPath: root, FS: files}, Path: root,
+					Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}, Path: root,
 					SelfURLs: []string{
 						"https://fixture.invalid/repo",
 						"https://fixture.invalid/first",
@@ -200,7 +201,10 @@ func TestPlan_RequestedApplication(t *testing.T) {
 			}
 			entries, err := Plan(
 				t.Context(),
-				Config{Input: &store.SourceArtifact{LocalPath: root, FS: files}, Path: root},
+				Config{
+					Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files},
+					Path:  root,
+				},
 			)
 			assert.NoError(t, err)
 			assert.Equal(t, len(entries), 1)
@@ -215,13 +219,16 @@ func TestClusterRoots_ListOccurrences(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"input.yaml": {
-			Data: []byte(
-				"apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: same}\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: same}\n",
-			),
-		},
-	}})
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+			"input.yaml": {
+				Data: []byte(
+					"apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: same}\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: same}\n",
+				),
+			},
+		}},
+	)
 	l := loader.New(st)
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
@@ -250,7 +257,7 @@ func TestAggregateInput_PreservesSymlinks(t *testing.T) {
 	assert.NoError(t, builder.AddSymlink("linked.yaml", "plain.yaml"))
 	authored, err := builder.Build()
 	assert.NoError(t, err)
-	input := &store.SourceArtifact{LocalPath: root, Content: "authored", FS: authored}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, Content: "authored", FS: authored}
 	aggregate, err := aggregateInput(input, root, []loader.PackageEvidence{
 		{Path: ".", Independent: true, Occurrences: []selection.OccurrenceFacts{
 			{Declaration: selection.OccurrenceID{Source: root, File: "linked.yaml"}},
@@ -272,7 +279,7 @@ func TestPlan_BootstrapRootClustersLatePreparation(t *testing.T) {
 	root := t.TempDir()
 	cfg := testConfig(t, Config{
 		Path: root, SelfURLs: []string{"https://fixture.invalid/repo"},
-		Input: &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
 			"producer/kustomization.yaml": {
 				Data: []byte(
 					"resources: [settings.yaml, instance.yaml]\nreplacements:\n- source: {kind: ConfigMap, name: settings, fieldPath: data.target}\n  targets:\n  - select: {kind: FluxInstance, name: late}\n    fieldPaths: [spec.sync.path]\n",
@@ -369,7 +376,7 @@ spec:
       volumes: ` + volumes + "\n",
 			)}
 			entries, err := Plan(t.Context(), testConfig(t, Config{
-				Input: &store.SourceArtifact{LocalPath: root, FS: files}, Path: root,
+				Input: &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}, Path: root,
 			}))
 			if tc.cause == "" {
 				assert.NoError(t, err)

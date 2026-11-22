@@ -80,6 +80,7 @@ spec:
 	}
 	var directories atomic.Int64
 	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
 		LocalPath: root,
 		FS:        parsedReadFS{FS: files, reads: reads, directories: &directories},
 	}
@@ -192,6 +193,7 @@ func TestDecodeFileObjects_ApplicationPrecondition(t *testing.T) {
 			document := "apiVersion: \"" + api + "\"\nkind: " + kind + "\nmetadata: {name: app, namespace: apps}\nspec: {" + spec + "}\n"
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+				Provider:  store.ProviderInput,
 				LocalPath: root, FS: fstest.MapFS{"application.yaml": {Data: []byte(document)}},
 			})
 			l := New(st)

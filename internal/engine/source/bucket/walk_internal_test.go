@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
@@ -244,6 +245,56 @@ func TestWalkBucket_Faults(t *testing.T) {
 			},
 			)
 		}
+	}
+}
+
+func TestBucketChunk_BufferedReadFaults(t *testing.T) {
+	t.Parallel()
+	const content = "abcd"
+	readFailure := errors.New("chunk transport failed")
+	for _, tc := range []struct {
+		name    string
+		body    io.Reader
+		cause   error
+		wantErr string
+	}{
+		{
+			name: "truncated", body: strings.NewReader("ab"), cause: io.ErrUnexpectedEOF,
+			wantErr: "read bucket object chunk: unexpected EOF",
+		},
+		{
+			name:  "error with final bytes",
+			body:  iotest.DataErrReader(io.MultiReader(strings.NewReader(content), iotest.ErrReader(readFailure))),
+			cause: readFailure, wantErr: "read bucket object chunk: chunk transport failed",
+		},
+		{
+			name: "error after final bytes", body: io.MultiReader(strings.NewReader(content), iotest.ErrReader(readFailure)),
+			cause: readFailure, wantErr: "check bucket object chunk length: chunk transport failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			transport := bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+				resp := bucketReply(req, http.StatusOK, content)
+				resp.Header.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+				resp.Body = io.NopCloser(tc.body)
+				return resp, nil
+			})
+			client, err := minio.New("bucket.invalid", &minio.Options{
+				Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: transport,
+			})
+			assert.NoError(t, err)
+
+			chunk := bucketChunk{
+				object: &minio.ObjectInfo{Key: "file", Size: int64(len(content))},
+				size:   int64(len(content)),
+				ready:  make(chan io.Reader, 1),
+			}
+			err = chunk.fetch(t.Context(), client, "data")
+			assert.FatalIf(t, err == nil, "buffered read accepted a failed body")
+			assert.Equal(t, err.Error(), tc.wantErr)
+			assert.ErrorIf(t, !errors.Is(err, tc.cause), "error %v does not wrap %v", err, tc.cause)
+		})
 	}
 }
 

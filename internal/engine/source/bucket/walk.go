@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	chunkBytes       int64 = 8 << 20
-	downloads              = 8
-	bucketPolicyFile       = ".sourceignore"
+	chunkBytes        int64 = 8 << 20
+	downloads               = 8
+	bucketPolicyFile        = ".sourceignore"
+	bucketPolicyLimit       = chunkBytes
 )
 
 type bucketOutput struct {
@@ -131,22 +132,86 @@ func walkBucket(
 	return result, nil
 }
 
+var errBucketBodyTooLong = errors.New("bucket response body exceeds its expected length")
+
 func readBucketPolicy(
 	ctx context.Context, client *minio.Client, bucket string, work *manifest.WorkRecord,
 ) ([]byte, error) {
-	body, _, _, err := (minio.Core{Client: client}).GetObject(ctx, bucket, bucketPolicyFile, minio.GetObjectOptions{})
+	body, info, _, err := (minio.Core{Client: client}).GetObject(
+		ctx,
+		bucket,
+		bucketPolicyFile,
+		minio.GetObjectOptions{},
+	)
 	if err != nil {
 		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
 			return nil, nil
 		}
 		return nil, bucketResponseError(err)
 	}
-	data, readErr := io.ReadAll(body)
-	if readErr = errors.Join(readErr, body.Close()); readErr != nil {
+	data, readErr := readBucketBody(body, info.Size, bucketPolicyLimit)
+	closeErr := body.Close()
+	if errors.Is(readErr, errBucketBodyTooLong) {
+		if info.Size >= 0 && info.Size < bucketPolicyLimit {
+			return nil, fmt.Errorf("bucket object %q exceeds its %d-byte declared size", bucketPolicyFile, info.Size)
+		}
+		size := fmt.Sprintf("at least %d", bucketPolicyLimit+1)
+		if info.Size > bucketPolicyLimit {
+			size = strconv.FormatInt(info.Size, 10)
+		}
+		return nil, manifest.NewError(manifest.ErrFlux, nil, fmt.Sprintf(
+			"bucket object %q is %s bytes, limit %d bytes", bucketPolicyFile, size, bucketPolicyLimit,
+		))
+	}
+	if readErr = errors.Join(readErr, closeErr); readErr != nil {
 		return nil, fmt.Errorf("read bucket policy: %w", readErr)
 	}
 	work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	return data, nil
+}
+
+// A nil buffer on error lets callers distinguish the body read from the extra-byte probe.
+func readBucketBody(body io.Reader, size, limit int64) ([]byte, error) {
+	var data []byte
+	switch {
+	case size > limit:
+		return nil, errBucketBodyTooLong
+	case size < 0:
+		var err error
+		data, err = io.ReadAll(io.LimitReader(body, limit))
+		if err != nil {
+			return nil, err //nolint:wrapcheck // The caller supplies the read context.
+		}
+		if int64(len(data)) < limit {
+			return data, nil
+		}
+	default:
+		data = make([]byte, size)
+		for remaining := data; len(remaining) != 0; {
+			n, err := body.Read(remaining)
+			remaining = remaining[n:]
+			if err == io.EOF {
+				switch len(remaining) {
+				case 0:
+					return data, nil
+				case len(data):
+				default:
+					err = io.ErrUnexpectedEOF
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	n, err := io.CopyN(io.Discard, body, 1)
+	if n != 0 {
+		return data, errBucketBodyTooLong
+	}
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return data, err
 }
 
 func (w bucketOutput) writeArchive(
@@ -237,17 +302,15 @@ func (c *bucketChunk) fetch(ctx context.Context, client *minio.Client, bucket st
 			return ctx.Err()
 		}
 	}
-	data := make([]byte, c.size)
-	if _, err := io.ReadFull(body, data); err != nil {
-		return fmt.Errorf("read bucket object chunk: %w", err)
-	}
-	if n, err := io.CopyN(io.Discard, body, 1); n != 0 {
-		return fmt.Errorf("bucket object %q exceeds chunk size", c.object.Key)
-	} else if !errors.Is(err, io.EOF) {
-		if err != nil {
-			return fmt.Errorf("check bucket object chunk length: %w", err)
+	data, err := readBucketBody(body, c.size, chunkBytes)
+	if err != nil {
+		if errors.Is(err, errBucketBodyTooLong) {
+			return fmt.Errorf("bucket object %q exceeds chunk size", c.object.Key)
 		}
-		return nil
+		if data == nil {
+			return fmt.Errorf("read bucket object chunk: %w", err)
+		}
+		return fmt.Errorf("check bucket object chunk length: %w", err)
 	}
 	c.ready <- bytes.NewReader(data)
 	return nil

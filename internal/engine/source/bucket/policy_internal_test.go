@@ -1,6 +1,8 @@
 package bucket
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -96,4 +99,225 @@ func TestFetcher_RootPolicyRefresh(t *testing.T) {
 		assert.Equal(t, artifact.Revision, second.Revision)
 	}
 	assert.Equal(t, warm.Content, cold.Content)
+}
+
+func TestFetcher_RootPolicyLimit(t *testing.T) {
+	t.Parallel()
+	const limit = 8 << 20
+	const policy = "/prefix/drop.yaml\n"
+	const comment = "# policy padding\n"
+	padding := limit - len(policy)
+	full := policy + strings.Repeat(comment, padding/len(comment)) + strings.Repeat("#", padding%len(comment))
+	tooLarge := full + "extra"
+	readFailure := errors.New("policy transport failed on the last bytes")
+	for _, tc := range []rootPolicyCase{
+		{
+			name: "advertised overflow", body: tooLarge, size: limit + 5, flux: true,
+			wantErr: `bucket object ".sourceignore" is 8388613 bytes, limit 8388608 bytes`,
+		},
+		{name: "unknown length", body: policy, size: -1, wantBytes: len(policy)},
+		{
+			name: "unknown overflow", body: tooLarge, size: -1, wantBytes: limit + 1, flux: true,
+			wantErr: `bucket object ".sourceignore" is at least 8388609 bytes, limit 8388608 bytes`,
+		},
+		{name: "inclusive limit", body: full, size: limit, wantBytes: limit},
+		{
+			name: "one byte past limit", body: tooLarge, size: limit, wantBytes: limit + 1, flux: true,
+			wantErr: `bucket object ".sourceignore" is at least 8388609 bytes, limit 8388608 bytes`,
+		},
+		{
+			name: "truncated", body: policy, size: int64(len(policy) + 1), wantBytes: len(policy),
+			wantErr: "read bucket policy: unexpected EOF",
+		},
+		{
+			name: "understated length", body: policy, size: 1, wantBytes: 2,
+			wantErr: `bucket object ".sourceignore" exceeds its 1-byte declared size`,
+		},
+		{
+			name: "read error with final bytes", body: policy, size: int64(len(policy)), wantBytes: len(policy),
+			readErr: readFailure, wantErr: "read bucket policy: policy transport failed on the last bytes",
+		},
+		{
+			name: "unknown length read error at limit", body: full, size: -1, wantBytes: limit,
+			readErr: readFailure, wantErr: "read bucket policy: policy transport failed on the last bytes",
+		},
+		{
+			name: "failed refresh", body: tooLarge, size: limit + 5, flux: true, previousPolicy: policy,
+			wantErr: `bucket object ".sourceignore" is 8388613 bytes, limit 8388608 bytes`,
+		},
+		{name: "missing", missing: true},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testRootPolicyLimit(t, &tc)
+		})
+	}
+}
+
+type rootPolicyCase struct {
+	name           string
+	body           string
+	previousPolicy string
+	size           int64
+	wantBytes      int
+	readErr        error
+	wantErr        string
+	flux, missing  bool
+}
+
+func testRootPolicyLimit(t *testing.T, tc *rootPolicyCase) {
+	t.Helper()
+	b := &manifest.Bucket{
+		Name: "policy-limit", Namespace: "test", BucketName: "data",
+		Endpoint: "https://bucket.invalid", Region: "us-east-1", Prefix: "prefix/",
+	}
+	reads := (testInputs{}).readSet(b)
+	t.Cleanup(reads.Close)
+	op := operation{
+		Fetcher: &Fetcher{Cache: cachetest.New(t, t.TempDir(), cache.New)},
+		secrets: source.SecretLookup(reads),
+	}
+	request, err := op.prepare(b)
+	assert.NoError(t, err)
+	body := &countedPolicyBody{Reader: strings.NewReader(tc.body), readErr: tc.readErr}
+	fixture := policyBucketTransport{t: t, body: body, size: tc.size}
+	if tc.missing {
+		fixture.body = nil
+	}
+	if tc.previousPolicy != "" {
+		fixture.body = &countedPolicyBody{Reader: strings.NewReader(tc.previousPolicy)}
+		fixture.size = int64(len(tc.previousPolicy))
+	}
+	request.options.Transport = bucketRoundTrip(fixture.respond)
+	fetch := func() (*store.SourceArtifact, error) {
+		return fetchtest.Fetch(t.Context(), func(
+			_ context.Context, _ *manifest.Bucket, _ *store.ReadSet, p *cache.Policy,
+		) (source.PreparedFetch, error) {
+			return source.PreparedFetch{
+				Fetch: func(ctx context.Context, _ *store.SourceArtifact) (*store.SourceArtifact, error) {
+					return op.fetch(ctx, &request, p)
+				},
+			}, nil
+		}, b, reads, &cache.Policy{}, nil)
+	}
+	var previous *store.SourceArtifact
+	if tc.previousPolicy != "" {
+		previous, err = fetch()
+		assert.NoError(t, err)
+		assert.Equal(t, fixture.objects.Swap(0), int32(1))
+		assert.Equal(t, fixture.policies.Swap(0), int32(1))
+		fixture.body, fixture.size = body, tc.size
+	}
+
+	artifact, err := fetch()
+	assert.Equal(t, fixture.policies.Load(), int32(1))
+	if !tc.missing {
+		assert.Equal(t, body.bytesRead, tc.wantBytes)
+		assert.Equal(t, body.closes, 1)
+		if tc.size > 8<<20 {
+			assert.Equal(t, body.reads, 0)
+		}
+	}
+	if tc.wantErr != "" {
+		assert.FatalIf(t, err == nil, "fetch succeeded with an invalid policy")
+		assert.Equal(t, err.Error(), tc.wantErr)
+		assert.Equal(t, artifact, nil)
+		assert.Equal(t, fixture.objects.Load(), int32(0))
+		if tc.flux {
+			classified, ok := errors.AsType[*manifest.Error](err)
+			assert.FatalIf(t, !ok, "missing classified policy error: %v", err)
+			assert.Equal(t, classified.Category(), manifest.ErrFlux)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		}
+		if tc.readErr != nil {
+			assert.Equal(t, errors.Is(err, tc.readErr), true)
+		}
+		if previous != nil {
+			assertPolicyArtifact(t, previous, tc.previousPolicy, false)
+		}
+		return
+	}
+	assert.NoError(t, err)
+	assertPolicyArtifact(t, artifact, tc.body, tc.missing)
+}
+
+func assertPolicyArtifact(t *testing.T, artifact *store.SourceArtifact, policy string, missing bool) {
+	t.Helper()
+	data, err := fs.ReadFile(artifact.FS, bucketPolicyFile)
+	if missing {
+		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	} else {
+		assert.NoError(t, err)
+		assert.ErrorIf(
+			t,
+			string(data) != policy,
+			"policy contents differ: got %d bytes, want %d",
+			len(data),
+			len(policy),
+		)
+	}
+	data, err = fs.ReadFile(artifact.FS, "prefix/keep.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "x")
+	_, err = fs.ReadFile(artifact.FS, "prefix/drop.yaml")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), policy != "")
+}
+
+type policyBucketTransport struct {
+	t        *testing.T
+	body     *countedPolicyBody
+	size     int64
+	objects  atomic.Int32
+	policies atomic.Int32
+}
+
+func (p *policyBucketTransport) respond(r *http.Request) (*http.Response, error) {
+	if r.URL.Query().Get("prefix") == "prefix/" {
+		const listing = `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>
+<Contents><Key>prefix/drop.yaml</Key><Size>1</Size><ETag>etag</ETag></Contents>
+<Contents><Key>prefix/keep.yaml</Key><Size>1</Size><ETag>etag</ETag></Contents>
+</ListBucketResult>`
+		return bucketReply(r, http.StatusOK, listing), nil
+	}
+	res := bucketReply(r, http.StatusOK, "x")
+	res.Header.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+	res.Header.Set("ETag", `"etag"`)
+	if r.URL.Path == "/data/"+bucketPolicyFile {
+		assert.Equal(p.t, r.Method, http.MethodGet)
+		p.policies.Add(1)
+		if p.body == nil {
+			return missingBucketPolicyResponse(r), nil
+		}
+		res.Body, res.ContentLength = p.body, p.size
+	} else {
+		p.objects.Add(1)
+	}
+	if res.ContentLength >= 0 {
+		res.Header.Set("Content-Length", strconv.FormatInt(res.ContentLength, 10))
+	}
+	return res, nil
+}
+
+type countedPolicyBody struct {
+	*strings.Reader
+
+	readErr          error
+	reads, bytesRead int
+	closes           int
+}
+
+func (b *countedPolicyBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.reads++
+	b.bytesRead += n
+	if n > 0 && b.Len() == 0 && b.readErr != nil {
+		return n, b.readErr
+	}
+	return n, err
+}
+
+func (b *countedPolicyBody) Close() error {
+	b.closes++
+	return nil
 }

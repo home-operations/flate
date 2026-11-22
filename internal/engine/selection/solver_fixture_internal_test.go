@@ -326,3 +326,7 @@ func (*solverFacts) DeclarationContents() func(map[string]any) store.Declaration
 		return store.DeclarationContent{Exact: manifest.Fingerprint(document)}
 	}
 }
+
+func (*solverFacts) ChartReadPaths(context.Context, *store.SourceArtifact, string) SourceReadPaths {
+	return SourceReadPaths{}
+}

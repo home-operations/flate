@@ -1,0 +1,23 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: flux-instance, namespace: flux-system}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/bootstrap
+      sourceRef: {kind: GitRepository, name: flux-system}
+  values:
+    kustomize:
+      patches:
+        - target: {group: kustomize.toolkit.fluxcd.io, kind: Kustomization, name: flux-system}
+          patch: |
+            - op: add
+              path: /spec/patches
+              value:
+                - target: {group: kustomize.toolkit.fluxcd.io, kind: Kustomization, name: alpha}
+                  patch: |
+                    - op: add
+                      path: /spec/commonMetadata
+                      value:
+                        annotations: {fixture: patched}

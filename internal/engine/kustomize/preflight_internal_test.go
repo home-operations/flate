@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/pkg/manifest"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/fetcherr"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
@@ -399,6 +402,66 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 				got := hits.Load()
 				assert.FatalIf(t, got != 1, "server hits = %d, want 1 shared preflight fetch", got)
 			}
+		})
+	}
+}
+
+func TestObserveLocalInputs_ExactOperandsAndDeclaredRoots(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		optional bool
+	}{
+		{name: "present", optional: true},
+		{name: "absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{
+				"app/kustomization.yaml": {Data: []byte(`apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../shared/package, ../link, ../escape, /outside/secret.yaml, ../../outside.yaml]
+patches:
+  - path: ../shared/patch.yaml
+    target: {kind: ConfigMap}
+configMapGenerator:
+  - name: values
+    envs: [../shared/values.env]
+`)},
+				"shared/package/kustomization.yaml": {Data: []byte("resources: [leaf.yaml]")},
+				"shared/package/leaf.yaml":          {},
+				"shared/package/unread.yaml":        {},
+				"shared/patch.yaml":                 {},
+				"shared/values.env":                 {},
+				"link":                              {Mode: os.ModeSymlink, Data: []byte("links/target")},
+				"links/target":                      {Mode: os.ModeSymlink, Data: []byte("../shared/linked.yaml")},
+				"shared/linked.yaml":                {},
+				"escape":                            {Mode: os.ModeSymlink, Data: []byte("../outside.yaml")},
+				"outside.yaml":                      {},
+			}
+			wantFiles := []string{
+				"app/kustomization.yaml", "link", "links/target", "shared/linked.yaml",
+				"shared/package/kustomization.yaml", "shared/package/leaf.yaml",
+				"shared/patch.yaml", "shared/values.env",
+			}
+			wantRoots := []string{"app"}
+			if tc.optional {
+				files["optional/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [leaf.yaml]")}
+				files["optional/leaf.yaml"] = &fstest.MapFile{}
+				wantRoots = append(wantRoots, "optional")
+				wantFiles = append(wantFiles, "optional/kustomization.yaml", "optional/leaf.yaml")
+				slices.Sort(wantFiles)
+			}
+			ks := &manifest.Kustomization{Name: "app", Namespace: "apps"}
+			ks.Path, ks.Components, ks.IgnoreMissingComponents = "app", []string{"../optional"}, true
+			inputs := ObserveLocalInputs(t.Context(), &RenderRequest{
+				Source:  &store.SourceArtifact{FS: files, Content: tc.name},
+				SubPath: ks.Path,
+				Spec:    ks,
+			})
+			assert.Equal(t, inputs.Complete, true)
+			assert.Diff(t, inputs.Roots, wantRoots)
+			assert.Diff(t, inputs.Files, wantFiles)
 		})
 	}
 }

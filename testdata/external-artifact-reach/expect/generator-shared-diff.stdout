@@ -1,0 +1,35 @@
+--- ConfigMap default/alpha
++++ ConfigMap default/alpha
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   app: old
+-  shared: old
++  shared: new
+ kind: ConfigMap
+ metadata:
+   labels:
+
+--- ConfigMap default/beta
++++ ConfigMap default/beta
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   app: old
+-  shared: old
++  shared: new
+ kind: ConfigMap
+ metadata:
+   labels:
+
+--- ConfigMap default/gamma
++++ ConfigMap default/gamma
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   app: old
+-  shared: old
++  shared: new
+ kind: ConfigMap
+ metadata:
+   labels:

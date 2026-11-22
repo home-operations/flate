@@ -356,9 +356,14 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 	}, int64(
 		1,
 	)
+	path := "file"
 	if strings.HasPrefix((*testCaseInput.phase), "extract-") {
+		destination := "@artifact/"
+		if *testCaseInput.phase == "extract-inner-warm" {
+			destination, path = "@artifact/other", "other/file"
+		}
 		name, operations, wantCalls = (*testCaseInput.phase), []any{
-			map[string]any{"from": "@repo/archive.tgz", "to": "@artifact/", "strategy": "Extract"},
+			map[string]any{"from": "@repo/archive.tgz", "to": destination, "strategy": "Extract"},
 		}, 2
 	}
 	generatorForTestResult := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})
@@ -400,7 +405,7 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 	if !ok || tasks.Failures() != 0 {
 		t.Fatalf("control output=%v task failures=%d", output, tasks.Failures())
 	}
-	data, err := fs.ReadFile(artifact.FS, "file")
+	data, err := fs.ReadFile(artifact.FS, path)
 	if err != nil || string(data) != "input" || testCaseInput.calls.Load()-before != wantCalls {
 		t.Fatalf(
 			"generator control: calls=%d want=%d data=%q error=%v", testCaseInput.calls.Load()-before, wantCalls,

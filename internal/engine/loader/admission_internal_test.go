@@ -278,7 +278,7 @@ func TestAdmission_MultipleReferences(t *testing.T) {
 				}
 				changes, err := change.Qualify(
 					t.Context(),
-					detectChanges(t, paths, paths), [2]*store.Store{stores[0], stores[1]},
+					detectChanges(t, paths, paths), change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)

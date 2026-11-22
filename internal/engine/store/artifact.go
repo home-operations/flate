@@ -36,7 +36,7 @@ type SourceArtifact struct {
 	// Only an admitted bootstrap uses its original checkout root for Git metadata.
 	LocalRoot string
 
-	// Key identifies an acquisition family; Content identifies its admitted generation.
+	// Key identifies the source family across acquired content generations.
 	// Empty Content with FS denotes mutable content requiring cache validation.
 	// Nonempty Key without FS requires acquisition before reading.
 	Key string

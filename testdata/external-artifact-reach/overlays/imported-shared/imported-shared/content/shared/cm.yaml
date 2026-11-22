@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: shared, namespace: default}
+data: {s: "2"}

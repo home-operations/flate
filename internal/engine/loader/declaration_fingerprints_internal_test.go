@@ -217,7 +217,7 @@ func TestCompleteDeclarations_PreservesInventorySnapshots(t *testing.T) {
 			changes, err := change.Qualify(
 				t.Context(),
 				detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
-				[2]*store.Store{store.New(), store.New()},
+				change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)

@@ -237,6 +237,16 @@ func (d *Session) load(ctx context.Context) error {
 // Advance MUST consume only accepted observations after admission publication.
 func (d *Session) Advance(ctx context.Context, admission *selection.AdmissionResult) (bool, error) {
 	d.pendingSources = d.pendingSources[:0]
+	d.pendingMaterializers = d.pendingMaterializers[:0]
+	if admission != nil {
+		for i := range admission.Demands {
+			demand := &admission.Demands[i]
+			if demand.Materialize && d.cfg.Store.GetObject(demand.Identity) != nil {
+				d.pendingMaterializers = append(d.pendingMaterializers, demand.Identity)
+			}
+		}
+		slices.SortFunc(d.pendingMaterializers, manifest.NamedResource.Compare)
+	}
 	changed, err := d.advance(ctx, admission)
 	if errors.Is(err, errPendingSources) {
 		return true, nil
@@ -381,7 +391,7 @@ func (d *Session) pendingProducers(
 	pending := map[manifest.NamedResource]selection.Demand{}
 	for i := range demands {
 		demand := &demands[i]
-		if demand.History || demand.Occurrence.Identity != (manifest.NamedResource{}) {
+		if demand.History || demand.Materialize || demand.Occurrence.Identity != (manifest.NamedResource{}) {
 			continue
 		}
 		ks, err := d.pendingProducer(ctx, demand, root)

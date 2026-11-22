@@ -638,6 +638,66 @@ func (s *Set) ForSource(source manifest.NamedResource) (*Set, [2]*store.SourceAr
 	return nil, [2]*store.SourceArtifact{}, [2]manifest.BaseManifest{}
 }
 
+// Paired reports whether both sides participate in source qualification.
+func (s *Set) Paired() bool { return s != nil && s.paired }
+
+// PendingSourceOwner returns the prior producer that still owes absence evidence on this side.
+func (s *Set) PendingSourceOwner(source manifest.NamedResource, side manifest.TreeSide) manifest.NamedResource {
+	evidence := s.sources[source]
+	if evidence.pendingOwner != nil && evidence.artifacts[side] == nil {
+		return *evidence.pendingOwner
+	}
+	return manifest.NamedResource{}
+}
+
+// CompareSource evaluates a generated read against its current paired source generation.
+func (s *Set) CompareSource(
+	source manifest.NamedResource, side manifest.TreeSide, current *store.SourceArtifact,
+	compare func(*Set) Comparison,
+) (Comparison, bool) {
+	if s == nil || side > manifest.TreeHead {
+		return Comparison{}, false
+	}
+	evidence := s.sources[source]
+	if !evidence.generated {
+		return Comparison{}, false
+	}
+	if current != evidence.artifacts[side] ||
+		current != nil && !current.Reads.Valid() {
+		return Comparison{}, true
+	}
+	if evidence.absent[0] || evidence.absent[1] {
+		return Comparison{Changed: true, Known: true}, true
+	}
+	if evidence.changes == nil {
+		return Comparison{}, true
+	}
+	if compare != nil {
+		return compare(evidence.changes), true
+	}
+	a, b := evidence.artifacts[0], evidence.artifacts[1]
+	if a.Content != "" && b.Content != "" {
+		return Comparison{Changed: a.Content != b.Content, Known: true}, true
+	}
+	return evidence.changes.ComparePaths(nil), true
+}
+
+// ComparePaths applies a read footprint to the paired file delta.
+func (s *Set) ComparePaths(match func(string) bool) Comparison {
+	if s == nil {
+		return Comparison{}
+	}
+	if match == nil {
+		return Comparison{Changed: len(s.paths) != 0, Known: true}
+	}
+	for file := range s.paths {
+		if match(file) {
+			return Comparison{Changed: true, Known: true}
+		}
+	}
+	return Comparison{Known: true}
+}
+
 type comparisonKey struct {
 	source, owner, input manifest.NamedResource
 	use                  string

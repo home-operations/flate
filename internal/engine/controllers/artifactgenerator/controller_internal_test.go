@@ -7,6 +7,7 @@ import (
 	"context"
 	"io/fs"
 	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -189,7 +190,11 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	phaseCounts1[manifest.WorkAcquisition] = manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 1}
 	phaseCounts1[manifest.WorkEvaluation] = manifest.WorkCounts{Attempts: 1, Completed: 1}
 	phaseCounts1[manifest.WorkCache] = manifest.WorkCounts{Attempts: 3, Completed: 3, CacheService: 2}
-	assertGeneratorWork(t, st, obj.Named(), phaseCounts1)
+	retry := assertGeneratorWork(t, st, obj.Named(), phaseCounts1)
+	assert.Equal(t, slices.ContainsFunc(retry, func(record manifest.WorkRecord) bool {
+		return record.Key.Phase == manifest.WorkEvaluation &&
+			record.Key.Input == failedInput && record.Counts.Completed == 1
+	}), true)
 	status, _ := st.GetStatus(obj.Named())
 	assert.FatalIf(t, status.Status != store.StatusReady, "retry status = %+v", status)
 	target := manifest.NamedResource{
@@ -200,7 +205,7 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	}
 	artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 	assert.FatalIf(t, !ok, "%v", "same-input retry did not execute the failed output")
-	assert.Equal(t, artifact.Key, failedInput)
+	assert.Equal(t, artifact.Key, target.NamespacedName())
 	{
 		data, err := fs.ReadFile(artifact.FS, "file")
 		assert.FatalIf(t, err != nil || string(data) != "c", "retried c = %q, %v", data, err)

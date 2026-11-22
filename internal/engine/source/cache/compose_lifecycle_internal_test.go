@@ -34,7 +34,7 @@ func TestCompose_PublishedOutputOwnsBacking(t *testing.T) {
 			input := os.DirFS(backing)
 			before := compositionFiles(t, input)
 			output, _, _, err := owner.Compose(t.Context(), Composition{
-				Content: "owned output", Base: CompositionInput{FS: input, Content: "base"},
+				Base:   CompositionInput{FS: input, Content: "base"},
 				Inputs: []CompositionInput{{FS: input, Content: "generation"}},
 				Copies: []Copy{{From: "nested", To: "."}}, Policy: "fixed",
 			}, &Policy{MaxAge: Forever})
@@ -66,20 +66,18 @@ func TestCompose_CancellationDoesNotPublish(t *testing.T) {
 			observed := &compositionObservedFS{FS: files}
 			input := compositionReadFS{FS: observed, read: func(name string) ([]byte, error) {
 				reads++
-				return fs.ReadFile(files, name)
+				data, err := fs.ReadFile(files, name)
+				if name == "overlay" {
+					cancel()
+				}
+				return data, err
 			}}
 			request := Composition{
-				Content: stage, Inputs: []CompositionInput{{FS: input, Content: "generation"}}, Policy: "fixed",
+				Inputs: []CompositionInput{{FS: input, Content: "generation"}}, Policy: "fixed",
 				Copies: []Copy{
 					{From: "base", To: "values"},
 					{From: "overlay", To: "values", Mode: MergeYAML},
-					{
-						From: "archive.tgz", To: "out", Mode: ExtractArchive,
-						ExtractContent: func(string, string) any {
-							cancel()
-							return "extract"
-						},
-					},
+					{From: "archive.tgz", To: "out", Mode: ExtractArchive},
 				},
 			}
 			if stage == "before planning" {
@@ -118,13 +116,12 @@ func TestCompose_FailurePreservesOtherGeneration(t *testing.T) {
 			files := fstest.MapFS{"file": {Data: []byte("complete"), Mode: 0o640}}
 			before := compositionFiles(t, files)
 			request := Composition{
-				Content: "stable family", Inputs: []CompositionInput{{FS: files, Content: ""}},
+				Inputs: []CompositionInput{{FS: files, Content: ""}},
 				Copies: []Copy{{From: "file", To: "out"}}, Policy: "fixed",
 			}
 			previous, descriptor, previousKey, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
 			assert.NoError(t, err)
 			previousArchiveKey := request.key()
-			request.Content = "failed generation"
 			request.Copies = append(request.Copies, Copy{From: "missing", To: "partial"})
 			output, failedDescriptor, key, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
 			assert.Equal(t, output == nil, true)
@@ -167,15 +164,12 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 	}
 	before := compositionFiles(t, files)
 	request := Composition{
-		Content: "backend agreement", Inputs: []CompositionInput{{FS: files, Content: "generation"}},
+		Inputs: []CompositionInput{{FS: files, Content: "generation"}},
 		Copies: []Copy{
 			{From: "base", To: "values"},
 			{From: "overlay", To: "values", Mode: MergeYAML},
 			{From: "skip", To: "skip", Exclude: []string{"skip"}},
-			{
-				From: "archive.tgz", To: "out", Mode: ExtractArchive,
-				ExtractContent: func(name, destination string) any { return []string{"nested", name, destination} },
-			},
+			{From: "archive.tgz", To: "out", Mode: ExtractArchive},
 		}, Policy: "fixed",
 	}
 	want := map[string]compositionFile{

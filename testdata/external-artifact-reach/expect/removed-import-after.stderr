@@ -1,0 +1,8 @@
+<PERSISTENCE:
+  ⚠ warnings (1)
+    [UnresolvedSubstitution] substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+|
+  ⚠ warnings (2)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+    [UnresolvedSubstitution] substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+>

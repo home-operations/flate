@@ -19,6 +19,7 @@ import (
 
 type entryQualification struct {
 	operandsSettled bool
+	changedOnly     bool
 	packages        [][]selection.OccurrenceFacts
 	active          []manifest.NamedResource
 	preparation     *selection.Preparation

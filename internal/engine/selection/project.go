@@ -321,36 +321,6 @@ func (s *selectionSide) includes(namespace string) bool {
 	return ok
 }
 
-func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifest.BaseManifest) {
-	src, _, _ := obj.SourcePath()
-	id := obj.Named()
-	if !(Request{Roots: []manifest.NamedResource{root}}).Matches(id) {
-		return
-	}
-	if s.run.Facts == nil || !s.run.Facts.SourceExternal(src, &s.reads) {
-		return
-	}
-	info := s.status(id)
-	if info.Outcome() != store.OutcomeUnchanged && info.Outcome() != store.OutcomeSkipped {
-		return
-	}
-	if slices.ContainsFunc(s.run.Warnings, func(w manifest.Warning) bool {
-		return w.Resource == src && w.Category == manifest.WarnSourceCredentialsUnavailable
-	}) {
-		return
-	}
-	s.result.External = append(
-		s.result.External,
-		manifest.Warning{
-			Resource: id,
-			Subject:  s.result.Diagnostic(id),
-			Related:  []manifest.NamedResource{src},
-			Category: manifest.WarnExternalSource,
-			Message:  "external source " + s.diagnostic(src).String() + " is outside the local tree; not rendered",
-		},
-	)
-}
-
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {
 	local := make(map[manifest.NamedResource]store.StatusInfo, len(candidates))
 	counterpart := make(map[manifest.NamedResource]store.StatusInfo)

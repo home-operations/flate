@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/depwait"
+	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -196,21 +197,31 @@ func (o *Orchestrator) run(ctx context.Context) error {
 
 // Configure MUST precede dispatch; controllers freeze shaping config on start.
 func (o *Orchestrator) configureControllers() {
-	o.configureSources(false)
+	o.configureControllerStage(false)
+}
+
+func (o *Orchestrator) configureControllerStage(construction bool) {
+	o.configureSources(false, construction)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
-		Cache:     o.cache,
-		SkipKinds: o.cfg.HelmOptions.SkipKinds,
-		Session:   o.selection,
-		Loader:    o.loader,
-		Index:     o.index,
-		Existence: existence,
-		Missing:   o.cfg.missing,
+		Construction: construction,
+		Cache:        o.cache,
+		SkipKinds:    o.cfg.HelmOptions.SkipKinds,
+		Session:      o.selection,
+		Loader:       o.loader,
+		Index:        o.index,
+		Existence:    existence,
+		Missing:      o.cfg.missing,
 	}
 	if o.admission != nil {
 		common.PreparedGeneration = o.admission.PreparedGeneration
 	}
+	var localInputs map[manifest.NamedResource]*kustomize.LocalInputs
+	if o.kustomizeInputs != nil {
+		localInputs = o.kustomizeInputs.prepared
+	}
 	o.ksc.Configure(kustomization.Options{
+		LocalInputs:         localInputs,
 		Discovery:           o.discoveryResult,
 		Options:             common,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
@@ -338,11 +349,11 @@ func (o *Orchestrator) stop() {
 	o.cfg.StatusListener = nil
 }
 
-func (o *Orchestrator) configureSources(construction bool) {
+func (o *Orchestrator) configureSources(bootstrap, construction bool) {
 	owner := o
 	session := o.selection
 	configuredLoader, index := o.loader, o.loader.Index
-	if construction {
+	if bootstrap {
 		owner = &Orchestrator{store: o.store, loader: o.loader, index: o.loader.Index, admission: o.admission}
 		session = nil
 		configuredLoader, index = nil, nil
@@ -357,11 +368,12 @@ func (o *Orchestrator) configureSources(construction bool) {
 	)
 	o.src.Controller.Configure(
 		base.Options{
-			Session:   session,
-			Loader:    o.loader,
-			Index:     index,
-			Missing:   o.cfg.missing,
-			Existence: &orchestratorExistence{DiscoveryIndex: o.loader.Index, o: owner, construction: construction},
+			Construction: construction,
+			Session:      session,
+			Loader:       o.loader,
+			Index:        index,
+			Missing:      o.cfg.missing,
+			Existence:    &orchestratorExistence{DiscoveryIndex: o.loader.Index, o: owner, construction: bootstrap},
 		},
 	)
 }

@@ -73,7 +73,12 @@ func optionalSupplierPair(
 		}
 		indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 	}
-	changes, err := change.Qualify(tb.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		tb.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -186,7 +191,7 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 			}
 			changes, err := change.Qualify(
 				t.Context(),
-				nil, [2]*store.Store{stores[0], stores[1]},
+				nil, change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -227,7 +232,7 @@ func TestFilter_DeferredSourceValuesPairedSides(t *testing.T) {
 			}
 			changes, err := change.Qualify(
 				t.Context(),
-				bootstrap, [2]*store.Store{stores[0], stores[1]},
+				bootstrap, change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -263,7 +268,7 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 			}
 			changes, err := change.Qualify(
 				t.Context(),
-				bootstrap, [2]*store.Store{stores[0], stores[1]},
+				bootstrap, change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -492,7 +497,12 @@ func staleOptionalInputChanges(t *testing.T, stores [2]*store.Store, source, inp
 			st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
 		)
 	}
-	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	before := manifest.InputVisibility{
 		Source:   source,
@@ -541,7 +551,7 @@ func crossSourceSupplierPair(t *testing.T, namespace, mode string) (
 			indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 		}
 		var err error
-		changes, err = change.Qualify(t.Context(), nil, stores, manifest.WorkScope{})
+		changes, err = change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
 		assert.NoError(t, err)
 		changes, err = changes.WithReaders(t.Context(), indexes,
 			[2]map[manifest.NamedResource]inputprojection.Projection{}, manifest.WorkScope{})
@@ -578,7 +588,12 @@ func crossSourceSupplierPair(t *testing.T, namespace, mode string) (
 			}
 		}
 		var err error
-		changes, err = change.Qualify(t.Context(), changes, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+		changes, err = change.Qualify(
+			t.Context(),
+			changes,
+			change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+			manifest.WorkScope{},
+		)
 		assert.NoError(t, err)
 		changes, err = changes.WithReaders(t.Context(),
 			[2]*manifest.DiscoveryIndex{indexes[0], indexes[1]},

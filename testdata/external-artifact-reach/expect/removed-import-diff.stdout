@@ -1,0 +1,59 @@
+--- ConfigMap app/static (deploy/app/manifests)
++++ ConfigMap app/static (deploy/app/manifests)
+@@ -1,9 +1 @@
+-apiVersion: v1
+-kind: ConfigMap
+-metadata:
+-  labels:
+-    kustomize.toolkit.fluxcd.io/name: app
+-    kustomize.toolkit.fluxcd.io/namespace: app
+-  name: static
+-  namespace: app
+ 
+
+--- ExternalSecret app/local-vars (clusters/local/flux)
++++ ExternalSecret app/local-vars (clusters/local/flux)
+@@ -1,9 +1 @@
+-apiVersion: external-secrets.io/v1
+-kind: ExternalSecret
+-metadata:
+-  labels:
+-    kustomize.toolkit.fluxcd.io/name: cluster-config
+-    kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: local-vars
+-  namespace: app
+ 
+
+--- Kustomization app/app (clusters/local/flux)
++++ Kustomization app/app (clusters/local/flux)
+@@ -1,18 +1 @@
+-apiVersion: kustomize.toolkit.fluxcd.io/v1
+-kind: Kustomization
+-metadata:
+-  labels:
+-    kustomize.toolkit.fluxcd.io/name: cluster-config
+-    kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: app
+-  namespace: app
+-spec:
+-  dependsOn:
+-  - name: cluster-config
+-    namespace: flux-system
+-  path: ./deploy/app/manifests
+-  sourceRef:
+-    kind: GitRepository
+-    name: cluster
+-    namespace: flux-system
+ 
+
+--- Namespace app (clusters/local/flux)
++++ Namespace app (clusters/local/flux)
+@@ -1,8 +1 @@
+-apiVersion: v1
+-kind: Namespace
+-metadata:
+-  labels:
+-    kustomize.toolkit.fluxcd.io/name: cluster-config
+-    kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: app
+ 

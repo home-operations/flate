@@ -69,7 +69,7 @@ func testAdmissionDuplicateInputContentCase(t *testing.T, testCaseInput *string,
 		changes, err := change.Qualify(
 			t.Context(),
 			nil,
-			[2]*store.Store{stores[before], stores[after]},
+			change.SourcePair{Stores: [2]*store.Store{stores[before], stores[after]}},
 			manifest.WorkScope{},
 		)
 		assert.NoError(t, err)
@@ -116,7 +116,7 @@ func testAdmissionInputVisibilityCaseCompletion(
 		changes, err := change.Qualify(
 			t.Context(),
 			nil,
-			[2]*store.Store{stores[before], stores[after]},
+			change.SourcePair{Stores: [2]*store.Store{stores[before], stores[after]}},
 			manifest.WorkScope{},
 		)
 		assert.NoError(t, err)

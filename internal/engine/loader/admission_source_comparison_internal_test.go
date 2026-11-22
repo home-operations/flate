@@ -204,7 +204,12 @@ func testQualifyContentFingerprintCaseCompletion(
 	if (*(*scope.testCaseInput)) == "bootstrap" {
 		changes = nil
 	}
-	qualified, err := change.Qualify(ctx, changes, [2]*store.Store{scope.st[0], scope.st[1]}, manifest.WorkScope{})
+	qualified, err := change.Qualify(
+		ctx,
+		changes,
+		change.SourcePair{Stores: [2]*store.Store{scope.st[0], scope.st[1]}},
+		manifest.WorkScope{},
+	)
 	if (*(*scope.testCaseInput)) == "error" || (*(*scope.testCaseInput)) == "canceled" ||
 		(*(*scope.testCaseInput)) == "callback_canceled" ||
 		(*(*scope.testCaseInput)) == "callback_deadline" {
@@ -276,7 +281,7 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 		_, qualifyErr := change.Qualify(
 			t.Context(),
 			nil,
-			[2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]},
+			change.SourcePair{Stores: [2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]}},
 			manifest.WorkScope{},
 		)
 		assert.Equal(t, errors.Is(qualifyErr, manifest.ErrInput), true)
@@ -289,7 +294,7 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 	changes, (*scope.err) = change.Qualify(
 		t.Context(),
 		compareInput,
-		[2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]},
+		change.SourcePair{Stores: [2]*store.Store{(*scope.stores)[0], (*scope.stores)[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, (*scope.err))

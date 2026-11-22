@@ -317,6 +317,7 @@ func (c *execution) compose(
 		Base: cache.CompositionInput{
 			FS:      artifact.FS,
 			Content: artifact.Content,
+			Backing: artifact.LocalPath,
 		},
 		Policy: composition.Policy,
 		Ignore: composition.Ignore,
@@ -332,7 +333,7 @@ func (c *execution) compose(
 		if input == nil || input.FS == nil {
 			return nil, &depwait.BlockedError{Deps: []manifest.NamedResource{include.Reference.NamedResource}}
 		}
-		request.Inputs[i] = cache.CompositionInput{FS: input.FS, Content: input.Content}
+		request.Inputs[i] = cache.CompositionInput{FS: input.FS, Content: input.Content, Backing: input.LocalPath}
 		request.Copies[i] = cache.Copy{Input: i, From: include.FromPath, To: include.ToPath, Mode: cache.PlaceTree}
 	}
 	completed := *artifact

@@ -31,6 +31,7 @@ type Set struct {
 	sources      map[manifest.NamedResource]sourceDelta
 	groups       []sourceGroup
 	declarations map[comparisonKey]declarationComparison
+	paired       bool
 }
 
 type filePresence uint8
@@ -53,6 +54,9 @@ type sourceDelta struct {
 	changes      *Set
 	artifacts    [2]*store.SourceArtifact
 	declarations [2]manifest.BaseManifest
+	pendingOwner *manifest.NamedResource
+	absent       [2]bool
+	generated    bool
 }
 
 type sourceGroup struct {
@@ -77,21 +81,30 @@ type readerPair struct {
 	exclusions    [2]string
 }
 
+// SourcePair carries the current discovery indexes before the stores freeze them.
+type SourcePair struct {
+	Stores  [2]*store.Store
+	Indexes [2]*manifest.DiscoveryIndex
+}
+
 // Qualify compares available admitted source pairs before reconciliation.
 // Supplied changes retain their bootstrap coordinates and are never mutated.
-func Qualify(ctx context.Context, changes *Set, stores [2]*store.Store, work manifest.WorkScope) (*Set, error) {
+func Qualify(ctx context.Context, changes *Set, pair SourcePair, work manifest.WorkScope) (*Set, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
-	ids := sourceIDs(stores)
-	out := &Set{sources: make(map[manifest.NamedResource]sourceDelta, len(ids))}
+	ids := sourceIDs(pair.Stores)
+	out := &Set{sources: make(map[manifest.NamedResource]sourceDelta, len(ids)), paired: true}
 	compared := map[readerPair]*Set{}
 	for _, id := range slices.SortedFunc(maps.Keys(ids), manifest.NamedResource.Compare) {
-		evidence := sourceEvidence(stores, id)
+		evidence := sourceEvidence(pair, id)
 		switch {
 		case evidence.readable():
 		case id == manifest.BootstrapSourceID && changes == nil:
 			return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
+		case evidence.generated:
+			out.sources[id] = evidence
+			continue
 		default:
 			continue
 		}
@@ -103,11 +116,6 @@ func Qualify(ctx context.Context, changes *Set, stores [2]*store.Store, work man
 			return nil, err
 		}
 		evidence.changes = delta
-		if len(delta.sources) != 0 || len(delta.groups) != 0 || len(delta.declarations) != 0 {
-			local := *delta
-			local.sources, local.groups, local.declarations = nil, nil, nil
-			evidence.changes = &local
-		}
 		out.sources[id] = evidence
 		if id == manifest.BootstrapSourceID {
 			out.paths, out.origins = delta.paths, evidence.artifacts
@@ -134,7 +142,7 @@ func (s *Set) qualifySource(
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("context: %w", err)
 		}
-		return delta, nil
+		return delta.sourceLocalChanges(), nil
 	case s == nil || id != manifest.BootstrapSourceID || s.sources[id].changes != nil:
 		return nil, nil //nolint:nilnil // Existing qualified sources use their admitted comparison.
 	}
@@ -187,6 +195,15 @@ func (s *Set) qualifySource(
 	return delta, nil
 }
 
+func (s *Set) sourceLocalChanges() *Set {
+	if len(s.sources) != 0 || len(s.groups) != 0 || len(s.declarations) != 0 {
+		local := *s
+		local.sources, local.groups, local.declarations = nil, nil, nil
+		return &local
+	}
+	return s
+}
+
 func sourceIDs(stores [2]*store.Store) map[manifest.NamedResource]struct{} {
 	ids := map[manifest.NamedResource]struct{}{manifest.BootstrapSourceID: {}}
 	for _, st := range stores {
@@ -199,13 +216,60 @@ func sourceIDs(stores [2]*store.Store) map[manifest.NamedResource]struct{} {
 	return ids
 }
 
-func sourceEvidence(stores [2]*store.Store, id manifest.NamedResource) sourceDelta {
+func sourceEvidence(pair SourcePair, id manifest.NamedResource) sourceDelta {
 	var evidence sourceDelta
-	for i, st := range stores {
+	for i, st := range pair.Stores {
 		evidence.artifacts[i], _ = st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		if a := evidence.artifacts[i]; a != nil && !a.Reads.Valid() {
+			evidence.artifacts[i] = nil
+		}
 		evidence.declarations[i] = st.GetObject(id)
 	}
+	for i, st := range pair.Stores {
+		owner := pair.Stores[1-i].EmissionOwner(id)
+		evidence.generated = evidence.generated || owner != (manifest.NamedResource{})
+		if owner.Name != "" && evidence.artifacts[i] == nil && evidence.artifacts[1-i] != nil {
+			absent, pending := outputAbsence(st, pair.Indexes[i], owner, id)
+			evidence.absent[i] = absent
+			if pending.Name != "" {
+				evidence.pendingOwner = new(pending)
+			}
+		}
+	}
 	return evidence
+}
+
+func outputAbsence(
+	st *store.Store, index *manifest.DiscoveryIndex, owner, output manifest.NamedResource,
+) (bool, manifest.NamedResource) {
+	if st.GetObject(output) != nil {
+		return false, manifest.NamedResource{}
+	}
+	owners := []manifest.NamedResource{owner}
+	productions := st.Productions(output, index)
+	for i := range productions {
+		if producer := productions[i].Materializer(output); producer.Name != "" && !slices.Contains(owners, producer) {
+			owners = append(owners, producer)
+		}
+	}
+	for _, producer := range owners {
+		if st.GetObject(producer) == nil && !index.IsFileIndexed(producer) &&
+			len(st.Productions(producer, index)) == 0 {
+			continue
+		}
+		emission, _ := st.GetArtifact(producer, store.ArtifactContent).(*store.Emission)
+		if !inventoryOmits(emission, output) {
+			return false, producer
+		}
+	}
+	return true, manifest.NamedResource{}
+}
+
+func inventoryOmits(emission *store.Emission, output manifest.NamedResource) bool {
+	if emission == nil || !emission.Complete || !emission.OutputReads.Valid() {
+		return false
+	}
+	return !slices.ContainsFunc(emission.Children, func(child store.Child) bool { return child.Obj.Named() == output })
 }
 
 func (e *sourceDelta) readable() bool {
@@ -306,8 +370,9 @@ func (e *sourceDelta) contentEqual(ctx context.Context, id manifest.NamedResourc
 
 func (e *sourceDelta) immutableArtifact() bool {
 	a, b := e.artifacts[0], e.artifacts[1]
-	identity := a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key
-	return identity && a.Revision == b.Revision && a.Digest == b.Digest
+	hasIdentity := a.Content != "" && a.Key != ""
+	sameMaterial := a.Content == b.Content && a.Key == b.Key && a.Digest == b.Digest
+	return hasIdentity && sameMaterial && (e.generated || a.Revision == b.Revision)
 }
 
 func (e *sourceDelta) hasFingerprints() bool {
@@ -330,7 +395,9 @@ func (s *Set) groupSources() {
 		add(manifest.BootstrapSourceID, s)
 	}
 	for _, ref := range slices.SortedFunc(maps.Keys(s.sources), manifest.NamedResource.Compare) {
-		add(ref, s.sources[ref].changes)
+		if delta := s.sources[ref].changes; delta != nil {
+			add(ref, delta)
+		}
 	}
 }
 
@@ -577,9 +644,13 @@ func (s *Set) WithReaders(
 		return out, nil
 	}
 	out := *s
+	out.paired = indexes[0] != nil && indexes[1] != nil
 	out.sources = maps.Clone(s.sources)
 	out.inputs = nil
 	for ref, evidence := range s.sources {
+		if evidence.changes == nil {
+			continue
+		}
 		qualified := evidence.changes.withReaders(
 			indexes,
 			&bindings,

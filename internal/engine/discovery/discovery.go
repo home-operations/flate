@@ -104,6 +104,7 @@ type Session struct {
 	packages               []loader.PackageEvidence
 	planLoaded             bool
 	pendingSources         []manifest.NamedResource
+	pendingMaterializers   []manifest.NamedResource
 	sourceGroups           map[manifest.NamedResource]*entrySourceGroup
 	loaded                 bool
 	built                  bool

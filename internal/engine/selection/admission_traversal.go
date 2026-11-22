@@ -139,6 +139,9 @@ func (c *admissionClosure) selectInventoryChildren(id manifest.NamedResource, ro
 		if id.ReportHidden() && c.isFileIndexed(child.Obj.Named()) {
 			continue
 		}
+		if comparison, generated := c.generatedRead(child.Obj.Named(), nil); generated && !comparison.Changed {
+			continue
+		}
 		if c.unchangedDeclaration(child.Obj.Named(), id, child.Obj) {
 			continue
 		}
@@ -549,7 +552,11 @@ func (c *admissionClosure) hydrateDeclaration(
 
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
-	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Runnable
+	qualification := !role.selected || c.proposal.Request.construction &&
+		slices.ContainsFunc(c.proposal.demands, func(demand Demand) bool {
+			return demand.Identity == id && demand.Materialize
+		})
+	preparation := role.needed && role.ordinary && qualification && id.KindInfo().Runnable
 	if !Root(*c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
 		!preparation &&
 		(role.ordinary || !role.needed) {

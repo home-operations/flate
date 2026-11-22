@@ -26,15 +26,9 @@
 package resourceset
 
 import (
-	"bytes"
-	"fmt"
-	"strings"
+	"errors"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/core/resourcesetinput"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -61,8 +55,8 @@ func Render(
 	if rs == nil {
 		return nil, nil, nil
 	}
-	if err := validateSteps(rs); err != nil {
-		return nil, nil, err
+	if err := resourcesetinput.ValidateSteps(&rs.ResourceSetSpec); err != nil {
+		return nil, nil, manifest.NewError(manifest.ErrInput, err, "")
 	}
 
 	var warnings []manifest.Warning
@@ -98,213 +92,20 @@ func Render(
 		return nil, warnings, nil
 	}
 
-	docs, err := renderSteps(rs, inputs)
+	documents, err := resourcesetinput.Build(&rs.ResourceSetSpec, inputs, false)
+	if errors.Is(err, resourcesetinput.ErrDocument) {
+		err = manifest.NewError(manifest.ErrInput, err, "")
+	}
 	work.Finish(err)
-	return docs, warnings, err
-}
-
-func validateSteps(rs *manifest.ResourceSet) error {
-	if len(rs.Steps) > 0 && (len(rs.Resources) > 0 || rs.ResourcesTemplate != "") {
-		return manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			"spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate",
-		)
-	}
-	for _, step := range rs.Steps {
-		if len(step.Resources) == 0 && step.ResourcesTemplate == "" {
-			return manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				fmt.Sprintf("step %q: at least one of resources or resourcesTemplate must be set", step.Name),
-			)
-		}
-	}
-	return nil
-}
-
-func renderSteps(rs *manifest.ResourceSet, inputs []map[string]any) ([]manifest.DocOccurrence, error) {
-	steps := rs.Steps
-	if len(steps) == 0 {
-		steps = []fluxopv1.ResourceSetStep{{Resources: rs.Resources, ResourcesTemplate: rs.ResourcesTemplate}}
+	if err != nil {
+		return nil, warnings, err
 	}
 	var docs []manifest.DocOccurrence
-	stepOfObject := make(map[manifest.NamedResource]string)
-	for _, step := range steps {
-		rendered, err := renderStep(step, inputs)
-		if err != nil {
-			if len(rs.Steps) > 0 {
-				err = fmt.Errorf("step %q: %w", step.Name, err)
-			}
-			return nil, err
-		}
-		if len(rs.Steps) > 0 {
-			if err := recordStepObjects(step.Name, rendered, stepOfObject); err != nil {
-				return nil, err
-			}
-		}
-		if docs == nil {
-			docs = rendered
-		} else {
-			for _, doc := range rendered {
-				doc.Ordinal = len(docs)
-				docs = append(docs, doc)
-			}
+	if len(documents) != 0 {
+		docs = make([]manifest.DocOccurrence, len(documents))
+		for i, document := range documents {
+			docs[i] = manifest.DocOccurrence{Document: document, Ordinal: i}
 		}
 	}
-	return docs, nil
-}
-
-func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]manifest.DocOccurrence, error) {
-	seen := make(map[manifest.NamedResource]struct{})
-	var docs []manifest.DocOccurrence
-	appendUnique := func(rendered []map[string]any, dedup bool) {
-		for _, doc := range rendered {
-			if dedup && disabledByReconcileAnnotation(doc) {
-				continue
-			}
-			key := DedupKey(doc)
-			if _, dup := seen[key]; dedup && dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			if docs == nil {
-				docs = make([]manifest.DocOccurrence, 0, len(rendered))
-			}
-			docs = append(docs, manifest.DocOccurrence{Document: doc, Ordinal: len(docs)})
-		}
-	}
-	// Flux preserves no-input JSON duplicates while giving them precedence over YAML.
-	for i, raw := range step.Resources {
-		rendered, err := renderResources(raw, inputs)
-		if err != nil {
-			return nil, fmt.Errorf("spec.resources[%d]: %w", i, err)
-		}
-		appendUnique(rendered, len(inputs) > 0)
-	}
-	if step.ResourcesTemplate != "" {
-		rendered, err := renderResourcesTemplate(step.ResourcesTemplate, inputs)
-		if err != nil {
-			return nil, fmt.Errorf("spec.resourcesTemplate: %w", err)
-		}
-		appendUnique(rendered, true)
-	}
-	return docs, nil
-}
-
-func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	yamlBytes, err := yaml.JSONToYAML(raw.Raw)
-	if err != nil {
-		return nil, fmt.Errorf("convert template to YAML: %w", err)
-	}
-	pt, err := resourcesetinput.Parse(string(yamlBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]map[string]any, 0, len(inputs))
-	for _, in := range defaultNilInput(inputs) {
-		rendered, err := pt.Execute(in)
-		if err != nil {
-			return nil, err
-		}
-		var doc map[string]any
-		if err := yaml.Unmarshal(rendered, &doc); err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("unmarshal rendered doc: %w", err), "")
-		}
-		if doc == nil {
-			continue
-		}
-		out = append(out, doc)
-	}
-	return out, nil
-}
-
-func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[string]any, error) {
-	pt, err := resourcesetinput.Parse(tmplStr)
-	if err != nil {
-		return nil, err
-	}
-	var out []map[string]any
-	for _, in := range defaultNilInput(inputs) {
-		rendered, err := pt.Execute(in)
-		if err != nil {
-			return nil, err
-		}
-		out, err = appendTemplateDocuments(out, rendered)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-func defaultNilInput(inputs []map[string]any) []map[string]any {
-	if len(inputs) == 0 {
-		return []map[string]any{nil}
-	}
-	return inputs
-}
-
-func appendTemplateDocuments(out []map[string]any, rendered []byte) ([]map[string]any, error) {
-	// Flux rejects non-comment content after a column-zero document separator.
-	for line := range bytes.SplitSeq(rendered, []byte{'\n'}) {
-		if bytes.HasPrefix(line, []byte("---")) {
-			tail := bytes.TrimSpace(line[3:])
-			if len(tail) > 0 && tail[0] != '#' {
-				return nil, manifest.NewError(
-					manifest.ErrInput,
-					nil,
-					fmt.Sprintf("invalid Yaml document separator: %s", tail),
-				)
-			}
-		}
-	}
-	for chunk := range bytes.SplitSeq(rendered, []byte("\n---")) {
-		var doc map[string]any
-		if err := yaml.Unmarshal(bytes.TrimPrefix(chunk, []byte("---")), &doc); err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("decode rendered YAML: %w", err), "")
-		}
-		obj := &unstructured.Unstructured{Object: doc}
-		if obj.IsList() {
-			if err := obj.EachListItem(func(item runtime.Object) error {
-				//nolint:errcheck // Unstructured.EachListItem supplies unstructured objects.
-				out = append(out, item.(*unstructured.Unstructured).Object)
-				return nil
-			}); err != nil {
-				return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read rendered list: %w", err), "")
-			}
-		} else if obj.GetName() != "" && obj.GetKind() != "" && obj.GetAPIVersion() != "" &&
-			(!strings.EqualFold(obj.GetKind(), "kustomization") || !strings.HasPrefix(obj.GetAPIVersion(), "kustomize.config.k8s.io/")) {
-			out = append(out, doc)
-		}
-	}
-	return out, nil
-}
-
-func recordStepObjects(
-	stepName string,
-	rendered []manifest.DocOccurrence,
-	stepOfObject map[manifest.NamedResource]string,
-) error {
-	for _, doc := range rendered {
-		key := DedupKey(doc.Document)
-		if prev, found := stepOfObject[key]; found && prev != stepName {
-			return manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				fmt.Sprintf(
-					"duplicate resource %s in step %q, already defined in step %q",
-					key,
-					stepName,
-					prev,
-				),
-			)
-		}
-		stepOfObject[key] = stepName
-	}
-	return nil
+	return docs, warnings, nil
 }

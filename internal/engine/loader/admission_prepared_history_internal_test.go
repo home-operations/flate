@@ -72,7 +72,12 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		stores[side], loaders[side] = st, l
 	}
-	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes

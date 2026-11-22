@@ -47,6 +47,42 @@ func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact,
 	return possible, ctx.Err()
 }
 
+// EntryProducerHint MUST affect ordering only. Its view includes declarations awaiting a build.
+func (l *Loader) EntryProducerHint(ctx context.Context, input *store.SourceArtifact, path string) (bool, error) {
+	visits := l.packageResources(input, path, nil)
+	reader := l.documents
+	reader.intent = manifest.IncidentalDocuments
+	reader.compact = false
+	reader.parsed = nil
+	reader.cache = make(map[string]document)
+	for i := range visits {
+		visit := &visits[i]
+		readable := visit.readable || visit.deferDecode && safepath.Contains(visit.root, visit.file)
+		if visit.role != kustomizeinput.Resource || visit.document != nil || !readable {
+			continue
+		}
+		children, readErr := reader.fileObjects(ctx, visit.file, manifest.ParseDocOptions{})
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if readErr != nil {
+			continue
+		}
+		for i := range children {
+			obj := children[i].Obj
+			kind := manifest.KindOf(obj)
+			if !kind.Render || kind.Structural {
+				continue
+			}
+			_, hint := manifest.ProjectProducer(obj, func(func([]byte) bool) {})
+			if hint {
+				return true, nil
+			}
+		}
+	}
+	return false, ctx.Err()
+}
+
 func (r *documentReader) frontierVisit(ctx context.Context, visit *graphVisit) bool {
 	if visit.role == kustomizeinput.File {
 		return false

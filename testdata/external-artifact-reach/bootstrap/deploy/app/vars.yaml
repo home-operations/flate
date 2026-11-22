@@ -1,0 +1,5 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: "${CLUSTER_NAME:=default}-vars"
+  namespace: authored

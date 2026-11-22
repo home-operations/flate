@@ -88,7 +88,12 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 				var err error
 				changes, err = change.Qualify(
 					t.Context(),
-					detectChanges(t, []string{"consumer.yaml"}, []string{"consumer.yaml"}), [2]*store.Store{peer, st},
+					detectChanges(
+						t,
+						[]string{"consumer.yaml"},
+						[]string{"consumer.yaml"},
+					),
+					change.SourcePair{Stores: [2]*store.Store{peer, st}},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)
@@ -500,7 +505,12 @@ func testPeerReaderContentSources(t *testing.T) {
 			)
 		}
 	}
-	changes, err := change.Qualify(t.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		t.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	assert.NoError(t, err)
 	assert.Diff(t, sourceChanges(changes, sources[0].Named()).Paths(), []string{"apps/red/removed.yaml"})
 	assert.Equal(t, sourceChanges(changes, sources[1].Named()).Len(), 0)

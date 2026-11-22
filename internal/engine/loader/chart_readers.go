@@ -8,8 +8,24 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/internal/engine/helm/chartinput"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
+	"github.com/home-operations/flate/internal/engine/store"
 )
+
+// ChartReadPaths returns the same chart inputs that reader finalization indexes.
+func (*Loader) ChartReadPaths(
+	ctx context.Context,
+	input *store.SourceArtifact,
+	chart string,
+) selection.SourceReadPaths {
+	if input == nil || input.FS == nil {
+		return selection.SourceReadPaths{}
+	}
+	chart = path.Clean(chart)
+	names, _, _ := chartFiles(ctx, fileInput{fs: input.FS, name: chart}, chart, false)
+	return selection.SourceReadPaths{Files: names.names, Roots: names.missing}
+}
 
 type chartReaders struct {
 	names   []string
@@ -21,22 +37,38 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 	if names, seen := rf.charts[location]; seen {
 		return names, nil
 	}
-	inputFile := new(rf.loader.documents).input(location)
+	input := new(rf.loader.documents).input(location)
+	names, templates, err := chartFiles(ctx, input, chartPath, true)
+	if err != nil {
+		return chartReaders{}, err
+	}
+	rf.templateBodies[location] = templates
+	rf.charts[location] = names
+	return names, nil
+}
+
+func chartFiles(
+	ctx context.Context,
+	input fileInput,
+	chartPath string,
+	readTemplates bool,
+) (chartReaders, [][]byte, error) {
 	var names chartReaders
-	description, parentMissing, _ := chartinput.Describe(ctx, inputFile.fs, chartinput.Options{
-		Name: inputFile.name,
+	var templates [][]byte
+	description, parentMissing, _ := chartinput.Describe(ctx, input.fs, chartinput.Options{
+		Name: input.name,
 		Validate: func(name string) error {
 			_, err := safepath.ArchiveName(name)
 			return err
 		},
-	}, func(name string, _ fs.FileInfo, data []byte) {
-		names.names = append(names.names, path.Join(chartPath, name))
-		if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
+	}, func(file string, _ fs.FileInfo, data []byte) {
+		names.names = append(names.names, path.Join(chartPath, file))
+		if readTemplates && (strings.HasPrefix(file, "templates/") || strings.Contains(file, "/templates/")) {
 			if data == nil {
-				data, _ = fs.ReadFile(inputFile.fs, path.Join(inputFile.name, name))
+				data, _ = fs.ReadFile(input.fs, path.Join(input.name, file))
 			}
 			if data != nil {
-				rf.templateBodies[location] = append(rf.templateBodies[location], data)
+				templates = append(templates, data)
 			}
 		}
 	})
@@ -48,26 +80,20 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 		}
 	}
 	if len(description.Dependencies) != 0 {
-		rf.templateBodies[location] = names.addDependencies(
-			&description, inputFile.name, chartPath, rf.templateBodies[location],
-		)
+		templates = names.addDependencies(&description, func(name string) string {
+			relative, _ := filepath.Rel(filepath.FromSlash(input.name), filepath.FromSlash(name))
+			return path.Join(chartPath, filepath.ToSlash(relative))
+		}, templates, readTemplates)
 	}
-	if err := ctx.Err(); err != nil {
-		return chartReaders{}, err
-	}
-	rf.charts[location] = names
-	return names, nil
+	return names, templates, ctx.Err()
 }
 
 func (r *chartReaders) addDependencies(
 	description *chartinput.Description,
-	inputName, chartPath string,
+	coordinate func(string) string,
 	bodies [][]byte,
+	readTemplates bool,
 ) [][]byte {
-	coordinate := func(name string) string {
-		relative, _ := filepath.Rel(filepath.FromSlash(inputName), filepath.FromSlash(name))
-		return path.Join(chartPath, filepath.ToSlash(relative))
-	}
 	capture := func(input chartinput.Capture, origin string) {
 		if input.Files == nil {
 			r.names = append(r.names, coordinate(origin))
@@ -76,7 +102,8 @@ func (r *chartReaders) addDependencies(
 		r.names = append(r.names, coordinate(path.Join(origin, ".helmignore")))
 		for _, file := range input.Files {
 			r.names = append(r.names, coordinate(path.Join(origin, file.Name)))
-			if strings.HasPrefix(file.Name, "templates/") || strings.Contains(file.Name, "/templates/") {
+			if readTemplates &&
+				(strings.HasPrefix(file.Name, "templates/") || strings.Contains(file.Name, "/templates/")) {
 				bodies = append(bodies, file.Data)
 			}
 		}

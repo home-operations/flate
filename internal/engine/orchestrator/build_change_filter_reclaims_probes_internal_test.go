@@ -652,7 +652,7 @@ spec:
 	changes, err := change.Qualify(
 		t.Context(),
 		detectChanges(t, []string{"apps/blue/cm.yaml"}, []string{"apps/blue/cm.yaml"}),
-		[2]*store.Store{current[0].store, current[1].store},
+		change.SourcePair{Stores: [2]*store.Store{current[0].store, current[1].store}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

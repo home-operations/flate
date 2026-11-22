@@ -1,0 +1,10 @@
+<PERSISTENCE:
+  ⚠ warnings (2)
+    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+|
+  ⚠ warnings (3)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "missing" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+>

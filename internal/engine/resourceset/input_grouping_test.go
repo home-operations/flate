@@ -6,7 +6,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/home-operations/flate/internal/engine/resourceset"
+	"github.com/home-operations/flate/internal/core/resourcesetinput"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -60,8 +60,8 @@ metadata: {name: incomplete}`,
 	assert.Equal(t, manifest.DocIdentity(malformed).Group, "example.io")
 	assert.Equal(
 		t,
-		resourceset.DedupKey(malformed),
-		manifest.NamedResource{Kind: "Deployment", Namespace: "default", Name: "shared"},
+		resourcesetinput.Key(malformed),
+		resourcesetinput.ResourceKey{Kind: "Deployment", Namespace: "default", Name: "shared"},
 	)
 }
 

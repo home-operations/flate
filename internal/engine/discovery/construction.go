@@ -23,6 +23,11 @@ func (d *Session) PendingSources() []manifest.NamedResource {
 	return d.pendingSources
 }
 
+// PendingMaterializers borrows runnable demands from the most recent Advance.
+func (d *Session) PendingMaterializers() []manifest.NamedResource {
+	return d.pendingMaterializers
+}
+
 func (d *Session) requireSource(id manifest.NamedResource) error {
 	if d.sourceMaterial(id, d.resolvedSources.snapshot()[id].artifact) != nil {
 		return nil

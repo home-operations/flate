@@ -26,6 +26,7 @@ import (
 // metadata and need not name an existing host path.
 type RenderRequest struct {
 	Preparation *Preparation `json:"-"`
+	LocalInputs *LocalInputs `json:"-"`
 	// Work borrows stage counters from this render execution.
 	Work *manifest.RenderWork `json:"-"`
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
@@ -152,13 +153,13 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		work.Finish(err)
 		return renderRequest{}, err
 	}
-	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
+	lower := req.Source.FS
+	root, err := renderRoot(req)
 	policyKey := gittree.PolicyKey(lower)
-	root, err = filepath.Abs(root)
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
+		return renderRequest{}, manifest.NewError(manifest.ErrInput, err, "")
 	}
 	previous, key := req.Preparation, ""
 	if previous.Matches(c, req) && previous.root == root && previous.policyKey == policyKey {
@@ -195,6 +196,14 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 		*req.Preparation = prepared
 	}
 	return renderRequest{Preparation: prepared}, nil
+}
+
+func renderRoot(req *RenderRequest) (string, error) {
+	root, err := filepath.Abs(cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source"))
+	if err != nil {
+		return "", fmt.Errorf("source label: %w", err)
+	}
+	return root, nil
 }
 
 func (p *Preparation) bindSource(req *RenderRequest) {
@@ -303,37 +312,12 @@ func (r *renderRequest) produce(
 	memFS.work = r.request.Work.Attribution()
 	memFS.retry = r.retry
 	memFS.maxAge = r.maxAge
-	subDir := r.root + string(filepath.Separator) + strings.TrimLeft(r.request.SubPath, "/")
-	canonicalDir, file, cleanedAbsErr := memFS.CleanedAbs(subDir)
-	if cleanedAbsErr != nil {
-		return sourcecache.ProducerResult{}, manifest.NewError(
-			manifest.ErrInput,
-			fmt.Errorf("kustomization path is not a directory: %s: %w", r.request.SubPath, cleanedAbsErr),
-			"",
-		)
+	files, err := prepareFilesAndPreflight(ctx, &r.request, memFS, cache)
+	if err != nil {
+		return sourcecache.ProducerResult{}, err
 	}
-	if file != "" {
-		return sourcecache.ProducerResult{}, manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			fmt.Sprintf("kustomization path is not a directory: %s", r.request.SubPath),
-		)
-	}
-	subDir = canonicalDir.String()
-	kfile, generateErr := r.generateFiles(ctx, memFS, subDir)
-	if generateErr != nil {
-		return sourcecache.ProducerResult{}, generateErr
-	}
-
-	if preflightRemoteResourcesErr := preflightRemoteResources(
-		ctx,
-		cache,
-		memFS,
-		subDir,
-	); preflightRemoteResourcesErr != nil {
-		return sourcecache.ProducerResult{}, preflightRemoteResourcesErr
-	}
-	result.docs, cleanedAbsErr = r.buildDocuments(ctx, memFS, subDir, kfile)
+	var cleanedAbsErr error
+	result.docs, cleanedAbsErr = r.buildDocuments(ctx, memFS, files.dir, files.control)
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
@@ -353,29 +337,47 @@ func (r *renderRequest) produce(
 	return sourcecache.ProducerResult{}, renderDomain.WritePending(ctx, w, &frame)
 }
 
-func (r *renderRequest) generateFiles(_ context.Context, memFS *treeFS, subDir string) (string, error) {
-	var ks map[string]any
-	var cleanedAbsErr error
-	var data []byte
-	var kfile string
-	if r.request.Spec != nil {
-		ks, cleanedAbsErr = r.request.Spec.RenderDocument()
-		if cleanedAbsErr != nil {
-			return "", cleanedAbsErr
-		}
-		generateManifestResult1, generateManifestResult1Err := generateManifest(memFS, subDir, ks)
-		data, kfile, cleanedAbsErr = generateManifestResult1.data, generateManifestResult1.path, generateManifestResult1Err
-		if cleanedAbsErr != nil {
-			return "", fmt.Errorf("flux kustomize generator: %w", cleanedAbsErr)
-		}
-		if writeFileErr := memFS.WriteFile(kfile, data); writeFileErr != nil {
-			return "", fmt.Errorf("write kustomization.yaml: %w", writeFileErr)
-		}
-	} else {
-		kfile, _ = kustomizationFileIn(memFS, subDir)
-	}
+type buildFiles struct {
+	control, dir string
+}
 
-	return kfile, nil
+func prepareFilesAndPreflight(
+	ctx context.Context, req *RenderRequest, memFS *treeFS, cache *TreeCache,
+) (buildFiles, error) {
+	if inputs := req.LocalInputs; inputs.matches(req, memFS.root) {
+		if err := writeGeneratedManifest(memFS, &inputs.generated); err != nil {
+			return buildFiles{}, err
+		}
+		w := inputWalk{cache: cache, fs: memFS, parsed: inputs.controls}
+		return buildFiles{control: inputs.generated.path, dir: inputs.dir}, w.preflight(ctx, inputs.dir)
+	}
+	dir, err := buildDirectory(memFS, req.SubPath)
+	if err != nil {
+		return buildFiles{}, err
+	}
+	generated, err := generateFiles(req.Spec, memFS, dir)
+	if err != nil {
+		return buildFiles{}, err
+	}
+	return buildFiles{control: generated.path, dir: dir}, preflightRemoteResources(ctx, cache, memFS, dir)
+}
+
+func buildDirectory(memFS *treeFS, subPath string) (string, error) {
+	dir := memFS.root + string(filepath.Separator) + strings.TrimLeft(subPath, "/")
+	canonical, file, err := memFS.CleanedAbs(dir)
+	if err != nil {
+		return "", manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("kustomization path is not a directory: %s: %w", subPath, err),
+			"",
+		)
+	}
+	if file != "" {
+		return "", manifest.NewError(
+			manifest.ErrInput, nil, fmt.Sprintf("kustomization path is not a directory: %s", subPath),
+		)
+	}
+	return canonical.String(), nil
 }
 
 func (r *renderRequest) buildDocuments(

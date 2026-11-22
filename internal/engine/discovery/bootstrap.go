@@ -462,10 +462,11 @@ func (d *Session) admission() *Admission {
 		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),
 	}
 	d.entryState = entryQualification{
-		packages: d.entryPackagesToQualify,
-		loader:   d.loader,
-		trees:    d.cfg.Trees,
-		session:  d,
+		changedOnly: d.cfg.Selection.Changed,
+		packages:    d.entryPackagesToQualify,
+		loader:      d.loader,
+		trees:       d.cfg.Trees,
+		session:     d,
 	}
 	admission.entryDemand = d.requiresEntry()
 	d.entryState.closed = !admission.entryDemand

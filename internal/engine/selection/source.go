@@ -2,6 +2,9 @@ package selection
 
 import (
 	"context"
+	"iter"
+	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -20,6 +23,40 @@ type SourceContext struct {
 	Frozen                     bool
 	SideKnown                  bool
 	Side                       manifest.TreeSide
+}
+
+// SourceReadPaths distinguishes exact files from subtrees.
+type SourceReadPaths struct {
+	Files []string
+	Roots []string
+}
+
+func (p *SourceReadPaths) all() iter.Seq2[string, bool] {
+	return func(yield func(string, bool) bool) {
+		for _, root := range p.Roots {
+			if !yield(root, false) {
+				return
+			}
+		}
+		for _, file := range p.Files {
+			if !yield(file, true) {
+				return
+			}
+		}
+	}
+}
+
+func (p *SourceReadPaths) matches(file string) bool {
+	if slices.Contains(p.Files, file) {
+		return true
+	}
+	for _, root := range p.Roots {
+		name := manifest.NormalizeClaimBase(root)
+		if name == "" || name == "." || file == name || strings.HasPrefix(file, name+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // SourceFile preserves both source-relative and census-relative coordinates.
@@ -55,6 +92,7 @@ type ProducerFacts struct {
 }
 
 type census interface {
+	ChartReadPaths(context.Context, *store.SourceArtifact, string) SourceReadPaths
 	DeclarationContents() func(map[string]any) store.DeclarationContent
 	ResolveRoot(context.Context, *store.ReadSet, manifest.NamedResource, string) (string, bool, error)
 	OccurrenceObject(context.Context, *OccurrenceFacts, *store.SourceArtifact) (store.Child, error)

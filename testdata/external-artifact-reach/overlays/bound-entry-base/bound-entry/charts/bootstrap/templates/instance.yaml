@@ -1,0 +1,9 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: 2.6.x}
+  cluster: {multitenant: true}
+  sync: {name: flux-system, kind: GitRepository, url: https://fixture.invalid/bound-entry, ref: refs/heads/main, path: ./kubernetes/apps}
+  kustomize:
+    {{- toYaml .Values.kustomize | nindent 4 }}

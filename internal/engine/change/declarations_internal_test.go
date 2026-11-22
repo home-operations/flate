@@ -94,7 +94,7 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	changes, err := Qualify(
 		t.Context(),
 		&Set{paths: map[string][2]filePresence{"values.yaml": {}}},
-		[2]*store.Store{stores[0], stores[1]},
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -185,7 +185,7 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 	changes, err := Qualify(
 		t.Context(),
 		&Set{paths: map[string][2]filePresence{}},
-		[2]*store.Store{stores[0], stores[1]},
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -232,7 +232,7 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 	qualified, err := Qualify(
 		t.Context(),
 		&Set{paths: map[string][2]filePresence{}},
-		[2]*store.Store{stores[0], stores[1]},
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -345,7 +345,7 @@ func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
 			changes, err := Qualify(
 				t.Context(),
 				&Set{paths: map[string][2]filePresence{"parent.yaml": {}}},
-				[2]*store.Store{stores[0], stores[1]},
+				SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
@@ -493,7 +493,7 @@ func testWithDeclarationsOneSidedInputCase(t *testing.T, testCaseInput *struct {
 	changes, err := Qualify(
 		t.Context(),
 		&Set{paths: paths},
-		[2]*store.Store{stores[0], stores[1]},
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -572,7 +572,7 @@ func testWithDeclarationsPreparedProductionCase(
 	changes, err := Qualify(
 		t.Context(),
 		&Set{paths: map[string][2]filePresence{}},
-		[2]*store.Store{stores[0], stores[1]},
+		SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -611,7 +611,7 @@ func testWithDeclarationsEffectiveInputApplicabilityCase(
 	changes, err := Qualify(
 		t.Context(),
 		&Set{paths: map[string][2]filePresence{"settings.yaml": {}}},
-		[2]*store.Store{f.stores[0], f.stores[1]},
+		SourcePair{Stores: [2]*store.Store{f.stores[0], f.stores[1]}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

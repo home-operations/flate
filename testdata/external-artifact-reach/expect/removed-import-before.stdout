@@ -1,0 +1,75 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: app
+    kustomize.toolkit.fluxcd.io/namespace: app
+  name: static
+  namespace: app
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: local-vars
+  namespace: app
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: cluster
+  namespace: flux-system
+spec:
+  url: https://fixture.invalid/repo
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: app
+  namespace: app
+spec:
+  dependsOn:
+  - name: cluster-config
+    namespace: flux-system
+  path: ./deploy/app/manifests
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: cluster-config
+  namespace: flux-system
+spec:
+  path: ./clusters/local/flux
+  postBuild:
+    substitute:
+      CLUSTER_NAME: local
+    substituteFrom:
+    - kind: Secret
+      name: missing
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: app

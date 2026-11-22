@@ -14,7 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/selection"
 
-	"github.com/home-operations/flate/internal/engine/resourceset"
+	"github.com/home-operations/flate/internal/core/resourcesetinput"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
@@ -656,9 +656,9 @@ func testRSEmissionGroupingCase(t *testing.T, testCaseInput *bool,
 		{
 			got := outputByParent(o.collectManifests())[parent]
 			assert.FatalIf(t, len(got) != 2 ||
-				resourceset.DedupKey(
+				resourcesetinput.Key(
 					got[0],
-				) != resourceset.DedupKey(
+				) != resourcesetinput.Key(
 					ordered[0],
 				), "authoritative document order lost: %v", got)
 		}

@@ -129,14 +129,19 @@ func (t *view) masked(name string) bool {
 // canonical slash path. Unlike the io/fs methods, it accepts unclean relative
 // paths. Links stay confined to the tree.
 func (t *view) Resolve(name string) (string, error) {
-	p, _, err := t.resolve(name, true)
+	return t.ResolveLinks(name, nil)
+}
+
+// ResolveLinks appends the links traversed during an in-tree resolution.
+func (t *view) ResolveLinks(name string, links *[]string) (string, error) {
+	p, _, err := t.resolve(name, true, links)
 	if err != nil {
 		return "", &fs.PathError{Op: "resolve", Path: name, Err: err}
 	}
 	return p, nil
 }
 
-func (t *view) resolve(name string, follow bool) (string, *node, error) {
+func (t *view) resolve(name string, follow bool, links *[]string) (string, *node, error) {
 	if strings.ContainsRune(name, 0) || name == "" {
 		return "", nil, fs.ErrInvalid
 	}
@@ -158,7 +163,7 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 			return "", nil, err
 		}
 	}
-	r := pathResolution{view: t, current: ".", remaining: name}
+	r := pathResolution{view: t, current: ".", remaining: name, links: links}
 	return r.resolve(follow)
 }
 
@@ -167,6 +172,7 @@ type pathResolution struct {
 	current   string
 	remaining string
 	node      *node
+	links     *[]string
 	hops      int
 }
 
@@ -214,6 +220,9 @@ func (r *pathResolution) advance(part, rest string, slash, follow bool) error {
 		return err
 	}
 	if r.node.mode&fs.ModeSymlink != 0 && (follow || slash) {
+		if r.links != nil {
+			*r.links = append(*r.links, next)
+		}
 		return r.followLink(rest, slash)
 	}
 	if slash && !r.node.IsDir() {
@@ -247,7 +256,7 @@ func (t *view) readNode(op, name string, follow bool) (*node, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: op, Path: name, Err: fs.ErrInvalid}
 	}
-	p, n, err := t.resolve(name, follow)
+	p, n, err := t.resolve(name, follow, nil)
 	if err != nil {
 		return nil, &fs.PathError{Op: op, Path: name, Err: err}
 	}

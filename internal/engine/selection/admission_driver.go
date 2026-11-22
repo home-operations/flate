@@ -59,6 +59,7 @@ type admissionDriver struct {
 //nolint:gocritic // One owner MUST retain acquisitions and first-attempt presence through publication retries.
 func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
 	driver := admissionDriver{session: s, options: options, request: options.Request}
+	driver.request.construction = options.Stage == Construction && s.request.Changed
 	local := driver.request.Preparation == nil
 	var preparation *Preparation
 	if local {
@@ -281,7 +282,11 @@ func (s *Session) publishAdmission(ctx context.Context, proposal *Admission, sta
 		return nil, false
 	}
 	for _, id := range included {
-		s.store.SetIncluded(id, true, next.OrdinaryDemand(id))
+		var incoming manifest.BaseManifest
+		if proposal.Request.AwaitEmission {
+			incoming = proposal.preparation.closure.incoming(id).Obj
+		}
+		s.store.SetIncluded(id, true, next.OrdinaryDemand(id), incoming)
 	}
 	return next, proposal.admitObjects(ctx, s)
 }

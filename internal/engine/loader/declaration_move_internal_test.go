@@ -83,7 +83,7 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 						[]string{"entry/source.yaml"},
 						[]string{"entry/source.yaml"},
 					),
-					[2]*store.Store{stores[0], stores[1]},
+					change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
 					manifest.WorkScope{},
 				)
 				assert.NoError(t, err)

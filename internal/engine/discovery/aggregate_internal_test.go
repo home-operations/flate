@@ -178,7 +178,7 @@ func TestClusterEntries_CoalescesBootstrapEvidence(t *testing.T) {
 	assert.FatalIf(t, len(entries) != 1, "got %d entries for the same bootstrap target", len(entries))
 	assert.Equal(t, entries[0].ID, manifest.ClusterID("cluster"))
 	var prepared entryInputs
-	prepared.collectEntryOperands(&entries[0], roots, ".")
+	prepared.collectEntryOperands(&entries[0], roots, ".", false)
 	assert.Diff(t, prepared.publicOperands, operands)
 }
 

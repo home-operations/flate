@@ -17,12 +17,6 @@ import (
 func TestComposition_ExtractionWork(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, "", New)
-	content := struct{ Namespace, Generation, Path, Destination string }{
-		"composition/extract/test",
-		"generation",
-		"archive.tgz",
-		"out",
-	}
 	recorder := &manifest.WorkRecorder{
 		Key: manifest.WorkKey{Owner: manifest.NamedResource{Kind: "ArtifactGenerator", Name: "generator"}},
 	}
@@ -37,7 +31,6 @@ func TestComposition_ExtractionWork(t *testing.T) {
 	}
 	op := Copy{
 		Input: 0, From: "archive.tgz", To: "out", Mode: ExtractArchive,
-		ExtractContent: func(string, string) any { return content },
 	}
 	plan, err := e.prepareCopy(&op)
 	assert.NoError(t, err)

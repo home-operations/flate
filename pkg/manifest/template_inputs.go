@@ -6,17 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"iter"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"text/template"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	yamlv4 "go.yaml.in/yaml/v4"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
-	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/core/application"
 	"github.com/home-operations/flate/internal/core/keylock"
@@ -173,9 +175,9 @@ func possibleApplication(content iter.Seq[[]byte]) bool {
 	return false
 }
 
-func projectTemplate(data []byte, namespace string, projected bool, yield func(BaseManifest, string)) {
+func projectTemplate(data []byte, namespace string, projected bool, yield func(BaseManifest, string)) bool {
 	if len(data) == 0 {
-		return
+		return false
 	}
 	if bytes.Contains(data, []byte("{{")) {
 		compiled, err := template.New("static").Option("missingkey=error").Parse(string(data))
@@ -186,13 +188,19 @@ func projectTemplate(data []byte, namespace string, projected bool, yield func(B
 			}
 		}
 	}
+	unresolved := false
 	reader := k8syaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(data)))
 	for {
 		document, err := reader.Read()
 		if err != nil {
-			return
+			return unresolved
 		}
-		projectTemplateDocument(document, namespace, projected, yield)
+		known := false
+		projectTemplateDocument(document, namespace, projected, func(object BaseManifest, authoredNamespace string) {
+			known = true
+			yield(object, authoredNamespace)
+		})
+		unresolved = unresolved || !known && bytes.Contains(document, []byte("<<"))
 	}
 }
 
@@ -215,7 +223,7 @@ func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace st
 	for _, object := range nested.Objects {
 		keep(object)
 	}
-	p.addObjectInputs(object, authoredNamespace)
+	p.addObjectInputs(object, authoredNamespace, false)
 }
 
 func concreteTemplateOperand(value string) bool {
@@ -227,21 +235,51 @@ func (r *ResourceSet) templateProjection() TemplateProjection {
 	if len(r.Resources) == 0 && r.ResourcesTemplate == "" && len(r.Steps) == 0 {
 		return projection
 	}
-	templates := resourceSetTemplates{winners: map[NamedResource]int{}}
-	for _, resource := range r.Resources {
-		templates.visit(r, resource.Raw, true)
-	}
-	templates.visit(r, []byte(r.ResourcesTemplate), false)
-	for _, step := range r.Steps {
-		for _, resource := range step.Resources {
-			templates.visit(r, resource.Raw, true)
+	docs, complete := r.evaluateTemplates()
+	seen := make(map[NamedResource]struct{})
+	for _, doc := range docs {
+		parsed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: r.Namespace})
+		if err != nil || parsed.Object == nil {
+			continue
 		}
-		templates.visit(r, []byte(step.ResourcesTemplate), false)
+		object := parsed.Object
+		id := object.Named()
+		if _, duplicate := seen[id]; !duplicate {
+			projection.addObject(object, DocMetadata(doc).Namespace, true)
+			seen[id] = struct{}{}
+		}
 	}
-	for _, child := range templates.children {
-		projection.addObject(child.object, child.namespace, true)
+	if complete {
+		return projection
+	}
+	steps := r.Steps
+	if len(steps) == 0 {
+		steps = []fluxopv1.ResourceSetStep{{Resources: r.Resources, ResourcesTemplate: r.ResourcesTemplate}}
+	}
+	for i := range steps {
+		for _, resource := range steps[i].Resources {
+			if resource != nil {
+				projection.addResourceSetDraft(resource.Raw, r.Namespace, seen)
+			}
+		}
+		projection.addResourceSetDraft([]byte(steps[i].ResourcesTemplate), r.Namespace, seen)
 	}
 	return projection
+}
+
+func (r *ResourceSet) evaluateTemplates() ([]map[string]any, bool) {
+	if resourcesetinput.ValidateSteps(&r.ResourceSetSpec) != nil {
+		return nil, false
+	}
+	inputs, err := resourcesetinput.Combine(
+		[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
+		r.InputStrategy,
+	)
+	if err != nil || len(inputs) == 0 && len(r.InputsFrom) != 0 {
+		return nil, false
+	}
+	docs, err := resourcesetinput.Build(&r.ResourceSetSpec, inputs, true)
+	return docs, err == nil && len(r.InputsFrom) == 0
 }
 
 func projectTemplateDocument(document []byte, namespace string, projected bool, yield func(BaseManifest, string)) {
@@ -338,93 +376,104 @@ func projectTemplateNode(node *kyaml.RNode, namespace string, projected bool, yi
 	yield(object, authoredNamespace)
 }
 
-type projectedTemplateChild struct {
-	object    BaseManifest
-	namespace string
-	evaluated bool
-}
-
-type resourceSetTemplates struct {
-	children    []projectedTemplateChild
-	winners     map[NamedResource]int
-	inputs      []map[string]any
-	inputsKnown bool
-}
-
-func (p *resourceSetTemplates) collect(data []byte, defaultNamespace string, evaluated bool) {
-	projectTemplate(data, defaultNamespace, false, func(object BaseManifest, namespace string) {
+func (p *TemplateProjection) addResourceSetDraft(data []byte, namespace string, seen map[NamedResource]struct{}) {
+	dynamicKind := false
+	unresolved := projectTemplate(data, namespace, false, func(object BaseManifest, authoredNamespace string) {
 		id := object.Named()
-		if i, known := p.winners[id]; known {
-			if evaluated && !p.children[i].evaluated {
-				p.children[i] = projectedTemplateChild{object, namespace, true}
-			}
+		if raw, ok := object.(*RawObject); ok && !raw.hasLiteralTemplateKind() {
+			dynamicKind = true
 			return
 		}
-		p.winners[id] = len(p.children)
-		p.children = append(p.children, projectedTemplateChild{object, namespace, evaluated})
+		if _, known := seen[id]; !known {
+			p.addObject(object, authoredNamespace, true)
+			seen[id] = struct{}{}
+		} else {
+			p.addObjectInputs(object, authoredNamespace, true)
+		}
 	})
+	if dynamicKind || unresolved && !opaqueResourceSetDraft(data) {
+		p.Inputs = append(p.Inputs, TemplateInput{UnresolvedPath: true})
+	}
 }
 
-func (p *resourceSetTemplates) visit(r *ResourceSet, data []byte, jsonDocument bool) {
-	p.collect(data, r.Namespace, false)
-	if jsonDocument {
-		converted, err := yaml.JSONToYAML(data)
-		if err != nil {
-			return
-		}
-		data = converted
-	}
-	if !strings.Contains(string(data), "<<") {
-		return
-	}
-	if !p.inputsKnown {
-		p.inputsKnown = true
-		var err error
-		p.inputs, err = resourcesetinput.Combine(
-			[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
-			r.InputStrategy,
-		)
-		if err != nil {
-			return
-		}
-		if len(p.inputs) == 0 {
-			p.inputs = []map[string]any{nil}
-		}
-	}
+func opaqueResourceSetDraft(data []byte) bool {
 	tmpl, err := resourcesetinput.Parse(string(data))
 	if err != nil {
-		return
+		return false
 	}
-	for _, input := range p.inputs {
-		rendered, err := tmpl.Execute(input)
-		if err != nil {
+	reader := k8syaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(tmpl.Draft())))
+	found := false
+	for {
+		document, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return found
+		}
+		var doc map[string]any
+		if err != nil || yamlv4.Unmarshal(document, &doc) != nil {
+			return false
+		}
+		if doc == nil {
 			continue
 		}
-		p.collect(rendered, r.Namespace, true)
+		raw := RawObject{APIVersion: DocAPIVersion(doc), Kind: DocKind(doc)}
+		if !raw.hasLiteralTemplateKind() || raw.draftMayReadSource() {
+			return false
+		}
+		found = true
 	}
 }
 
-func (p *TemplateProjection) addObjectInputs(object BaseManifest, authoredNamespace string) {
+func (r *RawObject) hasLiteralTemplateKind() bool {
+	return r.APIVersion != "" && r.Kind != "" &&
+		concreteTemplateOperand(r.APIVersion) && concreteTemplateOperand(r.Kind)
+}
+
+func (r *RawObject) draftMayReadSource() bool {
+	return strings.HasSuffix(r.Kind, "List") || r.Named().KindInfo().Tracked || r.isFluxInstance()
+}
+
+func (p *TemplateProjection) addObjectInputs(object BaseManifest, authoredNamespace string, pendingOnly bool) {
 	id := object.Named()
 	for ref := range References(object, ReferenceRelations) {
-		if !ref.ContentInput() || ref.Ordering || !concreteTemplateOperand(ref.Name) ||
-			!concreteTemplateOperand(ref.Namespace) {
+		if !ref.ContentInput() || ref.Ordering {
+			continue
+		}
+		if !concreteTemplateOperand(ref.Name) || !concreteTemplateOperand(ref.Namespace) {
+			if ref.BindsSource() {
+				p.Inputs = append(p.Inputs, TemplateInput{Reader: id, UnresolvedPath: true})
+			}
 			continue
 		}
 		ref.NamespaceDefault = ref.NamespaceDefault && authoredNamespace == ""
 		ref.Gate, ref.ArtifactStages = 0, 0
 		ref.Artifact, ref.ChartSource = false, false
-		unresolved := false
-		if ref.Use == sourceKey {
-			for root := range SourceRoots(object) {
-				if concreteTemplateOperand(root) {
-					ref.Files = append(ref.Files, root)
-					ref.Subtree = true
-				} else {
-					unresolved = true
-				}
+		unresolved := templateInputPaths(object, &ref)
+		if !pendingOnly || unresolved {
+			p.Inputs = append(p.Inputs, TemplateInput{Reader: id, Reference: ref, UnresolvedPath: unresolved})
+		}
+	}
+}
+
+func templateInputPaths(object BaseManifest, ref *Reference) bool {
+	unresolved := !concreteTemplateOperand(ref.ChartPath)
+	if unresolved {
+		ref.ChartPath = ""
+	}
+	if slices.ContainsFunc(ref.Files, func(file string) bool { return !concreteTemplateOperand(file) }) {
+		ref.Files = slices.DeleteFunc(slices.Clone(ref.Files), func(file string) bool {
+			return !concreteTemplateOperand(file)
+		})
+		unresolved = true
+	}
+	if ref.Use == sourceKey {
+		for root := range SourceRoots(object) {
+			if concreteTemplateOperand(root) {
+				ref.Files = append(ref.Files, root)
+				ref.Subtree = true
+			} else {
+				unresolved = true
 			}
 		}
-		p.Inputs = append(p.Inputs, TemplateInput{Reader: id, Reference: ref, UnresolvedPath: unresolved})
 	}
+	return unresolved
 }

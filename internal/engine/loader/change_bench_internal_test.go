@@ -202,7 +202,12 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 			)
 		}
 	}
-	changes, err := change.Qualify(b.Context(), nil, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
+	changes, err := change.Qualify(
+		b.Context(),
+		nil,
+		change.SourcePair{Stores: [2]*store.Store{stores[0], stores[1]}},
+		manifest.WorkScope{},
+	)
 	if err != nil {
 		b.Fatal(err)
 	}

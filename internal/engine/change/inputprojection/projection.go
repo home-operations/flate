@@ -17,7 +17,8 @@ type Projection struct {
 type Overlay struct {
 	*tree.Tree
 
-	Authored *store.SourceArtifact
+	Authored  *store.SourceArtifact
+	Resources []string
 }
 
 // Authored retains the admitted source identity behind render-only content.

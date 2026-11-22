@@ -84,7 +84,12 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 			admissionConfig{changes: paths, index: index, inventory: head, root: ""},
 		).KeepNames()
 		assert.Diff(t, unqualified[i], selectedNames)
-		evidence, err := change.Qualify(t.Context(), paths, [2]*store.Store{before, head}, manifest.WorkScope{})
+		evidence, err := change.Qualify(
+			t.Context(),
+			paths,
+			change.SourcePair{Stores: [2]*store.Store{before, head}},
+			manifest.WorkScope{},
+		)
 		assert.NoError(t, err)
 		got := newAdmission(t, admissionConfig{changes: evidence, index: index, inventory: head, root: ""}).KeepNames()
 		want := []string{}

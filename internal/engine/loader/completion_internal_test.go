@@ -521,7 +521,7 @@ func TestCompleteDeclarations_UnknownAndAbsent(t *testing.T) {
 	changes, err := change.Qualify(
 		t.Context(),
 		detectChanges(t, []string{"input.yaml"}, []string{"input.yaml"}),
-		[2]*store.Store{peer, l.Store},
+		change.SourcePair{Stores: [2]*store.Store{peer, l.Store}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)

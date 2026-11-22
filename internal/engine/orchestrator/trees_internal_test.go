@@ -187,7 +187,7 @@ func TestWithReaders_PreservesSideEvidence(t *testing.T) {
 
 			changes, err := change.Qualify(
 				t.Context(), detectChanges(t, []string{"removed.yaml"}, nil),
-				[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{},
+				change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}}, manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
 
@@ -387,7 +387,7 @@ func testQualifyReadersCompletionFailure(t *testing.T, phase, cancellation strin
 	changes, err = change.Qualify(
 		t.Context(),
 		changes,
-		[2]*store.Store{owners[0].store, owners[1].store},
+		change.SourcePair{Stores: [2]*store.Store{owners[0].store, owners[1].store}},
 		manifest.WorkScope{},
 	)
 	assert.NoError(t, err)
@@ -565,10 +565,10 @@ func prepareCompletionHealthyPairs(t *testing.T, r *Invocation) [2]completionHea
 		comparison, setupErr = change.Qualify(
 			t.Context(),
 			comparison,
-			[2]*store.Store{
+			change.SourcePair{Stores: [2]*store.Store{
 				healthy[clusterIndex].owners[0].store,
 				healthy[clusterIndex].owners[1].store,
-			},
+			}},
 			manifest.WorkScope{},
 		)
 		assert.NoError(t, setupErr)

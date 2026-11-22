@@ -1,0 +1,4 @@
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Provider
+metadata: {name: alertmanager}
+spec: {type: alertmanager, address: "http://alertmanager:9094/api/v2/alerts/"}

@@ -1,0 +1,6 @@
+
+spec.address  (notification.toolkit.fluxcd.io/v1/Provider/alertmanager)
+  ± value change
+    - http://alertmanager:9093/api/v2/alerts/
+    + http://alertmanager:9094/api/v2/alerts/
+

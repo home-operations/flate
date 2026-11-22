@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -189,6 +190,7 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 				Name:      "output",
 			}
 			before := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+			beforeReplay := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 			next := input
 			tc.edit(&next)
 			st.SetArtifact(repo, &next)
@@ -196,12 +198,14 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 			after := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 			assert.FatalIf(
 				t,
-				before.Key == after.Key || before.Digest != after.Digest,
+				!before.SameMaterial(after, store.ArtifactContent),
 				"input %s identity before=%+v after=%+v",
 				tc.name,
 				before,
 				after,
 			)
+			afterReplay := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
+			assert.Equal(t, beforeReplay == afterReplay, false)
 		})
 	}
 }
@@ -345,7 +349,7 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	})
 	c := New(st, task.NewBounded(2), owner)
 
-	generatorForTestResult4 := generatorForTest(
+	fixture := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -354,9 +358,13 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 				"originRevision": "@repo",
 				"copy":           []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}},
 			},
+			map[string]any{
+				"name": "peer",
+				"copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}},
+			},
 		},
 	)
-	obj, doc := generatorForTestResult4.object, generatorForTestResult4.document
+	obj, doc := fixture.object, fixture.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -381,6 +389,20 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	st.SetArtifact(repo, stable)
 	runForTest(t, c, obj.Named())
 	checkCapturedMetadata(t, st, target, "stable")
+	initial := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+	peerID := target
+	peerID.Name = "peer"
+	peer := st.GetArtifact(peerID, store.ArtifactContent).(*store.SourceArtifact)
+	assert.Equal(t, initial.Key, target.NamespacedName())
+	assert.Equal(t, peer.Key, peerID.NamespacedName())
+	assert.Equal(t, initial.Content, initial.Digest)
+	assert.Equal(t, initial.Content, peer.Content)
+	assert.Equal(t, initial.SameMaterial(peer, store.ArtifactContent), false)
+	history := initial.HistoryIdentity(target)
+	assert.Equal(t, history, manifest.SourceIdentity{Kind: manifest.KindExternalArtifact, Key: target.NamespacedName()})
+	assert.Equal(t, history == peer.HistoryIdentity(peerID), false)
+	metadata := metadataFixture{c: c, obj: obj, repo: repo, target: target, selected: stable}
+	metadata.assertFacets(t, initial)
 	var replaced atomic.Bool
 	first := &observedFS{FS: fstest.MapFS{"file": {Data: []byte("first")}}}
 	first.onOpen = func(name string) {
@@ -445,6 +467,45 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 		work.snapshot(),
 	)
 	checkCapturedMetadata(t, st, target, "next")
+	next := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+	assert.Equal(t, next.Content, next.Digest)
+	assert.Equal(t, next.Content == initial.Content, false)
+	assert.Equal(t, next.HistoryIdentity(target), history)
+}
+
+func (f *metadataFixture) assertFacets(t *testing.T, initial *store.SourceArtifact) {
+	t.Helper()
+	c, target := f.c, f.target
+	facets := []store.ArtifactRead{store.ArtifactContent, store.ArtifactRevision, store.ArtifactOrigin}
+	var readers [3]store.ReadSet
+	for i, facet := range facets {
+		reader := &manifest.Kustomization{Name: "reader-" + strconv.Itoa(i)}
+		c.Store.AddObject(reader)
+		readers[i].Init(c.Store, reader.Named(), nil)
+		t.Cleanup(readers[i].Retire)
+		assert.Equal(t, readers[i].GetArtifact(target, facet), store.Artifact(initial))
+		assert.Equal(t, readers[i].Valid(), true)
+	}
+
+	updated := *f.selected
+	updated.Metadata = map[string]string{"org.opencontainers.image.revision": "other-origin"}
+	c.Store.SetArtifact(f.repo, &updated)
+	runForTest(t, c, f.obj.Named())
+	assert.Equal(t, readers[0].Valid(), true)
+	assert.Equal(t, readers[1].Valid(), true)
+	assert.Equal(t, readers[2].Valid(), false)
+
+	revised := updated
+	revised.Revision = "other-revision"
+	c.Store.SetArtifact(f.repo, &revised)
+	runForTest(t, c, f.obj.Named())
+	assert.Equal(t, readers[0].Valid(), true)
+	assert.Equal(t, readers[1].Valid(), false)
+	next := c.Store.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+	assert.Equal(t, next.SameMaterial(initial, store.ArtifactContent), true)
+	assert.Equal(t, next.Revision, "other-revision")
+	assert.Equal(t, next.Metadata["org.opencontainers.image.revision"], "other-origin")
+	assert.Equal(t, next.HistoryIdentity(target), initial.HistoryIdentity(target))
 }
 
 func TestArtifactGenerator_MutableInput(t *testing.T) {

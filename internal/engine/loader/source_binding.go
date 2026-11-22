@@ -80,19 +80,7 @@ func (l *Loader) admissionSourceFacts(
 		evidence.origin = input.OriginPath(input.LocalPath)
 	}
 	for side, snapshot := range snapshots {
-		if snapshot == nil || input == nil || declaration != declarations[side] {
-			continue
-		}
-		bound := snapshot == input
-		if l.frozen {
-			bound = evidence.sideKnown && manifest.TreeSide(side) == evidence.side && evidence.initial == input &&
-				snapshot.Input(
-					store.ArtifactContent|store.ArtifactRevision,
-				) == input.Input(
-					store.ArtifactContent|store.ArtifactRevision,
-				)
-		}
-		if bound && input.Reads.Valid() {
+		if evidence.pairsSnapshot(manifest.TreeSide(side), snapshot) {
 			evidence.paired = true
 			return l.sourceViewFacts(&evidence, true)
 		}
@@ -108,6 +96,19 @@ func (l *Loader) admissionSourceFacts(
 	}
 	evidence.delta = nil
 	return l.sourceViewFacts(&evidence, true)
+}
+
+func (e *admissionSource) pairsSnapshot(side manifest.TreeSide, snapshot *store.SourceArtifact) bool {
+	input := e.input
+	if snapshot == nil || input == nil || e.declaration != e.declarations[side] {
+		return false
+	}
+	if !e.frozen {
+		return snapshot == input && input.Reads.Valid()
+	}
+	const read = store.ArtifactContent | store.ArtifactRevision
+	eligible := e.sideKnown && side == e.side && (e.initial == input || snapshot.Content != "")
+	return eligible && snapshot.Input(read) == input.Input(read) && input.Reads.Valid()
 }
 
 func (e *admissionSource) reusable(l *Loader, current *admissionSource, initialize bool) bool {

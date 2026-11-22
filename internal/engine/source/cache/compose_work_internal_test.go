@@ -30,7 +30,7 @@ func TestCompose_ImmutableInputsCoalesce(t *testing.T) {
 			return fs.ReadFile(files, name)
 		}}
 		request := Composition{
-			Content: "shared composition", Inputs: []CompositionInput{{FS: input, Content: "immutable"}},
+			Inputs: []CompositionInput{{FS: input, Content: "immutable"}},
 			Base:   CompositionInput{FS: fstest.MapFS{}, Content: "immutable base"},
 			Copies: []Copy{{From: "file", To: "out"}}, Policy: "fixed",
 		}
@@ -102,15 +102,11 @@ func TestCompose_MutableInputsRefresh(t *testing.T) {
 	var recorder manifest.WorkRecorder
 	work := manifest.AcquisitionWork{Scope: recorder.Scope()}
 	policy := Policy{MaxAge: Forever, Work: &work}
-	selections := 0
 	request := Composition{
-		Content: "unknown generation", Inputs: []CompositionInput{{FS: files}},
+		Inputs: []CompositionInput{{FS: files}},
 		Copies: []Copy{
 			{From: "plain", To: "plain"},
-			{From: "archive.tgz", To: "out", Mode: ExtractArchive, ExtractContent: func(name, destination string) any {
-				selections++
-				return []string{"unknown archive generation", name, destination}
-			}},
+			{From: "archive.tgz", To: "out", Mode: ExtractArchive},
 		}, Policy: "fixed",
 	}
 	var previousKey, previousDigest string
@@ -142,7 +138,6 @@ func TestCompose_MutableInputsRefresh(t *testing.T) {
 		}
 		previousKey, previousDigest = key, descriptor.Annotations["flate.tree-digest"]
 	}
-	assert.Equal(t, selections, 2)
 	records := recorder.Scope().Snapshot(0)
 	assert.Equal(
 		t,
@@ -175,17 +170,9 @@ func TestCompose_ExtractionWorkAndPolicy(t *testing.T) {
 			return func() { releases++ }, nil
 		},
 	}
-	nestedFacts := struct{ Generation, Path, Destination string }{"generation", "archive.tgz", "out"}
 	request := Composition{
-		Content: "outer", Inputs: []CompositionInput{{FS: files, Content: "generation"}},
-		Copies: []Copy{{
-			From: "archive.tgz", To: "out", Mode: ExtractArchive,
-			ExtractContent: func(name, destination string) any {
-				assert.Equal(t, name, "archive.tgz")
-				assert.Equal(t, destination, "out")
-				return nestedFacts
-			},
-		}}, Policy: "fixed",
+		Inputs: []CompositionInput{{FS: files, Content: "generation"}},
+		Copies: []Copy{{From: "archive.tgz", To: "out", Mode: ExtractArchive}}, Policy: "fixed",
 	}
 	output, _, outerKey, err := owner.Compose(t.Context(), request, &policy)
 	assert.NoError(t, err)

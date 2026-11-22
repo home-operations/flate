@@ -21,26 +21,44 @@ func reconcileConstruction(
 	controller *sourcectrl.Controller,
 	tasks *task.Service,
 ) error {
-	if len(pending) == 0 {
+	controllers := base.Controllers{Source: controller}
+	dispatch := constructionDispatcher{controller: controller, controllers: &controllers}
+	return dispatch.run(ctx, pending, nil, tasks)
+}
+
+type constructionDispatcher struct {
+	controller  *sourcectrl.Controller
+	controllers *base.Controllers
+	scheduler   *schedule.Scheduler
+	local       map[manifest.NamedResource]bool
+}
+
+func (d *constructionDispatcher) run(
+	ctx context.Context,
+	pending, materializers []manifest.NamedResource,
+	tasks *task.Service,
+) error {
+	if len(pending) == 0 && len(materializers) == 0 {
 		return nil
 	}
 
 	phase := tasks.Fork()
-	d := &constructionDispatcher{controller: controller, local: make(map[manifest.NamedResource]bool)}
+	d.local = make(map[manifest.NamedResource]bool, len(pending))
 	for _, id := range pending {
 		d.local[id] = true
 	}
 	d.scheduler = schedule.New(phase, d)
-	unsubscribe := controller.Store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		d.scheduler.OnArrival(id, controller.Owns(id))
+	unsubscribe := d.controller.Store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		d.scheduler.OnArrival(id, len(materializers) == 0 && d.controllers.Owns(id))
 	}, false)
 	defer unsubscribe()
 	publication := func(manifest.NamedResource, any) { d.scheduler.OnPublication() }
-	offStatus := controller.Store.AddListener(store.EventStatusUpdated, publication, false)
+	offStatus := d.controller.Store.AddListener(store.EventStatusUpdated, publication, false)
 	defer offStatus()
-	offArtifact := controller.Store.AddListener(store.EventArtifactUpdated, publication, false)
+	offArtifact := d.controller.Store.AddListener(store.EventArtifactUpdated, publication, false)
 	defer offArtifact()
 	d.scheduler.Seed(pending)
+	d.scheduler.Seed(materializers)
 	if err := d.scheduler.Run(ctx); err != nil {
 		return err
 	}
@@ -49,17 +67,11 @@ func reconcileConstruction(
 	}
 	var failures []error
 	for _, id := range pending {
-		if status, _ := controller.Store.GetStatus(id); status.Status == store.StatusFailed {
+		if status, _ := d.controller.Store.GetStatus(id); status.Status == store.StatusFailed {
 			failures = append(failures, manifest.NewError(manifest.ErrFlux, nil, status.String()))
 		}
 	}
 	return errors.Join(failures...)
-}
-
-type constructionDispatcher struct {
-	controller *sourcectrl.Controller
-	scheduler  *schedule.Scheduler
-	local      map[manifest.NamedResource]bool
 }
 
 // Construction outputs MUST retain their subscriptions after this phase drains.
@@ -73,20 +85,26 @@ func (d *constructionDispatcher) Dispatch(
 	level manifest.DrainLevel,
 	previous schedule.Result,
 ) schedule.Result {
-	object := d.controller.Store.GetObject(id)
-	composed := object != nil && len(object.Composition().Includes) != 0
-	if d.local[id] && !composed {
-		if err := d.controller.Construct(ctx, id); err != nil {
-			d.controller.Store.UpdateFailure(id, err)
+	reconcile := d.controllers.ReconcileNode
+	if d.local[id] {
+		object := d.controller.Store.GetObject(id)
+		if object == nil || len(object.Composition().Includes) == 0 {
+			if err := d.controller.Construct(ctx, id); err != nil {
+				d.controller.Store.UpdateFailure(id, err)
+			}
+			return schedule.Result{}
 		}
-		return schedule.Result{}
+		reconcile = d.controller.ReconcileNode
 	}
 	if prior, ok := previous.Assessment.(constructionExecution); ok {
 		previous.Assessment = prior.Execution
 	}
-	execution := d.controller.ReconcileNode(ctx, id, level, previous)
+	execution := reconcile(ctx, id, level, previous)
+	if execution == nil {
+		return schedule.Result{}
+	}
 	for _, dependency := range execution.Blocked {
-		d.scheduler.OnArrival(dependency, d.controller.Owns(dependency))
+		d.scheduler.OnArrival(dependency, d.controllers.Owns(dependency))
 	}
 	return schedule.Result{Assessment: constructionExecution{execution}}
 }

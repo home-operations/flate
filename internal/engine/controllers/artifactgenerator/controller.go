@@ -75,14 +75,8 @@ type evaluation struct {
 	lastFrom      string
 	lastSelection sourceSelection
 	// Projections are borrowed only until Compose returns; outputs reconcile serially.
-	projectedInputs  []cache.CompositionInput
-	projectedCopies  []cache.Copy
-	projectedContent struct {
-		Namespace string
-		Generator manifest.NamedResource
-		Request   request
-		Inputs    []inputIdentity
-	}
+	projectedInputs []cache.CompositionInput
+	projectedCopies []cache.Copy
 }
 
 func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, level manifest.DrainLevel) error {
@@ -256,11 +250,11 @@ type generatorPublication struct {
 }
 
 func (p *generatorPublication) generatedSource(ctx context.Context, req *request) (*store.SourceArtifact, error) {
-	composition, err := p.evaluation.composition(p.id, req)
+	composition, err := p.evaluation.composition(req)
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Output.Name, err), "")
 	}
-	input, descriptor, keyID, err := p.execution.cache.Compose(
+	input, descriptor, _, err := p.execution.cache.Compose(
 		ctx,
 		composition,
 		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
@@ -269,7 +263,7 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 		return nil, fmt.Errorf("evaluate %s: %w", req.Output.Name, err)
 	}
 	digest := descriptor.Annotations["flate.tree-digest"]
-	if input == nil || keyID == "" || digest == "" {
+	if input == nil || digest == "" {
 		return nil, manifest.NewError(
 			manifest.ErrInput,
 			nil,
@@ -279,8 +273,7 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 	payload := &store.SourceArtifact{
 		Kind:     manifest.KindExternalArtifact,
 		FS:       input,
-		Key:      keyID,
-		Content:  cache.AcquisitionIdentity(input),
+		Content:  digest,
 		Digest:   digest,
 		Revision: "latest@" + digest,
 	}
@@ -334,6 +327,7 @@ func (p *generatorPublication) publish(ctx context.Context, req *request, ordina
 		return err
 	}
 	targetID := parsed.Children[0].Obj.Named()
+	payload.Key = targetID.NamespacedName()
 	p.attempt.Children, p.attempt.Manifests, p.attempt.Complete = parsed.Children, parsed.Visible, false
 	if err := p.execution.run.Emit(
 		ctx,

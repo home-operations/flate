@@ -30,8 +30,9 @@ type Controller struct {
 	retry cache.RetryConfig
 
 	// Trees shares remote fetches and persisted renders.
-	Trees     *kustomize.TreeCache
-	Discovery *discovery.Result
+	Trees       *kustomize.TreeCache
+	Discovery   *discovery.Result
+	localInputs map[manifest.NamedResource]*kustomize.LocalInputs
 
 	strictSubstitutions bool
 	restricted          bool
@@ -42,7 +43,8 @@ type Controller struct {
 type Options struct {
 	base.Options
 
-	Discovery *discovery.Result
+	Discovery   *discovery.Result
+	LocalInputs map[manifest.NamedResource]*kustomize.LocalInputs
 
 	// StrictSubstitutions rejects undefined variables without defaults.
 	StrictSubstitutions bool
@@ -77,7 +79,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache) *Controlle
 //nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
-	c.Discovery = opts.Discovery
+	c.Discovery, c.localInputs = opts.Discovery, opts.LocalInputs
 	if c.Discovery != nil && c.Discovery.Binding.Failure != nil {
 		c.Store.UpdateFailure(c.Discovery.Binding.Producer, c.Discovery.Binding.Failure)
 	}
@@ -166,6 +168,7 @@ func (c *execution) render(
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	request.Work = c.run.Reads.Work().Scope().RenderWork()
+	request.LocalInputs = c.localInputs[id]
 	c.matchPreparation(&request)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {

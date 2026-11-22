@@ -1,0 +1,21 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: credentials, namespace: flux-system}
+spec:
+  inputsFrom:
+  - kind: ResourceSetInputProvider
+    name: credentials
+  resourcesTemplate: |
+    <<- $data := default "missing" (index inputs "value") >>
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata: {name: credentials, namespace: flux-system}
+    spec:
+      target: {name: '<< $data >>'}
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata: {name: credentials, namespace: flux-system}
+spec:
+  type: Static
+  defaultValues: {value: example}

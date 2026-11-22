@@ -38,7 +38,7 @@ func Open(t *testing.T, scenario, caseName string) *Case {
 }
 
 // Run restores fixture trees and applies the declared cache policy on every replay.
-func (c *Case) Run(t *testing.T) []Result {
+func (c *Case) Run(t *testing.T, flags ...string) []Result {
 	t.Helper()
 	f := c.fixture
 	f.Restore(t)
@@ -63,13 +63,18 @@ func (c *Case) Run(t *testing.T) []Result {
 					t.Setenv(key, f.Resolve(t, value, cache))
 				}
 			}
-			args := make([]string, len(inv.Argv))
+			args := make([]string, len(inv.Argv), len(inv.Argv)+len(flags))
 			for i, arg := range inv.Argv {
 				args[i] = f.Resolve(t, arg, cache)
 			}
 			previous, writer := slog.Default(), log.Writer()
 			defer func() { slog.SetDefault(previous); log.SetOutput(writer) }()
-			result, canceled := runCLI(t.Context(), t, args, cli.RunConfig{GitTransports: c.transport.git})
+			result, canceled := runCLI(
+				t.Context(),
+				t,
+				append(args, flags...),
+				cli.RunConfig{GitTransports: c.transport.git},
+			)
 			assert.FatalIf(
 				t,
 				canceled,

@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"testing"
@@ -57,10 +56,7 @@ func TestEvaluate(t *testing.T) {
 					"repo": fstest.MapFS{"app/file": {Data: []byte("file")}},
 				},
 			}
-			_, err := e.composition(
-				manifest.NamedResource{},
-				&request{Output: manifest.ArtifactGeneratorOutput{Copy: tc.operations}},
-			)
+			_, err := e.composition(&request{Output: manifest.ArtifactGeneratorOutput{Copy: tc.operations}})
 			assert.FatalIf(t, (err != nil) != tc.invalid, "evaluate() = %v; invalid=%v", err, tc.invalid)
 		})
 	}
@@ -85,7 +81,6 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 			},
 		},
 	}
-	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
 	req := request{
 		Output: manifest.ArtifactGeneratorOutput{
 			Name: "artifact",
@@ -95,22 +90,12 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		},
 	}
 	req.work.Scope = scope
-	composition, err := e.composition(recorder.Key.Owner, &req)
+	composition, err := e.composition(&req)
 	assert.FatalIf(t, err != nil, "%v", err)
 	_, _, _, err = owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever, Work: &req.work})
 	assert.FatalIf(t, err != nil, "%v", err)
-	want := struct {
-		Namespace string           `json:"Namespace"`
-		Inputs    []inputIdentity  `json:"Inputs"`
-		Selection archiveSelection `json:"Selection"`
-	}{"artifactgenerator/extract/v1", identities, selection}
-	wantBytes, err := json.Marshal(want)
-	assert.NoError(t, err)
-	gotBytes, err := json.Marshal(composition.Copies[0].ExtractContent(selection.Path, selection.Destination))
-	assert.NoError(t, err)
-	assert.Equal(t, string(gotBytes), string(wantBytes))
 	called := false
-	composition.Content = "another outer composition with the same extraction"
+	composition.Copies[0].To = "other"
 	composition.Inputs[0].FS = extractionProbeFS{FS: composition.Inputs[0].FS, opened: &called}
 	input, _, id, err := owner.Compose(
 		t.Context(),
@@ -126,6 +111,9 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		err,
 		called,
 	)
+	data, err := fs.ReadFile(input, "other/file")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "bytes")
 }
 
 type extractionProbeFS struct {

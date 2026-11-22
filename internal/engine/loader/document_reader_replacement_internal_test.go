@@ -32,7 +32,7 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 			st := store.New()
 			l := New(st)
 			changes, err := change.Qualify(t.Context(), detectChanges(t, nil, nil),
-				[2]*store.Store{store.New(), store.New()}, manifest.WorkScope{})
+				change.SourcePair{Stores: [2]*store.Store{store.New(), store.New()}}, manifest.WorkScope{})
 			assert.NoError(t, err)
 			l.Options.Changes = changes
 			l.SourceRoot = (*testCaseInput)

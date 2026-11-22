@@ -240,7 +240,12 @@ func TestAdmission_SourceCoordinateClaims(t *testing.T) {
 		)
 		assert.Equal(
 			t,
-			c.affectedSourceRoots(manifest.NamedResource{}, source, []string{"."}, &manifest.DiscoveryRecord{}),
+			c.affectedSourceRoots(
+				manifest.NamedResource{},
+				source,
+				&SourceReadPaths{Roots: []string{"."}},
+				&manifest.DiscoveryRecord{},
+			),
 			affectedResult{settled: true},
 		)
 	})

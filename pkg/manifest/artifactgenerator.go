@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"cmp"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -26,6 +28,143 @@ func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifa
 	}})
 }
 
+func (r *RawObject) artifactGeneratorCatalogSpec() map[string]any {
+	fields := [...]string{"artifacts", "pathPattern"}
+	spec := make(map[string]any, len(fields))
+	for _, field := range fields {
+		found := false
+		for key, value := range r.Spec {
+			if strings.EqualFold(key, field) {
+				spec[key] = value
+				found = true
+			}
+		}
+		if !found {
+			spec[field] = nil
+		}
+	}
+	return spec
+}
+
+func (o *ArtifactGeneratorOutput) identityTemplate(namespace string) NamedResource {
+	return NamedResource{
+		Group: SourceDomain, Kind: KindExternalArtifact,
+		Namespace: cmp.Or(o.Namespace, namespace), Name: o.Name,
+	}
+}
+
+func (o *ArtifactGeneratorOutput) needsCandidates() bool {
+	return strings.ContainsAny(o.Name, "{}") || strings.ContainsAny(o.Namespace, "{}")
+}
+
+// ResolveOutput expands the output identity with normalized captures and paths with raw captures.
+// It returns the concrete identity separately from the authored declaration.
+// Nil captures retain templates for declaration validation.
+func (o *ArtifactGeneratorOutput) ResolveOutput(
+	namespace string, normalized, raw map[string]string,
+) (NamedResource, ArtifactGeneratorOutput, error) {
+	id, output := o.identityTemplate(namespace), *o
+	if normalized == nil {
+		return id, output, nil
+	}
+	var err error
+	id.Name, err = expandArtifactTemplate(id.Name, normalized)
+	if err != nil {
+		return NamedResource{}, ArtifactGeneratorOutput{}, err
+	}
+	if o.Namespace != "" {
+		id.Namespace, err = expandArtifactTemplate(id.Namespace, normalized)
+		if err != nil {
+			return NamedResource{}, ArtifactGeneratorOutput{}, err
+		}
+	}
+	output.InputsFrom, err = expandArtifactTemplate(o.InputsFrom, raw)
+	if err != nil {
+		return NamedResource{}, ArtifactGeneratorOutput{}, err
+	}
+	output.Copy = slices.Clone(o.Copy)
+	for i := range output.Copy {
+		operation := &output.Copy[i]
+		operation.From, err = expandArtifactTemplate(operation.From, raw)
+		if err != nil {
+			return NamedResource{}, ArtifactGeneratorOutput{}, err
+		}
+		operation.To, err = expandArtifactTemplate(operation.To, raw)
+		if err != nil {
+			return NamedResource{}, ArtifactGeneratorOutput{}, err
+		}
+	}
+	return id, output, nil
+}
+
+func expandArtifactTemplate(template string, captures map[string]string) (string, error) {
+	if !strings.ContainsAny(template, "{}") {
+		return template, nil
+	}
+	var out strings.Builder
+	err := scanArtifactTemplate(template, func(literal, capture string) error {
+		out.WriteString(literal)
+		if capture == "" {
+			return nil
+		}
+		value, ok := captures[capture]
+		if !ok {
+			return fmt.Errorf(
+				"invalid template %q: capture variable %q is not defined by pathPattern",
+				template,
+				capture,
+			)
+		}
+		out.WriteString(value)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func scanArtifactTemplate(template string, visit func(literal, capture string) error) error {
+	rest := template
+	for rest != "" {
+		i := strings.IndexAny(rest, "{}")
+		if i < 0 {
+			return visit(rest, "")
+		}
+		offset := len(template) - len(rest) + i
+		if rest[i] == '}' {
+			return fmt.Errorf(
+				"invalid template %q: capture ending at offset %d is missing opening brace",
+				template,
+				offset,
+			)
+		}
+		name, tail, ok := strings.Cut(rest[i+1:], "}")
+		if !ok {
+			return fmt.Errorf(
+				"invalid template %q: capture starting at offset %d is missing closing brace",
+				template,
+				offset,
+			)
+		}
+		if name == "" {
+			return fmt.Errorf("invalid template %q: empty capture variable", template)
+		}
+		if !validArtifactCapture(name) {
+			return fmt.Errorf(
+				"invalid template %q: capture variable %q must be a valid capture name matching [A-Za-z_][A-Za-z0-9_]*",
+				template,
+				name,
+			)
+		}
+		if err := visit(rest[:i], name); err != nil {
+			return err
+		}
+		rest = tail
+	}
+	return nil
+}
+
 type artifactToken struct {
 	literal string
 	capture int
@@ -45,25 +184,17 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		}
 	}
 	for i := range spec.Artifacts {
-		name := spec.Artifacts[i].Name
-		if name == "" {
+		output := &spec.Artifacts[i]
+		if output.Name == "" {
 			continue
 		}
-		if !strings.ContainsAny(name, "{}") {
-			targets = append(
-				targets,
-				ProducerTarget{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: r.Namespace, Name: name},
-			)
+		if !output.needsCandidates() {
+			targets = append(targets, ProducerTarget{NamedResource: output.identityTemplate(r.Namespace)})
 			continue
 		}
-		if len(captures) == 0 {
-			continue
+		if len(captures) != 0 {
+			targets = output.appendMatches(targets, candidates, output.identityTemplate(r.Namespace), captures)
 		}
-		tokens, _, ok := artifactTokens(name, captures, false)
-		if !ok {
-			continue
-		}
-		targets = r.appendArtifactMatches(targets, candidates, tokens, len(captures))
 	}
 	slices.SortFunc(targets, func(a, b ProducerTarget) int { return a.Compare(b.NamedResource) })
 	return slices.CompactFunc(targets, func(a, b ProducerTarget) bool { return a.NamedResource == b.NamedResource })
@@ -71,34 +202,28 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 
 func artifactTokens(template string, captures []string, declare bool) ([]artifactToken, []string, bool) {
 	var tokens []artifactToken
-	for template != "" {
-		i := strings.IndexAny(template, "{}")
-		if i < 0 {
-			tokens = append(tokens, artifactToken{literal: template})
-			break
+	err := scanArtifactTemplate(template, func(literal, capture string) error {
+		if literal != "" {
+			tokens = append(tokens, artifactToken{literal: literal})
 		}
-		if template[i] != '{' {
-			return nil, nil, false
+		if capture == "" {
+			return nil
 		}
-		if i != 0 {
-			tokens = append(tokens, artifactToken{literal: template[:i]})
-		}
-		name, rest, ok := strings.Cut(template[i+1:], "}")
-		if !ok || !validArtifactCapture(name) {
-			return nil, nil, false
-		}
-		index := slices.Index(captures, name)
+		index := slices.Index(captures, capture)
 		if declare {
-			if index >= 0 || len(content.IsLabelKey(name)) != 0 {
-				return nil, nil, false
+			if index >= 0 || len(content.IsLabelKey(capture)) != 0 {
+				return fmt.Errorf("invalid path capture %q", capture)
 			}
 			index = len(captures)
-			captures = append(captures, name)
+			captures = append(captures, capture)
 		} else if index < 0 {
-			return nil, nil, false
+			return fmt.Errorf("undefined path capture %q", capture)
 		}
 		tokens = append(tokens, artifactToken{capture: index + 1})
-		template = rest
+		return nil
+	})
+	if err != nil {
+		return nil, nil, false
 	}
 	return tokens, captures, true
 }
@@ -204,14 +329,17 @@ func (s *ArtifactGeneratorSpec) inputPaths(alias string) []string {
 		return nil
 	}
 	var files []string
-	add := func(value string) {
+	add := func(value, variables string, cleanFirst bool) {
 		input, name, found := strings.Cut(value, "/")
 		input, marked := strings.CutPrefix(input, "@")
 		if !found || !marked || input != alias {
 			return
 		}
 		// Variable components describe potential reads, including absent matches on either diff side.
-		if variable := strings.IndexAny(name, "*?[{"); variable >= 0 {
+		if cleanFirst {
+			name = path.Clean(name)
+		}
+		if variable := strings.IndexAny(name, variables); variable >= 0 {
 			name = path.Dir(name[:variable])
 		}
 		name = path.Clean(name)
@@ -219,10 +347,13 @@ func (s *ArtifactGeneratorSpec) inputPaths(alias string) []string {
 			files = append(files, name)
 		}
 	}
-	add(s.PathPattern)
+	add(s.PathPattern, "*?[{", false)
 	for i := range s.Artifacts {
 		for _, operation := range s.Artifacts[i].Copy {
-			add(operation.From)
+			add(operation.From, "*?[{", false)
+		}
+		if alias != "artifact" {
+			add(s.Artifacts[i].InputsFrom, "{", true)
 		}
 	}
 	slices.Sort(files)
@@ -233,22 +364,36 @@ const (
 	maxArtifactCaptureLength = 63
 )
 
-func (r *RawObject) appendArtifactMatches(
-	targets []ProducerTarget,
-	candidates []NamedResource,
-	tokens []artifactToken,
-	captureCount int,
+func (o *ArtifactGeneratorOutput) appendMatches(
+	targets []ProducerTarget, candidates []NamedResource, id NamedResource, captures []string,
 ) []ProducerTarget {
-	bound := make([]string, captureCount)
+	template := id.Name
+	dynamicNamespace := strings.ContainsAny(o.Namespace, "{}")
+	if dynamicNamespace {
+		// A capture is a label value and can never consume the identity separator.
+		template = id.Namespace + "/" + id.Name
+	}
+	tokens, _, ok := artifactTokens(template, captures, false)
+	if !ok {
+		return targets
+	}
+	bound := make([]string, len(captures))
 	for _, candidate := range candidates {
 		if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
-			candidate.Namespace != r.Namespace ||
+			!dynamicNamespace && candidate.Namespace != id.Namespace ||
 			len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
 			continue
 		}
+		name := candidate.Name
+		if dynamicNamespace {
+			if len(apivalidation.ValidateNamespaceName(candidate.Namespace, false)) != 0 {
+				continue
+			}
+			name = candidate.Namespace + "/" + name
+		}
 		clear(bound)
 		budget := artifactMatchBudget
-		if artifactMatch(tokens, candidate.Name, bound, &budget) {
+		if artifactMatch(tokens, name, bound, &budget) {
 			targets = append(targets, ProducerTarget{NamedResource: candidate})
 		}
 	}

@@ -1,6 +1,11 @@
 package manifest
 
-import "maps"
+import (
+	"fmt"
+	"maps"
+
+	kjson "k8s.io/apimachinery/pkg/util/json"
+)
 
 // RenderDocument projects an ExternalArtifact declaration and its evaluated metadata.
 func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
@@ -37,7 +42,28 @@ func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 		metadataKey:   metadata,
 		specKey:       spec,
 	}
+	if len(e.ExportedInputs) != 0 {
+		inputs, err := e.renderExportedInputs()
+		if err != nil {
+			return nil, err
+		}
+		doc["status"] = map[string]any{"exportedInputs": inputs}
+	}
 	return doc, nil
+}
+
+func (e *ExternalArtifact) renderExportedInputs() (map[string]any, error) {
+	inputs := make(map[string]any, len(e.ExportedInputs))
+	for key, input := range e.ExportedInputs {
+		var value any
+		if input != nil {
+			if err := kjson.Unmarshal(input.Raw, &value); err != nil {
+				return nil, fmt.Errorf("decode exported inputs: %w", err)
+			}
+		}
+		inputs[key] = value
+	}
+	return inputs, nil
 }
 
 type documentRenderer interface {

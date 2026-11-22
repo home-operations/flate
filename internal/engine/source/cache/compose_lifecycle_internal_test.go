@@ -129,11 +129,11 @@ func TestCompose_FailurePreservesOtherGeneration(t *testing.T) {
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			domain, ok := errors.AsType[*manifest.Error](err)
 			assert.FatalIf(t, !ok, "unclassified composition failure: %v", err)
-			assert.Equal(t, domain.Error(), "stat: open missing: file does not exist")
+			assert.Equal(t, domain.Error(), "source 'missing' does not exist")
 			assert.Equal(
 				t,
 				domain.Cause().Error(),
-				"copy 1 \"missing\" to \"partial\": stat: open missing: file does not exist",
+				"copy 1 \"missing\" to \"partial\": source 'missing' does not exist",
 			)
 			assert.Diff(t, failedDescriptor, ocispec.Descriptor{})
 			assert.Diff(t, compositionFiles(t, files), before)
@@ -155,9 +155,11 @@ func TestCompose_FailurePreservesOtherGeneration(t *testing.T) {
 func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
-		"base":    {Data: []byte("base: true\n"), Mode: 0o640},
-		"overlay": {Data: []byte("overlay: true\n"), Mode: 0o600},
-		"skip":    {Data: []byte("excluded"), Mode: 0o600},
+		"base":         {Data: []byte("base: true\n"), Mode: 0o640},
+		"overlay":      {Data: []byte("overlay: true\n"), Mode: 0o600},
+		"skip":         {Data: []byte("excluded"), Mode: 0o600},
+		"ci.yaml":      {Data: []byte("region: east"), Mode: 0o600},
+		"other-ci.yml": {Data: []byte("region: west"), Mode: 0o600},
 		"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{
 			"member": {Data: []byte("archive"), Mode: 0o750}, "empty": {Mode: fs.ModeDir | 0o755},
 		})},
@@ -169,6 +171,8 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 			{From: "base", To: "values"},
 			{From: "overlay", To: "values", Mode: MergeYAML},
 			{From: "skip", To: "skip", Exclude: []string{"skip"}},
+			{From: "ci.yaml", To: "cloudbuild.yaml"},
+			{From: "other-ci.yml", To: "appveyor.yml"},
 			{From: "archive.tgz", To: "out", Mode: ExtractArchive},
 		}, Policy: "fixed",
 	}
@@ -190,7 +194,7 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 		Digest         digest.Digest
 		Ignore, Policy string
 		Version        int
-	}{digest.FromBytes(archive.Bytes()), "", "fixed", archiveShapeVersion})
+	}{digest.FromBytes(archive.Bytes()), "", "fixed", 3})
 	expectedTree := "sha256:" + manifest.Fingerprint([]struct {
 		Path    string
 		Mode    fs.FileMode
@@ -207,8 +211,14 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 			manifest.Fingerprint([]byte("base: true\noverlay: true\n")),
 		},
 	})
-	var previousDescriptor ocispec.Descriptor
-	var previousKey, previousIdentity string
+	captures := []struct {
+		path, value   string
+		key, identity string
+		descriptor    ocispec.Descriptor
+	}{
+		{path: "cloudbuild.yaml", value: "region: east"},
+		{path: "appveyor.yml", value: "region: west"},
+	}
 	for _, backend := range []string{"memory", "disk"} {
 		root := ""
 		if backend == "disk" {
@@ -221,24 +231,35 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 			if backend == "disk" && run == 1 {
 				policy.Admit = func(context.Context) (func(), error) { return nil, errors.New("reopen must reuse") }
 			}
-			output, descriptor, key, err := owner.Compose(t.Context(), request, &policy)
-			assert.NoError(t, err)
-			assert.Diff(t, compositionFiles(t, output), want)
-			assert.Diff(t, compositionFiles(t, files), before)
-			assert.Diff(
-				t,
-				descriptor,
-				ocispec.Descriptor{Annotations: map[string]string{"flate.tree-digest": expectedTree}},
-			)
-			identity := AcquisitionIdentity(output)
-			assert.Equal(t, identity, expectedIdentity)
-			assert.Equal(t, identity != "", true)
-			if previousKey != "" {
-				assert.Diff(t, descriptor, previousDescriptor)
-				assert.Equal(t, key, previousKey)
-				assert.Equal(t, identity, previousIdentity)
+			for i := range captures {
+				capture := &captures[i]
+				request.CapturePath = capture.path
+				request.Capture = func(_ context.Context, staged fs.FS) (string, error) {
+					data, err := fs.ReadFile(staged, capture.path)
+					return string(data), err
+				}
+				output, descriptor, key, err := owner.Compose(t.Context(), request, &policy)
+				assert.NoError(t, err)
+				assert.Diff(t, compositionFiles(t, output), want)
+				assert.Diff(t, compositionFiles(t, files), before)
+				assert.Diff(
+					t,
+					descriptor,
+					ocispec.Descriptor{Annotations: map[string]string{
+						"flate.tree-digest": expectedTree, CompositionCapture: capture.value,
+					}},
+				)
+				identity := AcquisitionIdentity(output)
+				assert.Equal(t, identity, expectedIdentity)
+				assert.Equal(t, identity != "", true)
+				if capture.key != "" {
+					assert.Diff(t, descriptor, capture.descriptor)
+					assert.Equal(t, key, capture.key)
+					assert.Equal(t, identity, capture.identity)
+				}
+				capture.descriptor, capture.key, capture.identity = descriptor, key, identity
 			}
-			previousDescriptor, previousKey, previousIdentity = descriptor, key, identity
+			assert.Equal(t, captures[0].key != captures[1].key, true)
 			assert.NoError(t, owner.Close())
 		}
 	}

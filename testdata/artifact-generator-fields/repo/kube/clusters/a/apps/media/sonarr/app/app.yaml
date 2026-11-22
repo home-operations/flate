@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sonarr
+  namespace: media
+data:
+  value: media

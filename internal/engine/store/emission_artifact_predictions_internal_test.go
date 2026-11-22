@@ -12,6 +12,46 @@ import (
 
 func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 	t.Parallel()
+	t.Run("cross_namespace", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		s.AddObject(owner)
+		generator := &manifest.RawObject{
+			APIVersion: manifest.SourceExtensionsDomain + "/v1beta1", Kind: manifest.KindArtifactGenerator,
+			Name: "generator", Namespace: owner.Namespace,
+			Spec: map[string]any{
+				"pathPattern": "@repo/{app}",
+				"artifacts": []any{
+					map[string]any{"name": "{app}", "namespace": "target-{app}"},
+					map[string]any{"name": "api", "namespace": "fixed"},
+				},
+			},
+		}
+		target := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindExternalArtifact,
+			Namespace: "target-api",
+			Name:      "api",
+		}
+		consumer := &manifest.Kustomization{
+			Name: "consumer", Namespace: target.Namespace,
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: target.Kind, Name: target.Name},
+		}
+		other := *consumer
+		other.Namespace = "unrelated"
+		s.RecordEmitted(
+			owner.Named(),
+			&Emission{Children: []Child{{Obj: generator}, {Obj: consumer}, {Obj: &other}}, Complete: true},
+			nil,
+		)
+		want := []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}}
+		assert.Diff(t, s.Productions(target, nil), want)
+		target.Namespace = "fixed"
+		assert.Diff(t, s.Productions(target, nil), want)
+		target.Namespace = other.Namespace
+		assert.Equal(t, len(s.Productions(target, nil)), 0)
+	})
 	generator := func(template string) Child {
 		return Child{
 			Obj: &manifest.RawObject{

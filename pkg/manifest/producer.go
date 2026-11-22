@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"maps"
 	"slices"
-	"strings"
 )
 
 // KeySet retains known names without proving absence until coverage is complete.
@@ -28,14 +27,14 @@ type ProducerTarget struct {
 // encryptedData keys. ObjectBucketClaim produces a same-named Secret and ConfigMap
 // for credentials and connection settings, without declaring their keys.
 //
-// Targets use the supplied producer's namespace and spec target names.
+// Targets use the supplied producer's identity and declared output fields.
 // Declaration identity projection belongs to the caller; explicit spec names
 // require their own nameReference transformation.
 func ProducerTargets(obj BaseManifest, candidates ...NamedResource) []ProducerTarget {
 	return obj.producerTargets(candidates)
 }
 
-// ProducerNeedsCandidates reports whether obj declares outputs with dynamic names.
+// ProducerNeedsCandidates reports whether obj declares outputs with dynamic identities.
 func ProducerNeedsCandidates(obj BaseManifest) bool {
 	r, ok := obj.(*RawObject)
 	return ok && r.producerNeedsCandidates()
@@ -51,7 +50,7 @@ func (r *RawObject) producerNeedsCandidates() bool {
 	}
 	artifacts := r.artifactGeneratorSpec().spec.Artifacts
 	for i := range artifacts {
-		if strings.ContainsAny(artifacts[i].Name, "{}") {
+		if artifacts[i].needsCandidates() {
 			return true
 		}
 	}

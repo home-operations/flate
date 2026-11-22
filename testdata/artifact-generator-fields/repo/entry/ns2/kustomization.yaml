@@ -1,0 +1,2 @@
+namespace: ns2
+resources: [consumer.yaml]

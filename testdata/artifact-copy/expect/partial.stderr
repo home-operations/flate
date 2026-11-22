@@ -1,5 +1,5 @@
 
-  ✗  ArtifactGenerator  apps/generator  evaluate generated-c: stat: stat c: file does not exist
+  ✗  ArtifactGenerator  apps/generator  evaluate generated-c: source 'c' does not exist
   ✗  ExternalArtifact  apps/generated-c  not found
          required by apps/c
 <PERSISTENCE:|

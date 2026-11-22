@@ -1,0 +1,13 @@
+
+  ✗  ArtifactGenerator  flux-system/generator  evaluate sonarr: no files match pattern 'kube/base/media/sonarr/**' in source 'repo'
+  ✗  ExternalArtifact  media/sonarr  not found
+         required by media/sonarr
+  ✗  ExternalArtifact  ns1/gateway  not found
+         required by ns1/gateway
+  ✗  ExternalArtifact  ns2/gateway  not found
+         required by ns2/gateway
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
+  ✗ 4 failed · 3 blocked

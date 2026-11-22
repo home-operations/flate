@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"maps"
-	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 )
@@ -91,23 +90,11 @@ func (*Secret) catalog(id NamedResource) BaseManifest {
 
 func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
-	if r.isArtifactGenerator() {
-		fields := [...]string{"artifacts", "pathPattern"}
-		out.Spec = make(map[string]any, len(fields))
-		for _, field := range fields {
-			found := false
-			for key, value := range r.Spec {
-				if strings.EqualFold(key, field) {
-					out.Spec[key] = value
-					found = true
-				}
-			}
-			if !found {
-				out.Spec[field] = nil
-			}
-		}
+	switch {
+	case r.isArtifactGenerator():
+		out.Spec = r.artifactGeneratorCatalogSpec()
 		out.initArtifactGeneratorSpec()
-	} else if r.isFluxInstance() {
+	case r.isFluxInstance():
 		keys := [...]string{"sync", "distribution", "cluster", "kustomize"}
 		out.Spec = make(map[string]any, len(keys))
 		for _, key := range keys {
@@ -115,6 +102,15 @@ func (r *RawObject) catalog(id NamedResource) BaseManifest {
 				out.Spec[key] = value
 			}
 		}
+	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
+		out.Spec = map[string]any{"target": r.Spec["target"], "data": r.Spec["data"], "dataFrom": r.Spec["dataFrom"]}
+	case r.Kind == "SealedSecret" && apiGroup(r.APIVersion) == "bitnami.com":
+		values := (specView{r.Spec}).child("encryptedData").m
+		encrypted := make(map[string]any, len(values))
+		for key := range values {
+			encrypted[key] = nil
+		}
+		out.Spec = map[string]any{"template": r.Spec["template"], "encryptedData": encrypted}
 	}
 	return out
 }

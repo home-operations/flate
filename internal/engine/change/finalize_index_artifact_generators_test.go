@@ -278,7 +278,12 @@ func testFinalizeIndexArtifactGeneratorsCase(
 	t.Helper()
 
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: ["+testCaseInput.resources+"]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"apps/kustomization.yaml",
+		"resources: ["+testCaseInput.resources+", routed.yaml, unrelated.yaml]\n",
+	)
 	generatorFile := "apps/generator.yaml"
 	if testCaseInput.component {
 		generatorFile = "shared/generator.yaml"
@@ -293,7 +298,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 		t,
 		root,
 		generatorFile,
-		"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: authored, uid: authored}\nspec:\n  sources: [{alias: foreign, kind: OCIRepository, name: foreign, namespace: external}, {alias: repo, kind: GitRepository, name: input}, {alias: bucket, kind: Bucket, name: bucket, namespace: storage}]\n  pathPattern: '@repo/apps/{app}'\n  artifacts: [{name: 'app-{app}'}]\n",
+		"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: authored, uid: authored}\nspec:\n  sources: [{alias: foreign, kind: OCIRepository, name: foreign, namespace: external}, {alias: repo, kind: GitRepository, name: input}, {alias: bucket, kind: Bucket, name: bucket, namespace: storage}]\n  pathPattern: '@repo/apps/{app}'\n  artifacts: [{name: 'app-{app}', inputsFrom: '@repo/settings/{app}.yaml'}, {name: fixed, namespace: delivery}, {name: namespace-only, namespace: 'delivery-{app}'}]\n",
 	)
 	testutil.WriteFile(
 		t,
@@ -305,6 +310,14 @@ func testFinalizeIndexArtifactGeneratorsCase(
 			"  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-api}\n",
 		),
 	)
+	for _, consumer := range []struct{ name, namespace string }{{"routed", "delivery-api"}, {"unrelated", "elsewhere"}} {
+		testutil.WriteFile(t, root, "apps/"+consumer.name+".yaml", testutil.KustomizationYAML(
+			consumer.name,
+			"authored",
+			"  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: namespace-only, namespace: "+consumer.namespace+"}\n",
+		))
+	}
+
 	s := store.New()
 	source := manifest.BootstrapSourceID
 	if testCaseInput.alias {
@@ -406,6 +419,31 @@ func testFinalizeIndexArtifactGeneratorsCase(
 		}
 		assert.Diff(t, r.Productions, []manifest.Production{want})
 	}
+	fixed := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindExternalArtifact,
+		Namespace: "delivery",
+		Name:      "fixed",
+	}
+	record, ok := idx.Lookup(fixed)
+
+	assert.FatalIf(
+		t,
+		!ok || len(record.Productions) != 2 || record.Path != "",
+		"literal cross-namespace prediction: %+v",
+		record,
+	)
+	for i := range record.Productions {
+		production := &record.Productions[i]
+		assert.Equal(t, production.Owner.Name, production.Declaration.Namespace)
+		assert.Equal(t, production.Authored.Namespace, "authored")
+		assert.Equal(t, production.File, generatorFile)
+	}
+	for _, namespace := range []string{"apps", "staging"} {
+		wrong := fixed
+		wrong.Namespace = namespace
+		assert.Equal(t, len(s.Productions(wrong, idx)), 0)
+	}
 	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
@@ -468,5 +506,35 @@ func testFinalizeIndexArtifactGeneratorsCase(
 			assert.FatalIf(t, ok &&
 				len(r.Productions) != 0, "%v", "generator name became an output")
 		}
+	}
+	routed := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindExternalArtifact,
+		Name:      "namespace-only",
+		Namespace: "delivery-api",
+	}
+	productions := s.Productions(routed, idx)
+	assert.Equal(t, len(productions), 2)
+	unrelated := routed
+	unrelated.Namespace = "elsewhere"
+	assert.Equal(t, len(s.Productions(unrelated, idx)), 0)
+	demand := admissiontest.Decision(t, admissiontest.Config{
+		Changes: detectChanges(t, []string{"apps/routed.yaml"}, []string{"apps/routed.yaml"}),
+		Index:   idx, Inventory: s, Root: "",
+	})
+	for i := range productions {
+		production := &productions[i]
+		assert.Equal(t, production.Declaration.Kind, manifest.KindArtifactGenerator)
+		assert.Equal(t, production.File, generatorFile)
+		assert.Equal(t, demand.Reconcile(production.Owner), true)
+	}
+	if testCaseInput.component {
+		assert.NoError(t, l.PromoteOrphans(t.Context()))
+		authored := manifest.NamedResource{
+			Group: manifest.SourceExtensionsDomain, Kind: manifest.KindArtifactGenerator,
+			Namespace: "authored", Name: "generator",
+		}
+		assert.Equal(t, s.GetObject(authored), nil)
+		assert.Equal(t, s.GetObject(unrelated), nil)
 	}
 }

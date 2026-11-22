@@ -4,6 +4,7 @@ import "time"
 
 const (
 	archiveShapeVersion = 2
+	fixedShapeVersion   = 3
 	extractPolicy       = "extract"
 	payloadName         = "content"
 	openOperation       = "open"

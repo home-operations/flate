@@ -1,0 +1,525 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "9142bf5a8457adbd018eb3d8bfa4e02ba3130a1d",
+    "paths": [
+      "pkg/manifest/artifactgenerator_spec.go"
+    ],
+    "reductions": "Offline reproduction of issue #1657 with local Git, namespace transforms, and ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "input-only",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "input-only"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "required",
+      "directory": "overlays/required"
+    },
+    {
+      "name": "input-only",
+      "directory": "overlays/input-only"
+    }
+  ],
+  "cases": [
+    {
+      "name": "artifact-generator--output-fields",
+      "description": "Render Sonarr and both gateways from artifacts in their own namespaces.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "sonarr",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "--namespace",
+              "media",
+              "sonarr",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sonarr.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/all.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--required-copy",
+      "description": "Report the missing Sonarr base when the copy is required.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "required"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "required",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required.stdout",
+              "stderr": "expect/required.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--inputs-forward",
+      "description": "Compare a source input edit with its base.",
+      "setup": [
+        {
+          "commit": "input-only"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:base@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/forward.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--inputs-reverse",
+      "description": "Compare the original source input with the edited revision.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:input-only@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reverse.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/all.stdout",
+      "cases": [
+        "artifact-generator--output-fields"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/forward.stdout",
+      "cases": [
+        "artifact-generator--inputs-forward"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/required.stderr",
+      "cases": [
+        "artifact-generator--required-copy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/required.stdout",
+      "cases": [
+        "artifact-generator--required-copy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/reverse.stdout",
+      "cases": [
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/sonarr.stdout",
+      "cases": [
+        "artifact-generator--output-fields"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/success.stderr",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/input-only/repo/kube/inputs/media/sonarr.yaml",
+      "cases": [
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "overlays/required/repo/entry/generator.yaml",
+      "cases": [
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/generator.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/media/consumer.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/media/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/ns1/consumer.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/ns1/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/ns2/consumer.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/ns2/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/entry/repo.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/base/ns1/gateway/value.txt",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/ci/media/sonarr.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/clusters/a/apps/media/sonarr/app/app.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/clusters/a/apps/ns1/gateway/app.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/clusters/a/apps/ns1/gateway/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/clusters/a/apps/ns2/gateway/app.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/clusters/a/apps/ns2/gateway/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/inputs/media/sonarr.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/inputs/ns1/gateway.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/inputs/ns2/gateway.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/shared/kustomization.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    },
+    {
+      "path": "repo/kube/shared/shared.yaml",
+      "cases": [
+        "artifact-generator--output-fields",
+        "artifact-generator--required-copy",
+        "artifact-generator--inputs-forward",
+        "artifact-generator--inputs-reverse"
+      ],
+      "purpose": "Source, app package, or overlay for the artifact field scenario."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway
+  namespace: ns1
+data:
+  value: ns1

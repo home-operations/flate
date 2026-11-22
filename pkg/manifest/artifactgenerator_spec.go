@@ -40,6 +40,8 @@ func (s ArtifactGeneratorSource) Supported() bool {
 // ArtifactGeneratorOutput must retain authored revision selectors in content fingerprints.
 type ArtifactGeneratorOutput struct {
 	Name           string                  `json:"name"`
+	Namespace      string                  `json:"namespace"`
+	InputsFrom     string                  `json:"inputsFrom"`
 	Revision       string                  `json:"revision"`
 	OriginRevision string                  `json:"originRevision"`
 	Copy           []ArtifactGeneratorCopy `json:"copy"`
@@ -51,6 +53,7 @@ type ArtifactGeneratorCopy struct {
 	To       string   `json:"to"`
 	Strategy string   `json:"strategy"`
 	Exclude  []string `json:"exclude"`
+	Optional bool     `json:"optional"`
 }
 
 type artifactGeneratorDecode struct {

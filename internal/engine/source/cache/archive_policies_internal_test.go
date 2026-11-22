@@ -19,6 +19,38 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestAcquire_ArchiveIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ policy, key, content string }{
+		{
+			"bucket",
+			"e2958ed63c669b98121b7d19136db5223d3660a705986c93971db93da064dcbe",
+			"fc80af2ca25f3cd6d2908366b8aa25f845c73672ba5fb030fa558282754eab8e",
+		},
+		{
+			"source",
+			"67496e029001d8a6ef4a648bcc1206b1bf355e2e7490735ce4f22ca9f36d7805",
+			"25f5501d4b8842bed526cd8b4bfd6ec8fedeb3452635f9fe9af6820e1e61e276",
+		},
+		{
+			"extract",
+			"1131847e8cf236c0e126c11b1652f4878107f7fd1014f234ffe65e3fd66fb246",
+			"0bcb5af28c327b2995c2225cb3224ec8620ccedb63ba75347ea793156f9d94f0",
+		},
+	} {
+		t.Run(tc.policy, func(t *testing.T) {
+			t.Parallel()
+			owner := cachetest.New(t, "", New)
+			data := orderedArchive(t, "file", "content")
+			out, _, key, err := owner.Acquire(t.Context(), ArchiveKey{Content: "source-generation", Policy: tc.policy},
+				&Policy{MaxAge: Forever}, producer(data, &ocispec.Descriptor{}))
+			assert.NoError(t, err)
+			assert.Equal(t, key, tc.key)
+			assert.Equal(t, AcquisitionIdentity(out), tc.content)
+		})
+	}
+}
+
 func TestAcquire_GeneratedPolicy(t *testing.T) {
 	t.Parallel()
 	for _, disk := range []bool{false, true} {

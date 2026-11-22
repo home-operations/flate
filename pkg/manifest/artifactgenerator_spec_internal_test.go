@@ -29,6 +29,8 @@ type fingerprintSource struct {
 
 type fingerprintOutput struct {
 	Name           string                 `json:"name"`
+	Namespace      string                 `json:"namespace"`
+	InputsFrom     string                 `json:"inputsFrom"`
 	Revision       string                 `json:"revision"`
 	OriginRevision string                 `json:"originRevision"`
 	Copy           []fingerprintOperation `json:"copy"`
@@ -39,6 +41,7 @@ type fingerprintOperation struct {
 	To       string   `json:"to"`
 	Strategy string   `json:"strategy"`
 	Exclude  []string `json:"exclude"`
+	Optional bool     `json:"optional"`
 }
 
 func TestArtifactGeneratorSpec_JSON(t *testing.T) {
@@ -53,8 +56,8 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 		{"incomplete", map[string]any{"sources": []any{nil, map[string]any{}, map[string]any{"kind": KindGitRepository, "name": "repo"}}}},
 		{"namespaces", map[string]any{"sources": []any{map[string]any{"namespace": ""}, map[string]any{"namespace": nil}, map[string]any{"namespace": "apps"}}}},
 		{"metadata", map[string]any{"commonMetadata": map[string]any{"labels": map[string]string{"app": "test"}, "annotations": map[string]any{"null": nil}}}},
-		{"copies", map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}", "revision": "@repo", "originRevision": "@repo", "copy": []any{nil, map[string]any{"from": "@repo/file", "to": "@artifact/file", "strategy": "Overwrite", "exclude": []string{"ignored"}}, map[string]any{"exclude": []any{}}}}}}},
-		{"mixed_case_fields", map[string]any{"PathPattern": "@repo/{app}", "sources": []any{map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "apps"}}, "Artifacts": []any{map[string]any{"Name": "app", "Revision": "@repo", "OriginRevision": "@repo", "Copy": []any{map[string]any{"From": "@repo/file", "To": "@artifact/file", "Strategy": "Overwrite", "Exclude": []string{"ignored"}}}}}}},
+		{"copies", map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}", "namespace": "{app}", "inputsFrom": "@repo/settings/{app}.yaml", "revision": "@repo", "originRevision": "@repo", "copy": []any{nil, map[string]any{"from": "@repo/file", "to": "@artifact/file", "strategy": "Overwrite", "exclude": []string{"ignored"}, "optional": true}, map[string]any{"exclude": []any{}}}}}}},
+		{"mixed_case_fields", map[string]any{"PathPattern": "@repo/{app}", "sources": []any{map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "apps"}}, "Artifacts": []any{map[string]any{"Name": "app", "Namespace": "apps", "InputsFrom": "@artifact/file", "Revision": "@repo", "OriginRevision": "@repo", "Copy": []any{map[string]any{"From": "@repo/file", "To": "@artifact/file", "Strategy": "Overwrite", "Exclude": []string{"ignored"}, "Optional": true}}}}}},
 		{"mixed_case_exclude_type", map[string]any{"artifacts": []any{map[string]any{"copy": []any{map[string]any{"Exclude": 1}}}}}},
 		{"namespace_type", map[string]any{"sources": []any{map[string]any{"namespace": 1}}}},
 		{"source_type", map[string]any{"sources": []any{"invalid"}}},
@@ -159,8 +162,9 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 			},
 			"artifacts": []any{
 				map[string]any{
-					"name": "literal",
-					"copy": []any{map[string]any{"from": "@repo/payload/one/**", "exclude": 1}},
+					"name":       "literal",
+					"inputsFrom": "@repo/config/stage/../values*.yaml",
+					"copy":       []any{map[string]any{"from": "@repo/payload/one/**", "exclude": 1}},
 				},
 			},
 		},
@@ -178,7 +182,7 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 	)
 	assert.Equal(t, refs[1].BindsSource(), true)
 	assert.Diff(t, refs[0].Files, []string(nil))
-	assert.Diff(t, refs[1].Files, []string{"payload/one"})
+	assert.Diff(t, refs[1].Files, []string{"config/values*.yaml", "payload/one"})
 	assert.Equal(t, refs[1].Subtree, true)
 	assert.Equal(t, refs[1].NamespaceDefault, true)
 	targets := ProducerTargets(raw)

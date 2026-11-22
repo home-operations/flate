@@ -1,0 +1,2 @@
+namespace: media
+resources: [consumer.yaml]

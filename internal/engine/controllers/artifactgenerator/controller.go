@@ -105,7 +105,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	}
 	spec, err := raw.ArtifactGeneratorSpec()
 	if err == nil {
-		err = validateSpec(&spec)
+		err = validateSpec(&spec, id.Namespace)
 	}
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", err), "")
@@ -136,7 +136,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if handled || err != nil {
 		return err
 	}
-	requests, err := expand(ctx, &spec, localEvaluation.inputs)
+	requests, err := expand(ctx, &spec, id.Namespace, localEvaluation.inputs)
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}
@@ -249,10 +249,27 @@ type generatorPublication struct {
 	documents  []manifest.DocOccurrence
 }
 
-func (p *generatorPublication) generatedSource(ctx context.Context, req *request) (*store.SourceArtifact, error) {
+func (p *generatorPublication) generatedSource(
+	ctx context.Context,
+	req *request,
+) (*store.SourceArtifact, map[string]any, error) {
 	composition, err := p.evaluation.composition(req)
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Output.Name, err), "")
+		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
+	}
+	if from := req.Output.InputsFrom; strings.HasPrefix(from, "@artifact/") {
+		composition.CapturePath = from
+		composition.Capture = func(ctx context.Context, staged fs.FS) (string, error) {
+			inputs, readErr := p.evaluation.exportedInputs(ctx, from, staged)
+			if readErr != nil {
+				return "", manifest.NewError(manifest.ErrInput, readErr, "")
+			}
+			encoded, encodeErr := json.Marshal(inputs)
+			if encodeErr != nil {
+				return "", fmt.Errorf("encode staged inputs: %w", encodeErr)
+			}
+			return string(encoded), nil
+		}
 	}
 	input, descriptor, _, err := p.execution.cache.Compose(
 		ctx,
@@ -260,14 +277,14 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("evaluate %s: %w", req.Output.Name, err)
+		return nil, nil, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err)
 	}
 	digest := descriptor.Annotations["flate.tree-digest"]
 	if input == nil || digest == "" {
-		return nil, manifest.NewError(
+		return nil, nil, manifest.NewError(
 			manifest.ErrInput,
 			nil,
-			fmt.Sprintf("incomplete generated source %q", req.Output.Name),
+			fmt.Sprintf("incomplete generated source %q", req.Identity.Name),
 		)
 	}
 	payload := &store.SourceArtifact{
@@ -289,7 +306,16 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 		}
 		payload.Metadata = map[string]string{"org.opencontainers.image.revision": origin}
 	}
-	return payload, nil
+	var inputs map[string]any
+	if captured := descriptor.Annotations[cache.CompositionCapture]; captured != "" {
+		err = json.Unmarshal([]byte(captured), &inputs)
+	} else {
+		inputs, err = p.evaluation.exportedInputs(ctx, req.Output.InputsFrom, nil)
+	}
+	if err != nil {
+		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
+	}
+	return payload, inputs, nil
 }
 
 func (p *generatorPublication) generatedDocument(req *request) (map[string]any, error) {
@@ -301,8 +327,8 @@ func (p *generatorPublication) generatedDocument(req *request) (map[string]any, 
 	labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", p.uid
 	declaration := p.raw.ExternalArtifact(
 		metav1.ObjectMeta{
-			Name:        req.Output.Name,
-			Namespace:   p.id.Namespace,
+			Name:        req.Identity.Name,
+			Namespace:   req.Identity.Namespace,
 			Labels:      labels,
 			Annotations: p.spec.CommonMetadata.Annotations,
 		},
@@ -311,13 +337,16 @@ func (p *generatorPublication) generatedDocument(req *request) (map[string]any, 
 }
 
 func (p *generatorPublication) publish(ctx context.Context, req *request, ordinal int) error {
-	payload, err := p.generatedSource(ctx, req)
+	payload, inputs, err := p.generatedSource(ctx, req)
 	if err != nil {
 		return err
 	}
 	doc, err := p.generatedDocument(req)
 	if err != nil {
 		return err
+	}
+	if len(inputs) != 0 {
+		doc["status"] = map[string]any{"exportedInputs": inputs}
 	}
 	parsed := p.execution.run.ParseChildren(
 		p.raw,

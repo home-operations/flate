@@ -9,6 +9,7 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v6/plumbing/transport"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -323,10 +324,11 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 
 // ExternalArtifact is a source whose content is published by its materializer.
 type ExternalArtifact struct {
-	Name        string            `json:"name"                yaml:"name"`
-	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Labels      map[string]string `json:"-"                   yaml:"-"`
-	Annotations map[string]string `json:"-"                   yaml:"-"`
+	ExportedInputs map[string]*apiextensionsv1.JSON `json:"-"                   yaml:"-"`
+	Name           string                           `json:"name"                yaml:"name"`
+	Namespace      string                           `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Labels         map[string]string                `json:"-"                   yaml:"-"`
+	Annotations    map[string]string                `json:"-"                   yaml:"-"`
 
 	// ExternalArtifactSpec embeds the upstream spec, exposing
 	// SourceRef at the top level.
@@ -341,6 +343,7 @@ func newExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
 		Labels:               cr.Labels,
 		Annotations:          cr.Annotations,
 		ExternalArtifactSpec: cr.Spec,
+		ExportedInputs:       cr.Status.ExportedInputs,
 	}
 }
 

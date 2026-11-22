@@ -42,6 +42,13 @@ type ArchiveKey struct {
 	Required []string
 }
 
+func (k *ArchiveKey) shapeVersion() int {
+	if k.Policy == fixedPolicy {
+		return fixedShapeVersion
+	}
+	return archiveShapeVersion
+}
+
 // RenderMode identifies the acquisition phase of rendered content.
 type RenderMode uint8
 

@@ -90,6 +90,7 @@ type Config struct {
 
 // Session retains invocation-local declaration construction until Freeze.
 type Session struct {
+	bootstrapInput         *store.SourceArtifact
 	entryBuilderInput      *store.SourceArtifact
 	entryBuilderPath       string
 	entryBuilder           bool
@@ -249,7 +250,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 		admission.qualification = nil
 	}
 	if admission.qualification != nil && d.cfg.Trees != nil && d.cfg.Selection.Changed && d.binding == (Binding{}) {
-		d.entryReceipt(ctx, admission, admission.input)
+		d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
 		if d.entryReceiptRequest != nil {
 			admission.entryDemand = true
 			admission.qualification.closed = false
@@ -524,7 +525,7 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 	if q := admission.qualification; q != nil && q.previous.Receipt == nil && d.cfg.Trees != nil {
 		needsHistory := d.hasEntryOperands() || d.entryReceiptRequest != nil || !d.hasEntryBuilder()
 		if needsHistory {
-			d.entryReceipt(ctx, admission, admission.input)
+			d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
 		}
 	}
 	for {
@@ -642,7 +643,8 @@ func (d *Session) entryCandidateReady(
 		return len(candidate.DependsOn) == 0
 	}
 	selected := d.resolvedSources.snapshot()[candidate.EffectiveSourceID()]
-	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact)
+	workingInput := selected.usesUnfilteredInput(d.cfg.Input, artifact) ||
+		selected.usesUnfilteredInput(d.bootstrapInput, artifact)
 	// An independent bootstrap entry stays eligible even when its preparation fails.
 	if workingInput && !hasEntryPrerequisites(candidate) {
 		return true

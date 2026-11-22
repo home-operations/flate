@@ -36,6 +36,16 @@ func localSource(tb testing.TB, root string) *store.SourceArtifact {
 	return &store.SourceArtifact{LocalPath: root, FS: admitted.FS}
 }
 
+func admittedTestSource(tb testing.TB, artifact *store.SourceArtifact, ignore string) *store.SourceArtifact {
+	tb.Helper()
+	input, _, err := gittree.New(
+		tb.Context(), nil, plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: ignore},
+	)
+	assert.NoError(tb, err)
+	return artifact.WithSourceView(input)
+}
+
 func testTreeFS(t *testing.T, root string) *treeFS {
 	t.Helper()
 	input, _, err := source.OperationView(t.Context(), localSource(t, root).FS)

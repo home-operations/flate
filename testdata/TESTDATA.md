@@ -34,6 +34,18 @@ The expectations retain the handwritten regression assertions and never derive f
 | `rootless-aggregate/ancestor-bootstrap-indexed-producer` | Retain the indexed producer and its reader when the enclosing application is blocked. The diff allows the missing input and shows the reader value change. |
 
 
+`flux-source-membership/` reproduces the source file audit through `cli.Run`.
+Each case compares stdout, stderr, and exit status with two workers.
+The second run reuses the private cache from the first run.
+
+| Case | Behavior |
+| --- | --- |
+| `flux-source-membership/specignore` | The owning GitRepository excludes `apps/a/` and the build renders ConfigMap `kept`. |
+| `flux-source-membership/f7-include-ignored` | The build fails when the source excludes a file that Kustomize references by name. |
+| `flux-source-membership/mini1` | A diff resolves the dependency declared under `crds/` and shows the ConfigMap edit. |
+| `flux-source-membership/templates` | The same diff resolves the dependency from `templates/`. |
+| `flux-source-membership/sourceignore` | The root `.sourceignore` excludes `apps/a/` and the build renders ConfigMap `kept`. |
+
 `custom-bootstrap-source/` covers a checkout whose bootstrap GitRepository is named `fleet`.
 The sync Kustomization targets the cluster directory.
 The infrastructure Kustomization reads a sibling directory and renders ConfigMap `default/podinfo`.

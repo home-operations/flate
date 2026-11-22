@@ -133,7 +133,7 @@ func testRenderRemoteCacheDependenciesCaseOrigin(
 		)
 	}
 	renderRequestSnapshot := request()
-	key := renderKey(&renderRequestSnapshot, root, nil)
+	key := renderKey(&renderRequestSnapshot, root, "")
 	snap, stored, hit := readTestRenderFrame(t, cache, key)
 	assert.FatalIf(
 		t,
@@ -271,7 +271,6 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		sourcecache.BlobKey{Content: *inputs.key, Render: sourcecache.RenderPending},
 		testRenderFrame(t, new(*inputs.snapshot), testRenderPayload(t, "SENTINEL")),
 	)
-	(*inputs.cache).Close()
 	(*inputs.cache).remoteInputs.Close()
 	*inputs.before = len(inputs.trace.snapshot())
 	(*inputs.cache) = (*inputs.newCache)(*inputs.cacheDir, (*inputs.cache).owner)
@@ -310,7 +309,6 @@ func checkRemoteDependencyReplay(ctx context.Context, t *testing.T, inputs *remo
 		testCaseInput ***testRenderRemoteCacheDependenciesCaseInputs
 		out2          *[]map[string]any
 	}{origin: inputs.origin, trace: inputs.trace, before: inputs.before, testCaseInput: inputs.scenario, out2: &out2})
-	(*inputs.cache).Close()
 	(*inputs.cache).remoteInputs.Close()
 }
 

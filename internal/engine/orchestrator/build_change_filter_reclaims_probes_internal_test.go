@@ -421,7 +421,7 @@ func testBuildChangeFilterReclaimsProbesCase(
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n",
 	)
 	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
-	cfg := Config{CacheDir: cacheDir, Concurrency: 2}
+	cfg := Config{CacheDir: cacheDir, Concurrency: 2, RecordWork: true}
 	if (*testCaseInput) == "hit" {
 		warm, err := newTestOrchestrator(t, tree, cfg)
 		assert.NoError(t, err)
@@ -441,14 +441,14 @@ func testBuildChangeFilterReclaimsProbesCase(
 	if (*testCaseInput) == "error" {
 		source.FS = failedProbeFS{source.FS}
 	}
-	if (*testCaseInput) == "cancel" {
-		source.FS = cancelProbeFS{FS: source.FS, cancel: cancel}
-	}
 	current.store.SetArtifact(manifest.BootstrapSourceID, &source)
 	owner := testutil.KustomizationID("apps", "emitter")
 	current.store.AddObject(
 		&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace, Path: "./apps"},
 	)
+	if (*testCaseInput) == "cancel" {
+		ctx = cancelHistoryProbe(ctx, current, owner, cancel)
+	}
 	released := func() <-chan struct{} {
 		declaration := current.store.GetObject(owner).(*manifest.Kustomization)
 		done := make(chan struct{})

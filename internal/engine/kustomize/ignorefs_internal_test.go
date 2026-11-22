@@ -127,11 +127,11 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				ctx,
 				newTestTreeCache(t, ""),
 				RenderRequest{
-					Source:      localSource(t, root),
-					Label:       root,
-					ApplyIgnore: true,
-					SubPath:     "bundles/common",
-					Spec:        parsedKS(t, spec("./bundles/common")),
+					Source: admittedTestSource(t, localSource(t, root), ""),
+					Label:  root,
+
+					SubPath: "bundles/common",
+					Spec:    parsedKS(t, spec("./bundles/common")),
 				},
 				sourcecache.RetryConfig{},
 			),
@@ -151,11 +151,11 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				ctx,
 				newTestTreeCache(t, ""),
 				RenderRequest{
-					Source:      localSource(t, root),
-					Label:       root,
-					ApplyIgnore: true,
-					SubPath:     "clusters/dev/app",
-					Spec:        parsedKS(t, spec("./clusters/dev/app")),
+					Source: admittedTestSource(t, localSource(t, root), ""),
+					Label:  root,
+
+					SubPath: "clusters/dev/app",
+					Spec:    parsedKS(t, spec("./clusters/dev/app")),
 				},
 				sourcecache.RetryConfig{},
 			),
@@ -175,11 +175,11 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				ctx,
 				newTestTreeCache(t, ""),
 				RenderRequest{
-					Source:      localSource(t, root),
-					Label:       root,
-					ApplyIgnore: true,
-					SubPath:     "clusters/dev/ok",
-					Spec:        parsedKS(t, spec("./clusters/dev/ok")),
+					Source: admittedTestSource(t, localSource(t, root), ""),
+					Label:  root,
+
+					SubPath: "clusters/dev/ok",
+					Spec:    parsedKS(t, spec("./clusters/dev/ok")),
 				},
 				sourcecache.RetryConfig{},
 			),
@@ -195,11 +195,11 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 				ctx,
 				newTestTreeCache(t, ""),
 				RenderRequest{
-					Source:      localSource(t, root),
-					Label:       root,
-					ApplyIgnore: false,
-					SubPath:     "bundles/common",
-					Spec:        parsedKS(t, spec("./bundles/common")),
+					Source: localSource(t, root),
+					Label:  root,
+
+					SubPath: "bundles/common",
+					Spec:    parsedKS(t, spec("./bundles/common")),
 				},
 				sourcecache.RetryConfig{},
 			),
@@ -280,11 +280,11 @@ configMapGenerator:
 					t.Context(),
 					newTestTreeCache(t, ""),
 					RenderRequest{
-						Source:      artifact,
-						Label:       root,
-						ApplyIgnore: true,
-						SubPath:     "app",
-						Spec:        parsedKS(t, ksDoc(map[string]any{"path": "./app"})),
+						Source: admittedTestSource(t, artifact, ""),
+						Label:  root,
+
+						SubPath: "app",
+						Spec:    parsedKS(t, ksDoc(map[string]any{"path": "./app"})),
 					},
 					sourcecache.RetryConfig{},
 				),
@@ -386,18 +386,11 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		}
 	}
 	admit := func() *store.SourceArtifact {
-		artifact := localSource(t, root)
+		ignore := ""
 		if *testCaseInput {
-			input, _, err := gittree.New(
-				t.Context(),
-				nil,
-				plumbing.ZeroHash,
-				gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: "b.yaml\n"},
-			)
-			assert.NoError(t, err)
-			artifact.FS = input
+			ignore = "b.yaml\n"
 		}
-		return artifact
+		return admittedTestSource(t, localSource(t, root), ignore)
 	}
 	cache := newTestTreeCache(t, t.TempDir())
 	ctx := context.Background()
@@ -406,7 +399,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec},
+			RenderRequest{Source: admit(), Label: root, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)
@@ -416,10 +409,8 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		assert.NoError(t, recordRenderErr)
 	}
 	assert.FatalIf(t, hasRenderField(out1, "name", "b"), "b.yaml should be excluded; got %s", out1)
-	req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec}
-	input, err := cache.sourceRootFor(ctx, req.Source, root)
-	assert.NoError(t, err)
-	key := renderKey(&req, root, input.ignore)
+	req := RenderRequest{Source: admit(), Label: root, SubPath: ".", Spec: spec}
+	key := renderKey(&req, root, gittree.PolicyKey(req.Source.FS))
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	assert.FatalIf(t, !ok, "%s", "owner did not retain filtered render")
 	publishTestFrame(
@@ -432,7 +423,7 @@ func testRenderSourceignoreCacheReplaysFilteredViewCase(
 		Render(
 			ctx,
 			cache,
-			RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec},
+			RenderRequest{Source: admit(), Label: root, SubPath: ".", Spec: spec},
 			sourcecache.RetryConfig{},
 		),
 	)

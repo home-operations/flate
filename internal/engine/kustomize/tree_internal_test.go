@@ -5,10 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -42,9 +40,7 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 
 func newTestTreeCache(tb testing.TB, root string) *TreeCache {
 	tb.Helper()
-	c := newTestTreeCacheWithTasks(tb, cachetest.New(tb, root, cache.New), task.NewBounded(4))
-	tb.Cleanup(c.Close)
-	return c
+	return newTestTreeCacheWithTasks(tb, cachetest.New(tb, root, cache.New), task.NewBounded(4))
 }
 
 func newTestTreeCacheWithTasks(tb testing.TB, owner *cache.Cache, tasks *task.Service) *TreeCache {
@@ -98,7 +94,7 @@ func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 		c := newTestTreeCacheWithTasks(t, owner, tasks)
 		held, release := make(chan struct{}, 2), make(chan struct{})
 		unblock := sync.OnceFunc(func() { close(release) })
-		defer func() { unblock(); c.Close(); c.remoteInputs.Close(); tasks.BlockTillDone() }()
+		defer func() { unblock(); c.remoteInputs.Close(); tasks.BlockTillDone() }()
 		for range 2 {
 			tasks.Go(t.Context(), "hold-slot", func(context.Context) { held <- struct{}{}; <-release })
 		}
@@ -130,29 +126,9 @@ func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 			err := <-done
 			assert.FatalIf(t, !errors.Is(err, context.Canceled), "validation cancellation: %v", err)
 		}
-		c.Close()
 		c.remoteInputs.Close()
 		tasks.BlockTillDone()
 
 		assert.FatalIf(t, tasks.Failures() != 0, "%s", "task accounting corrupted")
 	})
-}
-
-func TestTreeCache_Close(t *testing.T) {
-	t.Parallel()
-	c := newTestTreeCache(t, "")
-	c.sourceRoots.Store("source-root", func() (*sourceRoot, error) { return &sourceRoot{}, nil })
-	c.Close()
-	c.Close()
-	c.sourceRoots.Range(func(_, _ any) bool { t.Error("source-root memo retained after Close"); return false })
-	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "borrowed") }),
-	)
-	defer server.Close()
-	input, err := c.remoteInputs.Acquire(
-		t.Context(), &source.HTTPRequest{URL: server.URL, Retry: cache.RetryConfig{}, HeldSlot: nil},
-	)
-	assert.FatalIf(t, err != nil, "%v", err)
-	body, err := fs.ReadFile(input, "content")
-	assert.FatalIf(t, err != nil || string(body) != "borrowed", "borrowed input after render Close: %q %v", body, err)
 }

@@ -120,7 +120,7 @@ func (a *Admission) generatorInventories(ctx context.Context) ([]*declarationRen
 	// An enclosing aggregate applies its transformations after the nested package builds.
 	for _, dir := range slices.Backward(a.generatorPackages) {
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, dir, manifest.NamedResource{})
-		frame, err := a.packageInventory(ctx, owner, inputprojection.Authored(a.input))
+		frame, err := a.packageInventory(ctx, owner, inputprojection.Authored(a.bootstrapArtifact()))
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

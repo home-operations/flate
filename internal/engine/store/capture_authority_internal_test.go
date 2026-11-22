@@ -101,7 +101,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 			assert.Equal(t, reads.Valid(), true)
 			current = next.object
 		}
-		assert.Equal(t, reads.Policy(supplied.Named()).Origin, manifest.SuppliedDeclaration)
+		assert.Equal(t, reads.Policy(supplied.Named()).Supplied(), true)
 	})
 	s := New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}

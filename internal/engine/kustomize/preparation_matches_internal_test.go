@@ -42,7 +42,7 @@ func TestPreparation_Matches(t *testing.T) {
 		{"different declaration", func(r *RenderRequest) { r.Spec = r.Spec.Clone(); r.Spec.Path = "other" }, false},
 		{"different label", func(r *RenderRequest) { r.Label = "other" }, false},
 		{"different path", func(r *RenderRequest) { r.SubPath = "other" }, false},
-		{"different ignore policy", func(r *RenderRequest) { r.ApplyIgnore = true }, false},
+
 		{"different strict policy", func(r *RenderRequest) { r.StrictSubstitutions = true }, false},
 		{"added aggregate resource", func(r *RenderRequest) {
 			source := *r.Source

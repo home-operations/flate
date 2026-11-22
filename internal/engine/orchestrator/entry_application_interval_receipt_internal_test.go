@@ -139,7 +139,7 @@ spec:
 	assert.NoError(t, err)
 	assertEntryReceiptInterval(t, complete, "2h")
 	evidence := full.ksc.Trees.PreviousEntry(t.Context(), kustomize.RenderRequest{
-		Source: full.cfg.Input, ApplyIgnore: true, SubPath: "entry",
+		Source: full.cfg.Input, SubPath: "entry",
 		Spec: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}),
 	})
 	assert.Equal(t, evidence.Application != nil, fixture.persists)

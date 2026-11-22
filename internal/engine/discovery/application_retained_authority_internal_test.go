@@ -199,7 +199,11 @@ func generatedRootCoverageFiles(t *testing.T, edge, component string, ignored bo
 		files[".sourceignore"] = &fstest.MapFile{Data: []byte("/" + excluded + "\n")}
 		policy, err := sourceignore.NewFS(files, []string{".sourceignore"}, "", false)
 		assert.NoError(t, err)
-		sourceignore.Select(policy, files, nil)
+		for name := range files {
+			if policy.Match(name, false) {
+				delete(files, name)
+			}
+		}
 		_, present := files[excluded]
 		assert.Equal(t, present, false)
 	}

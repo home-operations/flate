@@ -240,6 +240,11 @@ func testFetcherArchiveResponse(w http.ResponseWriter, r *http.Request, captures
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/data/prefix/")
+	if r.URL.Path == "/data/.sourceignore" {
+		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		_, _ = fmt.Fprint(w, "prefix/dir/drop.yaml\n")
+		return
+	}
 	data, ok := files[name]
 	if !ok {
 		http.NotFound(w, r)
@@ -307,7 +312,7 @@ func assertBucketAcquisitionWork(captures *assertBucketAcquisitionWorkInputs) {
 			uint64(min((*(*(*captures.captures).attempts)), 2)-1),
 		)
 		if acquisition.RemoteTransfers == 0 ||
-			acquisition.RemoteTransfers > uint64(6+5*(min((*(*(*captures.captures).attempts)), 2)-1)) {
+			acquisition.RemoteTransfers > uint64(7+6*(min((*(*(*captures.captures).attempts)), 2)-1)) {
 			(*(*captures.captures).t).Errorf(
 				"%s cold transfer count=%d",
 				(*(*captures.captures).namespace),
@@ -345,22 +350,27 @@ func assertBucketArchiveContent(
 	if (*(*captures).namespace) == "second" {
 		want = "other"
 	}
-	if data, err := fs.ReadFile((*art).FS, "dir/file.yaml"); err != nil || string(data) != want {
+	if data, err := fs.ReadFile((*art).FS, "prefix/dir/file.yaml"); err != nil || string(data) != want {
 		(*(*captures).t).Errorf("%s content=%q err=%v", (*(*captures).namespace), data, err)
 	}
-	if _, err := fs.Stat((*art).FS, "attempt-only.yaml"); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := fs.Stat((*art).FS, "prefix/attempt-only.yaml"); !errors.Is(err, fs.ErrNotExist) {
 		(*(*captures).t).Errorf("failed acquisition leaked a file: %v", err)
 	}
-	if _, err := fs.Stat((*art).FS, "dir/drop.yaml"); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := fs.Stat((*art).FS, "prefix/dir/drop.yaml"); !errors.Is(err, fs.ErrNotExist) {
 		(*(*captures).t).Errorf("ignored file: %v", err)
 	}
-	if data, err := fs.ReadFile((*art).FS, "image.png"); err != nil || string(data) != "image" {
+	if data, err := fs.ReadFile((*art).FS, "prefix/image.png"); err != nil || string(data) != "image" {
 		(*(*captures).t).Errorf("complete image=%q, error=%v", data, err)
 	}
-	if data, err := fs.ReadFile((*art).FS, ".git/config"); err != nil || string(data) != "git" {
+	if data, err := fs.ReadFile((*art).FS, "prefix/.git/config"); err != nil || string(data) != "git" {
 		(*(*captures).t).Errorf("bucket flavor excluded git content: %q %v", data, err)
 	}
-	if (*art).Metadata["objectCount"] != "5" || (*art).Revision == "" {
+	for name, want := range map[string]string{".sourceignore": "prefix/dir/drop.yaml\n", "prefix/.sourceignore": "dir/drop.yaml\n"} {
+		data, err := fs.ReadFile((*art).FS, name)
+		assert.NoError((*(*captures).t), err)
+		assert.Equal((*(*captures).t), string(data), want)
+	}
+	if (*art).Metadata["objectCount"] != "4" || (*art).Revision == "" {
 		(*(*captures).t).Errorf("bucket metadata: %v", (*art).Metadata)
 	}
 }

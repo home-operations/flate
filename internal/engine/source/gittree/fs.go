@@ -60,6 +60,8 @@ type ViewOptions struct {
 	Worktree billy.Filesystem
 	// Current supplies admitted bytes; Git views also expose read-only local objects.
 	Current fs.FS
+	// CurrentObserved borrows observations from the same construction stage.
+	CurrentObserved bool
 	// CurrentContent carries the acquisition owner's identity when Current wraps its admitted view.
 	CurrentContent string
 	// Changes routes complete, unfiltered differences to commit bodies.
@@ -89,7 +91,9 @@ type FS struct {
 	// Warnings is immutable admission evidence, nil when no advisory was observed.
 	Warnings   []manifest.Warning
 	location   *gitrepo.Location
+	sameFiles  *FS
 	policy     *sourceignore.Matcher
+	policyKey  string
 	snapshot   *localPolicy
 	membership membership
 	content    atomic.Pointer[contentFingerprint]
@@ -97,18 +101,6 @@ type FS struct {
 
 // Location returns the resolved disk identity retained by admission.
 func (g *FS) Location() *gitrepo.Location { return g.location }
-
-// OperationView creates private local observations while retaining admitted membership.
-func (g *FS) OperationView() *FS {
-	if local, ok := g.view.(*localView); ok {
-		input := newLocal(local.root, true, g.snapshot)
-		input.location = g.location
-		input.membership = g.membership
-		input.Warnings = g.Warnings
-		return input
-	}
-	return g
-}
 
 type view interface {
 	fs.ReadFileFS
@@ -134,6 +126,7 @@ type gitView struct {
 	commit    plumbing.Hash
 	identity  string
 	mode      ViewMode
+	pruned    bool
 }
 
 type gitNode struct {
@@ -192,6 +185,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 		captured := directory.membership
 		_ = directory.Close()
+		captured.extra = opts.membership.extra
 		opts.membership = captured
 	}
 	if liveWorktree && opts.Mode == Direct {
@@ -204,6 +198,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return input, "", nil
 	}
 	source := opts.Mode == Source
+	previous, _ := opts.Current.(*FS)
 	current, matcher, reuse, err := opts.refreshCurrent(ctx, commit)
 	identity := opts.CurrentContent
 	switch {
@@ -232,6 +227,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return warningOnly(input), "", err
 	}
 	input.policy = matcher
+	input.sameFiles = sourceOrigin(previous, opts.Mode, commit)
 	return input.finishGitView(ctx, commit, &opts, identity)
 }
 
@@ -639,17 +635,17 @@ func (g *gitView) ReadFile(name string) ([]byte, error) {
 			return os.ReadFile(abs)
 		}
 	}
-	f, err := g.Open(name)
+	open := g.Open
+	if node != nil && node.mode.IsRegular() {
+		open = g.OpenRegular
+	}
+	f, err := open(name)
 	if err != nil {
 		return nil, err
 	}
 	data, err := io.ReadAll(f)
 	return data, errors.Join(err, f.Close())
 }
-
-// OpenRegular skips metadata checks for a regular file already admitted by Stat
-// or ReadDir. Callers MUST retain the listing's immutable-backing assumption.
-func (g *gitView) OpenRegular(name string) (fs.File, error) { return g.Open(name) }
 
 // ReadLink exposes visible link metadata to the remote-base resolver.
 func (g *gitView) ReadLink(name string) (string, error) {
@@ -708,18 +704,16 @@ func (o *ViewOptions) refreshCurrent(
 		return nil, matcher, reuse, nil
 	}
 
-	directory := cmp.Or(o.membership.directory, current.membership.directory)
-	o.membership = current.membership
-	o.membership.directory = directory
+	o.membership.directory = cmp.Or(o.membership.directory, current.membership.directory)
+	o.membership.extra = append(slices.Clone(current.membership.extra), o.membership.extra...)
+	o.membership.ignored, o.membership.captured = current.membership.ignored, current.membership.captured
 	if commit != plumbing.ZeroHash {
 		o.membership.ignored = nil
 	}
 	o.Location = cmp.Or(o.Location, current.location)
 	switch v := current.view.(type) {
 	case *localView:
-		current = current.OperationView()
-		current.membership = o.membership
-		current.location = o.Location
+		current = o.localCurrent(current)
 	case *gitView:
 		if v.refresh != nil {
 			refresh := *v.refresh
@@ -770,8 +764,9 @@ func (g *FS) finishGitView(
 			Mode            ViewMode
 			Sparse          []string `json:",omitempty"`
 			Ignore          string
-			Excluded        string `json:",omitempty"`
-		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore, opts.membership.directory})
+			Excluded        string   `json:",omitempty"`
+			ExcludedPaths   []string `json:",omitempty"`
+		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore, opts.membership.directory, opts.membership.extra})
 		if v.identity == "" {
 			return warningOnly(
 					g,
@@ -817,6 +812,7 @@ func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
 			return err
 		}
 		if entry.Name() == gitDirectory {
+			g.pruned = true
 			if entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -827,6 +823,7 @@ func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
 		}
 		mode := entry.Type()
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
+			g.pruned = true
 			return nil
 		}
 		g.nodes[name] = &gitNode{name: entry.Name(), mode: mode}
@@ -889,15 +886,4 @@ func (g *gitView) relativeLink(name, target string) (string, error) {
 		}
 	}
 	return target, nil
-}
-
-func (o *ViewOptions) currentPolicy(ctx context.Context, current *FS) (*sourceignore.Matcher, error) {
-	matcher, err := current.SourcePolicy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if o.Ignore != "" {
-		matcher = matcher.WithExtra(o.Ignore)
-	}
-	return matcher, nil
 }

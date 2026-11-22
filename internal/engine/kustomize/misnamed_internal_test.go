@@ -28,11 +28,11 @@ func TestRender_MisnamedKustomization(t *testing.T) {
 			context.Background(),
 			newTestTreeCache(t, ""),
 			RenderRequest{
-				Source:      localSource(t, root),
-				Label:       root,
-				ApplyIgnore: false,
-				SubPath:     "app",
-				Spec:        fluxKS(),
+				Source: localSource(t, root),
+				Label:  root,
+
+				SubPath: "app",
+				Spec:    fluxKS(),
 			},
 			sourcecache.RetryConfig{},
 		),

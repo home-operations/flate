@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/home-operations/flate/internal/engine/source"
@@ -26,9 +25,8 @@ type GitBaseRequest struct {
 type GitBaseFetcher func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error)
 
 // TreeCache borrows backing storage and HTTP inputs for one run's render state.
-// Callers MUST join renders and Close before releasing borrowed dependencies.
+// Callers MUST join renders before releasing borrowed dependencies.
 type TreeCache struct {
-	sourceRoots sync.Map
 	// internal/engine/kustomize cannot import internal/engine/source/git (import cycle).
 	gitBase      GitBaseFetcher
 	tasks        *task.Service
@@ -40,9 +38,6 @@ type TreeCache struct {
 func NewTreeCache(owner *cache.Cache, remoteInputs *source.HTTPInputs, tasks *task.Service) *TreeCache {
 	return &TreeCache{owner: owner, remoteInputs: remoteInputs, tasks: tasks}
 }
-
-// Close clears render state after callers join renders; borrowed inputs stay open.
-func (c *TreeCache) Close() { c.sourceRoots.Clear() }
 
 // SetGitBaseFetcher wires the git-clone capability used to resolve remote git
 // bases referenced from a kustomization's resources:. The orchestrator calls

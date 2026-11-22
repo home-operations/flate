@@ -182,8 +182,6 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 					identity,
 					first,
 				)
-
-				c.Close()
 			}
 		})
 	}

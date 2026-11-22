@@ -162,11 +162,11 @@ func TestRender_NonDuplicateError_Unannotated(t *testing.T) {
 			t.Context(),
 			newTestTreeCache(t, ""),
 			RenderRequest{
-				Source:      localSource(t, root),
-				Label:       root,
-				ApplyIgnore: false,
-				SubPath:     "apps",
-				Spec:        fluxKS(),
+				Source: localSource(t, root),
+				Label:  root,
+
+				SubPath: "apps",
+				Spec:    fluxKS(),
 			},
 			sourcecache.RetryConfig{},
 		),

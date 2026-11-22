@@ -332,7 +332,6 @@ func testReconcileRequiredPostBuildPermissionCase(
 	freezeSourceForTest(t, st)
 	cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
 	trees := kustomize.NewTreeCache(cacheOwner, nil, original.Tasks)
-	t.Cleanup(trees.Close)
 	opts := Options{}
 	if *testCaseInput.allowed {
 		opts.Missing = depwait.NewMissingPolicy([]string{

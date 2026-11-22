@@ -350,7 +350,7 @@ func (c *execution) compose(
 	if err != nil {
 		return nil, err
 	}
-	if artifact.LocalPath != "" {
+	if artifact.LocalPath != "" && facts.Named() != manifest.BootstrapSourceID {
 		root := cmp.Or(artifact.LocalRoot, artifact.LocalPath)
 		completed.LocalPath, _ = gittree.Label(
 			gittree.LabelOptions{

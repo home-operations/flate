@@ -11,7 +11,6 @@ import (
 	"maps"
 	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -83,7 +82,7 @@ func (t *tarFS) identify(content digest.Digest, key ArchiveKey) {
 		Ignore  string
 		Policy  string
 		Version int
-	}{content, key.Ignore, key.Policy, 1})
+	}{content, key.Ignore, key.Policy, archiveShapeVersion})
 }
 
 func (t *tarFS) Open(name string) (fs.File, error) {
@@ -347,7 +346,7 @@ func (a *archiveReader) finish() (*tarFS, error) {
 }
 
 func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
-	if key.Policy == extractPolicy {
+	if key.Policy == extractPolicy || key.Policy == "bucket" {
 		return nil
 	}
 	var files []string
@@ -364,13 +363,7 @@ func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
 		if name == "." || !node.Mode().IsRegular() && !retainDirectory {
 			continue
 		}
-		if matcher.Match(filepath.FromSlash(name), node.IsDir()) {
-			continue
-		}
-		kept[name] = true
-		for p := path.Dir(name); p != "."; p = path.Dir(p) {
-			kept[p] = true
-		}
+		matcher.Admit(kept, name, node.IsDir())
 	}
 	return pruneNodes(raw, nodes, kept)
 }

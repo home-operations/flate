@@ -215,7 +215,7 @@ func (p archiveProducer) identity() string {
 		Content        any
 		Ignore, Policy string
 		Version        int
-	}{p.key.Content, p.key.Ignore, p.key.Policy, 1}})
+	}{p.key.Content, p.key.Ignore, p.key.Policy, archiveShapeVersion}})
 }
 
 func (p archiveProducer) produce(

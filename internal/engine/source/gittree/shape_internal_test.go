@@ -1,7 +1,8 @@
 package gittree
 
 import (
-	"io/fs"
+	"maps"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
-func TestSourceVisible_ReusesDirectoryMatches(t *testing.T) {
+func TestShape_AdmitsDirectories(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, ignore string
@@ -32,31 +33,13 @@ func TestSourceVisible_ReusesDirectoryMatches(t *testing.T) {
 			t.Parallel()
 			matcher, err := sourceignore.NewFS(fstest.MapFS{}, []string{}, tc.ignore, false)
 			assert.NoError(t, err)
-			calls := map[string]int{}
-			visible := sourceVisible(func(name string, directory bool) bool {
-				if directory {
-					calls[name]++
-				}
-				return matcher.Match(name, directory)
-			})
-			var got []string
+			kept := map[string]bool{".": true}
 			for _, name := range []string{
-				".", "ignored", "ignored/empty", "kept", "kept/empty", "kept/empty/child", "kept/file", "kept/link",
+				"ignored", "ignored/empty", "kept", "kept/empty", "kept/empty/child", "kept/file",
 			} {
-				mode := fs.ModeDir
-				switch name {
-				case "kept/file":
-					mode = 0
-				case "kept/link":
-					mode = fs.ModeSymlink
-				}
-				if visible(nil, name, mode, nil) {
-					got = append(got, name)
-				}
+				matcher.Admit(kept, name, name != "kept/file")
 			}
-			assert.Diff(t, got, tc.want)
-			assert.Equal(t, calls["kept"], 1)
-			assert.Equal(t, calls["kept/empty"], 1)
+			assert.Diff(t, slices.Sorted(maps.Keys(kept)), tc.want)
 		})
 	}
 }

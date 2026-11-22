@@ -46,6 +46,28 @@ func newLocal(root string, operation bool, policy *localPolicy) *FS {
 	return &input.FS
 }
 
+// OperationView creates private local observations while retaining admitted membership.
+func (g *FS) OperationView() *FS {
+	if local, ok := g.view.(*localView); ok {
+		input := newLocal(local.root, true, g.snapshot)
+		input.location = g.location
+		input.membership = g.membership
+		input.Warnings = g.Warnings
+		input.sameFiles = cmp.Or(g.sameFiles, g)
+		return input
+	}
+	return g
+}
+
+func (o *ViewOptions) localCurrent(current *FS) *FS {
+	if o.CurrentObserved {
+		return current
+	}
+	observed := current.OperationView()
+	observed.membership, observed.location = o.membership, o.Location
+	return observed
+}
+
 func (g *localView) Stat(name string) (fs.FileInfo, error) {
 	info, err := g.Lstat(name)
 	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {

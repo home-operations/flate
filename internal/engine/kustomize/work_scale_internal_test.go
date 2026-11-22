@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/engine/source/gittree"
+
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
@@ -152,8 +154,8 @@ func TestPrepareRender_FilteredAdmission(t *testing.T) {
 	var preparation Preparation
 	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
-		Preparation: &preparation, Source: original.WithReads(&store.ReadSet{}),
-		ApplyIgnore: true, Label: root, SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
+		Preparation: &preparation, Source: admittedTestSource(t, original, "").WithReads(&store.ReadSet{}),
+		Label: root, SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
 	}
 	first, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
@@ -174,17 +176,15 @@ func TestPrepareRender_FilteredAdmission(t *testing.T) {
 			previousLower := preparation.lower
 			if tc.renew {
 				testutil.WriteFile(t, root, ".sourceignore", tc.policy)
-				req.Source = original.WithReads(&store.ReadSet{})
+				req.Source = admittedTestSource(t, original, "").WithReads(&store.ReadSet{})
 			}
-			input, err := cache.sourceRootFor(t.Context(), req.Source, root)
-			assert.NoError(t, err)
 			next, err := cache.prepareRender(t.Context(), &req)
 			assert.NoError(t, err)
 			for _, prepared := range []*Preparation{&next.Preparation, &preparation} {
-				assert.Equal(t, prepared.lower, input.fs)
+				assert.Equal(t, prepared.lower, req.Source.FS)
 				assert.Equal(t, prepared.lower != previousLower, tc.renew)
 				assert.Equal(t, prepared.source, req.Source)
-				assert.Equal(t, prepared.key, renderKey(&req, root, input.ignore))
+				assert.Equal(t, prepared.key, renderKey(&req, root, gittree.PolicyKey(req.Source.FS)))
 				assert.Equal(t, prepared.key == first.key, tc.retain)
 				assert.Equal(t, &prepared.binding.Policy.Skip[0] == &first.binding.Policy.Skip[0], tc.retain)
 				if tc.retain {
@@ -220,12 +220,12 @@ func TestPrepareRender_UncomparableSourceFS(t *testing.T) {
 	var preparation Preparation
 	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
-		Preparation: &preparation, Source: original.WithReads(&store.ReadSet{}),
-		ApplyIgnore: false, SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
+		Preparation: &preparation, Source: admittedTestSource(t, original, "").WithReads(&store.ReadSet{}),
+		SkipKinds: []string{"Pod"}, Work: recorder.Scope().RenderWork(),
 	}
 	first, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
-	req.Source = original.WithReads(&store.ReadSet{})
+	req.Source = admittedTestSource(t, original, "").WithReads(&store.ReadSet{})
 	next, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
 	repeated, err := cache.prepareRender(t.Context(), &req)

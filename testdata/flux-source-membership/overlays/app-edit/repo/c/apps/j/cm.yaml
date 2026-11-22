@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: j, namespace: default}
+data: {a: "2"}

@@ -58,7 +58,6 @@ func NewRenderRequest(
 	}
 	return RenderRequest{
 		Source:                  source,
-		ApplyIgnore:             ApplySourceIgnore(ks, source),
 		SubPath:                 ks.Path,
 		Spec:                    ks,
 		HeldSlot:                options.HeldSlot,
@@ -93,9 +92,4 @@ func SourceInput(reads sourceReader, ks *manifest.Kustomization) (*store.SourceA
 			manifest.DiagnosticFor(srcID, reads.GetObject(srcID)),
 		),
 	)
-}
-
-// ApplySourceIgnore preserves source-controller filtering for ordinary acquired content.
-func ApplySourceIgnore(ks *manifest.Kustomization, source *store.SourceArtifact) bool {
-	return ks.EffectiveSourceID() == manifest.BootstrapSourceID || source.InputAlias || source.Content == ""
 }

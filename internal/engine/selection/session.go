@@ -202,7 +202,7 @@ func (a *Admission) Retire() {
 
 type admissionReader interface {
 	SourceAdmission(manifest.NamedResource, manifest.NamedResource) bool
-	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
+	Lookup(manifest.NamedResource) (manifest.BaseManifest, store.DeclarationPolicy)
 	WorkScope() manifest.WorkScope
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest

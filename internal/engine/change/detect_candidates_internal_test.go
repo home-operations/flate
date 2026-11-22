@@ -129,7 +129,7 @@ func candidateInputs(
 	for side := range inputs {
 		readers[side] = &candidateReadFS{digestReadFS: &digestReadFS{FS: files[side]}}
 		source, _, err := gittree.New(ctx, nil, plumbing.ZeroHash,
-			gittree.ViewOptions{Mode: gittree.Direct, Current: readers[side]})
+			gittree.ViewOptions{Mode: gittree.Source, Current: readers[side]})
 		assert.NoError(t, err)
 		inputs[side] = &store.SourceArtifact{FS: source}
 		if completed {

@@ -192,10 +192,10 @@ func TestRender_RemotePreflightDoesNotMutateSource(t *testing.T) {
 			context.Background(),
 			newTestTreeCache(t, ""),
 			RenderRequest{
-				Source:      localSource(t, src),
-				Label:       src,
-				ApplyIgnore: false,
-				SubPath:     ".",
+				Source: localSource(t, src),
+				Label:  src,
+
+				SubPath: ".",
 				Spec: parsedKS(t, map[string]any{
 					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 					"kind":       "Kustomization",

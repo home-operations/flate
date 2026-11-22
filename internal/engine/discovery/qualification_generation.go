@@ -39,7 +39,7 @@ func (w *qualificationWalk) visitGeneration(ctx context.Context, evidence *appli
 			return false, nil
 		}
 	}
-	if w.reads.Policy(evidence.object.Named()).Origin == manifest.SuppliedDeclaration {
+	if w.reads.Policy(evidence.object.Named()).Supplied() {
 		matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
 		if matched {
 			w.q.matches = append(w.q.matches, *evidence)

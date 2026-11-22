@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -175,15 +175,29 @@ func TestBootstrap_AcceptedOrphanHelmChildRoot(t *testing.T) {
 	}
 }
 
-type cancelProbeFS struct {
-	fs.FS
+type historyProbeContext struct {
+	context.Context //nolint:containedctx // The test wraps the context to cancel after physical history preparation.
 
-	cancel context.CancelFunc
+	preparation *manifest.WorkRecord
+	before      uint64
+	cancel      context.CancelFunc
 }
 
-func (f cancelProbeFS) Open(name string) (fs.File, error) {
-	f.cancel()
-	return f.FS.Open(name)
+func (c historyProbeContext) Err() error {
+	if atomic.LoadUint64(&c.preparation.Counts.Completed) > c.before {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func cancelHistoryProbe(
+	ctx context.Context, o *Orchestrator, owner manifest.NamedResource, cancel context.CancelFunc,
+) context.Context {
+	scope := o.store.WorkScope()
+	key := scope.Identity()
+	key.Owner = owner
+	preparation := scope.Recorder(&key).Scope().RenderWork().Preparation()
+	return historyProbeContext{ctx, preparation, atomic.LoadUint64(&preparation.Counts.Completed), cancel}
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -198,7 +212,7 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 			RepoRoot:        root,
 			ExternalChanges: detectChanges(t, []string{"flux/emitter.yaml"}, []string{"flux/emitter.yaml"}),
 		},
-		Config{CacheDir: t.TempDir(), Concurrency: 2},
+		Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true},
 	)
 	assert.NoError(t, err)
 	t.Cleanup(func() { o.stop() })
@@ -209,7 +223,7 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	input := *o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
+	input.FS = os.DirFS(root)
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
 	assert.NoError(t, o.completeBootstrap(t.Context()))
 	assert.Equal(t, o.cache.CanPersistRenders(), persistent)
@@ -229,7 +243,7 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 		return
 	}
 	o.cfg.ExternalChanges = detectChanges(t, nil, nil)
-	err = o.prepareInvocation(ctx)
+	err = o.prepareInvocation(cancelHistoryProbe(ctx, o, owner, cancel))
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)), 0)
@@ -662,7 +676,7 @@ spec:
 	if (*testCaseInput) == "helm_values_from" {
 		supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
 		assert.Equal(t, warm.store.GetObject(supplied) != nil, true)
-		assert.Equal(t, warm.store.Policy(supplied).Origin, manifest.SuppliedDeclaration)
+		assert.Equal(t, warm.store.Policy(supplied).Supplied(), true)
 		assert.Equal(t, warm.store.EmissionOwner(supplied), manifest.NamedResource{})
 		reads.Retire()
 		reconcileEntryForTest(t, warm)

@@ -10,6 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v6/plumbing"
+
+	"github.com/home-operations/flate/internal/engine/source/gittree"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"sigs.k8s.io/yaml"
 
@@ -91,6 +95,10 @@ func TestPrepareDocuments_ImplicitSourceIgnore(t *testing.T) {
 			source := &store.SourceArtifact{
 				LocalPath: root, LocalRoot: root, FS: os.DirFS(root), Content: "snapshot", InputAlias: false,
 			}
+			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
+			assert.NoError(t, err)
+			source = source.WithSourceView(view)
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 			st.AddObject(owner)

@@ -187,7 +187,7 @@ func (r *ReadSet) ReferenceFacts(
 	input := r.input(id)
 	r.Capture(input)
 	var data manifest.Data
-	if input.view.child.Origin.Policy(id, nil).Root {
+	if input.view.child.policy.Root {
 		data, _ = input.view.child.Obj.(manifest.Data)
 	}
 	input.derived |= capturedProductions

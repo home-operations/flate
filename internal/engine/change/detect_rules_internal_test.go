@@ -21,6 +21,14 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
+func admitTestSource(t *testing.T, input *store.SourceArtifact) *store.SourceArtifact {
+	t.Helper()
+	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+		gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+	assert.NoError(t, err)
+	return input.WithSourceView(view)
+}
+
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDetect_FluxIgnoreRules(t *testing.T) {
 	t.Setenv("PATH", "")
@@ -233,7 +241,12 @@ func TestDetect_GitlinkFile(t *testing.T) {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
+			got, err := Detect(
+				t.Context(),
+				admitTestSource(t, inputs[0]),
+				admitTestSource(t, inputs[1]),
+				DetectConfig{},
+			)
 
 			assert.FatalIf(t, err != nil, "%v", err)
 
@@ -290,8 +303,9 @@ func TestDetect_CapturedSidePolicies(t *testing.T) {
 			gittree.ViewOptions{Mode: gittree.Direct, Current: counts[i]},
 		)
 		assert.NoError(t, err)
-		inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
 		assert.Equal(t, counts[i].reads.Load(), int64(0))
+		inputs[i] = admitTestSource(t, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
+		assert.Equal(t, counts[i].reads.Load(), int64(2))
 	}
 	var g errgroup.Group
 	for i := range 2 {
@@ -313,14 +327,7 @@ func TestDetect_CapturedSidePolicies(t *testing.T) {
 	assert.NoError(t, g.Wait())
 	for i, input := range inputs {
 		assert.Equal(t, counts[i].reads.Load(), int64(2))
-		shaped, _, err := gittree.New(
-			t.Context(),
-			nil,
-			plumbing.ZeroHash,
-			gittree.ViewOptions{Mode: gittree.Source, Current: input.FS},
-		)
-		assert.NoError(t, err)
-		_, err = fs.Stat(shaped, "keep.tmp")
+		_, err := fs.Stat(input.FS, "keep.tmp")
 		assert.Equal(t, err == nil, i == 1)
 		assert.Equal(t, counts[i].reads.Load(), int64(2))
 	}
@@ -385,7 +392,14 @@ func testDetectFluxIgnoreRulesCase(t *testing.T, testCaseInput *struct {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
+			inputs[0] = gittree.ExcludeDirectory(inputs[0], inputs[1].LocalPath)
+			inputs[1] = gittree.ExcludeDirectory(inputs[1], inputs[0].LocalPath)
+			got, err := Detect(
+				t.Context(),
+				admitTestSource(t, inputs[0]),
+				admitTestSource(t, inputs[1]),
+				DetectConfig{},
+			)
 
 			assert.FatalIf(t, err != nil, "%v", err)
 

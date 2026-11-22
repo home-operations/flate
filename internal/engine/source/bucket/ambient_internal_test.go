@@ -584,6 +584,9 @@ func bucketCredentialRoute(t *testing.T, hostname string, handle func(*http.Requ
 func bucketSourceProxy(t *testing.T, target string, observe func(*http.Request)) string {
 	t.Helper()
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		observe(r)
 		if r.Method != http.MethodConnect || r.Host != target {
 			http.Error(w, "unexpected proxy destination", http.StatusBadGateway)
@@ -687,6 +690,9 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 	providers = []credentials.Provider{first, next}
 	var signed atomic.Int32
 	request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/.sourceignore") {
+			return missingBucketPolicyResponse(r), nil
+		}
 		assert.ErrorIf(t, r.Header.Get("Authorization") == "" && tc.name != "anonymous" && tc.
 			name != "exhausted", "%s", "machine request is unsigned")
 

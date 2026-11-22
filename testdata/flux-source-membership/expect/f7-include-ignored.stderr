@@ -1,0 +1,7 @@
+
+  ✗  Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from './b': readfile apps/b: invalid argument': recursed accumulation of path '@@repo@@/apps/b': accumulating resources: accumulation err='accumulating resources from 'skip.yaml': resolve apps/b/skip.yaml: stat apps/b/skip.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/b/skip.yaml: stat apps/b/skip.yaml: file does not exist
+<PERSISTENCE:|
+  ⚠ warnings (1)
+    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>
+  ✗ 1 failed

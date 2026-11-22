@@ -117,7 +117,7 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 			Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}),
 		)
 	}
-	key := renderKey(&req, root, nil)
+	key := renderKey(&req, root, "")
 	frame := testRenderFrame(t, new(testCaseInput.tc.snapshot), testRenderPayload(t, "STALE"))
 	switch {
 	case testCaseInput.tc.malformed:
@@ -187,7 +187,6 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	_, retained, retainedHit := readTestRenderFrame(t, cache, key)
 	assert.Equal(t, retainedHit, true)
 	assert.Diff(t, retained, out)
-	cache.Close()
 	{
 		err := cache.owner.Close()
 		assert.NoError(t, err)

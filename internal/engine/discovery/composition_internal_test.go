@@ -158,7 +158,7 @@ func TestDiscovery_ComposedSeedOwnership(t *testing.T) {
 			st := store.New()
 			cacheOwner := cachetest.New(t, "", cache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, nil)
-			defer trees.Close()
+
 			release := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: claimed, namespace: ns}\nspec:\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: including, namespace: ns}\n"
 			owner := &manifest.Kustomization{
 				Name:      "owner",
@@ -611,7 +611,7 @@ func TestDiscovery_PreparedIncludeAuthority(t *testing.T) {
 			st := store.New()
 			cacheOwner := cachetest.New(t, "", cache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, nil)
-			defer trees.Close()
+
 			files := fstest.MapFS{
 				"entry/kustomization.yaml": {Data: []byte(`resources: [source.yaml, owner.yaml, instance.yaml]
 patches:

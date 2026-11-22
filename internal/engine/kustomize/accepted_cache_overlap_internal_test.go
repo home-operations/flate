@@ -51,7 +51,7 @@ func testRenderAcceptedCacheAcquisitionOverlapCase(
 		Content: renderKey(
 			&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "."},
 			root,
-			nil,
+			"",
 		),
 		Render: sourcecache.RenderAccepted,
 	}

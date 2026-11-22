@@ -16,7 +16,7 @@ func (m MapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { 
 func (m MapLister) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
 // Lookup returns the fixture object and its declaration roles.
-func (m MapLister) Lookup(id manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy) {
+func (m MapLister) Lookup(id manifest.NamedResource) (manifest.BaseManifest, store.DeclarationPolicy) {
 	return m[id], (store.Child{Obj: m[id]}).Policy(id)
 }
 

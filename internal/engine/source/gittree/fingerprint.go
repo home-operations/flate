@@ -110,7 +110,14 @@ func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, 
 		}
 		return nodes[name], nil
 	}
-	selected := fileIdentity{git: v, origin: origin, prefix: prefix, lookup: lookup, types: inventory.types}
+	selected := fileIdentity{
+		git:    v,
+		origin: origin,
+		prefix: prefix,
+		lookup: lookup,
+		types:  inventory.types,
+		fresh:  fresh,
+	}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		identity, err := selected.identify(ctx, g, name)
 		switch {
@@ -156,6 +163,14 @@ func (g *FS) PolicyEvidence() any {
 	return content
 }
 
+// PolicyKey identifies the rules that selected this filesystem's members.
+func PolicyKey(input fs.FS) string {
+	if g, ok := input.(*FS); ok {
+		return g.policyKey
+	}
+	return ""
+}
+
 // SourcePolicy returns the admission's captured Flux policy without reshaping its files.
 func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	if err := ctx.Err(); err != nil {
@@ -168,11 +183,6 @@ func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 }
 
 func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, requested []string) {
-	policy, err := g.SourcePolicy(ctx)
-	if err != nil {
-		c.err = err
-		return
-	}
 	v, native := g.view.(*gitView)
 	inventory, err := g.fingerprintFiles(ctx, v, native, fresh || native && v.identity != "")
 
@@ -181,12 +191,8 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 		return
 	}
 
-	selectedPolicy := selectedSourcePolicy(policy, v, native, inventory.files)
 	if requested != nil {
 		inventory.files = selectFiles(inventory.files, requested)
-	}
-	if !selectedPolicy {
-		sourceignore.Select(policy, inventory.files, inventory.ignores)
 	}
 	if c.err = g.identifyFiles(ctx, inventory, fresh); c.err != nil {
 		return
@@ -195,7 +201,10 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 		if v, ok := g.view.(*gitView); ok && v.identity != "" {
 			c.key = v.identity
 			if g.membership.directory != "" {
-				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.membership.directory})
+				c.key = manifest.Fingerprint(struct {
+					Content, Excluded string
+					ExcludedPaths     []string
+				}{v.identity, g.membership.directory, g.membership.extra})
 			}
 		} else {
 			c.key = manifest.Fingerprint(inventory.files)
@@ -247,9 +256,8 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe b
 }
 
 type fingerprintInventory struct {
-	types   map[string]fs.FileMode
-	files   map[string]string
-	ignores []string
+	types map[string]fs.FileMode
+	files map[string]string
 }
 
 func (i *fingerprintInventory) visit(ctx context.Context, name string, entry fs.DirEntry, contentParents bool) error {
@@ -259,22 +267,8 @@ func (i *fingerprintInventory) visit(ctx context.Context, name string, entry fs.
 	if err := ctx.Err(); err != nil || entry.IsDir() {
 		return err
 	}
-	if entry.Name() == ".sourceignore" {
-		i.ignores = append(i.ignores, name)
-	}
 	i.files[name] = ""
 	return nil
-}
-
-func selectedSourcePolicy(policy *sourceignore.Matcher, v *gitView, native bool, files map[string]string) bool {
-	selectedPolicy := native && v.mode == Source
-	for _, file := range policy.Evidence() {
-		if _, admitted := files[file.Path]; !admitted {
-			selectedPolicy = false
-			break
-		}
-	}
-	return selectedPolicy
 }
 
 func (g *FS) fingerprintOrigin(v **gitView, subdir, origin, root *string) {
@@ -298,6 +292,7 @@ func (g *FS) fingerprintOrigin(v **gitView, subdir, origin, root *string) {
 }
 
 type fileIdentity struct {
+	fresh          bool
 	buffer         []byte
 	types          map[string]fs.FileMode
 	git            *gitView
@@ -310,6 +305,13 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 		return plumbing.ZeroHash, err
 	}
 	var identity plumbing.Hash
+	if g.policy != nil && !s.fresh && path.Base(name) == ".sourceignore" {
+		if data, ok := g.policy.ReadPolicy(name); ok {
+			hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, int64(len(data)))
+			_, _ = io.WriteString(hasher, data)
+			return hasher.Sum(), nil
+		}
+	}
 	member := path.Join(s.origin, name)
 	if s.git != nil && (s.git.identity != "" || s.git.changes[member]) {
 		identity = s.git.nodes[member].hash
@@ -326,6 +328,10 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 	if identity != plumbing.ZeroHash {
 		return identity, nil
 	}
+	return s.identifyBody(ctx, g, name)
+}
+
+func (s *fileIdentity) identifyBody(ctx context.Context, g *FS, name string) (plumbing.Hash, error) {
 	mode, observed := s.types[name]
 	if !observed || !mode.IsRegular() {
 		data, err := g.ReadFile(name)
@@ -455,6 +461,7 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 		_ = admission.Close()
 		input := newLocal(v.root, true, &localPolicy{})
 		input.location = g.location
+		captured.extra = g.membership.extra
 		input.membership = captured
 		return input, nil
 	case *scopedView:

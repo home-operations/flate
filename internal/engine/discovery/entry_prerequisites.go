@@ -151,7 +151,7 @@ func (e *entryPrerequisites) exposed(id manifest.NamedResource) bool {
 	if input, ok := e.reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && input.Reads.Valid() {
 		return true
 	}
-	if object, policy := e.reads.Lookup(id); object != nil && policy.Origin == manifest.SuppliedDeclaration &&
+	if object, policy := e.reads.Lookup(id); object != nil && policy.Supplied() &&
 		e.reads.GetDeclaration(id) != nil {
 		return true
 	}

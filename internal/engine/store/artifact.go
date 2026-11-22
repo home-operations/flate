@@ -63,6 +63,13 @@ func (a *SourceArtifact) WithReads(reads *ReadSet) *SourceArtifact {
 	return &captured
 }
 
+// WithSourceView retains acquisition metadata with a new filesystem generation.
+func (a *SourceArtifact) WithSourceView(input fs.FS) *SourceArtifact {
+	captured := *a
+	captured.FS, captured.material = input, nil
+	return &captured
+}
+
 // SameMaterial MUST ignore execution registrations.
 // The identical-pointer path MUST inline during capture validation.
 func (a *SourceArtifact) SameMaterial(other *SourceArtifact, read ArtifactRead) bool {

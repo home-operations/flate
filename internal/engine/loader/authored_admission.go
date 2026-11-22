@@ -51,7 +51,7 @@ func (l *Loader) publishAdmittedObject(child *store.Child) bool {
 		l.Store.AddWarning(warning)
 	}
 	if existing, policy := l.Store.Lookup(id); existing != nil &&
-		(policy.Origin == manifest.SuppliedDeclaration || policy.Root && obj.ProjectionCompatible(existing)) {
+		(policy.Supplied() || policy.Root && obj.ProjectionCompatible(existing)) {
 		return false
 	}
 	l.Store.AddDeclaration(

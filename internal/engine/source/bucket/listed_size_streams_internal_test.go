@@ -98,6 +98,9 @@ type testWalkBucketLargeListedSizeCaseCallbackInputs struct {
 func testWalkBucketLargeListedSizeCaseCallback(
 	req *http.Request, testCaseInputValue *testWalkBucketLargeListedSizeCaseCallbackInputs,
 ) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Path, "/.sourceignore") {
+		return missingBucketPolicyResponse(req), nil
+	}
 	testCaseInput := *testCaseInputValue
 	deadline, ok := req.Context().Deadline()
 	const size int64 = 1073741825

@@ -184,7 +184,7 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 	}
 	if (*(*captures.mode)) != "subtree" {
 		_, ignored := selected.FileDigests()["dir/ignored"]
-		assert.Equal(t, ignored, false)
+		assert.Equal(t, ignored, selected.policy == nil && (*(*captures.mode)) != "sdk")
 	}
 	reads := (*captures.reader).reads.Load()
 	assert.Equal(t, (*captures.objects).reads.Load(), int64(0))

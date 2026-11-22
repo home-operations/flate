@@ -33,8 +33,7 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 		f := &consumedFixture{publication: publication, change: change, st: st, bodies: bodies, owner: owner}
 		f.prepareInputs(ctx, t)
 		f.prepareGenerator(t)
-		trees := f.startControllers(t)
-		defer trees.Close()
+		f.startControllers(t)
 		var producer *base.Execution
 		if publication == "emitted" {
 			supplier := &manifest.ResourceSet{Name: "supplier", Namespace: "apps"}

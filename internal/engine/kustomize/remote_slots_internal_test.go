@@ -98,7 +98,6 @@ func testRenderRemoteValidationSlotsCase(t *testing.T, testCaseInput *string,
 		defer func() {
 			releaseFirst()
 			releaseSecond()
-			c.Close()
 			c.remoteInputs.Close()
 			tasks.BlockTillDone()
 		}()
@@ -119,7 +118,6 @@ func testRenderRemoteValidationSlotsCase(t *testing.T, testCaseInput *string,
 				}
 				snap.Remotes = append(snap.Remotes, entry)
 			}
-			c.Close()
 			c.remoteInputs.Close()
 			c = newCache()
 		}
@@ -303,7 +301,6 @@ func assertRemoteSlotAcquisitions(t *testing.T, inputs *remoteSlotCheckInputs) {
 			assert.ErrorIf(t, !hasRenderField(inputs.result.out, "name", name), "render omitted %s", name)
 		}
 	}
-	(*inputs.cache).Close()
 	(*inputs.cache).remoteInputs.Close()
 	(*inputs.tasks).BlockTillDone()
 	assert.Equal(t, inputs.active.Load(), int32(0))

@@ -113,6 +113,12 @@ func testFetcherMachineProfilesCase(t *testing.T, shape *string,
 func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetcherMachineProfilesCaseCompletionInputs) {
 	t.Helper()
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		captures.remote.
 			Add(1)
 		access := captures.signer.Load().(string)

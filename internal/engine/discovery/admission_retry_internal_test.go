@@ -609,7 +609,7 @@ func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
 			}
 			cacheOwner := cachetest.New(t, "", cache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, nil)
-			t.Cleanup(trees.Close)
+
 			d := newDiscoverer(
 				&Config{
 					Input:            input,

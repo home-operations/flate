@@ -9,12 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 
 	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
 	"oras.land/oras-go/v2/errdef"
@@ -176,11 +177,11 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			ctx,
 			cache,
 			RenderRequest{
-				Source:      localSource(t, root),
-				Label:       root,
-				ApplyIgnore: false,
-				SubPath:     "selected",
-				Spec:        spec,
+				Source: localSource(t, root),
+				Label:  root,
+
+				SubPath: "selected",
+				Spec:    spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -220,7 +221,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Diff(t, out1, want)
 
-	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "selected"}, root, nil)
+	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: spec, SubPath: "selected"}, root, "")
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := sourcecache.RenderPersistenceDisabledReason() == ""
 	assert.FatalIf(t, !ok, "%s", "owner did not retain completed render")
@@ -233,18 +234,17 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		)
 	}
 	retained := cache.owner
-	cache.Close()
 	cache = newTestTreeCacheWithTasks(t, retained, task.NewBounded(2))
 	out2, receipt4, err := testutil.RenderMaps(
 		Render(
 			ctx,
 			cache,
 			RenderRequest{
-				Source:      localSource(t, root),
-				Label:       root,
-				ApplyIgnore: false,
-				SubPath:     "selected",
-				Spec:        spec,
+				Source: localSource(t, root),
+				Label:  root,
+
+				SubPath: "selected",
+				Spec:    spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -277,11 +277,11 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			ctx,
 			cache,
 			RenderRequest{
-				Source:      localSource(t, root),
-				Label:       root,
-				ApplyIgnore: false,
-				SubPath:     "selected",
-				Spec:        spec,
+				Source: localSource(t, root),
+				Label:  root,
+
+				SubPath: "selected",
+				Spec:    spec,
 			},
 			sourcecache.RetryConfig{},
 		),
@@ -384,7 +384,6 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		err,
 	)
 	retained = cache.owner
-	cache.Close()
 	cache = newTestTreeCacheWithTasks(t, retained, task.NewBounded(2))
 	_, persisted, hit := readTestRenderFrame(t, cache, key)
 	assert.FatalIf(
@@ -415,10 +414,8 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	ctx := t.Context()
-	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: spec}
-	input, err := cache.sourceRootFor(ctx, req.Source, root)
-	assert.NoError(t, err)
-	key := renderKey(&req, root, input.ignore)
+	req := RenderRequest{Source: admittedTestSource(t, localSource(t, root), ""), Label: root, SubPath: ".", Spec: spec}
+	key := renderKey(&req, root, gittree.PolicyKey(req.Source.FS))
 
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
@@ -442,10 +439,8 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 
 	cache = newTestTreeCache(t, cacheDir)
-	req.Source = localSource(t, root)
-	input, err = cache.sourceRootFor(ctx, req.Source, root)
-	assert.NoError(t, err)
-	changedKey := renderKey(&req, root, input.ignore)
+	req.Source = admittedTestSource(t, localSource(t, root), "")
+	changedKey := renderKey(&req, root, gittree.PolicyKey(req.Source.FS))
 	assert.FatalIf(t, changedKey == key, "%s", "re-admitted ignore bytes reused the render key")
 	out2, receipt12, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
@@ -469,12 +464,10 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	testutil.WriteFile(t, root, "app/.sourceignore", "b.yaml\n")
 	cache = newTestTreeCache(t, cacheDir)
-	req.Source = localSource(t, root)
-	input, err = cache.sourceRootFor(ctx, req.Source, root)
-	assert.NoError(t, err)
+	req.Source = admittedTestSource(t, localSource(t, root), "")
 	assert.FatalIf(
 		t,
-		renderKey(&req, root, input.ignore) == changedKey,
+		renderKey(&req, root, gittree.PolicyKey(req.Source.FS)) == changedKey,
 		"%s",
 		"moved ignore file reused the render key",
 	)
@@ -510,7 +503,7 @@ func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
 	var preparation Preparation
 	t.Cleanup(func() { preparation = Preparation{} })
 	req := RenderRequest{
-		Preparation: &preparation, ApplyIgnore: true, Label: root, SubPath: ".",
+		Preparation: &preparation, Label: root, SubPath: ".",
 		Spec: &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"},
 	}
 	var previousLower fs.FS
@@ -530,12 +523,11 @@ func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
 			if tc.policy != previousPolicy {
 				testutil.WriteFile(t, root, ".sourceignore", tc.policy)
 			}
-			req.Source = source.WithReads(&store.ReadSet{})
+			req.Source = admittedTestSource(t, source, "").WithReads(&store.ReadSet{})
 			assert.Equal(t, req.Source.Content, "")
 			assert.ErrorIf(t, req.Source == previousSource, "%s", "execution reused its source wrapper")
-			input, err := cache.sourceRootFor(t.Context(), req.Source, root)
-			assert.NoError(t, err)
-			assert.Diff(t, input.ignore, []struct {
+			input := req.Source.FS.(*gittree.FS)
+			assert.Diff(t, input.PolicyEvidence(), []struct {
 				Path string
 				Data []byte
 			}{{".sourceignore", []byte(tc.policy)}})
@@ -560,10 +552,10 @@ func TestRender_MutableWrapperIgnoreEvidence(t *testing.T) {
 			if previousLower != nil && tc.policy == previousPolicy {
 				assert.Equal(t, string(output), string(previousOutput))
 			}
-			assert.Equal(t, preparation.lower, input.fs)
+			assert.Equal(t, preparation.lower, req.Source.FS)
 			assert.ErrorIf(t, preparation.lower == previousLower, "%s", "retained the previous admission filesystem")
 			assert.Equal(t, preparation.source, req.Source)
-			assert.Equal(t, preparation.key, renderKey(&req, root, input.ignore))
+			assert.Equal(t, preparation.key, renderKey(&req, root, gittree.PolicyKey(req.Source.FS)))
 			if firstKey == "" {
 				firstKey = preparation.key
 			}
@@ -592,12 +584,6 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
 	}
 	var want []map[string]any
-	closeCaches := make([]func(), 0, 2)
-	defer func() {
-		for _, closeCache := range slices.Backward(closeCaches) {
-			closeCache()
-		}
-	}()
 	for _, disk := range []bool{false, true} {
 		root, storage := testutil.WriteTree(t, files), ""
 		if disk {
@@ -605,7 +591,6 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		}
 		first := newTestTreeCache(t, storage)
 		second := NewTreeCache(first.owner, nil, task.NewBounded(2))
-		closeCaches = append(closeCaches, second.Close)
 		var builds atomic.Int64
 		lower := &pausedRenderFS{FS: os.DirFS(root), builds: &builds}
 		req := RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: spec}
@@ -709,7 +694,7 @@ func testRenderCacheHitMissInvalidateEmptyStream(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs), 0)
-		_, stored, hit := readTestRenderFrame(t, c, renderKey(&req, root, nil))
+		_, stored, hit := readTestRenderFrame(t, c, renderKey(&req, root, ""))
 		assert.Equal(t, hit, true)
 		assert.Equal(t, len(stored), 0)
 	}

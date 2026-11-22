@@ -89,25 +89,11 @@ func selectChanges(ctx context.Context, s *selection) (*gittree.FS, *change.Set,
 		return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, err
 	}
 	selected := changes.Paths()
-	for _, input := range []*gittree.FS{baseline, s.current} {
-		policy, policyErr := input.SourcePolicy(ctx)
-		if policyErr != nil {
-			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, policyErr
-		}
-		for _, file := range policy.Evidence() {
-			if _, candidate := candidates[file.Path]; candidate {
-				selected = append(selected, file.Path)
-			}
-		}
-	}
-	slices.Sort(selected)
-	selected = slices.Compact(selected)
 	if !slices.Equal(routing, selected) {
-		replacement, _, readerErr := s.reader(ctx, entries, selected)
-		if readerErr != nil {
-			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, readerErr
+		baseline, identity, err = s.reader(ctx, entries, selected)
+		if err != nil {
+			return baseline, nil, "", warnings, err
 		}
-		baseline = replacement
 		original.FS = baseline
 	}
 	return baseline, changes, identity, warnings, nil

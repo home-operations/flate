@@ -115,12 +115,12 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		<-entered
 		synctest.Wait()
 		assert.Equal(t, readers[0].inputOpens.Load(), int64(1))
-		assert.Equal(t, readers[0].inputStats.Load(), int64(1))
+		assert.Equal(t, readers[0].inputStats.Load(), int64(0))
 		close(release)
 		assert.NoError(t, <-done)
 		for side, reader := range readers {
 			assert.Equal(t, reader.inputOpens.Load(), int64(3))
-			assert.Equal(t, reader.inputStats.Load(), int64(5))
+			assert.Equal(t, reader.inputStats.Load(), int64(2))
 			t.Logf("side=%d render input opens=%d", side, reader.inputOpens.Load())
 		}
 	})

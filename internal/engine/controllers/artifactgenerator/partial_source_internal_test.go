@@ -112,7 +112,6 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	gen := New(st, bodies, owner)
 	gen.StartLifecycle()
 	trees := kustomize.NewTreeCache(owner, nil, bodies)
-	defer trees.Close()
 	ks := kustomization.New(st, bodies, trees)
 	ks.Controller.Configure(base.Options{Cache: owner})
 	ks.StartLifecycle()

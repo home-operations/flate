@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,13 +22,22 @@ import (
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/fetcherr"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
+	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const (
-	chunkBytes int64 = 8 << 20
-	downloads        = 8
+	chunkBytes       int64 = 8 << 20
+	downloads              = 8
+	bucketPolicyFile       = ".sourceignore"
 )
+
+type bucketOutput struct {
+	io.Writer
+
+	work     *manifest.WorkRecord
+	previous *ocispec.Descriptor
+}
 
 type bucketChunk struct {
 	work        *manifest.WorkRecord
@@ -53,6 +61,11 @@ func walkBucket(
 		}
 		entries = append(entries, obj)
 	}
+	ignore, err := readBucketPolicy(ctx, client, b.BucketName, w.work)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	policy := sourceignore.NewRoot(string(ignore), *cmp.Or(b.Ignore, new(string)))
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
 	names := make([]string, 0, len(entries))
 	pairs := make([][2]string, 0, len(entries))
@@ -63,7 +76,7 @@ func walkBucket(
 		switch {
 		case err != nil:
 			return cache.ProducerResult{}, err
-		case name == "":
+		case name == "" || name == bucketPolicyFile || policy.Match(name, false):
 			continue
 		}
 		entries[len(names)] = *e
@@ -75,10 +88,12 @@ func walkBucket(
 	result := cache.ProducerResult{Annotations: map[string]string{
 		"flate.revision":     "sha256:" + manifest.Fingerprint(pairs),
 		"flate.object-count": strconv.Itoa(len(entries)),
+		"flate.sourceignore": manifest.Fingerprint(ignore),
 	}}
 	result.Unchanged = allETags && w.previous != nil &&
 		w.previous.Annotations["flate.revision"] == result.Annotations["flate.revision"] &&
-		w.previous.Annotations["flate.object-count"] == result.Annotations["flate.object-count"]
+		w.previous.Annotations["flate.object-count"] == result.Annotations["flate.object-count"] &&
+		w.previous.Annotations["flate.sourceignore"] == result.Annotations["flate.sourceignore"]
 	if result.Unchanged {
 		return result, nil
 	}
@@ -98,11 +113,7 @@ func walkBucket(
 	const archiveWorkers = 2
 	g.SetLimit(downloads + archiveWorkers)
 	g.Go(func() error {
-		tw := tar.NewWriter(w)
-		if err := writeBucketChunks(gctx, tw, chunks, budget); err != nil {
-			return cmp.Or(ctx.Err(), err)
-		}
-		return tw.Close()
+		return cmp.Or(ctx.Err(), w.writeArchive(gctx, ignore, chunks, budget))
 	})
 	g.Go(func() error {
 		for _, c := range chunks {
@@ -114,9 +125,49 @@ func walkBucket(
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		return cache.ProducerResult{}, err //nolint:wrapcheck // Bucket diagnostics must retain the producer error message and HTTP failure classification.
+		//nolint:wrapcheck // Retain cancellation authority or the producer's HTTP failure classification.
+		return cache.ProducerResult{}, cmp.Or(ctx.Err(), err)
 	}
 	return result, nil
+}
+
+func readBucketPolicy(
+	ctx context.Context, client *minio.Client, bucket string, work *manifest.WorkRecord,
+) ([]byte, error) {
+	body, _, _, err := (minio.Core{Client: client}).GetObject(ctx, bucket, bucketPolicyFile, minio.GetObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil, nil
+		}
+		return nil, bucketResponseError(err)
+	}
+	data, readErr := io.ReadAll(body)
+	if readErr = errors.Join(readErr, body.Close()); readErr != nil {
+		return nil, fmt.Errorf("read bucket policy: %w", readErr)
+	}
+	work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
+	return data, nil
+}
+
+func (w bucketOutput) writeArchive(
+	ctx context.Context, policy []byte, chunks []*bucketChunk, budget *semaphore.Weighted,
+) error {
+	tw := tar.NewWriter(w.Writer)
+	if policy != nil {
+		const policyMode = 0o600
+		if err := tw.WriteHeader(
+			&tar.Header{Name: bucketPolicyFile, Mode: policyMode, Size: int64(len(policy))},
+		); err != nil {
+			return fmt.Errorf("write bucket policy header: %w", err)
+		}
+		if _, err := tw.Write(policy); err != nil {
+			return fmt.Errorf("write bucket policy: %w", err)
+		}
+	}
+	if err := writeBucketChunks(ctx, tw, chunks, budget); err != nil {
+		return err
+	}
+	return tw.Close() //nolint:wrapcheck // Preserve the failure from the cache-owned archive stream.
 }
 
 func (c *bucketChunk) weight() int64 { return min(c.size, chunkBytes) }
@@ -218,28 +269,12 @@ func (c *bucketChunk) emit(tw *tar.Writer, body io.Reader) error {
 const bucketObjectMode = 0o600
 
 func bucketEntryName(e *minio.ObjectInfo, prefix string) (string, error) {
-	// Validate both coordinates before prefix stripping or marker omission.
-	if _, err := safepath.ArchiveName(e.Key); err != nil {
-		return "", fmt.Errorf("bucket key %q: %w", e.Key, err)
-	}
-	rel, matched := strings.CutPrefix(e.Key, prefix)
-	if !matched {
-		return "", fmt.Errorf(
-			"bucket key %q does not match prefix %q: %w",
-			e.Key,
-			prefix,
-			fs.ErrInvalid,
-		)
-	}
-	if prefix != "" && !strings.HasSuffix(prefix, "/") {
-		rel, _ = strings.CutPrefix(rel, "/")
-	}
-	if rel == "" {
-		rel = path.Base(e.Key)
-	}
-	name, err := safepath.ArchiveName(rel)
+	name, err := safepath.ArchiveName(e.Key)
 	if err != nil {
 		return "", fmt.Errorf("bucket key %q: %w", e.Key, err)
+	}
+	if !strings.HasPrefix(e.Key, prefix) {
+		return "", fmt.Errorf("bucket key %q does not match prefix %q: %w", e.Key, prefix, fs.ErrInvalid)
 	}
 	if strings.HasSuffix(e.Key, "/") {
 		return "", nil
@@ -295,11 +330,4 @@ func writeBucketChunks(ctx context.Context, tw *tar.Writer, chunks []*bucketChun
 		}
 	}
 	return nil
-}
-
-type bucketOutput struct {
-	io.Writer
-
-	work     *manifest.WorkRecord
-	previous *ocispec.Descriptor
 }

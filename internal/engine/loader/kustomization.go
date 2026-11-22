@@ -288,7 +288,10 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 }
 
 func (l *Loader) mountSources() {
-	l.refreshSources(nil)
+	l.refreshSources(l.provisionalInput)
+	if l.provisionalInput != nil {
+		return
+	}
 	for _, root := range l.documents.changed {
 		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {

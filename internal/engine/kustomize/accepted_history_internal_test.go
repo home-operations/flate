@@ -44,7 +44,6 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 				},
 			),
 		)
-		renderer.Close()
 		assert.NoError(t, renderer.owner.Close())
 		runtime.GC()
 		docs, err := testutil.DecodeRender(receipt.Value().(renderFrame).Output)

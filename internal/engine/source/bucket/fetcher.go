@@ -145,7 +145,7 @@ func (f *operation) fetch(
 			request.material,
 		},
 		Ignore:   ignore,
-		Policy:   "",
+		Policy:   "bucket",
 		Required: []string{"revision", "object-count"},
 	}
 	timeout := b.OperationTimeout()

@@ -54,6 +54,9 @@ func (e *Entry) matches(input *store.SourceArtifact, scan string) bool {
 		return false
 	}
 	prepared := e.prepared
+	if input == prepared.sources[manifest.BootstrapSourceID].input && !e.aggregate {
+		input = e.Input
+	}
 	authored := inputprojection.Authored(input)
 	return prepared.parsed.Matches(authored) &&
 		input.LocalPath == prepared.input.LocalPath && input.LocalRoot == prepared.input.LocalRoot &&
@@ -161,6 +164,14 @@ func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []cluste
 		}
 		prepared.sources[id] = resolved
 	}
+	if prepared.sources == nil {
+		prepared.sources = map[manifest.NamedResource]entryResolution{}
+	}
+	bootstrap := d.resolvedSources.snapshot()[manifest.BootstrapSourceID]
+	if entry.aggregate {
+		bootstrap.input, bootstrap.artifact = entry.Input, entry.Input
+	}
+	prepared.sources[manifest.BootstrapSourceID] = bootstrap
 	if prepared.parsed == nil {
 		prepared.parsed = d.loader.ParsedInputs()
 	}
@@ -530,7 +541,7 @@ func (a *Admission) requestedDocuments(
 func (a *Admission) requestedInventory(
 	ctx context.Context, owner *manifest.Kustomization,
 ) (entryDocuments, []store.Child, error) {
-	input := a.input
+	input := a.bootstrapArtifact()
 	if frame := a.preparedInventory(owner, input); frame != nil {
 		return inventoryDocuments(frame.children, frame.failedDocuments), frame.children, frame.inventoryError()
 	}

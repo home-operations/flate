@@ -197,9 +197,9 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, rendered.entryBinding.Producer, entry)
 		assert.Equal(t, readers[side].fingerprints.Load(), int64(1))
-		assert.Equal(t, readers[side].fingerprintStats.Load(), int64(2))
+		assert.Equal(t, readers[side].fingerprintStats.Load(), int64(1))
 		assert.Equal(t, readers[side].parsed.Load(), int64(3))
-		assert.Equal(t, readers[side].parsedStats.Load(), int64(3))
+		assert.Equal(t, readers[side].parsedStats.Load(), int64(2))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf(
 			"side=%d declaration reads=%d selected evidence reads=%d",

@@ -170,9 +170,9 @@ func TestPreflightGitBase_NonResourceBody(t *testing.T) {
 func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	t.Parallel()
 	worktree := fakeWorktree(t, map[string]string{
-		"apps/foo/kustomization.yaml":        "resources:\n  - ../../shared\n",
-		"shared/kustomization.yaml":          "resources:\n  - ./cm.yaml\n",
-		"shared/cm.yaml":                     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
+		"apps/foo/kustomization.yaml":        "resources:\n  - ../../crds/shared\n",
+		"crds/shared/kustomization.yaml":     "resources:\n  - ./cm.yaml\n",
+		"crds/shared/cm.yaml":                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: from-parent-ref\n",
 		"examples/kustomization.yaml":        "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
 		"apps/foo/unused/kustomization.yaml": "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
 	})
@@ -189,10 +189,10 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 			context.Background(),
 			cache,
 			RenderRequest{
-				Source:      localSource(t, src),
-				Label:       src,
-				ApplyIgnore: false,
-				SubPath:     ".",
+				Source: localSource(t, src),
+				Label:  src,
+
+				SubPath: ".",
 				Spec: parsedKS(t, map[string]any{
 					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 					"kind":       "Kustomization",
@@ -234,10 +234,10 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 				context.Background(),
 				cache,
 				RenderRequest{
-					Source:      localSource(t, src),
-					Label:       src,
-					ApplyIgnore: false,
-					SubPath:     ".",
+					Source: localSource(t, src),
+					Label:  src,
+
+					SubPath: ".",
 					Spec: parsedKS(t, map[string]any{
 						"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 						"kind":       "Kustomization",
@@ -361,7 +361,6 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 
 	for name, target := range map[string]string{
 		"alias.yaml": "cm.yaml", "missing.yaml": "absent.yaml", "dirlink": "node_modules",
-		".github/a": "b", ".github/b": "a", "node_modules/a": "b", "node_modules/b": "a",
 	} {
 		{
 			err := os.Symlink(target, filepath.Join(worktree, name))
@@ -396,8 +395,11 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 		assert.FatalIf(t, err != nil ||
 			!strings.Contains(string(data), "name: base"), "regular alias: %s, %v", data, err)
 	}
-	for _, name := range []string{".github", "node_modules", "missing.yaml", "dirlink"} {
-		assert.ErrorIf(t, fsys.Exists(filepath.Join(wantDir, name)), "hidden entry %s", name)
+	for _, name := range []string{".github/x.yaml", "node_modules/y.yaml"} {
+		assert.ErrorIf(t, !fsys.Exists(filepath.Join(wantDir, name)), "missing base entry %s", name)
+	}
+	for _, name := range []string{"missing.yaml", "dirlink"} {
+		assert.ErrorIf(t, fsys.Exists(filepath.Join(wantDir, name)), "invalid base entry %s", name)
 	}
 	assert.ErrorIf(
 		t,

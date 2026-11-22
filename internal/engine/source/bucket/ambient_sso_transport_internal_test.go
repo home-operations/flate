@@ -75,6 +75,12 @@ func testFetcherMachineSSOTransportCase(t *testing.T, canceled *bool,
 		)
 	})
 	endpoint := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		dataCalls.Add(1)
 		assert.ErrorIf(t, !strings.Contains(r.Header.Get("Authorization"), "Credential=sso-canary/") ||
 			strings.Contains(

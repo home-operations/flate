@@ -88,7 +88,7 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 	case untagged:
 		etags[1], wantUntaggedGets = "", 1
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(bucketWithoutPolicy(func(w http.ResponseWriter, r *http.Request) {
 		testWalkBucketRangesCaseCallback(
 			w,
 			r, &testWalkBucketRangesCaseCallbackInputs{
@@ -542,7 +542,7 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures **testWalkBuc
 	for i, size := range *(*captures).sizes {
 		{
 			err := tw.WriteHeader(
-				&tar.Header{Name: fmt.Sprintf("file%02d", i), Mode: 0o600, Size: size},
+				&tar.Header{Name: fmt.Sprintf("prefix/file%02d", i), Mode: 0o600, Size: size},
 			)
 			assert.NoError(t, err)
 		}

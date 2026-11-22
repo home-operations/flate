@@ -164,7 +164,7 @@ func testFSContentFingerprintExcludedPolicyFile(t *testing.T) {
 	_, err = ContentFingerprint(t.Context(), input)
 	assert.NoError(t, err)
 	_, included := input.FileDigests()["sub/keep.png"]
-	assert.Equal(t, included, false)
+	assert.Equal(t, included, true)
 	assert.Equal(t, input.FileDigests()["file"] != "", true)
 }
 
@@ -240,6 +240,10 @@ func testFSContentFingerprintIteration(t *testing.T, mode *string, i int, keys *
 	assert.Equal(t, key, "")
 	assert.Equal(t, reader.reads.Load(), int64(0))
 	assert.Equal(t, input.FileDigests() == nil, true)
+	if *mode == "payload" || *mode == "equal" || *mode == "name" || *mode == "ignored" {
+		input, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input})
+		assert.NoError(t, err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	if testFSContentFingerprintErrors(
 		ctx,
@@ -287,7 +291,7 @@ func testFSContentFingerprintIteration(t *testing.T, mode *string, i int, keys *
 		}
 	}
 	_, ignored := input.FileDigests()["ignored"]
-	assert.Equal(t, ignored, false)
+	assert.Equal(t, ignored, input.policy == nil)
 	keys[i], err = ContentFingerprint(t.Context(), input)
 	assert.NoError(t, err)
 	assert.Equal(t, reader.reads.Load(), reads)

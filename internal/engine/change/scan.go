@@ -12,15 +12,12 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/internal/engine/source/gittree"
-	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type fileScan struct {
-	policy      *sourceignore.Matcher
-	entries     map[string]fileMeta
-	ignoreFiles []string
+	entries map[string]fileMeta
 }
 
 type fileMeta struct {
@@ -31,15 +28,7 @@ type fileMeta struct {
 type scanEvidence struct {
 	digests    map[string]string
 	candidates map[string]bool
-}
-
-func (e scanEvidence) membershipChanged() bool {
-	for name := range e.candidates {
-		if path.Base(name) == ".sourceignore" {
-			return true
-		}
-	}
-	return false
+	full       bool
 }
 
 func completedDigests(inputs [2]*store.SourceArtifact) [2]map[string]string {
@@ -55,7 +44,6 @@ func completedDigests(inputs [2]*store.SourceArtifact) [2]map[string]string {
 	return digests
 }
 
-// Excluded directories MUST still be traversed so deeper .sourceignore re-includes survive.
 func scanTree(
 	ctx context.Context,
 	inputs [2]*store.SourceArtifact,
@@ -63,45 +51,14 @@ func scanTree(
 	work *manifest.WorkRecord,
 ) (fileScan, error) {
 	input, opposite := inputs[0], inputs[1]
-	source, native := input.FS.(*gittree.FS)
 	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
 	if err == nil {
 		oppositeName = filepath.ToSlash(oppositeName)
 	}
-	var scanned fileScan
-	switch {
-	case evidence.digests != nil || evidence.candidates != nil && !evidence.membershipChanged():
-		scanned, err = evidence.observeFiles(ctx, input.FS, oppositeName, work)
-	default:
-		scanned, err = scanFiles(ctx, input.FS, oppositeName, work)
+	if evidence.digests != nil || evidence.candidates != nil && !evidence.full {
+		return evidence.observeFiles(ctx, input.FS, oppositeName, work)
 	}
-	if err != nil {
-		return fileScan{}, err
-	}
-	if evidence.digests != nil {
-		scanned.policy, err = source.SourcePolicy(ctx)
-		return scanned, err
-	}
-	var matcher *sourceignore.Matcher
-	if native {
-		matcher, err = source.SourcePolicy(ctx)
-	} else {
-		files := scanned.ignoreFiles
-		if evidence.candidates != nil {
-			files = nil
-		}
-		matcher, err = sourceignore.NewFS(input.FS, files, "", true)
-	}
-	if err != nil {
-		return fileScan{}, err
-	}
-	files := scanned.ignoreFiles
-	if evidence.candidates != nil && !evidence.membershipChanged() {
-		files = nil
-	}
-	sourceignore.Select(matcher, scanned.entries, files)
-	scanned.policy = matcher
-	return scanned, nil
+	return scanFiles(ctx, input.FS, oppositeName, work)
 }
 
 func (e scanEvidence) observeFiles(
@@ -111,10 +68,10 @@ func (e scanEvidence) observeFiles(
 	work *manifest.WorkRecord,
 ) (fileScan, error) {
 	names := maps.Keys(e.digests)
-	if e.digests == nil || e.candidates != nil && !e.membershipChanged() {
+	if e.digests == nil || e.candidates != nil && !e.full {
 		names = maps.Keys(e.candidates)
 	}
-	out := fileScan{entries: make(map[string]fileMeta), ignoreFiles: []string{}}
+	out := fileScan{entries: make(map[string]fileMeta)}
 	directories := directoryObservations{input: input}
 	for _, name := range slices.Sorted(names) {
 		work.Add(&manifest.WorkCounts{FileEntries: 1})
@@ -224,7 +181,7 @@ func scanFiles(
 	oppositeName string,
 	work *manifest.WorkRecord,
 ) (fileScan, error) {
-	out := fileScan{entries: make(map[string]fileMeta), ignoreFiles: []string{}}
+	out := fileScan{entries: make(map[string]fileMeta)}
 	err := fs.WalkDir(scoped, ".", func(name string, d fs.DirEntry, err error) error {
 		work.Add(&manifest.WorkCounts{FileEntries: 1})
 		if err != nil {
@@ -233,14 +190,11 @@ func scanFiles(
 		if localErr := ctx.Err(); localErr != nil {
 			return fmt.Errorf("context: %w", localErr)
 		}
-		if name != "." && (d.Name() == ".git" || name == oppositeName) {
+		if name != "." && name == oppositeName {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
-		}
-		if d.Name() == ".sourceignore" {
-			out.ignoreFiles = append(out.ignoreFiles, name)
 		}
 		if d.IsDir() {
 			return nil

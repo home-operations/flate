@@ -33,7 +33,7 @@ func testDetectSelectedFileEvidenceCase(t *testing.T, testCaseInput *string,
 			t.Context(),
 			nil,
 			plumbing.ZeroHash,
-			gittree.ViewOptions{Mode: gittree.Direct, Current: readers[i]},
+			gittree.ViewOptions{Mode: gittree.Source, Current: readers[i]},
 		)
 		assert.FatalIf(t, err != nil, "%v", err)
 		inputs[i] = &store.SourceArtifact{

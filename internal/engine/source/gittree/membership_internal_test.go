@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
@@ -28,6 +29,36 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
+
+func TestPreservesFiles_Admission(t *testing.T) {
+	t.Parallel()
+	const file = "app.yaml"
+	direct, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{
+		Mode: Direct, Current: fstest.MapFS{file: {Data: []byte("authored")}},
+	})
+	assert.NoError(t, err)
+	before := &store.SourceArtifact{LocalPath: t.TempDir(), FS: direct}
+	for _, tc := range []struct {
+		name, ignore string
+		retained     bool
+	}{
+		{name: "retained", retained: true},
+		{name: "removed", ignore: "/" + file},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			view, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{
+				Mode: Source, Current: direct, Ignore: tc.ignore,
+			})
+			assert.NoError(t, err)
+			_, err = fs.Stat(view, file)
+			assert.Equal(t, err == nil, tc.retained)
+			assert.Equal(t, PreservesFiles(before, before.WithSourceView(view)), tc.retained)
+		})
+	}
+	assert.Equal(t, PreservesFiles(before, before), true)
+	assert.Equal(t, PreservesFiles(before, nil), false)
+}
 
 func TestContentFingerprint_AcquisitionRemovedAfterAdmission(t *testing.T) {
 	t.Parallel()
@@ -231,7 +262,7 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 					}
 					observed, observeErr := view.FreshInputs(t.Context(), nil, nil)
 					assert.NoError(t, observeErr)
-					assert.Equal(t, len(observed.Files), 3)
+					assert.Equal(t, len(observed.Files), map[bool]int{true: 4, false: 3}[view.policy == nil])
 					captured, captureErr := view.FreshInputs(
 						t.Context(),
 						nil,

@@ -19,12 +19,12 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		SubPath: ".",
 		Spec:    spec,
 	}
-	key := renderKey(&req, "/source", nil)
+	key := renderKey(&req, "/source", "")
 	for _, tc := range []struct {
 		name   string
 		change func(*RenderRequest)
 		root   string
-		ignore any
+		ignore string
 		spec   map[string]any
 		typed  map[string]any
 		same   bool
@@ -59,8 +59,8 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		{name: "JSON 6902 patches", same: true, spec: map[string]any{"patchesJson6902": []any{map[string]any{"patch": []any{map[string]any{"op": "remove", "path": "/data/old"}}}}}},
 		{name: "root", root: "/other"},
 		{name: "subpath", change: func(r *RenderRequest) { r.SubPath = "app" }},
-		{name: "ignore selection", change: func(r *RenderRequest) { r.ApplyIgnore = true }},
-		{name: "ignore bytes", ignore: []byte("*.yaml")},
+
+		{name: "ignore bytes", ignore: "*.yaml"},
 		{name: "acquisition", change: func(r *RenderRequest) { r.Source.Key = "other-family" }},
 		{name: "revision", same: true, change: func(r *RenderRequest) { r.Source.Revision = "revision" }},
 		{name: "generation", change: func(r *RenderRequest) { r.Source.Content = "next" }},
@@ -88,11 +88,11 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 	stamped.Spec.Labels = map[string]string{"owner": "parent"}
 	stamped.Spec.Annotations = map[string]string{"stamp": "changed"}
 	{
-		got := renderKey(&stamped, "/source", nil)
+		got := renderKey(&stamped, "/source", "")
 		assert.FatalIf(t, got != key, "%s", "emission metadata changed the render key")
 	}
 	{
-		got := renderKey(&req, "/source", nil)
+		got := renderKey(&req, "/source", "")
 		assert.FatalIf(t, got != key, "%s", "unchanged render input changed the key")
 	}
 }
@@ -104,7 +104,7 @@ type testRenderKeyContentInputsCaseInputs struct {
 		name   string
 		change func(*RenderRequest)
 		root   string
-		ignore any
+		ignore string
 		spec   map[string]any
 		typed  map[string]any
 		same   bool
@@ -173,7 +173,7 @@ func testRenderKeyContentInputsCase2(t *testing.T, testCaseInput *testRenderKeyC
 	}
 	assert.FatalIf(
 		t,
-		renderKey(&changed, "/source", nil) != renderKey(&plain, "/source", nil),
+		renderKey(&changed, "/source", "") != renderKey(&plain, "/source", ""),
 		"%s",
 		"authored null changed typed content",
 	)

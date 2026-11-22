@@ -607,14 +607,13 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
 		}
 		assert.Equal(t, substitutionValue(t, full[0].Result, (*(*inputs.consumer))), want)
 		assert.Equal(t, substitutionValue(t, (*inputs.paired)[i].Result, (*(*inputs.consumer))), want)
-		origin := manifest.SuppliedDeclaration
-		if (*(*inputs.transition))[i] != "absent" {
-			origin = manifest.RepositoryDeclaration
-		}
+		supplied := (*(*inputs.transition))[i] == "absent"
 		id := (*inputs.cfg).Supply[0].Obj.Named()
-		assert.Equal(t, (*inputs.paired)[i].store.Policy(id).Origin, origin)
-		assert.Equal(t, full[0].store.Policy(id).Origin, origin)
-		if origin == manifest.SuppliedDeclaration {
+		pairedPolicy := (*inputs.paired)[i].store.Policy(id)
+		assert.Equal(t, pairedPolicy.Supplied(), supplied)
+		assert.Equal(t, pairedPolicy.Root, !supplied)
+		assert.Equal(t, full[0].store.Policy(id), pairedPolicy)
+		if supplied {
 			assert.Equal(t, (*inputs.paired)[i].selection.Snapshot().Output(id), false)
 		}
 		for _, result := range []*Result{(*inputs.paired)[i].Result, full[0].Result} {

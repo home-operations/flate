@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a-cm
+  namespace: default
+data:
+  v: "1"

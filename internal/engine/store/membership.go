@@ -53,7 +53,7 @@ func (sh *shard) captureLocked(
 	id manifest.NamedResource,
 	cellValue *objectCell,
 	view *capture,
-) (manifest.BaseManifest, manifest.DeclarationPolicy) {
+) (manifest.BaseManifest, DeclarationPolicy) {
 	cell := *cellValue
 	if view != nil {
 		*view = capture{
@@ -86,7 +86,7 @@ func (sh *shard) captureLocked(
 
 func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValue *objectCell, view *capture) Child {
 	cell := *cellValue
-	policy := manifest.DeclarationPolicy{Root: true, Reconcile: cell.reconcile, Report: cell.report}
+	policy := DeclarationPolicy{Root: true, Reconcile: cell.reconcile, Report: cell.report}
 	obj := cell.static
 	bound := cell.bound()
 	if view != nil {
@@ -277,6 +277,10 @@ func (s *Store) publishRegionObjectLocked(
 	sh.captureLocked(id, new(cell), &view)
 	after := view.child.input()
 
+	referenceChanged := state.before != after.Obj && after.policy.reference()
+	if state.before != nil && referenceChanged {
+		sh.clearFacetsLocked(id)
+	}
 	s.advanceRegionObjectLocked(new(state), &cell, new(view))
 	if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
 		cell.policy != policy {
@@ -285,7 +289,10 @@ func (s *Store) publishRegionObjectLocked(
 	selectRegionHeadLocked(&cell, new(view))
 	sh.updateRegionBucketLocked(new(state), new(after))
 	// Direct removal MUST restore surviving emitted payloads after clearing static facets.
-	publications = s.appendRegionArtifactLocked(new(state), new(cell), new(view), publications)
+	artifactChanged := state.direct || state.payload != view.payload || state.cell.hidden != cell.hidden
+	if artifactChanged || referenceChanged {
+		publications = s.appendRegionArtifactLocked(new(state), new(cell), new(view), publications)
+	}
 	if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
 		event := fireUnderLock(s, EventObjectAdded, id)
 		event.payload = after.Obj
@@ -592,10 +599,6 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 	after := view.child.input()
 	id := state.id
 	sh := s.shardFor(id)
-	referenceChanged := state.before != after.Obj && after.Origin == manifest.SuppliedDeclaration
-	if state.before != nil && referenceChanged {
-		sh.clearFacetsLocked(id)
-	}
 	cell.policy = after.policy
 	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document, Warnings: state.warnings}, after)
 	sameAuthority := state.owner == view.owner && state.source.equal(&view.source) && sameDeclaration
@@ -651,10 +654,6 @@ func (s *Store) appendRegionArtifactLocked(
 	view := *viewValue
 	id := state.id
 	sh := s.shardFor(id)
-	referenceChanged := state.before != view.child.Obj && view.child.Origin == manifest.SuppliedDeclaration
-	if !state.direct && state.payload == view.payload && state.cell.hidden == cell.hidden && !referenceChanged {
-		return publications
-	}
 	record := sh.artifacts[id]
 	effective := sh.projectArtifactLocked(id, &view, new(record))
 	if record.effective != effective {
@@ -693,7 +692,7 @@ type capturedChild struct {
 	Origin            manifest.DeclarationOrigin
 	Generated         bool
 	VisibleGeneration bool
-	policy            manifest.DeclarationPolicy
+	policy            DeclarationPolicy
 }
 
 func snapshotChild(child *Child) capturedChild {

@@ -3,12 +3,13 @@ package cache
 import "time"
 
 const (
-	extractPolicy = "extract"
-	payloadName   = "content"
-	openOperation = "open"
-	fixedPolicy   = "fixed"
-	wrapOutcome   = "wrap"
-	joinOutcome   = "join"
+	archiveShapeVersion = 2
+	extractPolicy       = "extract"
+	payloadName         = "content"
+	openOperation       = "open"
+	fixedPolicy         = "fixed"
+	wrapOutcome         = "wrap"
+	joinOutcome         = "join"
 )
 
 const (

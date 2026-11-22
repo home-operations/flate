@@ -464,7 +464,11 @@ func (c *admissionClosure) recordDirectState(
 	c.derive()
 	state.direct, state.directKnown = changed, state.initialKnown
 	state.requested = state.requested || c.namedSelection(id)
-	state.eligible = record.Origin.Policy(id, nil).Root && c.session.request.Matches(id)
+	root := record.Origin.Policy(id, nil).Root
+	if incoming := c.incoming(id); incoming.Obj != nil {
+		root = incoming.Policy(id).Root
+	}
+	state.eligible = root && c.session.request.Matches(id)
 	if state.eligible && c.decision.unrestricted {
 		state.eligible = c.rootEvidence(id).Admitted || c.objects.GetDeclaration(id) != nil
 	}

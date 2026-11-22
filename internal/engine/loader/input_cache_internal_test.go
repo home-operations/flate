@@ -407,9 +407,21 @@ func TestInputCache_LoadEvidenceKeepsPathBoundaries(t *testing.T) {
 			)
 			assert.Equal(t, valid, true)
 			inputs := []string{
-				filepath.ToSlash(filepath.Join(name, ".krmignore")), "app/object.yaml", "app/part/child.yaml",
+				filepath.ToSlash(
+					filepath.Join(name, ".krmignore"),
+				),
+				"app/.hidden/ignored.yaml",
+				"app/object.yaml",
+				"app/part/child.yaml",
 			}
-			types := []string{"app", "app/.hidden", "app/object.yaml", "app/part", "app/part/child.yaml"}
+			types := []string{
+				"app",
+				"app/.hidden",
+				"app/.hidden/ignored.yaml",
+				"app/object.yaml",
+				"app/part",
+				"app/part/child.yaml",
+			}
 			if name == "." {
 				inputs = append(inputs, "app-before/other.yaml", "app2/other.yaml")
 				types = append(types, ".", "app-before", "app-before/other.yaml", "app2", "app2/other.yaml")

@@ -445,7 +445,8 @@ func TestAutoResolve_IgnoredHistoricalRemoval(t *testing.T) {
 		assert.NoError(t, readErr)
 		assert.Equal(t, string(data), "identical historical bytes")
 	}
-	assert.Diff(t, result.Changes.Paths(), []string{"historical.ignored"})
+	selected, _ := admittedChanges(t, result)
+	assert.Diff(t, selected.Paths(), []string{"historical.ignored"})
 }
 
 type sparseReadFS struct {

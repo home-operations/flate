@@ -122,7 +122,7 @@ func (h *acceptedHistoryCase) disabledPreparation(t *testing.T) {
 	artifact := *req.Source
 	artifact.FS = counted
 	input := req
-	input.Source, input.ApplyIgnore = &artifact, true
+	input.Source = admittedTestSource(t, &artifact, "")
 	fresh := newTestTreeCache(t, "")
 	counted.opens.Store(0)
 	{
@@ -231,7 +231,7 @@ func (h *acceptedHistoryCase) preparation(t *testing.T) {
 	artifact := *req.Source
 	artifact.FS = counted
 	input := req
-	input.Source, input.ApplyIgnore = &artifact, true
+	input.Source = admittedTestSource(t, &artifact, "")
 	directory := t.TempDir()
 	publisher := newTestTreeCache(t, directory)
 	_, pending, err := Render(t.Context(), publisher, input, sourcecache.RetryConfig{})

@@ -63,7 +63,7 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 			Missing:     o.cfg.missing,
 			Reads:       &caller,
 			Preparation: &preparation,
-			Generation:  []store.Child{{Obj: obj, Origin: o.store.Policy(id).Origin}},
+			Generation:  []store.Child{o.store.Policy(id).Child(obj)},
 		},
 	)
 	assert.NoError(t, err)
@@ -148,7 +148,7 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 			Missing:     o.cfg.missing,
 			Reads:       &fresh,
 			Preparation: &preparation,
-			Generation:  []store.Child{{Obj: current, Origin: o.store.Policy(id).Origin}},
+			Generation:  []store.Child{o.store.Policy(id).Child(current)},
 		},
 	)
 	assert.NoError(t, err)
@@ -529,7 +529,7 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 	proposal, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
 		Missing: o.cfg.missing,
 		Reads:   &fresh, Preparation: &third.AdmissionPreparation,
-		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
+		Generation: []store.Child{o.store.Policy(id).Child(o.store.GetObject(id))},
 	})
 	assert.NoError(t, err)
 	defer proposal.Retire()
@@ -545,7 +545,7 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 	stale, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
 		Missing: o.cfg.missing,
 		Reads:   &second.Reads, Preparation: &third.AdmissionPreparation,
-		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
+		Generation: []store.Child{o.store.Policy(id).Child(o.store.GetObject(id))},
 	})
 	assert.NoError(t, err)
 	_, committed, err := o.selection.Admit(t.Context(), selection.AdmissionOptions{

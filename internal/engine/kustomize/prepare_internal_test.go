@@ -11,36 +11,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestApplySourceIgnore_Policy(t *testing.T) {
-	t.Parallel()
-	ordinary := &manifest.Kustomization{Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{
-		Kind: manifest.KindGitRepository, Name: "source",
-	}}
-	for _, tc := range []struct {
-		name   string
-		ks     *manifest.Kustomization
-		source *store.SourceArtifact
-		want   bool
-	}{
-		{name: "implicit bootstrap", ks: &manifest.Kustomization{Path: "."}, source: &store.SourceArtifact{Content: "snapshot"}, want: true},
-		{
-			name: "explicit bootstrap",
-			ks: manifest.NewEntryKustomization(
-				manifest.BootstrapSourceID, ".", manifest.NamedResource{},
-			),
-			source: &store.SourceArtifact{Content: "snapshot"}, want: true,
-		},
-		{name: "input alias", ks: ordinary, source: &store.SourceArtifact{Content: "snapshot", InputAlias: true}, want: true},
-		{name: "empty content", ks: ordinary, source: &store.SourceArtifact{}, want: true},
-		{name: "acquired content", ks: ordinary, source: &store.SourceArtifact{Content: "snapshot"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, ApplySourceIgnore(tc.ks, tc.source), tc.want)
-		})
-	}
-}
-
 func TestSourceInput_Validation(t *testing.T) {
 	t.Parallel()
 	ordinary := kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}
@@ -96,12 +66,10 @@ func TestSourceInput_Validation(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, err.Error(), tc.message)
 				assert.Equal(t, request.Source, (*store.SourceArtifact)(nil))
-				assert.Equal(t, request.ApplyIgnore, false)
 				return
 			}
 			assert.NoError(t, err)
 			assert.Equal(t, request.Source, acquired)
-			assert.Equal(t, request.ApplyIgnore, false)
 		})
 	}
 }

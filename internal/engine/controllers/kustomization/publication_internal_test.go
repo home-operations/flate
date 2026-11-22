@@ -46,7 +46,6 @@ func TestRecordRender_CapturedEmission(t *testing.T) {
 			c, st, _ := newControllerWithFixture(t)
 			c.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
 			c.Trees = kustomize.NewTreeCache(c.Cache, nil, c.Tasks)
-			t.Cleanup(c.Trees.Close)
 			artifact := *st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			artifact.Kind, artifact.URL = manifest.KindGitRepository, "https://fixture.invalid/first"
 			st.SetArtifact(manifest.BootstrapSourceID, &artifact)

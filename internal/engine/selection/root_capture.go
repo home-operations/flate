@@ -9,7 +9,7 @@ import (
 )
 
 type rootReader interface {
-	Lookup(manifest.NamedResource) (manifest.BaseManifest, manifest.DeclarationPolicy)
+	Lookup(manifest.NamedResource) (manifest.BaseManifest, store.DeclarationPolicy)
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	SourceAdmission(manifest.NamedResource, manifest.NamedResource) bool
@@ -50,18 +50,22 @@ func CaptureRoot(facts RootEvidence, objects rootReader, index *manifest.Discove
 	facts.Captured = true
 	facts.CoveringOwners = nil
 	facts.Scope.Records, facts.Scope.Claims = index.Records, index.Claims
+	var rootDeclaration manifest.BaseManifest
 	if !facts.Scope.NativeEntry {
 		object, policy := objects.Lookup(id)
 		facts.Declaration = objects.GetDeclaration(id)
-		facts.Supplied = !facts.Incoming && object != nil && policy.Origin == manifest.SuppliedDeclaration &&
+		if policy.RootCandidate() {
+			rootDeclaration = facts.Declaration
+		}
+		facts.Supplied = !facts.Incoming && object != nil && policy.Supplied() &&
 			facts.Declaration == object && manifest.AdmitsRoot(object)
 		facts.Productions = objects.Productions(id, index)
 		facts.LiveProductions = objects.Productions(id, &currentRootIndex)
 	}
 	if facts.Record.Path == "" && facts.Record.Builder == "" {
-		facts.Scope.Candidate = facts.Scope.Candidate || facts.Declaration != nil
+		facts.Scope.Candidate = facts.Scope.Candidate || rootDeclaration != nil
 		facts.Scope.NamespaceEligible = facts.Scope.NamespaceEligible ||
-			facts.Declaration != nil && manifest.AdmitsRoot(facts.Declaration)
+			rootDeclaration != nil && manifest.AdmitsRoot(rootDeclaration)
 	}
 	captureRootSources(&facts, objects)
 	if Root(facts).NeedsOwnerSupport {

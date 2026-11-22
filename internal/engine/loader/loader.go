@@ -52,6 +52,8 @@ type options struct {
 type Loader struct {
 	constructionPurpose atomic.Pointer[[]manifest.NamedResource]
 	work                *manifest.WorkRecord
+	provisionalInput    *store.SourceArtifact
+	provisionalWarnings []manifest.Warning
 	Store               *store.Store
 	Options             options
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
@@ -580,7 +582,7 @@ func (l *Loader) replayFile(ctx context.Context, fileValue *fileAdmission, reade
 	file := *fileValue
 
 	if file.kind == admissionWarning {
-		l.Store.AddWarning(file.warning)
+		l.inputWarning(file.warning)
 		return 0, nil
 	}
 	if file.kind == admissionBootstrap {
@@ -617,7 +619,7 @@ func (l *Loader) replayFile(ctx context.Context, fileValue *fileAdmission, reade
 		if file.kind == admissionPackage {
 			message = "kustomization file failed to parse"
 		}
-		l.Store.AddWarning(
+		l.inputWarning(
 			manifest.Warning{
 				Category: manifest.WarnInputParseFailed,
 				Message:  message,

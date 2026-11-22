@@ -196,7 +196,7 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 		Digest         digest.Digest
 		Ignore, Policy string
 		Version        int
-	}{digest.FromBytes(archive.Bytes()), "", "fixed", 1})
+	}{digest.FromBytes(archive.Bytes()), "", "fixed", archiveShapeVersion})
 	expectedTree := "sha256:" + manifest.Fingerprint([]struct {
 		Path    string
 		Mode    fs.FileMode

@@ -586,14 +586,14 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 
 func (c *admissionClosure) assignRole(id manifest.NamedResource, role admissionRole) {
 	record := c.record(id)
-	policy := record.Origin.Policy(id, nil)
+	root := record.Origin.Policy(id, nil).Root
 	if c.incoming(id).Obj != nil {
-		policy = c.incoming(id).Policy(id)
+		root = c.incoming(id).Policy(id).Root
 	} else if record.Path == "" && record.Builder == "" {
-		_, policy = c.objects.Lookup(id)
-		policy.Root = policy.Root && c.objects.GetDeclaration(id) != nil
+		_, policy := c.objects.Lookup(id)
+		root = policy.Root && c.objects.GetDeclaration(id) != nil
 	}
-	if !policy.Root {
+	if !root {
 		role.selected = false
 	}
 	state := c.states[id]

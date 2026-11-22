@@ -124,7 +124,7 @@ func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
 	assert.Equal(t, len(results), 1)
 	assert.Equal(t, len(results[0].Result.Manifests), 1)
 	assert.Diff(t, configMapNames(results[0].Result), map[string]bool{"payload": true})
-	assert.Equal(t, input.walks.Load(), int32(3))
+	assert.Equal(t, input.walks.Load(), int32(2))
 }
 
 func TestWithReaders_PreservesSideEvidence(t *testing.T) {

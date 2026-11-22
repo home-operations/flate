@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -28,8 +27,10 @@ type Matcher struct {
 
 type policyFile struct {
 	Path, Data string
-	end        int
 }
+
+//nolint:gochecknoglobals // The default Flux patterns are immutable.
+var defaultMatcher = flux.NewDefaultMatcher(nil, nil)
 
 // NewFS builds Flux policy from a slash-named immutable filesystem.
 // Nil files walks the input; a supplied list MUST contain every relative ignore file.
@@ -51,19 +52,28 @@ func NewFS(input fs.FS, files []string, extra string, withDefaults bool) (*Match
 			}
 		}
 	}
+	return m.compile(extra), nil
+}
+
+// NewRoot builds bucket policy from its root ignore object and declared extensions.
+func NewRoot(data, extra string) *Matcher {
+	m := &Matcher{evidence: []policyFile{{Path: flux.IgnoreFile, Data: data}}}
+	return m.compile(extra)
+}
+
+func (m *Matcher) compile(extra string) *Matcher {
 	slices.SortFunc(m.evidence, func(a, b policyFile) int {
 		return comparePolicyFiles(a.Path, b.Path)
 	})
-	for i, file := range m.evidence {
+	for _, file := range m.evidence {
 		var domain []string
 		if dir := path.Dir(file.Path); dir != "." {
 			domain = strings.Split(dir, "/")
 		}
 		patterns := flux.ReadPatterns(strings.NewReader(file.Data), domain)
 		m.patterns = append(m.patterns, patterns...)
-		m.evidence[i].end = len(m.patterns)
 	}
-	return m.WithExtra(extra), nil
+	return m.WithExtra(extra)
 }
 
 func policyDepth(dir string) int {
@@ -136,12 +146,15 @@ func (m *Matcher) buildMatcher(patterns []gitignore.Pattern) gitignore.Matcher {
 	}
 	if m.withDefaults {
 		if len(patterns) == 0 {
-			return flux.NewDefaultMatcher(nil, nil)
+			return defaultMatcher
 		}
 		patterns = append(flux.VCSPatterns(nil), patterns...)
 	}
 	return flux.NewMatcher(patterns)
 }
+
+// UsesDefaults reports whether the policy has no custom patterns.
+func (m *Matcher) UsesDefaults() bool { return len(m.patterns) == 0 && len(m.extra) == 0 }
 
 // Evidence returns the ordered ignore-file paths and exact content parsed by NewFS.
 func (m *Matcher) Evidence() []struct{ Path, Data string } {
@@ -152,38 +165,28 @@ func (m *Matcher) Evidence() []struct{ Path, Data string } {
 	return out
 }
 
+// ReadPolicy returns the bytes already read for an ignore file.
+func (m *Matcher) ReadPolicy(name string) (string, bool) {
+	for _, file := range m.evidence {
+		if file.Path == name {
+			return file.Data, true
+		}
+	}
+	return "", false
+}
+
 // Match reports whether rel (a path relative to the matcher's root, using the
-// OS separator) is excluded. isDir distinguishes directory-only patterns.
+// slash separator) is excluded. isDir distinguishes directory-only patterns.
 func (m *Matcher) Match(rel string, isDir bool) bool {
-	return m.matcher.Match(strings.Split(rel, string(filepath.Separator)), isDir)
+	return m.matcher.Match(strings.Split(rel, "/"), isDir)
 }
 
-// Select removes excluded regular-file names using captured policy.
-// Non-nil files restrict policy to those ignore files without rereading them.
-func Select[V any](policy *Matcher, candidates map[string]V, files []string) {
-	matcher := policy.matcher
-	if files != nil && slices.ContainsFunc(policy.evidence, func(file policyFile) bool {
-		return !slices.Contains(files, file.Path)
-	}) {
-		var patterns []gitignore.Pattern
-		start := 0
-		for _, file := range policy.evidence {
-			if slices.Contains(files, file.Path) {
-				patterns = append(patterns, policy.patterns[start:file.end]...)
-			}
-			start = file.end
-		}
-		matcher = policy.buildMatcher(patterns)
+// Admit records one selected entry and the parents needed to reach it.
+func (m *Matcher) Admit(kept map[string]bool, name string, directory bool) {
+	if m != nil && m.Match(name, directory) {
+		return
 	}
-	for name := range candidates {
-		if matcher.Match(strings.Split(name, "/"), false) {
-			delete(candidates, name)
-		}
+	for parent := name; parent != "." && !kept[parent]; parent = path.Dir(parent) {
+		kept[parent] = true
 	}
-}
-
-// PruneDir applies shared directory exclusions, including Helm directories during scans.
-func PruneDir(name string, scan bool) bool {
-	return name != "." && strings.HasPrefix(name, ".") || name == "node_modules" ||
-		scan && (name == "templates" || name == "crds")
 }

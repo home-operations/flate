@@ -1,0 +1,576 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c0560435c7751eea792140a1dfa6fd8369276584",
+    "paths": [
+      "internal/engine/source/gittree/local.go",
+      "internal/engine/discovery/bootstrap.go",
+      "internal/engine/loader/traversal.go"
+    ],
+    "reductions": "Offline repositories from the source membership audit. The templates case moves the dependency into a directory named templates."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "specignore",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "specignore"
+    },
+    {
+      "repository": "repo",
+      "name": "sourceignore",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "specignore"
+      ],
+      "overlay": "sourceignore"
+    },
+    {
+      "repository": "repo",
+      "name": "f7-include-ignored",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "f7-include-ignored"
+    },
+    {
+      "repository": "repo",
+      "name": "mini1",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "mini1"
+    },
+    {
+      "repository": "repo",
+      "name": "templates",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "mini1"
+      ],
+      "overlay": "templates"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "specignore",
+      "directory": "overlays/specignore"
+    },
+    {
+      "name": "f7-include-ignored",
+      "directory": "overlays/f7-include-ignored"
+    },
+    {
+      "name": "mini1",
+      "directory": "overlays/mini1"
+    },
+    {
+      "name": "sourceignore",
+      "directory": "overlays/sourceignore"
+    },
+    {
+      "name": "app-edit",
+      "directory": "overlays/app-edit"
+    },
+    {
+      "name": "templates",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/c/flux/crds",
+            "to": "repo/c/flux/templates"
+          }
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "specignore",
+      "description": "Build with the owning GitRepository ignore rule.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "specignore"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/x",
+              "--concurrency=2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "name": "private",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/specignore.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sourceignore",
+      "description": "Build with the same rule in .sourceignore.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "sourceignore"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/x",
+              "--concurrency=2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "name": "private",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sourceignore.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "f7-include-ignored",
+      "description": "Fail when an explicit resource is absent from the source.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "f7-include-ignored"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/x",
+              "--concurrency=2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "name": "private",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/f7-include-ignored.stdout",
+              "stderr": "expect/f7-include-ignored.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "mini1",
+      "description": "Resolve a dependency declared below crds during a changed-only diff.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "mini1"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "edit-app",
+          "edit": {
+            "overlay": "app-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "c/flux",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency=2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "name": "private",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "templates",
+      "description": "Resolve a dependency declared below templates during a changed-only diff.",
+      "directory": "@@repo@@",
+      "setup": [
+        {
+          "commit": "templates"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "edit-app",
+          "edit": {
+            "overlay": "app-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "c/flux",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret",
+              "--concurrency=2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "name": "private",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Complete output of the changed-only diff."
+    },
+    {
+      "path": "expect/f7-include-ignored.stderr",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Build diagnostics for the missing resource."
+    },
+    {
+      "path": "expect/f7-include-ignored.stdout",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Complete output of the failed build."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "specignore",
+        "sourceignore",
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Diagnostics for successful CLI runs."
+    },
+    {
+      "path": "expect/sourceignore.stdout",
+      "cases": [
+        "sourceignore"
+      ],
+      "purpose": "Complete build output with the root ignore file."
+    },
+    {
+      "path": "expect/specignore.stdout",
+      "cases": [
+        "specignore"
+      ],
+      "purpose": "Complete build output with the GitRepository ignore rule."
+    },
+    {
+      "path": "overlays/app-edit/repo/c/apps/j/cm.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Change the application ConfigMap before the diff."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/.sourceignore",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/a/cm.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/a/x.draft.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/b/keep.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/b/kustomization.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/b/skip.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/apps/drafts/cm.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/clusters/x/apps.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/clusters/x/flux-system/gotk-components.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/clusters/x/flux-system/gotk-sync.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/f7-include-ignored/repo/clusters/x/flux-system/kustomization.yaml",
+      "cases": [
+        "f7-include-ignored"
+      ],
+      "purpose": "Commit the source, Kustomizations, and files for the explicit missing resource case."
+    },
+    {
+      "path": "overlays/mini1/repo/c/apps/cm.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/apps/j/cm.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/apps/j/ks.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/crds/cm.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/flux/apps/ks.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/flux/crds/ks.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/flux/flux-system/kustomization.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/mini1/repo/c/flux/flux-system/sync.yaml",
+      "cases": [
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Commit the application and its dependency in the bootstrap package."
+    },
+    {
+      "path": "overlays/sourceignore/repo/.sourceignore",
+      "cases": [
+        "sourceignore"
+      ],
+      "purpose": "Move the ignore rule from the source declaration to the root ignore file."
+    },
+    {
+      "path": "overlays/sourceignore/repo/clusters/x/flux.yaml",
+      "cases": [
+        "sourceignore"
+      ],
+      "purpose": "Move the ignore rule from the source declaration to the root ignore file."
+    },
+    {
+      "path": "overlays/specignore/repo/apps/a/cm.yaml",
+      "cases": [
+        "specignore",
+        "sourceignore"
+      ],
+      "purpose": "Commit the source, the application, and the included and excluded files."
+    },
+    {
+      "path": "overlays/specignore/repo/apps/b/cm.yaml",
+      "cases": [
+        "specignore",
+        "sourceignore"
+      ],
+      "purpose": "Commit the source, the application, and the included and excluded files."
+    },
+    {
+      "path": "overlays/specignore/repo/clusters/x/flux.yaml",
+      "cases": [
+        "specignore",
+        "sourceignore"
+      ],
+      "purpose": "Commit the source, the application, and the included and excluded files."
+    },
+    {
+      "path": "repo/README",
+      "cases": [
+        "specignore",
+        "sourceignore",
+        "f7-include-ignored",
+        "mini1",
+        "templates"
+      ],
+      "purpose": "Keep the repository fixture directory present before setup."
+    }
+  ]
+}

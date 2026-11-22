@@ -64,13 +64,11 @@ data: {greeting: hi}
 	inputs := source.NewHTTPInputs(owner, network, tasks)
 	t.Cleanup(inputs.Close)
 	cache := kustomize.NewTreeCache(owner, &inputs, tasks)
-	t.Cleanup(cache.Close)
 
 	c := New(s, tasks, cache)
 	c.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-		cache.Close()
 		tasks.BlockTillDone()
 	})
 	return c, s, root
@@ -82,7 +80,7 @@ func freezeSourceForTest(t *testing.T, st *store.Store) {
 	owner := cachetest.New(t, "", sourcecache.New)
 	input, _, key, err := owner.Acquire(
 		t.Context(),
-		sourcecache.ArchiveKey{Policy: "fixed", Content: t.Name()},
+		sourcecache.ArchiveKey{Policy: "source", Content: t.Name()},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever},
 		func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			writer := tar.NewWriter(target)
@@ -222,7 +220,6 @@ spec:
 		inputs := source.NewHTTPInputs(owner, network, tasks)
 		t.Cleanup(inputs.Close)
 		trees := kustomize.NewTreeCache(owner, &inputs, tasks)
-		t.Cleanup(trees.Close)
 		c := New(s, tasks, trees)
 
 		c.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
@@ -337,7 +334,6 @@ spec:
 		)
 		output.Finish()
 		tasks.BlockTillDone()
-		trees.Close()
 		inputs.Close()
 		network.Close()
 		assert.NoError(t, owner.Close())

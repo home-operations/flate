@@ -331,6 +331,11 @@
   ],
   "files": [
     {
+      "path": "inputs/bucket/no-such-key.xml",
+      "cases": ["aws-native-profile"],
+      "purpose": "Report the missing bucket-root ignore object."
+    },
+    {
       "path": "repo/flux/source.yaml",
       "cases": [
         "docker-native-store",
@@ -862,6 +867,14 @@
         "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
       },
       "body": "inputs/registry/config.json"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "GET",
+      "path": "/fixture/.sourceignore",
+      "status": 404,
+      "headers": {"Content-Type": "application/xml"},
+      "body": "inputs/bucket/no-such-key.xml"
     },
     {
       "host": "s3.fixture.invalid",

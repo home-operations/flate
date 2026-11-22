@@ -165,7 +165,6 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
 	trees := kustomize.NewTreeCache(owner, nil, tasks)
-	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees)
 	c.Configure(Options{Cache: owner, StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := testutil.SplitDocs(

@@ -91,7 +91,7 @@ func testRenderCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 	}
 	switch *testCaseInput {
 	case "read":
-		key := sourcecache.BlobKey{Content: renderKey(&req, root, nil), Render: sourcecache.RenderAccepted}
+		key := sourcecache.BlobKey{Content: renderKey(&req, root, ""), Render: sourcecache.RenderAccepted}
 		reader, _, _, err := cache.owner.Blob(
 			t.Context(),
 			key,

@@ -416,8 +416,14 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 	}
 	set, err := Detect(
 		t.Context(),
-		&store.SourceArtifact{LocalPath: "/before/selected", LocalRoot: "/before", InputAlias: true, FS: before},
-		&store.SourceArtifact{LocalPath: "/after/selected", LocalRoot: "/after", InputAlias: true, FS: after},
+		admitTestSource(
+			t,
+			&store.SourceArtifact{LocalPath: "/before/selected", LocalRoot: "/before", InputAlias: true, FS: before},
+		),
+		admitTestSource(
+			t,
+			&store.SourceArtifact{LocalPath: "/after/selected", LocalRoot: "/after", InputAlias: true, FS: after},
+		),
 		DetectConfig{},
 	)
 	assert.NoError(t, err)

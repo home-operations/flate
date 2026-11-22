@@ -303,6 +303,9 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 	var proxyPassword atomic.Value
 	proxyPassword.Store("first")
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		testFetcherResolveTransportSnapshotRotationCallback(
 			w,
 			r,

@@ -397,7 +397,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 			ctx,
 			manifest.NamedResource{},
 			selection.PrepareRequest{
-				Generation:  []store.Child{{Obj: obj, Origin: policy.Origin}},
+				Generation:  []store.Child{policy.Child(obj)},
 				Reads:       &e.Reads,
 				Preparation: &e.AdmissionPreparation,
 			},

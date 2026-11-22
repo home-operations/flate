@@ -391,7 +391,7 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 		return nil
 	}
 	changes := current.cfg.ExternalChanges
-	if other != nil && (changes != nil || current.cfg.Input != other.cfg.Input) {
+	if current.hasComparison(other, changes) {
 		base, head := current, other
 		if current.cfg.ID.Side == manifest.TreeHead {
 			base, head = other, current
@@ -445,6 +445,10 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 		other.cfg.ExternalChanges = resolved
 	}
 	return nil
+}
+
+func (o *Orchestrator) hasComparison(peer *Orchestrator, changes *change.Set) bool {
+	return peer != nil && (changes != nil || o.cfg.BaseInput != o.cfg.Input && o.cfg.Input != peer.cfg.Input)
 }
 
 func (r *Invocation) prepareSession(ctx context.Context, i int) {

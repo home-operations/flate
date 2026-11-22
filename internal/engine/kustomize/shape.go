@@ -80,13 +80,12 @@ func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shapin
 		}
 	}
 	source := struct {
-		Input       store.ArtifactInput `json:"Input"`
-		ApplyIgnore bool                `json:"ApplyIgnore"`
-		Output      string              `json:"Output"`
-		Strict      bool                `json:"Strict"`
-		Skip        []string            `json:"Skip"`
+		Input  store.ArtifactInput `json:"Input"`
+		Output string              `json:"Output"`
+		Strict bool                `json:"Strict"`
+		Skip   []string            `json:"Skip"`
 	}{
-		request.Source.Input(store.ArtifactContent), request.ApplyIgnore, output,
+		request.Source.Input(store.ArtifactContent), output,
 		request.StrictSubstitutions, request.SkipKinds,
 	}
 	p.content = renderContent{Manifest: ks.Content(source, names, p.active)}

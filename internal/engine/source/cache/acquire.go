@@ -165,7 +165,7 @@ func (c *Cache) Acquire(
 	policy := *policyValue
 
 	switch key.Policy {
-	case "", "source", fixedPolicy, extractPolicy:
+	case "", "source", "bucket", fixedPolicy, extractPolicy:
 	default:
 		return nil, ocispec.Descriptor{}, "", &Error{
 			manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy)),

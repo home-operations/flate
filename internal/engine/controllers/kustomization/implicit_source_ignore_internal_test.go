@@ -38,6 +38,7 @@ func TestReconcile_ImplicitSourceIgnore(t *testing.T) {
 			source := *st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			source.FS, source.Content, source.InputAlias = os.DirFS(root), "snapshot", false
 			st.SetArtifact(manifest.BootstrapSourceID, &source)
+			freezeSourceForTest(t, st)
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 			st.AddObject(owner)
 			c.Tasks.Go(t.Context(), owner.Named().String(), func(ctx context.Context) {
@@ -93,7 +94,6 @@ func testPreviousRenderImplicitSourceIgnore(t *testing.T, replacement string) {
 		fixture, st, root := newControllerWithFixture(t)
 		cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
 		trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
-		t.Cleanup(trees.Close)
 		c := New(st, fixture.Tasks, trees)
 		c.Configure(Options{Cache: cacheOwner}, sourcecache.RetryConfig{})
 		c.StartLifecycle()

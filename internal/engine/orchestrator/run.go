@@ -321,7 +321,6 @@ func (o *Orchestrator) collectCompletedManifests(
 }
 
 func (o *Orchestrator) stop() {
-	o.ksc.Trees.Close()
 	o.inputs.Close()
 	o.tasks.BlockTillDone()
 	o.sweepProbes(true)

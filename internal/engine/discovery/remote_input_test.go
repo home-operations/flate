@@ -84,7 +84,7 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 	inputs := source.NewHTTPInputs(owner, network, tasks)
 	t.Cleanup(inputs.Close)
 	trees := kustomize.NewTreeCache(owner, &inputs, tasks)
-	t.Cleanup(trees.Close)
+
 	const root = "/virtual/remote-generator"
 	input := fstest.MapFS{
 		"kustomization.yaml": {
@@ -144,7 +144,7 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 	inputs := source.NewHTTPInputs(owner, network, tasks)
 	t.Cleanup(inputs.Close)
 	trees := kustomize.NewTreeCache(owner, &inputs, tasks)
-	t.Cleanup(trees.Close)
+
 	trees.SetGitBaseFetcher(
 		func(_ context.Context, request kustomize.GitBaseRequest, _ cache.RetryConfig) (*store.SourceArtifact, error) {
 			acquisitions.Add(1)

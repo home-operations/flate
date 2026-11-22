@@ -129,22 +129,37 @@ func (s *Set) qualifySource(
 	id manifest.NamedResource,
 	work manifest.WorkScope,
 ) (*Set, error) {
-	if delta := s.qualifyDelta(id, evidence); delta != nil {
+	switch delta := s.qualifyDelta(id, evidence); {
+	case delta != nil:
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("context: %w", err)
 		}
 		return delta, nil
-	}
-	if s == nil || id != manifest.BootstrapSourceID || s.sources[id].changes != nil {
+	case s == nil || id != manifest.BootstrapSourceID || s.sources[id].changes != nil:
 		return nil, nil //nolint:nilnil // Existing qualified sources use their admitted comparison.
 	}
-	candidates := make(map[string]bool, len(s.paths))
-	for file := range s.paths {
-		candidates[file] = false
+	inputs := [2]*store.SourceArtifact{
+		inputprojection.Authored(evidence.artifacts[0]), inputprojection.Authored(evidence.artifacts[1]),
 	}
-	digests := completedDigests(evidence.artifacts)
-	scanned, err := scanInputs(ctx, evidence.artifacts,
-		[2]scanEvidence{{digests: digests[0], candidates: candidates}, {digests: digests[1], candidates: candidates}},
+	digests := completedDigests(inputs)
+	beforePolicy := gittree.PolicyKey(inputs[0].FS)
+	afterPolicy := gittree.PolicyKey(inputs[1].FS)
+	unqualified := beforePolicy == "" && afterPolicy == ""
+	// A composed source can replace files outside the checkout diff.
+	compareAll := (beforePolicy == "" || afterPolicy == "") && inputs[0].Content != inputs[1].Content
+	full := beforePolicy != afterPolicy || compareAll
+	var candidates map[string]bool
+	if !compareAll {
+		candidates = make(map[string]bool, len(s.paths))
+		for file := range s.paths {
+			candidates[file] = false
+		}
+	}
+	scanned, err := scanInputs(ctx, inputs,
+		[2]scanEvidence{
+			{digests: digests[0], candidates: candidates, full: full},
+			{digests: digests[1], candidates: candidates, full: full},
+		},
 		[2]*manifest.WorkRecord{
 			work.Source(manifest.BootstrapSourceID).Record(manifest.WorkValidation, evidence.artifacts[0].Key),
 			work.Source(manifest.BootstrapSourceID).Record(manifest.WorkValidation, evidence.artifacts[1].Key),
@@ -152,14 +167,19 @@ func (s *Set) qualifySource(
 	if err != nil {
 		return nil, err
 	}
-	comparison := compareScannedFiles(
-		&scanned,
-		comparisonEvidence{digests: digests, candidates: candidates, contentEqual: true},
-	)
-	for file := range s.paths {
-		comparison.paths[file] = [2]filePresence{}
+	paths, err := compareScannedFiles(ctx, inputs, &scanned,
+		comparisonEvidence{digests: digests, candidates: candidates, contentEqual: !compareAll})
+	if err != nil {
+		return nil, err
 	}
-	delta := &Set{paths: comparison.paths, origins: evidence.artifacts}
+	for file, presence := range s.paths {
+		_, before := scanned.before.entries[file]
+		_, after := scanned.after.entries[file]
+		if before || after || unqualified || presence == ([2]filePresence{}) {
+			paths[file] = [2]filePresence{}
+		}
+	}
+	delta := &Set{paths: paths, origins: evidence.artifacts}
 	delta.recordPresence(&scanned)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
@@ -202,7 +222,16 @@ func (s *Set) qualifyDelta(id manifest.NamedResource, evidence *sourceDelta) *Se
 		previous.declarations == evidence.declarations {
 		return previous.changes
 	}
-	if id == manifest.BootstrapSourceID && s != nil && previous.changes == nil && s.origins == evidence.artifacts {
+	reuseBootstrap := id == manifest.BootstrapSourceID && s != nil && previous.changes == nil
+	if reuseBootstrap &&
+		gittree.PreservesFiles(
+			inputprojection.Authored(s.origins[0]),
+			inputprojection.Authored(evidence.artifacts[0]),
+		) &&
+		gittree.PreservesFiles(
+			inputprojection.Authored(s.origins[1]),
+			inputprojection.Authored(evidence.artifacts[1]),
+		) {
 		return s
 	}
 	return nil
@@ -363,7 +392,7 @@ type DetectConfig struct {
 	Candidates map[string]bool
 }
 
-// Detect compares admitted filesystems under each side's Flux ignore policy.
+// Detect compares the contents exposed by each input filesystem.
 func Detect(ctx context.Context, before, after *store.SourceArtifact, config DetectConfig) (*Set, error) {
 	return detect(ctx, [2]*store.SourceArtifact{before, after}, config, false)
 }
@@ -374,17 +403,20 @@ func detect(
 	config DetectConfig,
 	contentEqual bool,
 ) (*Set, error) {
-	before, after := inputs[0], inputs[1]
+	origins := inputs
+	before, after := inputprojection.Authored(inputs[0]), inputprojection.Authored(inputs[1])
 	if before == nil || after == nil || before.FS == nil || after.FS == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 	}
+	inputs = [2]*store.SourceArtifact{before, after}
 	digests := completedDigests(inputs)
+	full := gittree.PolicyKey(before.FS) != gittree.PolicyKey(after.FS)
 	scanned, err := scanInputs(
 		ctx,
 		inputs,
 		[2]scanEvidence{
-			{digests: digests[0], candidates: config.Candidates},
-			{digests: digests[1], candidates: config.Candidates},
+			{digests: digests[0], candidates: config.Candidates, full: full},
+			{digests: digests[1], candidates: config.Candidates, full: full},
 		},
 		[2]*manifest.WorkRecord{
 			config.Work.Record(manifest.WorkPreparation, before.Key),
@@ -394,19 +426,12 @@ func detect(
 	if err != nil {
 		return nil, err
 	}
-	comparison := compareScannedFiles(
-		&scanned,
-		comparisonEvidence{digests: digests, candidates: config.Candidates, contentEqual: contentEqual},
-	)
-	if err := hashJobs(ctx, inputs, comparison.jobs); err != nil {
+	paths, err := compareScannedFiles(ctx, inputs, &scanned,
+		comparisonEvidence{digests: digests, candidates: config.Candidates, contentEqual: contentEqual})
+	if err != nil {
 		return nil, err
 	}
-	for _, job := range comparison.jobs {
-		if job.changed {
-			comparison.paths[job.name] = [2]filePresence{}
-		}
-	}
-	out := &Set{paths: comparison.paths, origins: inputs}
+	out := &Set{paths: paths, origins: origins}
 	out.recordPresence(&scanned)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
@@ -589,15 +614,18 @@ type comparisonEvidence struct {
 	contentEqual bool
 }
 
-func compareScannedFiles(scanned *scannedInputs, evidence comparisonEvidence) fileComparison {
+func compareScannedFiles(
+	ctx context.Context,
+	inputs [2]*store.SourceArtifact,
+	scanned *scannedInputs,
+	evidence comparisonEvidence,
+) (map[string][2]filePresence, error) {
 	before, after := scanned.before.entries, scanned.after.entries
 	out := fileComparison{paths: make(map[string][2]filePresence, len(after)/changeCapacityDivisor)}
 	for name, right := range after {
 		left, present := before[name]
 		if !present {
-			if scanned.includesOneSided(name, evidence.candidates) {
-				out.addOneSided(name, [2]bool{false, true}, evidence)
-			}
+			out.addOneSided(name, [2]bool{false, true}, evidence)
 			continue
 		}
 		uncertain, candidate := evidence.candidates[name]
@@ -621,19 +649,20 @@ func compareScannedFiles(scanned *scannedInputs, evidence comparisonEvidence) fi
 		if _, present := after[name]; present {
 			continue
 		}
-		if scanned.includesOneSided(name, evidence.candidates) {
-			out.addOneSided(name, [2]bool{true, false}, evidence)
+		out.addOneSided(name, [2]bool{true, false}, evidence)
+	}
+	if len(out.jobs) == 0 {
+		return out.paths, nil
+	}
+	if err := hashJobs(ctx, inputs, out.jobs); err != nil {
+		return nil, err
+	}
+	for _, job := range out.jobs {
+		if job.changed {
+			out.paths[job.name] = [2]filePresence{}
 		}
 	}
-	return out
-}
-
-func (s *scannedInputs) includesOneSided(name string, candidates map[string]bool) bool {
-	_, candidate := candidates[name]
-	if candidates == nil || candidate {
-		return true
-	}
-	return s.before.policy.Match(name, false) != s.after.policy.Match(name, false)
+	return out.paths, nil
 }
 
 func (c *fileComparison) addOneSided(name string, present [2]bool, evidence comparisonEvidence) {

@@ -216,8 +216,6 @@ spec:
 			cacheDir := t.TempDir()
 			cacheOwner := cachetest.New(t, cacheDir, cache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
-			closeCache := trees.Close
-			t.Cleanup(closeCache)
 			source := &store.SourceArtifact{
 				Kind:      manifest.KindGitRepository,
 				LocalPath: root,
@@ -285,10 +283,9 @@ spec:
 				"%v",
 				"failed package published a partial batch",
 			)
-			closeCache()
 			assert.NoError(t, cacheOwner.Close())
 			testReceiptTreesResult3 := testReceiptTrees(t, cacheDir, persistent)
-			cacheOwner, trees, closeCache = testReceiptTreesResult3.owner, testReceiptTreesResult3.trees, testReceiptTreesResult3.close
+			cacheOwner, trees, closeCache := testReceiptTreesResult3.owner, testReceiptTreesResult3.trees, testReceiptTreesResult3.close
 			req := preparedRequest(t, &d.cfg, owner, source)
 			assert.FatalIf(
 				t,

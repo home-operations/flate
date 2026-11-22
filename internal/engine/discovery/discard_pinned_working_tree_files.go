@@ -172,6 +172,7 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	complete := false
 	defer func() {
 		if !complete {
+			d.loader.BindProvisionalInput(nil)
 			d.Close()
 		}
 	}()
@@ -180,15 +181,20 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, err
 	}
 	d.admission().input = bootstrap
+	group, err := d.bootstrapDeclaration(ctx, bootstrap)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := d.resolveEntrySource(
 		ctx,
 		d.admission(),
 		manifest.BootstrapSourceID,
-		&entrySourceGroup{required: true},
+		group,
 	); err != nil &&
 		!errors.Is(err, errPendingSources) {
 		return nil, err
 	}
+	d.loader.BindProvisionalInput(d.admission().bootstrapArtifact())
 
 	complete = true
 	return d, nil
@@ -223,7 +229,7 @@ func (d *Session) load(ctx context.Context) error {
 	}
 	admission := d.admission()
 	if d.cfg.Selection.Changed && d.cfg.Trees != nil && !d.hasEntryBuilder() {
-		d.entryReceipt(ctx, admission, admission.input)
+		d.entryReceipt(ctx, admission, admission.bootstrapArtifact())
 	}
 	return nil
 }

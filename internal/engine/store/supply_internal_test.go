@@ -45,8 +45,8 @@ func TestDeclaration_Authority(t *testing.T) {
 			repository := object(map[string]any{"value": "repository"})
 			s.AddObject(repository)
 			assert.Equal(t, reads.Valid(), false)
-			assert.Equal(t, reads.Policy(id).Origin, manifest.SuppliedDeclaration)
-			assert.Equal(t, s.Policy(id).Origin, manifest.RepositoryDeclaration)
+			assert.Equal(t, reads.Policy(id).Supplied(), true)
+			assert.Equal(t, s.Policy(id).Root, true)
 			assert.Equal(t, s.GetObject(id), repository)
 			assert.Equal(t, s.ReportHidden(id), false)
 			before := &ReadSet{}
@@ -115,11 +115,14 @@ func TestDeclaration_ContentReplacement(t *testing.T) {
 func TestDeclaration_SourceWithdrawal(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name     string
-		ancestor bool
+		name         string
+		ancestor     bool
+		construction bool
 	}{
-		{"direct", false},
-		{"ancestor", true},
+		{name: "direct"},
+		{name: "ancestor", ancestor: true},
+		{name: "direct/construction", construction: true},
+		{name: "ancestor/construction", ancestor: true, construction: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -136,13 +139,12 @@ func TestDeclaration_SourceWithdrawal(t *testing.T) {
 				Namespace: "apps",
 				URL:       "https://fixture.invalid/repository",
 			}
-			s.AddDeclaration(
-				Declaration{
-					Obj:    reference,
-					Doc:    testutil.ObjectDocument(reference),
-					Origin: manifest.SuppliedDeclaration,
-				},
-			)
+			document := testutil.ObjectDocument(reference)
+			if tc.construction {
+				s.AddConstructionDeclaration(reference, document)
+			} else {
+				s.AddDeclaration(Declaration{Obj: reference, Doc: document, Origin: manifest.SuppliedDeclaration})
+			}
 			producer := parent
 			if tc.ancestor {
 				producer = &manifest.Kustomization{Name: "producer", Namespace: "apps"}

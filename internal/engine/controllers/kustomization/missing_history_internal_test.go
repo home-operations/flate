@@ -77,7 +77,6 @@ func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 			promotion := &historyInputPromotion{store: st, input: input}
 			cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
-			t.Cleanup(trees.Close)
 			c := New(st, fixture.Tasks, trees)
 			c.Configure(
 				Options{Cache: cacheOwner, Existence: promotion, Missing: depwait.NewMissingPolicy(tc.allowed)},
@@ -256,7 +255,6 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			fixture, st, root := newControllerWithFixture(t)
 			cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
 			trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
-			t.Cleanup(trees.Close)
 			c := New(st, fixture.Tasks, trees)
 			c.Configure(
 				Options{Cache: cacheOwner, Missing: depwait.NewMissingPolicy(tc.allowed)},
@@ -466,7 +464,6 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	fixture, st, root := newControllerWithFixture(t)
 	cacheOwner := cachetest.New(t, t.TempDir(), sourcecache.New)
 	trees := kustomize.NewTreeCache(cacheOwner, nil, fixture.Tasks)
-	t.Cleanup(trees.Close)
 	c := New(st, fixture.Tasks, trees)
 	c.Configure(Options{Cache: cacheOwner}, sourcecache.RetryConfig{})
 	c.StartLifecycle()

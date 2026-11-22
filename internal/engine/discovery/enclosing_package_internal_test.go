@@ -155,7 +155,7 @@ spec:
 	}
 	cacheOwner := cachetest.New(t, "", cache.New)
 	trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
-	t.Cleanup(trees.Close)
+
 	input := &store.SourceArtifact{LocalPath: root, FS: files}
 	var recorder manifest.WorkRecorder
 	cfg := Config{

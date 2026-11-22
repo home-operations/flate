@@ -13,7 +13,6 @@ import (
 
 func closeTestTreeCache(t *testing.T, c *TreeCache) {
 	t.Helper()
-	c.Close()
 	c.remoteInputs.Close()
 	{
 		err := c.owner.Close()

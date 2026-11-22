@@ -218,7 +218,13 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 							&policy,
 						)
 					},
-					[]string{".sourceignore", "apps/drop.tmp", "apps/keep.yaml", "other/keep.yaml"},
+					[]string{
+						".hidden/secret.yaml",
+						".sourceignore",
+						"apps/drop.tmp",
+						"apps/keep.yaml",
+						"other/keep.yaml",
+					},
 				)
 			})
 		})

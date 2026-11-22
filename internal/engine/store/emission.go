@@ -26,7 +26,7 @@ type Child struct {
 	Generated         bool
 	VisibleGeneration bool
 	Origin            manifest.DeclarationOrigin
-	policy            manifest.DeclarationPolicy
+	policy            DeclarationPolicy
 	Productions       []manifest.Production
 	Warnings          []manifest.Warning `json:"-"`
 	payload           *SourceArtifact

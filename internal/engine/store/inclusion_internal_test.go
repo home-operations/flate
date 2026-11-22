@@ -25,7 +25,7 @@ func TestStore_InclusionCellSize(t *testing.T) {
 	t.Parallel()
 	type originalCell struct {
 		Reference                                      *Child
-		Policy                                         manifest.DeclarationPolicy
+		Policy                                         DeclarationPolicy
 		Static                                         manifest.BaseManifest
 		Document                                       map[string]any
 		Warnings                                       []manifest.Warning

@@ -42,8 +42,6 @@ func TestRender_CacheAcquisitionOverlap(t *testing.T) {
 				nil,
 				task.NewBounded(2),
 			)
-			defer firstCache.Close()
-			defer secondCache.Close()
 			var builds atomic.Int64
 			synctest.Test(t, func(t *testing.T) {
 				first := &pausedRenderFS{

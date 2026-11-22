@@ -177,7 +177,7 @@ func TestReadSet_AdmissionStableHiddenDeclaration(t *testing.T) {
 				retry.Close()
 				assert.Equal(t, reads.Valid(), true)
 				assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(supplied))
-				assert.Equal(t, s.Policy(id).Origin, manifest.SuppliedDeclaration)
+				assert.Equal(t, s.Policy(id).Supplied(), true)
 			}
 			next := *repository
 			if replacement == "declaration" {

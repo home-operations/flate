@@ -114,7 +114,7 @@ func assertRemoteIsolationResults(t *testing.T, c *TreeCache, results <-chan rem
 			got.err,
 		)
 		snap := got.snap
-		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(&got.request, got.request.Label, nil)); hit {
+		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(&got.request, got.request.Label, "")); hit {
 			snap = persisted
 		}
 		assert.FatalIf(

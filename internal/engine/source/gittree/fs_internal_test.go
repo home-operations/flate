@@ -545,7 +545,7 @@ func testNewEntryPolicyLocalOperationObservations(t *testing.T) {
 		_, statErr3 := fs.Stat(hidden, "hidden/empty")
 		assert.FatalIf(
 			t,
-			!errors.Is(statErr3, fs.ErrNotExist),
+			statErr3 != nil,
 			"re-included empty directory below hidden ancestor = %v",
 			statErr3,
 		)

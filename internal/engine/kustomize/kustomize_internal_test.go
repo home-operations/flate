@@ -32,9 +32,9 @@ func TestRender_RespectsCanceledContext(t *testing.T) {
 			ctx,
 			cache,
 			RenderRequest{
-				Source:      localSource(t, t.TempDir()),
-				ApplyIgnore: false,
-				SubPath:     ".",
+				Source: localSource(t, t.TempDir()),
+
+				SubPath: ".",
 				Spec: parsedKS(t, map[string]any{
 					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 					"kind":       "Kustomization",

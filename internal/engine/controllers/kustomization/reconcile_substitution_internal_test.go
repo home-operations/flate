@@ -320,7 +320,6 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 		controller.Configure(Options{Cache: owner}, sourcecache.RetryConfig{})
 		controller.StartLifecycle()
 		closeResources := sync.OnceFunc(func() {
-			trees.Close()
 			inputs.Close()
 			network.Close()
 			assert.NoError(t, owner.Close())

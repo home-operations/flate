@@ -94,7 +94,7 @@ type objectCell struct {
 	authority
 
 	reference            *Declaration
-	policy               manifest.DeclarationPolicy
+	policy               DeclarationPolicy
 	classified, ordinary bool
 	composed, operand    bool
 	static               manifest.BaseManifest
@@ -286,7 +286,7 @@ type objectUpdate struct {
 	operand                     bool
 	target, collection          *registration
 	obj                         manifest.BaseManifest
-	policy                      manifest.DeclarationPolicy
+	policy                      DeclarationPolicy
 	document                    map[string]any
 	warnings                    []manifest.Warning
 	composed                    bool
@@ -340,7 +340,7 @@ func (u *objectUpdate) unchanged() bool {
 
 func (u *objectUpdate) compare() {
 	equal := manifest.Equal(u.cell.static, u.obj) && warningsEqual(u.cell.warnings, u.warnings)
-	u.policy = manifest.DeclarationPolicy{Root: true, Reconcile: u.cell.reconcile, Report: u.cell.report}
+	u.policy = DeclarationPolicy{Root: true, Reconcile: u.cell.reconcile, Report: u.cell.report}
 	if u.cell.static == nil || u.cell.reconcile != manifest.KindOf(u.obj).Runnable {
 		u.policy = (Child{Obj: u.obj}).Policy(u.obj.Named())
 	}
@@ -436,7 +436,7 @@ func (s *Store) addObject(update *objectUpdate) {
 		cell := sh.cells[id]
 		generated := sh.generatedDeclarations[id]
 		supplied := binding != nil && cell.reference != nil && cell.reference.Obj == obj &&
-			cell.reference.Origin == manifest.SuppliedDeclaration
+			cell.reference.policy.Supplied()
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
 		sameObject := update.repeatsDeclaration(&cell, generated)
 		sameAuthority := cell.binding == binding && cell.support == support && cell.operand == update.operand

@@ -423,46 +423,68 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 	}
 }
 
-// TestFetcher_AppliesSpecIgnore exercises the spec.ignore wiring: a
-// staged tree containing a tracked file matching the user-supplied
-// gitignore pattern must have that file deleted post-checkout.
 func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
+		".sourceignore":        "/parent/\n",
 		"apps/deployment.yaml": "kind: Deployment",
 		"apps/scratch.tmp":     "noise",
 		"docs/notes.md":        "drop-me",
+		"parent/.sourceignore": "!keep.yaml\n!override.yaml\n",
+		"parent/keep.yaml":     "restored",
+		"parent/override.yaml": "overridden",
+		"parent/sibling.yaml":  "excluded",
 	})
 
-	patterns := "*.tmp\ndocs/\n"
-	cache := cachetest.New(t, t.TempDir(), sourcecache.New)
+	patterns := "*.tmp\ndocs/\nparent/override.yaml\n"
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:    "file://" + src,
 		Ignore: &patterns,
 	}
-	f := &Fetcher{Network: networktest.New(t), Cache: cache}
-	art, err := fetchtest.Fetch(
-		context.Background(),
-		f.Fetch,
-		repo,
-		(testInputs{}).readSet(repo),
-		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
-		nil,
-	)
-	assert.FatalIf(t, err != nil, "Fetch: %v", err)
-	{
-		_, err := fs.Stat(art.FS, path.Join("apps", "scratch.tmp"))
-		assert.ErrorIf(t, !os.IsNotExist(err), "expected *.tmp to be removed by spec.ignore; stat err = %v", err)
-	}
-	{
-		_, err := fs.Stat(art.FS, path.Join("docs"))
-		assert.ErrorIf(t, !os.IsNotExist(err), "expected docs/ to be removed by spec.ignore; stat err = %v", err)
-	}
-	{
-		_, err := fs.Stat(art.FS, path.Join("apps", "deployment.yaml"))
-		assert.ErrorIf(t, err != nil, "non-ignored file should remain: %v", err)
+	var identity string
+	for round := range 2 {
+		f := Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+		art, err := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			repo,
+			(testInputs{}).readSet(repo),
+			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
+		)
+		assert.FatalIf(t, err != nil || art == nil, "Fetch: %v", err)
+		var names []string
+		err = fs.WalkDir(art.FS, ".", func(name string, _ fs.DirEntry, err error) error {
+			if err == nil {
+				names = append(names, name)
+			}
+			return err
+		})
+		assert.NoError(t, err)
+		assert.Diff(
+			t,
+			names,
+			[]string{".", ".sourceignore", "apps", "apps/deployment.yaml", "parent", "parent/keep.yaml"},
+		)
+		for name, expected := range map[string]string{
+			"apps/deployment.yaml": "kind: Deployment",
+			"parent/keep.yaml":     "restored",
+		} {
+			data, readErr := fs.ReadFile(art.FS, name)
+			assert.NoError(t, readErr)
+			assert.Equal(t, string(data), expected)
+		}
+		for _, name := range []string{"apps/scratch.tmp", "docs", "parent/override.yaml", "parent/sibling.yaml"} {
+			_, statErr := fs.Stat(art.FS, name)
+			assert.ErrorIf(t, !errors.Is(statErr, fs.ErrNotExist), "%s: %v", name, statErr)
+		}
+		assert.FatalIf(t, art.Content == "", "missing Git artifact identity")
+		if round == 0 {
+			identity = art.Content
+		}
+		assert.Equal(t, art.Content, identity)
 	}
 }
 

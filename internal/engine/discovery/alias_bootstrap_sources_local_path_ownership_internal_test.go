@@ -13,6 +13,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/home-operations/flate/internal/engine/baseline"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v6"
@@ -292,6 +294,9 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 				ref,
 			),
 		)
+		latest, _, err := baseline.AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
+		assert.NoError(t, err)
+		st.SetArtifact(manifest.BootstrapSourceID, latest)
 		l := loader.New(st)
 		l.SourceRoot, l.PreferExisting = root, true
 

@@ -40,7 +40,10 @@ func TestFetcher_AnonymousPreparation(t *testing.T) {
 	t.Cleanup(metadata.Close)
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		requests.Add(1)
 		_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
 	}))
@@ -89,6 +92,9 @@ func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 	t.Cleanup(metadata.Close)
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
 	bucket := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if r.Header.Get("Authorization") != "" {
 			t.Error("anonymous Bucket sent credentials")
 		}
@@ -173,6 +179,9 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	}()
 	for i := range 2 {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if missingBucketPolicy(w, r) {
+				return
+			}
 			if r.URL.Host != "bucket.invalid" {
 				leaked.Add(1)
 				_, _ = io.WriteString(
@@ -253,6 +262,9 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 		)
 	})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if r.Method == http.MethodConnect || r.URL.Host != "bucket.invalid" ||
 			strings.Contains(fmt.Sprint(r.URL, r.Header), "identity-token-canary") {
 			leaked.Add(1)
@@ -300,6 +312,9 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 	entered, release, stopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	releaseProbe := sync.OnceFunc(func() { close(release) })
 	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		if probes.Add(1) == 1 {
 			close(entered)
 		}
@@ -318,6 +333,9 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 	t.Cleanup(releaseProbe)
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucketPolicy(w, r) {
+			return
+		}
 		acquisitions.Add(1)
 		if !strings.Contains(r.Header.Get("Authorization"), "Credential=iam-canary/") {
 			t.Error("live Bucket lost the shared IAM credential")

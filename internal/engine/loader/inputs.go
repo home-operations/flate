@@ -2,6 +2,7 @@ package loader
 
 import (
 	"cmp"
+	"io/fs"
 	"iter"
 	"path/filepath"
 	"slices"
@@ -194,6 +195,61 @@ func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
 	source, ok := p.sources[input.LocalPath]
 	return ok && source.input == parsedInputIdentity(input) &&
 		(!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
+}
+
+// StageProvisionalInput sets the physical reader before source policy is known.
+func (l *Loader) StageProvisionalInput(input *store.SourceArtifact) {
+	l.provisionalInput = input
+}
+
+// ProvisionalFS lends observed metadata only for the current construction input.
+func (l *Loader) ProvisionalFS(input *store.SourceArtifact) (fs.FS, bool) {
+	if l != nil && l.provisionalInput == input {
+		return l.documents.views[input.LocalPath], true
+	}
+	return input.FS, false
+}
+
+// BindProvisionalInput retains the first load only when admission kept its files.
+func (l *Loader) BindProvisionalInput(after *store.SourceArtifact) {
+	before, warnings := l.provisionalInput, l.provisionalWarnings
+	l.provisionalInput, l.provisionalWarnings = nil, nil
+	if before == nil {
+		return
+	}
+	root := before.LocalPath
+	if !gittree.PreservesFiles(before, after) {
+		l.entry, l.entryPath, l.nativeEntry = entryUnset, "", nil
+		for id, record := range l.Index.Records { //nolint:gocritic // Delete the iterated record without consulting the live store.
+			if record.Path != "" {
+				delete(l.Index.Records, id)
+				delete(l.locations, id)
+				delete(l.candidates, id)
+			}
+		}
+		return
+	}
+	l.documents.artifacts[root], l.documents.views[root] = after, after.FS
+	l.documents.changed = slices.DeleteFunc(l.documents.changed, func(changed string) bool { return changed == root })
+	if l.facts != nil {
+		if source, present := l.facts.sources[root]; present {
+			source.input = parsedInputIdentity(after)
+			source.binding = new(after.Input(store.ArtifactContent | store.ArtifactRevision))
+			l.facts.sources[root] = source
+		}
+	}
+	for _, warning := range warnings { //nolint:gocritic // Publish only warnings from retained source files.
+		l.Store.AddWarning(warning)
+	}
+}
+
+//nolint:gocritic // Store warnings are transferred as value snapshots.
+func (l *Loader) inputWarning(warning manifest.Warning) {
+	if l.provisionalInput == nil {
+		l.Store.AddWarning(warning)
+		return
+	}
+	l.provisionalWarnings = append(l.provisionalWarnings, warning)
 }
 
 func parsedInputIdentity(input *store.SourceArtifact) any {

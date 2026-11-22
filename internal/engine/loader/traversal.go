@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
-	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -115,7 +114,7 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 			*w.files = append(*w.files, fileAdmission{file: file, kind: admissionData})
 		}
 		if err := w.loader.recordDataFile(ctx, file, &w.documents); err != nil {
-			w.loader.Store.AddWarning(manifest.Warning{
+			w.loader.inputWarning(manifest.Warning{
 				Category: manifest.WarnInputParseFailed,
 				Message:  "component data file failed to parse",
 				Detail:   []string{file, err.Error()},
@@ -390,7 +389,7 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
 		}
-		w.loader.Store.AddWarning(warning)
+		w.loader.inputWarning(warning)
 		return 0
 	}
 	count := 0
@@ -399,7 +398,7 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 		if !w.proceed(ctx) {
 			return count
 		}
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() {
 			continue
 		}
 		abs := filepath.Join(dir, e.Name())
@@ -452,7 +451,7 @@ func (w *traversal) scanBootstrapFile(ctx context.Context, abs string, reader *d
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
 		}
-		w.loader.Store.AddWarning(warning)
+		w.loader.inputWarning(warning)
 		return 0
 	}
 	{
@@ -493,10 +492,7 @@ func (w *traversal) scanBootstrapFile(ctx context.Context, abs string, reader *d
 }
 
 // Explicit resources bypass scan pruning; negated descendants MUST remain reachable.
-func (w *traversal) shouldSkipDir(root, name, full string) bool {
-	if sourceignore.PruneDir(name, true) {
-		return true
-	}
+func (w *traversal) shouldSkipDir(root, full string) bool {
 	if w.ignore != nil && w.ignore.hasNegation {
 		return false
 	}

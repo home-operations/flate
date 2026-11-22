@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
+	chartloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/internal/core/kustpath"
@@ -129,7 +131,7 @@ func (w *traversal) admitDocument(ctx context.Context, visit *graphVisit, cached
 		n, err := w.loader.loadFile(ctx, input.file, &w.documents)
 		w.count += n
 		if err != nil {
-			w.loader.Store.AddWarning(manifest.Warning{
+			w.loader.inputWarning(manifest.Warning{
 				Category: manifest.WarnInputParseFailed,
 				Message:  "kustomization file failed to parse",
 				Detail:   []string{input.file, err.Error()},
@@ -161,7 +163,7 @@ func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graph
 		}
 	case traversalAdmission:
 		if visit.deferMaterialization {
-			if w.shouldSkipDir(visit.root, filepath.Base(abs), abs) {
+			if w.shouldSkipDir(visit.root, abs) {
 				return traversalDecision{done: true, more: true}
 			}
 			cached := w.documents.cache[abs]
@@ -223,12 +225,15 @@ func (w *traversal) walkDirectory(
 		w.err = err
 		return false
 	}
+	chart := w.policy == traversalAdmission && hasChartMetadata(inputFile.fs, inputFile.name, entries)
 	for _, entry := range entries {
 		w.work.Add(&manifest.WorkCounts{FileEntries: 1})
 		if !w.proceed(ctx) {
 			return false
 		}
-		if visit.entryResources && entry.IsDir() || !entry.IsDir() && !isManifestFile(entry.Name()) {
+		isDir, name := entry.IsDir(), entry.Name()
+		skipDir := isDir && (visit.entryResources || chartScanSkips(chart, name))
+		if skipDir || !isDir && !isManifestFile(name) {
 			continue
 		}
 		if !w.walkEntry(ctx, visit, directoryEntry{abs: abs, entry: entry}, yield) {
@@ -236,6 +241,27 @@ func (w *traversal) walkDirectory(
 		}
 	}
 	return true
+}
+
+func hasChartMetadata(input fs.FS, dir string, entries []fs.DirEntry) bool {
+	const name = "Chart.yaml"
+	found := slices.ContainsFunc(entries, func(entry fs.DirEntry) bool {
+		return entry.Name() == name && entry.Type().IsRegular()
+	})
+	if !found {
+		return false
+	}
+	body, err := fs.ReadFile(input, path.Join(dir, name))
+	if err != nil {
+		return false
+	}
+	_, err = chartloader.LoadFiles([]*archive.BufferedFile{{Name: name, Data: body}})
+	return err == nil
+}
+
+// Helm owns chart templates and CRDs, so the Flux manifest scan leaves them to chart rendering.
+func chartScanSkips(chart bool, name string) bool {
+	return chart && (name == "templates" || name == "crds")
 }
 
 func (w *traversal) walkEntry(
@@ -340,7 +366,7 @@ func (w *traversal) publishScope(
 
 func (w *traversal) prepareDirectory(visit *graphVisit, cached *document, abs string) bool {
 	if w.policy == traversalAdmission {
-		if w.shouldSkipDir(visit.root, filepath.Base(abs), abs) {
+		if w.shouldSkipDir(visit.root, abs) {
 			return true
 		}
 		cached.adHoc = true

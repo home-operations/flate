@@ -26,7 +26,7 @@ type bucketWorkload struct {
 
 func benchmarkBucket(tb testing.TB, s bucketWorkload) *minio.Client {
 	tb.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(bucketWithoutPolicy(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 			for i := range s.n {

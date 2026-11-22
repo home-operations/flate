@@ -273,27 +273,52 @@ resources:
 	)
 }
 
-func TestLoader_SkipsTemplatesDir(t *testing.T) {
+func TestLoader_SkipsChartTemplates(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	{
-		err := os.MkdirAll(filepath.Join(dir, "chart", "templates"), 0o750)
-		assert.NoError(t, err)
-	}
-	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `{{ if .Values.x }}foo: bar{{ end }}`)
-	testutil.WriteFile(t, dir, "cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: a, namespace: ns}
-`)
-	l := New(store.New())
-	n, err := loadForTest(t.Context(), t, l, dir)
-	assert.FatalIf(t, err != nil, "Load: %v", err)
-	if n != 0 || len(l.Index.Records) != 1 || len(retainedErrorsForTest(l)) != 0 {
-		t.Errorf("templates scan: admitted=%d records=%v errors=%v", n, l.Index.Records, retainedErrorsForTest(l))
+	for _, tc := range []struct {
+		name, marker string
+		chart        bool
+	}{
+		{name: "chart", marker: "apiVersion: v2\nname: chart\nversion: 1.0.0\n", chart: true},
+		{name: "no marker"},
+		{name: "manifest marker", marker: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker, namespace: ns}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tc.marker != "" {
+				testutil.WriteFile(t, dir, "app/Chart.yaml", tc.marker)
+			}
+			for _, name := range []string{"templates", "crds"} {
+				testutil.WriteFile(t, dir, filepath.Join("app", name, "dependency.yaml"), testutil.KustomizationYAML(
+					name, "ns", "  {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+				))
+			}
+			if tc.chart {
+				testutil.WriteFile(t, dir, "app/templates/cm.yaml", `{{ if .Values.x }}foo: bar{{ end }}`)
+			}
+			testutil.WriteFile(
+				t,
+				dir,
+				"cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: a, namespace: ns}\n",
+			)
+			l := New(store.New())
+			t.Cleanup(l.Close)
+			n, err := loadForTest(t.Context(), t, l, dir)
+			assert.NoError(t, err)
+			assert.Equal(t, l.IsFileIndexed(testutil.KustomizationID("ns", "templates")), !tc.chart)
+			assert.Equal(t, l.IsFileIndexed(testutil.KustomizationID("ns", "crds")), !tc.chart)
+			assert.Equal(t, len(retainedErrorsForTest(l)), 0)
+			if tc.chart {
+				assert.Equal(t, n, 0)
+				assert.Equal(t, len(l.Index.Records), 1)
+			}
+		})
 	}
 }
 
-func TestLoader_SkipsDotDirs(t *testing.T) {
+func TestLoader_AdmitsDotDirs(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{".git", ".cache", ".hidden"} {
 		t.Run(name, func(t *testing.T) {
@@ -327,9 +352,8 @@ func TestLoader_SkipsDotDirs(t *testing.T) {
 			}
 			assert.ErrorIf(
 				t,
-				s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil,
-				"%s",
-				"dot-directory manifest was loaded",
+				(s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil) != (name != ".git"),
+				"unexpected admission for %s/hidden.yaml", name,
 			)
 			assert.ErrorIf(
 				t,

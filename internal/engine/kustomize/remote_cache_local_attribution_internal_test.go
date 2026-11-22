@@ -180,7 +180,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 
 	assert.FatalIf(t, err != nil, "first render: %s, %v", out, err)
 	renderRequestSnapshot := request()
-	key := renderKey(&renderRequestSnapshot, root, nil)
+	key := renderKey(&renderRequestSnapshot, root, "")
 	if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 		publishTestFrame(
 			t,

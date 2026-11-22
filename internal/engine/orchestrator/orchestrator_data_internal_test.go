@@ -86,18 +86,30 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestOrchestrator_ParentOfAllocations(t *testing.T) {
-	o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+func TestOrchestrator_ParentOfEmittedChild(t *testing.T) {
+	t.Parallel()
 	owner := testutil.KustomizationID("apps", "parent")
-	child := testutil.HelmReleaseID("apps", "child")
-	publishFixture(t, o.store, owner, []manifest.NamedResource{child})
-	var parent manifest.NamedResource
-	var ok bool
-	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.store.Parent(child, o.index) })
+	o, child := parentOfEmittedChildFixture(t, owner)
+	parent, ok := o.store.Parent(child, o.index)
+	assert.FatalIf(t, !ok || parent != owner, "parent=%v/%t want=%v", parent, ok, owner)
+}
 
-	assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
+func BenchmarkOrchestrator_ParentOfEmittedChild(b *testing.B) {
+	o, child := parentOfEmittedChildFixture(b, testutil.KustomizationID("apps", "parent"))
+	work := func() { _, _ = o.store.Parent(child, o.index) }
+	assert.Equal(b, testing.AllocsPerRun(10, work), float64(0))
+	b.ReportAllocs()
+	for b.Loop() {
+		work()
+	}
+}
+
+func parentOfEmittedChildFixture(tb testing.TB, owner manifest.NamedResource) (*Orchestrator, manifest.NamedResource) {
+	tb.Helper()
+	o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+	child := testutil.HelmReleaseID("apps", "child")
+	publishFixture(tb, o.store, owner, []manifest.NamedResource{child})
+	return o, child
 }
 
 func acceptInputsForTest(t *testing.T, st *store.Store, id manifest.NamedResource, required []manifest.NamedResource) {

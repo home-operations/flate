@@ -2,11 +2,14 @@ package orchestrator
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -149,5 +152,51 @@ func BenchmarkDependencyGraph_RegisterWhileCycleFailed(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkSameKindDepTargets_CallerBuffer(b *testing.B) {
+	for _, count := range []int{1, 8} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			ks, _ := dependencyTargetFixture(count)
+			var buf [8]manifest.NamedResource
+			work := func() { _ = sameKindDepTargets(ks, buf[:0]) }
+			assert.Equal(b, testing.AllocsPerRun(100, work), float64(0))
+			b.ReportAllocs()
+			for b.Loop() {
+				work()
+			}
+		})
+	}
+}
+
+func BenchmarkOrchestrator_LogSummaryDisabled(b *testing.B) {
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.DiscardHandler))
+	defer slog.SetDefault(previous)
+	o := &Orchestrator{work: manifest.WorkSummary{{Counts: manifest.WorkCounts{Attempts: 1}}}}
+	work := func() { o.logSummary(nil, 1, 0) }
+	assert.Equal(b, testing.AllocsPerRun(10, work), float64(0))
+	b.ReportAllocs()
+	for b.Loop() {
+		work()
+	}
+}
+
+func BenchmarkDependencyCycles_WarningsDeduplicate(b *testing.B) {
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
+	for i := range dependencyCycleMembers {
+		from := testutil.KustomizationID("ns", fmt.Sprintf("ks-%02d", i))
+		to := testutil.KustomizationID("ns", fmt.Sprintf("ks-%02d", (i+1)%dependencyCycleMembers))
+		o.depGraph.ReplaceEdges(from, []manifest.NamedResource{to})
+	}
+	ctx := b.Context()
+	work := func() { assert.NoError(b, o.syncPreflightFailures(ctx)) }
+	got := testing.AllocsPerRun(10, work)
+	assert.FatalIf(b, got > dependencyCycleMembers, "cycle warning publication allocates %g times for %d members",
+		got, dependencyCycleMembers)
+	b.ReportAllocs()
+	for b.Loop() {
+		work()
 	}
 }

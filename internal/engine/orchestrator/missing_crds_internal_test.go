@@ -257,43 +257,57 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 	}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
+	t.Parallel()
+	for _, repeats := range []int{1, 32} {
+		t.Run(fmt.Sprintf("references=%d", repeats*2), func(t *testing.T) {
+			t.Parallel()
+			o := missingCRDsWithoutAcceptedInputs(repeats)
+			o.warnMissingCRDs()
+			assert.Equal(t, len(o.store.Warnings()), 0)
+		})
+	}
+}
+
+func BenchmarkWarnMissingCRDs_NoAcceptedInputs(b *testing.B) {
 	manifest.KindOf(&manifest.RawObject{APIVersion: "apiextensions.k8s.io/v1", Kind: manifest.KindCustomResourceDefinition}).
 		Namespaced()
 	var allocations [2]float64
-	for shape, repeats := range []int{1, 32} {
-		t.Run(fmt.Sprintf("references=%d", repeats*2), func(t *testing.T) {
-			st := store.New()
-			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps"}
-			for range repeats {
-				for _, name := range []string{"a.example.com", "b.example.com"} {
-					rs.DependsOn = append(
-						rs.DependsOn,
-						fluxopv1.Dependency{
-							APIVersion: "apiextensions.k8s.io/v1",
-							Kind:       manifest.KindCustomResourceDefinition,
-							Name:       name,
-						},
-					)
-				}
+	for i, repeats := range []int{1, 32} {
+		o := missingCRDsWithoutAcceptedInputs(repeats)
+		allocations[i] = testing.AllocsPerRun(10, o.warnMissingCRDs)
+		b.Run(fmt.Sprintf("references=%d", repeats*2), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				o.warnMissingCRDs()
 			}
-			st.AddObject(rs)
-			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady})
-			st.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
-			o := &Orchestrator{
-				store: st,
-				cfg: treeConfig{
-					Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
-				},
-			}
-			allocations[shape] = testing.AllocsPerRun(10, o.warnMissingCRDs)
-			assert.Equal(t, len(st.Warnings()), 0)
 		})
 	}
-	t.Logf("allocations for 2/64 declared references without accepted inputs: %v", allocations)
-	assert.Equal(t, allocations[1], allocations[0])
+	b.Logf("allocations for 2/64 declared references without accepted inputs: %v", allocations)
+	assert.Equal(b, allocations[1], allocations[0])
+}
+
+func missingCRDsWithoutAcceptedInputs(repeats int) *Orchestrator {
+	st := store.New()
+	rs := &manifest.ResourceSet{Name: "app", Namespace: "apps"}
+	for range repeats {
+		for _, name := range []string{"a.example.com", "b.example.com"} {
+			rs.DependsOn = append(rs.DependsOn, fluxopv1.Dependency{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       manifest.KindCustomResourceDefinition,
+				Name:       name,
+			})
+		}
+	}
+	st.AddObject(rs)
+	st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady})
+	st.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
+	return &Orchestrator{
+		store: st,
+		cfg: treeConfig{
+			Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
+		},
+	}
 }
 
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {

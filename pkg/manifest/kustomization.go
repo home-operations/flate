@@ -183,6 +183,13 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 	if !k.sourceReference(yield, view) {
 		return
 	}
+	if k.TargetNamespace != "" && !yield(Reference{
+		Kind: namespaceKind, Name: k.TargetNamespace,
+		Use:      "targetNamespace",
+		Optional: true,
+	}) {
+		return
+	}
 	for i := range k.DependsOn {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{

@@ -1,0 +1,9 @@
+resources: [source.yaml, generator.yaml, consumer.yaml]
+patches:
+  - target:
+      kind: ArtifactGenerator
+      name: generator
+    patch: |
+      - op: add
+        path: /spec/serviceAccountName
+        value: missing-account

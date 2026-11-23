@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -18,8 +19,14 @@ func TestCompose_InvalidOperation(t *testing.T) {
 		name      string
 		op        Copy
 		missingFS bool
+		prefix    string
 	}{
 		{name: "extract requires a tarball", op: Copy{From: "file", To: "output", Mode: ExtractArchive}},
+		{
+			name:   "extract glob attempts a directory with a tarball suffix",
+			op:     Copy{From: "*.tgz", To: "output", Mode: ExtractArchive},
+			prefix: "failed to extract tarball 'dir.tgz' to 'output':",
+		},
 		{name: "negative index", op: Copy{Input: -1}},
 		{name: "index past inputs", op: Copy{Input: 1}},
 		{name: "missing filesystem", missingFS: true},
@@ -34,7 +41,9 @@ func TestCompose_InvalidOperation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", New)
-			input := CompositionInput{FS: fstest.MapFS{"file": {Data: []byte("input")}}, Content: "generation"}
+			input := CompositionInput{FS: fstest.MapFS{
+				"file": {Data: []byte("input")}, "dir.tgz": {Mode: fs.ModeDir | 0o755},
+			}, Content: "generation"}
 			if tc.missingFS {
 				input.FS = nil
 			}
@@ -43,6 +52,15 @@ func TestCompose_InvalidOperation(t *testing.T) {
 			}, &Policy{MaxAge: Forever})
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			if tc.prefix != "" {
+				assert.FatalIf(
+					t,
+					err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
+					"got %v, want prefix %q",
+					err,
+					tc.prefix,
+				)
+			}
 			assert.Equal(t, output == nil, true)
 			assert.Equal(t, key, "")
 			assert.Equal(t, descriptor.Digest.String(), "")

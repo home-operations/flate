@@ -29,6 +29,7 @@ type Child struct {
 	policy            DeclarationPolicy
 	Productions       []manifest.Production
 	Warnings          []manifest.Warning `json:"-"`
+	Ordinal           int                `json:"-"`
 	payload           *SourceArtifact
 	output            *ReadSet
 }

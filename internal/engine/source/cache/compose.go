@@ -12,20 +12,25 @@ import (
 
 // Composition MUST identify the complete base and ordered operations before cache reuse.
 type Composition struct {
-	Base   CompositionInput
-	Inputs []CompositionInput
-	Copies []Copy
-	Policy string
-	Ignore string
-	// CapturePath keys the bounded value returned by Capture before archive filtering.
-	CapturePath string
-	Capture     func(context.Context, fs.FS) (string, error)
+	Base     CompositionInput
+	Inputs   []CompositionInput
+	Copies   []Copy
+	Policy   string
+	Ignore   string
+	Captures []StagedCapture
 }
 
-const compositionCaptureName = "composition-capture"
+// StagedCapture keys a bounded read from the unfiltered tree by purpose and path.
+type StagedCapture struct {
+	Purpose string
+	Path    string
+	Read    func(context.Context, string, fs.FS) (string, error) `json:"-"`
+}
 
-// CompositionCapture is the descriptor annotation for a captured staging value.
-const CompositionCapture = prefix + compositionCaptureName
+const stagedCapturePrefix = "staged-capture-"
+
+// StagedCaptureAnnotation identifies a captured value in the composition descriptor.
+func StagedCaptureAnnotation(purpose string) string { return prefix + stagedCapturePrefix + purpose }
 
 // CompositionInput MUST identify immutable backing or force fresh production.
 type CompositionInput struct {
@@ -94,12 +99,12 @@ func (r *Composition) key() ArchiveKey {
 			Base        compositionIdentity
 			Inputs      []compositionIdentity
 			Copies      []copyIdentity
-			CapturePath string `json:",omitempty"`
-		}{r.Base.FS != nil, r.Base.identity(), inputs, copies, r.CapturePath},
+			Captures    []StagedCapture `json:",omitempty"`
+		}{r.Base.FS != nil, r.Base.identity(), inputs, copies, r.Captures},
 		Policy: r.Policy, Ignore: r.Ignore,
 	}
-	if r.CapturePath != "" {
-		key.Required = []string{compositionCaptureName}
+	for i := range r.Captures {
+		key.Required = append(key.Required, stagedCapturePrefix+r.Captures[i].Purpose)
 	}
 	return key
 }

@@ -93,6 +93,38 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 	}
 }
 
+func TestExpand_NamespaceMetadataPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, pattern, path, want string
+		wantError                 bool
+	}{
+		{"static", "", "@repo/metadata/Prod.yaml", "@repo/metadata/Prod.yaml", false},
+		{"raw capture", "@repo/apps/{App}", "@repo/metadata/{App}.yaml", "@repo/metadata/Prod.yaml", false},
+		{"unknown capture", "@repo/apps/{App}", "@repo/metadata/{missing}.yaml", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			spec := manifest.ArtifactGeneratorSpec{
+				PathPattern: tc.pattern,
+				Artifacts:   []manifest.ArtifactGeneratorOutput{{Name: "artifact", Namespace: "delivery"}},
+				ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
+					Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
+						FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: tc.path},
+					},
+				},
+			}
+			input := fstest.MapFS{"apps/Prod/file": {}}
+			got, err := expand(t.Context(), &spec, "apps", map[string]fs.FS{"repo": input})
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(got) != 1, "request count = %d", len(got))
+			assert.Equal(t, got[0].Namespace, manifest.NamedResource{Kind: "Namespace", Name: "delivery"})
+			assert.Equal(t, got[0].NamespaceMetadataPath, tc.want)
+			assert.Equal(t, got[0].NamespaceMetadataPathError != nil, tc.wantError)
+		})
+	}
+}
+
 func TestExpand_Canceled(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())

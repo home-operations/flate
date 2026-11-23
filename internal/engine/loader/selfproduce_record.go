@@ -69,7 +69,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 		b.locations[id] = o
 	}
 	declaration := producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}
-	b.recordProducer(&declaration, nil)
+	pr.recordDeclaration(b, &declaration, o.facts.needsCandidates)
 	b.recordApplication(l, &declaration)
 	if id.KindInfo().Structural {
 		b.emittedFiles[pr.coordinate] = appendUniqueProducer(b.emittedFiles[pr.coordinate], pr.visit.owner)
@@ -217,11 +217,19 @@ func (op *objectProduction) recordDeclaration(
 			visit:              pr.visit,
 			substituteDisabled: op.substituteDisabled,
 		}
-		if needsCandidates {
-			pr.declarations = append(pr.declarations, declaration)
-		} else {
+		if !needsCandidates {
 			declaration.fact = op.fact
-			b.recordProducer(new(declaration), nil)
 		}
+		pr.recordDeclaration(b, &declaration, needsCandidates)
 	}
+}
+
+func (pr *productionRecorder) recordDeclaration(
+	b *selfProduceBuilder, declaration *producerDeclaration, needsCandidates bool,
+) {
+	if needsCandidates {
+		pr.declarations = append(pr.declarations, *declaration)
+		return
+	}
+	b.recordProducer(declaration, nil)
 }

@@ -404,7 +404,7 @@ func (c *admissionClosure) prepareReferenceInput(
 				id,
 			)
 		}
-	case !ref.ContentInput() && ref.Gate == 0 && ref.Use != "materializer":
+	case !ref.Optional && !ref.ContentInput() && ref.Gate == 0 && ref.Use != "materializer":
 		return false
 	default:
 		state := c.states[ref.NamedResource]

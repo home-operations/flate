@@ -77,6 +77,23 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 	}
 }
 
+func TestReferences_OptionalTargetNamespace(t *testing.T) {
+	t.Parallel()
+	k := &Kustomization{Namespace: "apps"}
+	assert.Equal(t, k.ReferenceCapacity(), ReferenceLimits{})
+	k.TargetNamespace = "tenant"
+	want := []Reference{{
+		Kind: "Namespace", Name: "tenant",
+		Use:      "targetNamespace",
+		Optional: true,
+	}}
+	got := slices.Collect(References(k, ReferenceRelations))
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(Reference{})); diff != "" {
+		t.Fatalf("references (-want +got):\n%s", diff)
+	}
+	assert.Equal(t, k.ReferenceCapacity(), ReferenceLimits{References: 1})
+}
+
 func TestReferences_EffectiveNamespace(t *testing.T) {
 	t.Parallel()
 	k := &Kustomization{Namespace: "authored"}

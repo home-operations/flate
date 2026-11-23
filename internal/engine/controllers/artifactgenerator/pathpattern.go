@@ -13,10 +13,15 @@ import (
 )
 
 type request struct {
-	work     manifest.AcquisitionWork
-	Identity manifest.NamedResource
-	Output   manifest.ArtifactGeneratorOutput
-	Captures map[string]string
+	work                       manifest.AcquisitionWork
+	Identity                   manifest.NamedResource
+	Namespace                  manifest.NamedResource
+	Output                     manifest.ArtifactGeneratorOutput
+	Captures                   map[string]string
+	NamespaceMetadataPath      string
+	NamespaceMetadataPathError error
+	stagedMetadata             stagedNamespaceMetadata
+	stagedMetadataError        error
 }
 
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -35,8 +40,11 @@ func expand(
 		requests := make([]request, 0, len(spec.Artifacts))
 		for i := range spec.Artifacts {
 			output := &spec.Artifacts[i]
-			id, artifact, _ := output.ResolveOutput(namespace, nil, nil)
-			requests = append(requests, request{Identity: id, Output: artifact})
+			resolved, _ := spec.ResolveOutput(output, namespace, nil, nil)
+			requests = append(requests, request{
+				Identity: resolved.Artifact, Namespace: resolved.Namespace, Output: resolved.Output,
+				NamespaceMetadataPath: resolved.NamespaceMetadataPath,
+			})
 		}
 		return requests, nil
 	}
@@ -92,12 +100,13 @@ func (x *requestExpansion) add(dir string, values []string) error {
 	}
 	for i := range x.spec.Artifacts {
 		output := &x.spec.Artifacts[i]
-		id, artifact, err := output.ResolveOutput(x.namespace, normalized, raw)
+		resolved, err := x.spec.ResolveOutput(output, x.namespace, normalized, raw)
 		if err != nil {
 			return fmt.Errorf("pathPattern %q: failed to render artifact %s for match %s: %w",
 				x.spec.PathPattern, output.Name, dir, err)
 		}
-		if err := validateArtifactIdentity(id, artifact.Namespace != "", "rendered artifact"); err != nil {
+		id := resolved.Artifact
+		if err := validateArtifactIdentity(id, output.Namespace != "", "rendered artifact"); err != nil {
 			return fmt.Errorf("pathPattern %q: %w", x.spec.PathPattern, err)
 		}
 		if previous, exists := x.seen[id]; exists {
@@ -105,7 +114,11 @@ func (x *requestExpansion) add(dir string, values []string) error {
 				x.spec.PathPattern, previous, dir, id.Name, id.Namespace)
 		}
 		x.seen[id] = dir
-		x.requests = append(x.requests, request{Identity: id, Output: artifact, Captures: normalized})
+		x.requests = append(x.requests, request{
+			Identity: id, Namespace: resolved.Namespace, Output: resolved.Output, Captures: normalized,
+			NamespaceMetadataPath:      resolved.NamespaceMetadataPath,
+			NamespaceMetadataPathError: resolved.NamespaceMetadataPathError,
+		})
 	}
 	return nil
 }

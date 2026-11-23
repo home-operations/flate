@@ -1,0 +1,11 @@
+--- Namespace tenant-a
++++ Namespace tenant-a
+@@ -3,7 +3,7 @@
+ metadata:
+   labels:
+     app.kubernetes.io/managed-by: source-watcher
+-    region: west
++    region: east
+     source.extensions.fluxcd.io/generator: fixture
+   name: tenant-a
+ 

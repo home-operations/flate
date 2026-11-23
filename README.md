@@ -70,6 +70,8 @@ repos:
 
 - flate treats SOPS-encrypted keys as missing. Use `--supply` to provide dummy values or other missing inputs. Referenced values can appear in the rendered YAML.
 - Some ResourceSet input providers need saved inputs when they run without a cluster.
+- Flux uses an ArtifactGenerator's `spec.serviceAccountName` to select credentials in the cluster. flate renders offline without impersonating that account.
+- flate renders the Namespaces that an ArtifactGenerator currently targets. Flux uses `spec.managedNamespaces.prune` to control live deletion.
 - Private sources need credentials from your repository, supplied objects, or the machine that runs flate.
 - Helm renders each release as a new install. Use `--kube-version` and `--api-versions` to match the target cluster.
 - flate skips Git and OCI signature checks.

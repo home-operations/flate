@@ -30,6 +30,13 @@ func TestE2E_ArtifactGenerator(t *testing.T) {
 		{"artifact-generator-fields", "artifact-generator--inputs-forward"},
 		{"artifact-generator-fields", "artifact-generator--inputs-reverse"},
 		{"artifact-convergence", "artifact-generator--consumed-input-convergence"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-render"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-namespace-target"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-metadata-forward"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-metadata-reverse"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-rejected-metadata"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-removal-prune-false"},
+		{"artifact-managed-namespaces", "artifact-generator--managed-removal-prune-true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := harness.Open(t, tc.scenario, tc.name)

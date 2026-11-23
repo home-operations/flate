@@ -1,0 +1,11 @@
+resources: [source.yaml, generator.yaml, consumer.yaml]
+patches:
+  - target:
+      kind: ArtifactGenerator
+      name: generator
+    patch: |
+      - op: replace
+        path: /spec/managedNamespaces/prune
+        value: true
+      - op: remove
+        path: /spec/artifacts/1

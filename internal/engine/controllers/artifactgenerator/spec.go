@@ -39,13 +39,19 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) error 
 	identities := make(map[manifest.NamedResource]bool, len(spec.Artifacts))
 	for i := range spec.Artifacts {
 		artifact := &spec.Artifacts[i]
-		id, _, _ := artifact.ResolveOutput(namespace, nil, nil)
+		resolved, _ := spec.ResolveOutput(artifact, namespace, nil, nil)
+		id := resolved.Artifact
 		if identities[id] {
 			return fmt.Errorf("duplicate artifact name '%s' found in namespace '%s'", id.Name, id.Namespace)
 		}
 		identities[id] = true
 		if err := validateArtifact(artifact, id, spec.PathPattern, aliases); err != nil {
 			return err
+		}
+	}
+	if ns := spec.ManagedNamespaces; ns != nil && ns.Metadata != nil && ns.Metadata.FromSource != nil {
+		if err := validateFileSelector(ns.Metadata.FromSource.Path, spec.PathPattern, aliases); err != nil {
+			return fmt.Errorf("namespaces metadata fromSource path %w", err)
 		}
 	}
 	return nil
@@ -90,15 +96,8 @@ func validateArtifact(
 		if len(from) > maxPatternLength {
 			return fmt.Errorf("artifact %s inputsFrom outside API bounds", artifact.Name)
 		}
-		if err := validateInputsSource(from, aliases); err != nil {
-			return fmt.Errorf("artifact %s inputsFrom %q: %w", artifact.Name, from, err)
-		}
-		if pattern == "" && strings.ContainsAny(from, "{}") {
-			return fmt.Errorf(
-				"artifact %s inputsFrom %q uses capture placeholders but pathPattern is not set",
-				artifact.Name,
-				from,
-			)
+		if err := validateFileSelector(from, pattern, aliases); err != nil {
+			return fmt.Errorf("artifact %s inputsFrom %w", artifact.Name, err)
 		}
 	}
 	for i := range artifact.Copy {
@@ -145,17 +144,16 @@ func validateArtifactIdentity(id manifest.NamedResource, explicitNamespace bool,
 	return nil
 }
 
-func validateInputsSource(value string, aliases map[string]bool) error {
-	source, marked := strings.CutPrefix(value, "@")
-	if !marked {
-		return fmt.Errorf("path must start with '@'")
+func validateFileSelector(value, pattern string, aliases map[string]bool) error {
+	selector, err := splitFileSelector(value)
+	if err != nil {
+		return fmt.Errorf("%q: %w", value, err)
 	}
-	alias, name, ok := strings.Cut(source, "/")
-	if !ok || alias == "" || name == "" {
-		return fmt.Errorf("path must be in the format '@<alias>/<path>'")
+	if alias := selector.alias; alias != artifactAlias && !aliases[alias] {
+		return fmt.Errorf("%q: source alias '%s' not found", value, alias)
 	}
-	if alias != "artifact" && !aliases[alias] {
-		return fmt.Errorf("source alias '%s' not found", alias)
+	if pattern == "" && strings.ContainsAny(value, "{}") {
+		return fmt.Errorf("%q uses capture placeholders but pathPattern is not set", value)
 	}
 	return nil
 }

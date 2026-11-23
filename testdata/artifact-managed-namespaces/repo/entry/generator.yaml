@@ -1,0 +1,29 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: flux-system
+  uid: fixture
+spec:
+  sources:
+    - alias: repo
+      kind: GitRepository
+      name: repo
+  artifacts:
+    - name: app
+      copy:
+        - from: "@repo/app"
+          to: "@artifact/app"
+    - name: managed
+      namespace: tenant-a
+      copy:
+        - from: "@repo/app"
+          to: "@artifact/app"
+  managedNamespaces:
+    allowedNames: ['ns == "tenant-a"']
+    prune: false
+    metadata:
+      fromSource:
+        path: "@repo/metadata/tenant-a.yaml"
+        allowedLabels:
+          region: 'value in ["east", "west"]'

@@ -1,0 +1,739 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "3123aafe38a35080beefb931ced72eb51bb7b480",
+    "paths": [
+      "pkg/manifest/artifactgenerator_spec.go"
+    ],
+    "reductions": "Offline ArtifactGenerator with a generated Namespace and a consumer of a local generated artifact."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "west",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "west"
+    },
+    {
+      "repository": "repo",
+      "name": "prune",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:02:00Z",
+      "parents": [
+        "base"
+      ],
+      "overlay": "prune"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "account",
+      "directory": "overlays/account"
+    },
+    {
+      "name": "namespace-target",
+      "directory": "overlays/namespace-target"
+    },
+    {
+      "name": "west",
+      "directory": "overlays/west"
+    },
+    {
+      "name": "rejected",
+      "directory": "overlays/rejected"
+    },
+    {
+      "name": "prune",
+      "directory": "overlays/prune"
+    },
+    {
+      "name": "remove",
+      "directory": "overlays/remove"
+    },
+    {
+      "name": "prune-and-remove",
+      "directory": "overlays/prune-and-remove"
+    }
+  ],
+  "cases": [
+    {
+      "name": "artifact-generator--managed-render",
+      "description": "Compare full and targeted rendering and prove offline service account parity.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/render.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "targeted",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "flux-system",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/targeted.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "generated",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ExternalArtifact,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/generated.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "set-service-account",
+          "edit": {
+            "overlay": "account"
+          }
+        },
+        {
+          "id": "generated-with-service-account",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ExternalArtifact,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/generated.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-namespace-target",
+      "description": "Reach the generator through the target Namespace and render when the Namespace is absent.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "namespace-target"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "with-producer",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "flux-system",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/targeted.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reject-metadata",
+          "edit": {
+            "overlay": "rejected"
+          }
+        },
+        {
+          "id": "with-rejected-producer",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "flux-system",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/targeted.stdout",
+              "stderr": "expect/targeted-rejected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remove-namespace-output",
+          "edit": {
+            "overlay": "remove"
+          }
+        },
+        {
+          "id": "without-producer",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "-n",
+              "flux-system",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/targeted.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-metadata-forward",
+      "description": "Find a metadata-only edit outside the paths copied into the artifacts.",
+      "setup": [
+        {
+          "commit": "west"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=ArtifactGenerator,ExternalArtifact",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:base@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/forward.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-metadata-reverse",
+      "description": "Find the metadata-only edit in the opposite comparison direction.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=ArtifactGenerator,ExternalArtifact",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:west@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reverse.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-rejected-metadata",
+      "description": "Reject a source label value before publishing managed outputs.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "rejected"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "rejected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds=ConfigMap,Namespace",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/rejected.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-removal-prune-false",
+      "description": "Show the removed desired Namespace with prune set to false.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "remove"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=ArtifactGenerator,ExternalArtifact",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:base@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/removed.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--managed-removal-prune-true",
+      "description": "Show the removed desired Namespace with prune set to true.",
+      "setup": [
+        {
+          "commit": "prune"
+        },
+        {
+          "overlay": "prune-and-remove"
+        }
+      ],
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--skip-kinds=ArtifactGenerator,ExternalArtifact",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:prune@@",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/removed.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "artifact-generator--managed-rejected-metadata"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/forward.stdout",
+      "cases": [
+        "artifact-generator--managed-metadata-forward"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/generated.stdout",
+      "cases": [
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/rejected.stderr",
+      "cases": [
+        "artifact-generator--managed-rejected-metadata"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/removed.stdout",
+      "cases": [
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/render.stdout",
+      "cases": [
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/reverse.stdout",
+      "cases": [
+        "artifact-generator--managed-metadata-reverse"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/success.stderr",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/targeted-rejected.stderr",
+      "cases": [
+        "artifact-generator--managed-namespace-target"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "expect/targeted.stdout",
+      "cases": [
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "Reviewed CLI stream."
+    },
+    {
+      "path": "overlays/account/repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/namespace-target/repo/entry/consumer.yaml",
+      "cases": [
+        "artifact-generator--managed-namespace-target"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/prune-and-remove/repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--managed-removal-prune-true"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/prune/repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--managed-removal-prune-true"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/rejected/repo/metadata/tenant-a.yaml",
+      "cases": [
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/remove/repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-removal-prune-false"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "overlays/west/repo/metadata/tenant-a.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/app/app.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/entry/consumer.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/entry/generator.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/entry/source.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    },
+    {
+      "path": "repo/metadata/tenant-a.yaml",
+      "cases": [
+        "artifact-generator--managed-metadata-forward",
+        "artifact-generator--managed-metadata-reverse",
+        "artifact-generator--managed-namespace-target",
+        "artifact-generator--managed-rejected-metadata",
+        "artifact-generator--managed-removal-prune-false",
+        "artifact-generator--managed-removal-prune-true",
+        "artifact-generator--managed-render"
+      ],
+      "purpose": "ArtifactGenerator namespace fixture input."
+    }
+  ]
+}

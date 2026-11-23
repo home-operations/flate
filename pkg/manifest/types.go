@@ -157,7 +157,8 @@ type Reference struct {
 	DependencyRef
 
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
-	// certSecretRef, proxySecretRef, inputsFrom, artifact, include or materializer; empty selects an implicit gate only.
+	// certSecretRef, proxySecretRef, inputsFrom, artifact, include, materializer or targetNamespace.
+	// Empty selects an implicit gate only.
 	Use string
 	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int

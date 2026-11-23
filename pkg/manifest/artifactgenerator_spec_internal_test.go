@@ -52,7 +52,7 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 	}{
 		{"absent", nil},
 		{"empty", map[string]any{"sources": []any{}, "artifacts": []any{}}},
-		{"null", map[string]any{"sources": nil, "artifacts": nil, "pathPattern": nil, "commonMetadata": nil}},
+		{"null", map[string]any{"sources": nil, "artifacts": nil, "pathPattern": nil, "commonMetadata": nil, "managedNamespaces": nil, "serviceAccountName": ""}},
 		{"incomplete", map[string]any{"sources": []any{nil, map[string]any{}, map[string]any{"kind": KindGitRepository, "name": "repo"}}}},
 		{"namespaces", map[string]any{"sources": []any{map[string]any{"namespace": ""}, map[string]any{"namespace": nil}, map[string]any{"namespace": "apps"}}}},
 		{"metadata", map[string]any{"commonMetadata": map[string]any{"labels": map[string]string{"app": "test"}, "annotations": map[string]any{"null": nil}}}},
@@ -221,7 +221,30 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 			"PathPattern": "@repo/clusters/{app}",
 			"Artifacts": []any{
 				map[string]any{"Name": "literal", "Copy": []any{map[string]any{"From": "@repo/common/file"}}},
-				map[string]any{"Name": "bundle-{app}"},
+				map[string]any{"Name": "bundle-{app}", "Namespace": "delivery"},
+				map[string]any{"Name": "route", "Namespace": "delivery-{app}"},
+			},
+			"ServiceAccountName": "offline",
+			"ManagedNamespaces": map[string]any{
+				"AllowedNames": []any{"true"}, "Prune": true,
+				"Metadata": map[string]any{
+					"FromSource": map[string]any{
+						"Path": "@repo/metadata/{app}.yaml", "AllowedLabels": map[string]string{"app": "true"},
+						"AllowedAnnotations": map[string]string{"owner": "true"},
+					},
+					"From": []any{
+						map[string]any{
+							"Namespace": "*",
+							"Strategy":  "Merge",
+							"Labels":    map[string]string{"app": "one"},
+						},
+						map[string]any{
+							"Namespace":   "delivery",
+							"Strategy":    "Override",
+							"Annotations": map[string]string{"owner": "two"},
+						},
+					},
+				},
 			},
 		},
 	})
@@ -236,10 +259,55 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 		NamedResource{Group: SourceDomain, Kind: KindGitRepository, Namespace: "input", Name: "repo"},
 	)
 	assert.Equal(t, refs[0].NamespaceDefault, false)
-	assert.Diff(t, refs[0].Files, []string{"clusters", "common/file"})
-	target := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "bundle-prod"}
+	assert.Diff(t, refs[0].Files, []string{"clusters", "common/file", "metadata"})
+	spec, err := parsed.ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	assert.Equal(t, spec.ServiceAccountName, "offline")
+	policy := spec.ManagedNamespaces
+	assert.FatalIf(
+		t,
+		policy == nil || policy.Metadata == nil || policy.Metadata.FromSource == nil,
+		"missing namespace policy",
+	)
+	assert.Diff(t, policy, &ArtifactGeneratorManagedNamespaces{
+		AllowedNames: []string{"true"},
+		Prune:        true,
+		Metadata: &ArtifactGeneratorNamespaceMetadata{
+			FromSource: &ArtifactGeneratorNamespaceMetadataSource{
+				Path:               "@repo/metadata/{app}.yaml",
+				AllowedLabels:      map[string]string{"app": "true"},
+				AllowedAnnotations: map[string]string{"owner": "true"},
+			},
+			From: []ArtifactGeneratorNamespaceMetadataEntry{
+				{Namespace: "*", Strategy: "Merge", Labels: map[string]string{"app": "one"}},
+				{Namespace: "delivery", Strategy: "Override", Annotations: map[string]string{"owner": "two"}},
+			},
+		},
+	})
+	pristine, err := parsed.ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	before := Fingerprint(pristine)
+	policy.Prune = false
+	policy.AllowedNames[0] = "false"
+	policy.Metadata.FromSource.Path = "@artifact/other"
+	policy.Metadata.FromSource.AllowedLabels["app"] = "false"
+	policy.Metadata.FromSource.AllowedAnnotations["owner"] = "false"
+	policy.Metadata.From[0].Labels["app"] = "changed"
+	policy.Metadata.From[1].Annotations["owner"] = "changed"
+	policy.Metadata.From[1].Namespace = "*"
+	assert.Equal(t, Fingerprint(spec) == before, false)
+	again, err := parsed.ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	assert.Diff(t, again, pristine)
+	assert.Equal(t, Fingerprint(again), before)
+
+	target := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "delivery", Name: "bundle-prod"}
 	literal := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "literal"}
-	want := []ProducerTarget{{NamedResource: target}, {NamedResource: literal}}
+	fixed := NamedResource{Kind: "Namespace", Name: "delivery"}
+	dynamic := NamedResource{Kind: "Namespace", Name: "delivery-prod"}
+	want := []ProducerTarget{
+		{NamedResource: literal}, {NamedResource: target}, {NamedResource: fixed}, {NamedResource: dynamic},
+	}
 	catalog := CatalogObject(parsed, parsed.Named())
 	data, err := EncodeCatalog(catalog)
 	assert.NoError(t, err)
@@ -248,8 +316,11 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	for _, obj := range []BaseManifest{parsed, catalog, decoded} {
 		assert.Equal(t, obj.(*RawObject).generator != nil, true)
 		assert.Equal(t, ProducerNeedsCandidates(obj), true)
-		assert.Diff(t, ProducerTargets(obj, target), want)
+		assert.Diff(t, ProducerTargets(obj, target, dynamic), want)
 	}
 	assert.Equal(t, catalog.ReferenceCapacity().References, 0)
 	assert.Equal(t, decoded.ReferenceCapacity().References, 0)
+	compact, err := decoded.(*RawObject).ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	assert.Diff(t, compact.ManagedNamespaces, &ArtifactGeneratorManagedNamespaces{})
 }

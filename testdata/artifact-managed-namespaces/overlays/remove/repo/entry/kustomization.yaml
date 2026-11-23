@@ -1,0 +1,8 @@
+resources: [source.yaml, generator.yaml, consumer.yaml]
+patches:
+  - target:
+      kind: ArtifactGenerator
+      name: generator
+    patch: |
+      - op: remove
+        path: /spec/artifacts/1

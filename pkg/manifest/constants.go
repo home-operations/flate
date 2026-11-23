@@ -59,7 +59,10 @@ var BootstrapSourceID = NamedResource{
 //nolint:gochecknoglobals // The SDK exposes the upstream filename inventory.
 var KustomizeBuilderFilenames = konfig.RecognizedKustomizationFileNames()
 
-const internalKustomizationNamespace = "\x00"
+const (
+	internalKustomizationNamespace = "\x00"
+	namespaceKind                  = "Namespace"
+)
 
 const (
 	labelsKey         = "labels"

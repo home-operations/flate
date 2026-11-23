@@ -158,19 +158,19 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 			}, runCfg)
 			base, head := renderedTrees1[0], renderedTrees1[1]
 			assert.NoError(t, err)
+			delta, err := change.Detect(
+				t.Context(),
+				base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
+				head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
+				change.DetectConfig{},
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, delta.Paths(), []string(nil))
 			for side, rendered := range []Rendered{base, head} {
 				fixture.assertWork(t, rendered, side, cold)
 				assert.Equal(t, len(selectionNamesForTest(rendered.selection, rendered.store, rendered.index)), 0)
 				assert.Equal(t, len(rendered.Result.Manifests), 0)
 				assert.Equal(t, rendered.selection.Snapshot().Reconcile(rendered.entryBinding.Producer), false)
-				delta, err := change.Detect(
-					t.Context(),
-					base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
-					head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
-					change.DetectConfig{},
-				)
-				assert.NoError(t, err)
-				assert.Diff(t, delta.Paths(), []string(nil))
 				t.Logf("paired run=%d side=%d unchanged root and source payload excluded", run, side)
 			}
 		}

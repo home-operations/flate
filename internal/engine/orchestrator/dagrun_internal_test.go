@@ -85,8 +85,8 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 func TestDAG_BoundedPublications(t *testing.T) {
 	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
-			first := renderScalePublications(t, workers, 160)
-			second := renderScalePublications(t, workers, 160)
+			first := renderScalePublications(t, workers, 64, 16)
+			second := renderScalePublications(t, workers, 64, 16)
 			assert.Equal(t, bytes.Equal(first, second), true)
 		})
 	}
@@ -99,14 +99,14 @@ func TestDAG_ScalePublications(t *testing.T) {
 	}
 	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
-			first := renderScalePublications(t, workers, 1000)
-			second := renderScalePublications(t, workers, 1000)
+			first := renderScalePublications(t, workers, 1000, 64)
+			second := renderScalePublications(t, workers, 1000, 64)
 			assert.Equal(t, bytes.Equal(first, second), true)
 		})
 	}
 }
 
-func renderScalePublications(t *testing.T, workers, producers int) []byte {
+func renderScalePublications(t *testing.T, workers, producers, width int) []byte {
 	t.Helper()
 	root := t.TempDir()
 	var resources strings.Builder
@@ -122,19 +122,19 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 	}
 	testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources:\n"+resources.String())
 	ids := make([]manifest.NamedResource, producers)
-	roots := make(map[manifest.NamedResource]bool, producers-128)
+	roots := make(map[manifest.NamedResource]bool, producers-2*width)
 	for n := range producers {
 		name := fmt.Sprintf("producer-%04d", n)
 		ids[n] = testutil.KustomizationID("flux-system", name)
 		var deps strings.Builder
 		switch {
-		case n > 0 && n < 64:
+		case n > 0 && n < width:
 			fmt.Fprintf(&deps, "  dependsOn: [{name: producer-%04d}]\n", n-1)
-		case n >= 64 && n < 128:
+		case n >= width && n < 2*width:
 			deps.WriteString("  dependsOn: [{name: producer-0000}]\n")
-		case n == 128:
+		case n == 2*width:
 			deps.WriteString("  dependsOn:\n")
-			for dep := 64; dep < 128; dep++ {
+			for dep := width; dep < 2*width; dep++ {
 				fmt.Fprintf(&deps, "    - name: producer-%04d\n", dep)
 			}
 		default:

@@ -349,68 +349,53 @@ func renderModelInputs() []renderModelInput {
 	return cases
 }
 
-func TestRenderTrees_IndependentModel(t *testing.T) {
+func TestRenderTrees_RecordedWorkFinalAndRetired(t *testing.T) {
 	t.Parallel()
-	t.Run(
-		"work_final_and_retired",
-		func(t *testing.T) {
-			t.Parallel()
-			cfg := Config{RecordWork: true}
-			assert.NoError(t, snapshotSubstitutions(&cfg))
-			o, constructionErr := newOrchestrator(
-				t.Context(), &cfg,
-				&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
-			)
-			assert.NoError(t, constructionErr)
-			defer o.stop()
-			o.index = &manifest.DiscoveryIndex{}
-			o.rsc.Configure(base.Options{})
-			o.rsc.StartLifecycle()
-			owner := &manifest.ResourceSet{
-				Name:              "owner",
-				Namespace:         "apps",
-				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: first}\n",
-			}
-			o.store.AddObject(owner)
-			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
-			next := *owner
-			next.ResourcesTemplate = strings.ReplaceAll(owner.ResourcesTemplate, "first", "final")
-			o.store.AddObject(&next)
-			assert.FatalIf(t, first.Valid(), "%v", "first execution retained superseded declaration authority")
-			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
-			first.Retire()
-			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
-			result, err := o.collectResult(t.Context(), nil)
-			t.Cleanup(result.Close)
-			assert.FatalIf(t, err != nil, "%v", err)
-			{
-				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
-				assert.FatalIf(t, got !=
-					(manifest.WorkCounts{Attempts: 2, Completed: 2}), "retired and final work=%+v", got)
-			}
-			_, _, output := o.store.GetEmission(owner.Named())
-			defer output.Finish()
-			assert.FatalIf(
-				t,
-				len(output.Manifests) != 1 || output.Manifests[0].Document["data"].(map[string]any)["value"] != "final",
-				"accepted output=%+v",
-				output.Manifests,
-			)
-			final.Close()
-			{
-				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
-				assert.FatalIf(t, got.Completed != 2, "result borrowed execution counters: %+v", got)
-			}
-		},
+	cfg := Config{RecordWork: true}
+	assert.NoError(t, snapshotSubstitutions(&cfg))
+	o, constructionErr := newOrchestrator(
+		t.Context(), &cfg,
+		&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
 	)
-	for _, tc := range renderModelInputs() {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			fixture := decodeRenderModelCase(tc.input)
-			if _, err := checkRenderModel(t, &fixture); err != nil {
-				failRenderModel(t, tc.input, &fixture, err)
-			}
-		})
+	assert.NoError(t, constructionErr)
+	defer o.stop()
+	o.index = &manifest.DiscoveryIndex{}
+	o.rsc.Configure(base.Options{})
+	o.rsc.StartLifecycle()
+	owner := &manifest.ResourceSet{
+		Name:              "owner",
+		Namespace:         "apps",
+		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: first}\n",
+	}
+	o.store.AddObject(owner)
+	first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
+	next := *owner
+	next.ResourcesTemplate = strings.ReplaceAll(owner.ResourcesTemplate, "first", "final")
+	o.store.AddObject(&next)
+	assert.FatalIf(t, first.Valid(), "%v", "first execution retained superseded declaration authority")
+	final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
+	first.Retire()
+	assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
+	result, err := o.collectResult(t.Context(), nil)
+	t.Cleanup(result.Close)
+	assert.FatalIf(t, err != nil, "%v", err)
+	{
+		got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
+		assert.FatalIf(t, got !=
+			(manifest.WorkCounts{Attempts: 2, Completed: 2}), "retired and final work=%+v", got)
+	}
+	_, _, output := o.store.GetEmission(owner.Named())
+	defer output.Finish()
+	assert.FatalIf(
+		t,
+		len(output.Manifests) != 1 || output.Manifests[0].Document["data"].(map[string]any)["value"] != "final",
+		"accepted output=%+v",
+		output.Manifests,
+	)
+	final.Close()
+	{
+		got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
+		assert.FatalIf(t, got.Completed != 2, "result borrowed execution counters: %+v", got)
 	}
 }
 

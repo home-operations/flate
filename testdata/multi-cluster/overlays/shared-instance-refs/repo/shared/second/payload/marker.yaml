@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: second, namespace: apps}
+data: {value: shared}

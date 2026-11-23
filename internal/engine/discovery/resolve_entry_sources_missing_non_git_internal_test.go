@@ -96,6 +96,55 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 
 func TestResolveEntrySources_Content(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		provider store.SourceProvider
+	}{
+		{name: "observed alias", provider: store.ProviderAlias},
+		{name: "observed commit", provider: store.ProviderCommit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			st := store.New()
+			id := (&manifest.GitRepository{Name: "cluster-repository", Namespace: "flux-system"}).Named()
+			input := &store.SourceArtifact{FS: fstest.MapFS{}, Content: "checkout", Provider: store.ProviderInput}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			var reads store.ReadSet
+			reads.Init(st, id, nil)
+			defer reads.Close()
+			reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+			observed := (&store.SourceArtifact{
+				FS: fstest.MapFS{}, Content: "stored source", Provider: tc.provider,
+			}).WithReads(&reads)
+			st.SetArtifact(id, observed)
+
+			d := Session{
+				cfg: Config{Store: st, Input: input},
+				resolvedSources: &entrySourcePublisher{
+					mutable: map[manifest.NamedResource]entryResolution{},
+				},
+			}
+			_, err := d.resolveEntrySource(t.Context(), d.admission(), id, &entrySourceGroup{scoped: true})
+			assert.NoError(t, err)
+			got := d.resolvedSources.snapshot()[id]
+			assert.Equal(t, got.provider, tc.provider)
+			assert.Equal(t, got.object == nil, true)
+			assert.Equal(t, got.artifact == nil, true)
+			assert.Equal(t, got.viewKey, sourceViewKey{})
+			assert.Equal(t, d.sourceMaterial(id, got.artifact) == observed, true)
+
+			mismatch := *observed
+			mismatch.Provider = store.ProviderFetch
+			st.SetArtifact(id, &mismatch)
+			assert.Equal(t, d.sourceMaterial(id, got.artifact) == nil, true)
+
+			st.SetArtifact(id, observed)
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Content: "new checkout"})
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, d.sourceMaterial(id, got.artifact) == nil, true)
+		})
+	}
 	t.Run("shallow unavailable pin", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()

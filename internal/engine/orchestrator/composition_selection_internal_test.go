@@ -77,8 +77,9 @@ func TestChangedOnly_IndexedIncludeClosure(t *testing.T) {
 		{name: "filtered-input-change", prior: "current-filtered-before", baseOutput: "no-include", headOutput: "no-include", filtered: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			fixture := testfixture.Materialize(t, "artifact-composition", tc.name)
 			for _, route := range []string{"path-orig", "base"} {
-				t.Run(route, func(t *testing.T) { testChangedOnlyIncludeClosure(t, &tc, route) })
+				t.Run(route, func(t *testing.T) { testChangedOnlyIncludeClosure(t, fixture, &tc, route) })
 			}
 			if tc.name == "include-added" || tc.name == "include-removed" {
 				t.Run("bootstrap-overwrite", func(t *testing.T) {
@@ -87,16 +88,15 @@ func TestChangedOnly_IndexedIncludeClosure(t *testing.T) {
 				t.Run("overwrite", func(t *testing.T) {
 					overwrite := tc
 					overwrite.overwrite = true
-					testChangedOnlyIncludeClosure(t, &overwrite, "path-orig")
+					testChangedOnlyIncludeClosure(t, fixture, &overwrite, "path-orig")
 				})
 			}
 		})
 	}
 }
 
-func testChangedOnlyIncludeClosure(t *testing.T, tc *includeClosureCase, route string) {
+func testChangedOnlyIncludeClosure(t *testing.T, fixture *testfixture.Fixture, tc *includeClosureCase, route string) {
 	t.Helper()
-	fixture := testfixture.Materialize(t, "artifact-composition", tc.name)
 	owner := cachetest.New(t, "", cache.New)
 	network := networktest.New(t)
 	server := file.NewTransport(file.Options{Loader: fixture})
@@ -495,16 +495,17 @@ func assertIncludeAcceptedHistory(
 func TestChangedOnly_IncludeAdmissionBeforePruning(t *testing.T) {
 	for _, scenario := range []string{"independent-diff", "shallow-authored-pin"} {
 		t.Run(scenario, func(t *testing.T) {
+			fixture := testfixture.Materialize(t, "artifact-composition", scenario)
+			baseCommit := prepareIncludeAdmission(t, fixture)
 			for _, route := range []string{"path-orig", "base"} {
-				t.Run(route, func(t *testing.T) { testIncludeAdmissionBeforePruning(t, scenario, route) })
+				t.Run(route, func(t *testing.T) { testIncludeAdmissionBeforePruning(t, fixture, baseCommit, route) })
 			}
 		})
 	}
 }
 
-func testIncludeAdmissionBeforePruning(t *testing.T, scenario, route string) {
+func prepareIncludeAdmission(t *testing.T, fixture *testfixture.Fixture) string {
 	t.Helper()
-	fixture := testfixture.Materialize(t, "artifact-composition", scenario)
 	root, original := fixture.Repo, fixture.Resolve(t, "@@baseline@@", "")
 	var baseCommit string
 	for _, path := range []string{root, original} {
@@ -539,6 +540,12 @@ func testIncludeAdmissionBeforePruning(t *testing.T, scenario, route string) {
 			testutil.GitCommitAll(t, repository, "indexed include after", options)
 		}
 	}
+	return baseCommit
+}
+
+func testIncludeAdmissionBeforePruning(t *testing.T, fixture *testfixture.Fixture, baseCommit, route string) {
+	t.Helper()
+	root, original := fixture.Repo, fixture.Resolve(t, "@@baseline@@", "")
 	owner := cachetest.New(t, "", cache.New)
 	server := file.NewTransport(file.Options{Loader: fixture})
 	cfg := Config{

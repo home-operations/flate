@@ -49,7 +49,6 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 	}
 	var oracle [2][]byte
 	for run := range 2 {
-		head.Restore(t)
 		cache, err := sourcecache.New(t.Context(), t.TempDir())
 		assert.NoError(t, err)
 		t.Cleanup(func() { assert.NoError(t, cache.Close()) })
@@ -111,14 +110,15 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 			assert.Equal(t, admissions[result.ID.Side].Load(), wantAdmissions)
 		}
 		output := assertExplicitEntryResults(t, results, mode, persistent)
+		assertExplicitEntryWork(t, mode, persistent, logs.String())
 		if run == 0 {
 			oracle = output
+			head.Restore(t)
 		} else {
 			for side := range output {
 				assert.Equal(t, bytes.Equal(output[side], oracle[side]), true)
 			}
 		}
-		assertExplicitEntryWork(t, mode, persistent, logs.String())
 	}
 }
 

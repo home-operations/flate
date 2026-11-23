@@ -196,28 +196,25 @@ func (c *admissionClosure) bootstrapInputRequired(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) bool {
-	if owner.Object == nil || record.Parent != owner.Identity && !c.coversDeclaration(owner, id) {
+	if owner.Object == nil {
 		return false
 	}
 	for ref := range manifest.References(owner.Object, manifest.ReferenceRelations) {
 		if !ref.Ordering && !ref.ContentInput() {
 			continue
 		}
-		if ref.NamedResource == id {
-			return true
-		}
-		input := c.record(ref.NamedResource)
-		productions := c.productions(ref.NamedResource)
-		if len(input.Productions) == 0 && len(productions) == 0 && input.Parent == id {
-			return true
-		}
-		for i := range productions {
-			production := &productions[i]
-			if (production.Materializer(ref.NamedResource) == id || production.Declaration == id) &&
-				c.bootstrapProductionCurrent(ref.NamedResource, production) {
-				return true
+		if ref.NamedResource != id {
+			input := c.record(ref.NamedResource)
+			productions := c.productions(ref.NamedResource)
+			parent := len(input.Productions) == 0 && len(productions) == 0 && input.Parent == id
+			if !parent && !slices.ContainsFunc(productions, func(production manifest.Production) bool {
+				return (production.Materializer(ref.NamedResource) == id || production.Declaration == id) &&
+					c.bootstrapProductionCurrent(ref.NamedResource, &production)
+			}) {
+				continue
 			}
 		}
+		return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
 	}
 	return false
 }

@@ -69,6 +69,29 @@
     },
     {
       "repository": "repo",
+      "name": "shared-instance-refs-tag",
+      "overlay": "shared-instance-refs",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/production"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "shared-instance-refs-head",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-instance-refs-tag"
+      ],
+      "refs": []
+    },
+    {
+      "repository": "repo",
       "name": "shared-classic-base",
       "overlay": "shared-classic-bootstrap",
       "author": "fixture",
@@ -172,6 +195,10 @@
       "name": "one-sided-diff",
       "directory": "overlays/one-sided-diff",
       "operations": []
+    },
+    {
+      "name": "shared-instance-refs",
+      "directory": "overlays/shared-instance-refs"
     },
     {
       "name": "shared-inputs",
@@ -895,6 +922,105 @@
             "expect": {
               "stdout": "expect/shared-diff-payload.stdout",
               "stderr": "expect/shared-root.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-instance-refs",
+      "description": "Two FluxInstance roots use different refs for the same generated source. The shared applications reach that source from outside both cluster paths.",
+      "setup": [
+        {
+          "commit": "shared-instance-refs-head"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/main",
+            "commit": "shared-instance-refs-head"
+          }
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap,GitRepository"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-refs-root.stdout",
+              "stderr": "expect/shared-instance-refs-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-main",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/main/sync",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap,GitRepository"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-refs-select-main.stdout",
+              "stderr": "expect/shared-instance-refs-select-main.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "select-test",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/test/sync",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap,GitRepository"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/shared-instance-refs-select-test.stdout",
+              "stderr": "expect/shared-selected.stderr",
               "code": 0
             }
           }
@@ -2036,6 +2162,7 @@
       "path": "expect/shared-selected.stderr",
       "cases": [
         "shared-instance",
+        "shared-instance-refs",
         "shared-classic",
         "classic-native",
         "classic-generated-values",
@@ -2085,6 +2212,125 @@
         "shared-instance"
       ],
       "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-instance-refs-root.stderr",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Complete diagnostics for the repository root."
+    },
+    {
+      "path": "expect/shared-instance-refs-root.stdout",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Complete manifest output for the repository root."
+    },
+    {
+      "path": "expect/shared-instance-refs-select-main.stderr",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Complete diagnostics for the explicit cluster path."
+    },
+    {
+      "path": "expect/shared-instance-refs-select-main.stdout",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Complete manifest output for the explicit cluster path."
+    },
+    {
+      "path": "expect/shared-instance-refs-select-test.stdout",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Complete manifest output for the explicit cluster path."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/main/sync/apps.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "References the shared applications from the cluster sync path."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/main/sync/flux-instance.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Generates the shared source identity with the cluster Git ref."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/main/sync/kustomization.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Builds the cluster entry package."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/main/sync/marker.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Identifies the cluster or workload in rendered output."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/shared/second/ks.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "References the shared GitRepository from outside both cluster paths."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/shared/second/payload/marker.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Identifies the cluster or workload in rendered output."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/shared/workload/ks.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "References the shared GitRepository from outside both cluster paths."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/shared/workload/payload/marker.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Identifies the cluster or workload in rendered output."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/test/sync/apps.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "References the shared applications from the cluster sync path."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/test/sync/flux-instance.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Generates the shared source identity with the cluster Git ref."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/test/sync/kustomization.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Builds the cluster entry package."
+    },
+    {
+      "path": "overlays/shared-instance-refs/repo/test/sync/marker.yaml",
+      "cases": [
+        "shared-instance-refs"
+      ],
+      "purpose": "Identifies the cluster or workload in rendered output."
     },
     {
       "path": "expect/shared-diff-main.stdout",

@@ -1,0 +1,9 @@
+
+  ⚠ warnings (<PERSISTENCE:3|4>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [ConflictingProducers] ConfigMap apps/marker: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository
+      entry path "main/sync", Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository
+    [ConflictingProducers] FluxInstance flux-system/flux: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository
+      entry path "main/sync", Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository
+    [ConflictingProducers] Kustomization flux-system/apps: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository
+      entry path "main/sync", Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster-repository

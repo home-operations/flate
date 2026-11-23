@@ -588,8 +588,9 @@ func (a *Admission) resolve(
 	if candidate.provider == store.ProviderInput && candidate.artifact == a.input && needsSourcePolicy(a.input) {
 		candidate.artifact = nil
 	}
-	if candidate.artifact != nil || candidate.provider == store.ProviderFetch ||
-		candidate.provider == store.ProviderGenerator || candidate.provider == store.ProviderAbsent {
+	localProvider := candidate.provider.WorkingTree() || candidate.provider == store.ProviderCommit
+	canBind := candidate.object != nil || candidate.synthetic
+	if candidate.artifact != nil || !localProvider || !canBind {
 		return candidate, nil
 	}
 	bootstrap := candidate.input

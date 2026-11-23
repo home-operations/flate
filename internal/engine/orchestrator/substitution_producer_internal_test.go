@@ -184,6 +184,7 @@ func TestRender_InheritedProducerIdentities(t *testing.T) {
 
 //nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
 func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
+	fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
 	for _, tc := range []struct {
 		name, field string
 		changed     bool
@@ -197,7 +198,6 @@ func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
 		{name: "label changed", field: "labels", changed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
 			metadata := "metadata:\n  name: '${BUCKET}'\n"
 			if tc.field != "" {
 				metadata += "  " + tc.field + ": {kustomize.toolkit.fluxcd.io/substitute: disabled}\n"

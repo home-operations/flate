@@ -51,7 +51,6 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixture := testfixture.Materialize(t, "scope-inputs-"+name, name)
-			fixture.Restore(t)
 			cache := cachetest.New(t, "", sourcecache.New)
 			paths := [2]string{fixture.Resolve(t, "@@baseline@@/flux", ""), filepath.Join(fixture.Repo, "flux")}
 			universal, want := scopeInputFullOracle(t, name, paths, cache)
@@ -298,7 +297,6 @@ func TestRenderTrees_InTreeCacheCorpus(t *testing.T) {
 func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 	t.Helper()
 	fixture := testfixture.Materialize(t, "scope-selection-"+name, name)
-	fixture.Restore(t)
 	cachePath := fixture.CachePath("package-proof")
 	switch layout {
 	case "relative":

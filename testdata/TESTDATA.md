@@ -369,9 +369,9 @@ The expected tables come from the declared cluster coordinates and application p
 
 ## Independent render model
 
-`pkg/orchestrator/trees_model{,_render}_test.go` constructs bounded before/after
-fixtures in temporary directories. `TestRenderTrees_IndependentModel` and
-`FuzzRenderTrees_IndependentModel` share the byte decoder and four-side checker.
+The tests in `internal/engine/orchestrator` build bounded before and after
+fixtures in temporary directories. `FuzzRenderTrees_IndependentModel` uses the
+byte decoder and compares the full and changed-only renders for both sides.
 The first byte chooses a seed; the second chooses a feature variant, with its
 high bit requesting directory comparison. Three-byte instructions compose
 content, comment, rename, identity, namespace, path, suspension, unconsumed-file

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -32,6 +34,11 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	)
 	owner := &countedRootOwner{Kustomization: &manifest.Kustomization{
 		Name: "owner", Namespace: "apps", Path: ".",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind:      manifest.BootstrapSourceID.Kind,
+			Namespace: manifest.BootstrapSourceID.Namespace,
+			Name:      manifest.BootstrapSourceID.Name,
+		},
 	}}
 	facts := &solverFacts{
 		store:       st,
@@ -59,6 +66,11 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Close()
 	c.objects, c.proposal.reads = &reads, &reads
+	concreteOwner := rootOwnerFact(owner.Kustomization, c.rootReader())
+	unrelated := facts.index.Records[inputs[0]]
+	assert.Equal(t, c.bootstrapInputRequired(&concreteOwner, inputs[0], &unrelated), false)
+	assert.Equal(t, len(c.ownerClaims), 0)
+
 	coordinates := rootOwnerFact(owner, c.rootReader())
 	missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing"}
 	assert.Equal(t, c.coversDeclaration(&coordinates, missing), false)

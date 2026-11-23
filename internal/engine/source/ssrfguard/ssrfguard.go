@@ -46,10 +46,9 @@ import (
 //nolint:gochecknoglobals // Egress restriction is deliberately process-wide and read at each dial.
 var restrict atomic.Bool
 
-// Restrict enables or disables the egress guard process-wide. The orchestrator
-// sets it from Config.RestrictEgress; tests reset it. Safe for concurrent use,
-// but it is a single process-level setting (last writer wins) — see the package
-// doc on why per-render is not possible.
+// Restrict enables or disables the address guard process-wide. The CLI and SDK
+// set it after validating input trees. Concurrent writes are safe, and the last
+// write sets the policy for the process.
 func Restrict(on bool) { restrict.Store(on) }
 
 // Ranges [netip.Addr.IsPrivate] does NOT cover but that are not legitimate fetch

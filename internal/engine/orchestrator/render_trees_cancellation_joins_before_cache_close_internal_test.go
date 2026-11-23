@@ -133,8 +133,8 @@ func (f *countedChartFetcher) Fetch(
 	}, nil
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
+	t.Parallel()
 	roots := [2]string{t.TempDir(), t.TempDir()}
 	for side, root := range roots {
 		writeCluster(t, root, "same", "same")
@@ -182,6 +182,7 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 	for side, root := range roots {
 		for _, changedOnly := range []bool{false, true} {
 			t.Run(fmt.Sprintf("side_%d/changed_%t", side, changedOnly), func(t *testing.T) {
+				t.Parallel()
 				testRenderDeclarationOnlyExcludesUnrelatedWorkCase(
 					t,
 					testRenderDeclarationOnlyExcludesUnrelatedWorkCaseInputs{

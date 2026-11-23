@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
+	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -183,12 +184,16 @@ func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResour
 	return roots
 }
 
+func (c *commonFlags) hasBaseline(autoFallback bool) bool {
+	return autoFallback || c.pathOrig != "" || c.base != ""
+}
+
 func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) error {
 	c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs = "", "", nil
 	if c.pathOrig != "" && c.base != "" {
 		return errors.New("--path-orig and --base are mutually exclusive")
 	}
-	if c.pathOrig == "" && c.base == "" && !autoFallback {
+	if !c.hasBaseline(autoFallback) {
 		return nil
 	}
 	if c.pathOrig != "" {
@@ -231,18 +236,22 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) err
 	return nil
 }
 
-func inputTrees(c *commonFlags) []orchestrator.Tree {
-	trees := []orchestrator.Tree{{
-		ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
-		RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs,
-		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes,
-	}}
-	if c.pathOrig != "" {
-		trees = append([]orchestrator.Tree{{
-			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
-			RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs,
-			Input: c.baseInput, BaseInput: c.input, ExternalChanges: c.changes,
-		}}, trees...)
+func inputTrees(compare bool) []orchestrator.Tree {
+	head := orchestrator.Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}
+	if !compare {
+		return []orchestrator.Tree{head}
+	}
+	return []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, head}
+}
+
+func (c *commonFlags) bindInputTrees(trees []orchestrator.Tree) []orchestrator.Tree {
+	head := &trees[len(trees)-1]
+	head.RepoRoot, head.Path, head.SelfURLs = c.pathRoot, c.path, c.selfURLs
+	head.Input, head.BaseInput, head.ExternalChanges = c.input, c.baseInput, c.changes
+	if len(trees) > 1 {
+		base := &trees[0]
+		base.RepoRoot, base.Path, base.SelfURLs = c.pathOrigRoot, c.pathOrig, c.pathOrigSelfURLs
+		base.Input, base.BaseInput, base.ExternalChanges = c.baseInput, c.input, c.changes
 	}
 	return trees
 }
@@ -381,7 +390,12 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		return early(err)
 	}
 
+	trees := inputTrees(c.hasBaseline(req.pair))
+	if err := orchestrator.ValidateTrees(trees); err != nil {
+		return early(err)
+	}
 	cfg := buildOrchCfg(c)
+	ssrfguard.Restrict(cfg.RestrictEgress)
 	owner, err := orchestrator.NewInvocation(ctx, cfg)
 	if err != nil {
 		return early(errors.Join(err, owner.Close()))
@@ -391,7 +405,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 	if err := resolveBaseline(ctx, c, req.pair); err != nil {
 		inv.failBaseline(c, req.pair, err)
 	} else {
-		inv.renderTrees(ctx, &req)
+		inv.renderTrees(ctx, &req, c.bindInputTrees(trees))
 	}
 	inv.elapsed = time.Since(start)
 	result := inv.preparePayload(&req, payload)
@@ -750,7 +764,7 @@ const (
 	pathKey              = "path"
 )
 
-func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedRequest) {
+func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedRequest, trees []orchestrator.Tree) {
 	cfg := i.owner.Config
 	cfg.HeadOnly = !req.pair && req.flags.baseInput != nil
 	cfg.Selection.Roots = slices.Clone(req.roots)
@@ -762,7 +776,7 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 		session := barSink.progress(ctx)
 		cfg.StatusListener, stop = session.observe, session.stop
 	}
-	runErr := i.owner.Render(ctx, inputTrees(&req.flags))
+	runErr := i.owner.Render(ctx, trees)
 	runs := i.owner.Results
 	if stop != nil {
 		stop()

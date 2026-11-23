@@ -295,7 +295,7 @@ func TestRender_MemorySparseGit(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test changes the process-wide GC settings.
 func TestRender_MemoryContained(t *testing.T) {
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	previousGC := debug.SetGCPercent(100)
@@ -385,7 +385,7 @@ func TestRender_MemoryContained(t *testing.T) {
 	}
 	writePayload(1024)
 	run(1024, 4)
-	const payloadSize = 16 << 20
+	const payloadSize = 9 << 20
 	writePayload(payloadSize)
 	baselineTree := heap()
 	tolerance := max(uint64(1<<20), baselineTree/50)

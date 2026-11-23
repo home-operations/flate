@@ -17,10 +17,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_ArtifactPredictionSource(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(
 				t,
@@ -122,11 +123,12 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		for _, change := range []string{"declaration", "target", "supplier"} {
 			t.Run(kind+"/"+change, func(t *testing.T) {
+				t.Parallel()
 				testResolveOptionalForceCutInvalidationCase(
 					t,
 					testResolveOptionalForceCutInvalidationCaseInputs{kind: &kind, change: &change},
@@ -137,10 +139,11 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalPairedSelection(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			runs := make([]Rendered, 0, 2)
 			var reader manifest.NamedResource
 			for _, result := range []string{"empty", "data"} {
@@ -199,10 +202,11 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			testResolveOptionalQueuedSuccessorCase(t, &kind)
 		},
 		)

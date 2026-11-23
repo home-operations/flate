@@ -13,8 +13,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestStatusListener_RepresentativeProvenance(t *testing.T) {
+	t.Parallel()
 	seen := map[manifest.NamedResource]int{}
 	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{
 		Concurrency:    2,

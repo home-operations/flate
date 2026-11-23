@@ -12,8 +12,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator helper changes the process-global egress guard.
 func TestCollectResult_HelmValuesKey(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, key         string
 		optional, changed bool
@@ -25,6 +25,7 @@ func TestCollectResult_HelmValuesKey(t *testing.T) {
 		{name: "changed-only missing required key", key: "other.yaml", changed: true, want: store.OutcomeFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\n")
 			testutil.WriteFile(t, root, "release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2

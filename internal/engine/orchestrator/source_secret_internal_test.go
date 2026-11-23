@@ -70,8 +70,8 @@ func (f *secretChartFetcher) Fetch(
 	}, nil
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_SourceSecretRenderedBeforeFetch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		secret    string
@@ -124,6 +124,7 @@ stringData:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			chart := t.TempDir()
 			testutil.WriteFile(t, chart, "chart/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
@@ -206,8 +207,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_OCIFetchUsesRenderedCA(t *testing.T) {
+	t.Parallel()
 	var requests atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)

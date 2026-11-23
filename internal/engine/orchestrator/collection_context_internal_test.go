@@ -32,15 +32,17 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // NewInvocation changes the process-wide egress policy.
 func TestRenderTrees_ChartDependencyContexts(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"shared_invocation", "separate_invocations"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testChartDependencyContexts(t, mode == "separate_invocations")
 		})
 	}
 	for _, file := range []string{"repository.yaml", "secret.yaml"} {
 		t.Run("late_"+file, func(t *testing.T) {
+			t.Parallel()
 			testChartDependencyPublication(t, file)
 		})
 	}

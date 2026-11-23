@@ -115,9 +115,8 @@ spec:
 // #872 fix: a real source.toolkit.fluxcd.io Bucket must still reach the source
 // controller. It has no reachable endpoint here, so failing the fetch is the
 // proof it was dispatched at all.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_FluxBucketStillScheduled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bucket.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: Bucket

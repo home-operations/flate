@@ -63,8 +63,9 @@ func (tc *includeClosureCase) expectation(side manifest.TreeSide) includeClosure
 	return expected
 }
 
-//nolint:paralleltest // RenderTrees changes process-global source policy.
+//nolint:paralleltest // Routes share a fixture, and the overwrite route must run last.
 func TestChangedOnly_IndexedIncludeClosure(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []includeClosureCase{
 		{name: "independent-diff", prior: "current-before", baseOutput: "before", headOutput: "after", baseValue: "before", headValue: "after"},
 		{name: "outside-copied-path", prior: "current-before", baseOutput: "before", headOutput: "before", baseValue: "before", headValue: "before", filtered: true},
@@ -77,6 +78,7 @@ func TestChangedOnly_IndexedIncludeClosure(t *testing.T) {
 		{name: "filtered-input-change", prior: "current-filtered-before", baseOutput: "no-include", headOutput: "no-include", filtered: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			fixture := testfixture.Materialize(t, "artifact-composition", tc.name)
 			for _, route := range []string{"path-orig", "base"} {
 				t.Run(route, func(t *testing.T) { testChangedOnlyIncludeClosure(t, fixture, &tc, route) })
@@ -491,10 +493,11 @@ func assertIncludeAcceptedHistory(
 	)
 }
 
-//nolint:paralleltest // Discovery changes process-global source policy.
 func TestChangedOnly_IncludeAdmissionBeforePruning(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"independent-diff", "shallow-authored-pin"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			fixture := testfixture.Materialize(t, "artifact-composition", scenario)
 			baseCommit := prepareIncludeAdmission(t, fixture)
 			for _, route := range []string{"path-orig", "base"} {

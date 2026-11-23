@@ -12,6 +12,7 @@ import (
 
 func testSuppliedSourceCycle(t *testing.T) {
 	t.Helper()
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t,
 		root,

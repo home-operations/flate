@@ -44,10 +44,13 @@ func (f *includeRepository) Load(_ *url.URL) (storage.Storer, error) {
 	return f.repository.Storer, nil
 }
 
-//nolint:paralleltest // RenderTrees changes process-global source policy.
 func TestPlanTree_IncludeConstruction(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"success", "nested", "missing", "acquisition failure", "cycle", "long cycle", "cancellation", "sparse", "copied policy"} {
-		t.Run(scenario, func(t *testing.T) { testPlanTreeIncludeConstruction(t, scenario) })
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			testPlanTreeIncludeConstruction(t, scenario)
+		})
 	}
 }
 

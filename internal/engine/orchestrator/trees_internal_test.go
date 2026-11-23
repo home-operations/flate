@@ -26,8 +26,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestConstructTrees_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		roots := [2]string{t.TempDir(), t.TempDir()}
 		for _, root := range roots {
@@ -320,11 +320,12 @@ func (f *completionFailureFile) Read([]byte) (int, error) {
 	return 0, f.source.cause
 }
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestQualifyReaders_CompletionFailure(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"construction", "declarations"} {
 		for _, canceled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/canceled_%t", phase, canceled), func(t *testing.T) {
+				t.Parallel()
 				cancellation := "active"
 				if canceled {
 					cancellation = "binding"
@@ -337,6 +338,7 @@ func TestQualifyReaders_CompletionFailure(t *testing.T) {
 		}
 	}
 	t.Run("declarations/pre_canceled", func(t *testing.T) {
+		t.Parallel()
 		testQualifyReadersCompletionFailure(t, "declarations", "before")
 	})
 }

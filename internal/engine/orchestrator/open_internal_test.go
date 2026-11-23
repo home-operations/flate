@@ -33,9 +33,8 @@ func (f *countedProducerFS) Open(name string) (fs.File, error) {
 }
 
 // Escaped resource ownership MUST reach selection through the real discovery wiring.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner(t *testing.T) {
+	t.Parallel()
 	writeTree := func(dir, value string) {
 		testutil.WriteFile(
 			t,
@@ -260,11 +259,12 @@ func assertDigestTrackingOutput(t *testing.T, run Rendered, disabled bool, marke
 	assert.Equal(t, docs[0]["data"].(map[string]any)["marker"], any(marker))
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
+	t.Parallel()
 	for _, covered := range []bool{false, true} {
 		for _, disabled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("covered_%t/disabled_%t", covered, disabled), func(t *testing.T) {
+				t.Parallel()
 				root := t.TempDir()
 				input := writeDigestTrackingTree(t, root)
 				rel := "apps/hr.yaml"
@@ -336,10 +336,11 @@ func TestRenderTrees_ChartDigestTrackingFailureRetry(t *testing.T) {
 	assert.Equal(t, runs[0].hrc.Options.DisableChartDigestTracking, false)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChartDigestTrackingRenderedBoundary(t *testing.T) {
+	t.Parallel()
 	for _, producer := range []string{"file", "kustomization", "resourceset"} {
 		t.Run(producer, func(t *testing.T) {
+			t.Parallel()
 			testOrchestratorChartDigestTrackingRenderedBoundaryCase(
 				t,
 				&producer,

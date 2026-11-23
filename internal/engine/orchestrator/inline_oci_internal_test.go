@@ -51,8 +51,8 @@ func inlineChartRepository(t *testing.T, url string, fields map[string]any) inli
 	return inlineChartFixture{root: root, document: doc}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_InlineOCIRegistryParity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                                 string
 		digest, extract, auth, disable, fail bool
@@ -65,6 +65,7 @@ func TestRender_InlineOCIRegistryParity(t *testing.T) {
 		{name: "registry_failure", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			testRenderInlineOCIRegistryParityCase(t, &tc)
 		})
 	}

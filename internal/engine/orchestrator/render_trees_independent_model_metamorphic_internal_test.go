@@ -43,6 +43,7 @@ func FuzzRenderTrees_IndependentModel(f *testing.F) {
 		f.Add(tc.input)
 	}
 	f.Fuzz(func(t *testing.T, input []byte) {
+		t.Parallel()
 		fixture := decodeRenderModelCase(input)
 		if _, err := checkRenderModel(t, &fixture); err != nil {
 			failRenderModel(t, input, &fixture, err)

@@ -191,8 +191,7 @@ func TestAggregateFailures_Deterministic(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger.
 func TestFinalize_DebugSummary(t *testing.T) {
 	t.Run("projected_declaration_count", func(t *testing.T) {
 		var logs bytes.Buffer

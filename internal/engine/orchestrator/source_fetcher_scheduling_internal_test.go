@@ -39,21 +39,22 @@ func (emptySourceFetcher) Fetch(
 	}, nil
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		fetcher    bool
 		dispatched int64
 	}{{false, 0}, {true, 1}} {
 		t.Run(strconv.FormatBool(tc.fetcher), func(t *testing.T) {
+			t.Parallel()
 			testDAGSourceWithoutFetcherIsNotSeededCase(t, &tc)
 		},
 		)
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSourceFetchers_ExistenceOnlyDisabled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{Concurrency: 2})
 	assert.NoError(t, err)

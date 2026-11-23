@@ -320,7 +320,7 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 		}
 	}
 	flags := commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2}
-	runs, runErr := renderTreesForTest(t.Context(), t, inputTrees(&flags), buildOrchCfg(&flags))
+	runs, runErr := renderTreesForTest(t.Context(), t, flags.bindInputTrees(inputTrees(false)), buildOrchCfg(&flags))
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", runErr)
 	run := runs[0]
 	res := run.Result

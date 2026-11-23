@@ -15,8 +15,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceGeneratorSource(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, ref, material string
 		provider            store.SourceProvider
@@ -25,6 +25,7 @@ func TestRender_FluxInstanceGeneratorSource(t *testing.T) {
 		{name: "digest", ref: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", material: "upstream"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, upstream := t.TempDir(), t.TempDir()
 			checkoutTree := fluxInstanceGeneratorFixture{
 				ref: tc.ref, name: "{namespace}-{app}", copyGlob: "base/**", material: "checkout",

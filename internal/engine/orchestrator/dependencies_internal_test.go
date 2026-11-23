@@ -13,8 +13,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest,tparallel // Worker cases compare the same generated name.
 func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
+	t.Parallel()
 	var generatedName string
 	for _, tc := range []struct {
 		workers int

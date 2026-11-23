@@ -24,7 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The receipt witnesses replace the process-wide logger.
 func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 	t.Run("cold-self-applier-substituteFrom", testEntrySelfApplier)
 	for _, kind := range []string{"fluxinstance", "kustomization"} {

@@ -45,7 +45,6 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 	materializeRenderModelSourcesResult1 := materializeRenderModelSources(t, fixture)
 	serializedBefore, serializedAfter := materializeRenderModelSourcesResult1.before, materializeRenderModelSourcesResult1.after
 	writeRenderModelWorld(t, beforeRoot, serializedBefore)
-	writeRenderModelWorld(t, afterRoot, serializedAfter)
 	owner, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		return nil, err
@@ -76,6 +75,8 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 			return nil, prepareErr
 		}
 		baseTree, headTree = before, after
+	} else {
+		writeRenderModelWorld(t, afterRoot, serializedAfter)
 	}
 	fullBefore, fullAfter := Rendered{}, Rendered{}
 	for _, side := range []struct {
@@ -172,9 +173,8 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 			}
 			reference[index] = projectRenderModel(full, side.want, side.world)
 			actual[index] = changed
-			if err := compareInitialRenderModelObservation(index, side.name, reference[index], changed); err != nil {
-				problems = append(problems, err)
-			}
+			comparisonErr := compareInitialRenderModelObservation(index, side.name, reference[index], changed)
+			problems = append(problems, comparisonErr)
 			if err := checkDeletedRenderModelDocuments(side.name, side.want.deleted, changed.documents); err != nil {
 				return nil, err
 			}
@@ -186,8 +186,8 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 	if err := checkRenderModelPairError(pairErr, old.Err, current.Err); err != nil {
 		return nil, err
 	}
-	if len(problems) > 0 {
-		return nil, fmt.Errorf("%w\n%s", errors.Join(problems...), evidence.String())
+	if err := errors.Join(problems...); err != nil {
+		return nil, fmt.Errorf("%w\n%s", err, evidence.String())
 	}
 	return marshalRenderModelManifests(old.Result.Manifests, current.Result.Manifests)
 }
@@ -681,9 +681,6 @@ func compareRenderModelSides(observed [2]bool, reference, actual *[2]modelObserv
 func commitRenderModelSources(t *testing.T, root string, before, after modelWorld) (plumbing.Hash, error) {
 	t.Helper()
 	repo := testutil.GitInit(t, root)
-	if err := removeAbsentRenderModelFiles(root, after, before); err != nil {
-		return plumbing.ZeroHash, err
-	}
 	writeRenderModelWorld(t, root, before)
 	hash := testutil.GitCommitAll(
 		t,

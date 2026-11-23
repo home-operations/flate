@@ -45,9 +45,8 @@ func (f fakeOCIFetcher) Fetch(
 }
 
 // A newly admitted emitted consumer MUST admit its source before publication.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {
+	t.Parallel()
 	clusterKS := "---\n" +
 		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository

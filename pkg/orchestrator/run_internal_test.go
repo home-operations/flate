@@ -4,29 +4,87 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
+	enginesource "github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
+func TestRun_RestrictEgress(t *testing.T) {
+	t.Cleanup(func() { ssrfguard.Restrict(false) })
+	const value = "remote-sdk-value"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w,
+			"apiVersion: v1\nkind: ConfigMap\n"+
+				"metadata: {name: output, namespace: apps}\ndata: {value: "+value+"}\n",
+		)
+	}))
+	t.Cleanup(server.Close)
+	root := t.TempDir()
+	writeRunCluster(t, root, "", "local")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+server.URL+"/remote.yaml]\n")
+	tree := Tree{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}, RepoRoot: root}
+
+	blocked, err := RenderTrees(t.Context(), []Tree{tree}, Config{
+		Concurrency: 2, CacheDir: t.TempDir(), RestrictEgress: true,
+	})
+	t.Cleanup(func() { assert.NoError(t, blocked.Close()) })
+	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "blocked by egress restriction"),
+		"missing guard diagnostic: %v", err)
+	assert.Equal(t, requests.Load(), 0)
+
+	invalid, err := RenderTrees(t.Context(), []Tree{tree, tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+	t.Cleanup(func() { assert.NoError(t, invalid.Close()) })
+	assert.Equal(t, invalid == nil, true)
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	transport := enginesource.NewHTTPTransport(enginesource.TransportMaterial{})
+	conn, err := transport.DialContext(t.Context(), "tcp", server.Listener.Addr().String())
+	if conn != nil {
+		assert.NoError(t, conn.Close())
+	}
+	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "blocked by egress restriction"),
+		"input rejection changed the egress policy: %v", err)
+	assert.Equal(t, requests.Load(), 0)
+
+	allowed, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+	t.Cleanup(func() { assert.NoError(t, allowed.Close()) })
+	assert.NoError(t, err)
+	assert.FatalIf(t, requests.Load() == 0, "missing request to %s", server.URL)
+	assert.FatalIf(
+		t,
+		allowed == nil || len(allowed.Results) != 1 || !allowed.Results[0].Complete,
+		"missing render: %v",
+		allowed,
+	)
+	assert.Equal(t, runValue(t, allowed.Results[0].Result.Manifests), value)
+}
+
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_ResultsDoNotControlOwnership(t *testing.T) {
-	t.Parallel()
 	for _, mutation := range []string{"replace", "reorder", "clear", "fields"} {
 		t.Run(mutation, func(t *testing.T) {
-			t.Parallel()
 			roots := []string{t.TempDir(), t.TempDir()}
 			trees := make([]Tree, 0, len(roots))
 			for i, root := range roots {
@@ -76,11 +134,10 @@ func TestRun_ResultsDoNotControlOwnership(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_LazySelectionLifetime(t *testing.T) {
-	t.Parallel()
 	for _, stage := range []string{"completed", "partial_failure", "discovery_failure", "canceled"} {
 		t.Run(stage, func(t *testing.T) {
-			t.Parallel()
 			root := t.TempDir()
 			writeRunCluster(t, root, "", "retained")
 			path := ""
@@ -151,8 +208,8 @@ func TestRun_LazySelectionLifetime(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_PairedSelectionMatchesHeadOnly(t *testing.T) {
-	t.Parallel()
 	root, err := filepath.Abs("../../testdata/producer-moves/pr91")
 	assert.NoError(t, err)
 	head := manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
@@ -195,8 +252,8 @@ func TestRun_PairedSelectionMatchesHeadOnly(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_StatusSnapshots(t *testing.T) {
-	t.Parallel()
 	st := store.New()
 	id := testutil.KustomizationID("apps", "owner")
 	st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
@@ -255,11 +312,10 @@ func TestRun_StatusSnapshots(t *testing.T) {
 	assert.Equal(t, selected[0].Statuses[id].Outcome, OutcomePassed)
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_SuppliedDocuments(t *testing.T) {
-	t.Parallel()
 	for _, scenario := range []string{"replacement", "repository_precedence", "encrypted", "malformed", "malformed_data"} {
 		t.Run(scenario, func(t *testing.T) {
-			t.Parallel()
 			testRunSuppliedDocuments(t, scenario)
 		})
 	}
@@ -384,11 +440,10 @@ func runValue(t *testing.T, batches []manifest.DocumentBatch) string {
 	return ""
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_LazySourceReads(t *testing.T) {
-	t.Parallel()
 	for _, stage := range []string{"completed", "partial_failure", "canceled"} {
 		t.Run(stage, func(t *testing.T) {
-			t.Parallel()
 			repositoryRoot, root := t.TempDir(), t.TempDir()
 			repo := testutil.GitInit(t, repositoryRoot)
 			writeRunCluster(t, repositoryRoot, "", "remote")
@@ -478,8 +533,8 @@ func TestRun_LazySourceReads(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_StatusDependencySnapshots(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	writeRunCluster(t, root, "", "unused")
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [missing.yaml]\n")

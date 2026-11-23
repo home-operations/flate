@@ -15,8 +15,8 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_SelectOwnedSides(t *testing.T) {
-	t.Parallel()
 	before, after := t.TempDir(), t.TempDir()
 	writeClusters(t, before, []string{"main", "test"}, false)
 	writeClusters(t, after, []string{"main", "test", "utility"}, true)
@@ -26,8 +26,8 @@ func TestRun_SelectOwnedSides(t *testing.T) {
 	}
 	roots := []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}}
 	for _, headOnly := range []bool{false, true} {
+		//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 		t.Run(fmt.Sprintf("head_only=%t", headOnly), func(t *testing.T) {
-			t.Parallel()
 			var callbacks atomic.Int32
 			cfg := orchestrator.Config{
 				RecordWork: true, Selection: orchestrator.SelectionRequest{Roots: roots, Changed: false, Labels: map[string]string{"fixture": "selected"}},
@@ -121,8 +121,8 @@ func TestRun_SelectOwnedSides(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_SelectInvalidIdentities(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	writeClusters(t, root, []string{"main", "test", "utility"}, false)
 	run, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/sdk"}}}, orchestrator.Config{Concurrency: 2})
@@ -155,8 +155,8 @@ func TestRun_SelectInvalidIdentities(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRun_ValidationAndSharedError(t *testing.T) {
-	t.Parallel()
 	bad := orchestrator.Tree{ID: manifest.TreeID{Cluster: "a", Side: manifest.TreeHead}}
 	if run, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{bad, bad}, orchestrator.Config{Concurrency: 2}); run != nil || !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("validation returned %v, %v", run, err)

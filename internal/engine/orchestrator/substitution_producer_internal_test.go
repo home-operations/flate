@@ -22,13 +22,14 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
 func TestRender_ComponentSecretProducerSelection(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{
 		"shared-file-ordered", "shared-file-unordered",
 		"parent-context-ordered", "parent-context-unordered",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			fixture := testfixture.Materialize(t, "component-secret-producer", name)
 			testutil.WriteFile(t, fixture.Repo, "kubernetes/apps/kustomization.yaml",
 				"resources: [paperwork/paperless/ks.yaml, sibling.yaml, namespace-owner.yaml]\n")
@@ -98,8 +99,8 @@ func TestRender_ComponentSecretProducerSelection(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
 func TestRender_InheritedProducerIdentities(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, postBuild, target string
 	}{
@@ -115,8 +116,10 @@ func TestRender_InheritedProducerIdentities(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, changed := range []bool{false, true} {
 				t.Run(fmt.Sprintf("changed_%t", changed), func(t *testing.T) {
+					t.Parallel()
 					fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
 					testutil.WriteFile(t, fixture.Repo, "kubernetes/flux/cluster/apps.yaml",
 						testutil.KustomizationYAML("cluster-apps", "flux-system",
@@ -182,8 +185,9 @@ func TestRender_InheritedProducerIdentities(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
+//nolint:paralleltest,tparallel // Cases edit a shared repository.
 func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
+	t.Parallel()
 	fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
 	for _, tc := range []struct {
 		name, field string
@@ -260,14 +264,15 @@ func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionProducerOrdering(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		for _, changedOnly := range []bool{false, true} {
 			for _, producerFirst := range []bool{false, true} {
 				t.Run(
 					fmt.Sprintf("%s/changed_%t/producer_first_%t", kind, changedOnly, producerFirst),
 					func(t *testing.T) {
+						t.Parallel()
 						testRenderSubstitutionProducerOrderingCase(
 							t,
 							testRenderSubstitutionProducerOrderingCaseInputs{
@@ -283,10 +288,11 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteSubstitutionProducerCluster(t, root, kind)
 			testutil.WriteFile(t, root, "data/version.env", "VERSION=4.6.2\n")
@@ -323,11 +329,12 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_ResourceSetConflictingDataConsumers(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		for _, skip := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/skip=%t", kind, skip), func(t *testing.T) {
+				t.Parallel()
 				testRenderResourceSetConflictingDataConsumersCase(
 					t,
 					testRenderResourceSetConflictingDataConsumersCaseInputs{kind: &kind, skip: &skip},

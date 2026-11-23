@@ -8,6 +8,7 @@ import (
 
 func testSuppliedSourceReferences(t *testing.T) {
 	t.Helper()
+	t.Parallel()
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket, manifest.KindHelmRepository, manifest.KindHelmChart} {
 		for _, mode := range []string{"full", "changed", "selected all", "selected reference"} {
 			t.Run(kind+"/"+mode, func(t *testing.T) {

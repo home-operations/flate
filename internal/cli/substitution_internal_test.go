@@ -3,13 +3,17 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil/assert"
 
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -86,6 +90,52 @@ const (
 	externalCM     = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: external, namespace: apps}\ndata: {VALUE: supplied}\n"
 	externalSecret = "apiVersion: v1\nkind: Secret\nmetadata: {name: external, namespace: apps}\nstringData: {VALUE: supplied}\n"
 )
+
+//nolint:paralleltest // Run sets the process-wide logger and egress policy.
+func TestRun_RestrictEgress(t *testing.T) {
+	t.Cleanup(func() { ssrfguard.Restrict(false) })
+	const value = "remote-cli-value"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w,
+			"apiVersion: v1\nkind: ConfigMap\n"+
+				"metadata: {name: rendered, namespace: apps}\ndata: {value: "+value+"}\n",
+		)
+	}))
+	t.Cleanup(server.Close)
+	root := substitutionFixture(t, "", "local")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+server.URL+"/remote.yaml]\n")
+
+	t.Run("enabled", func(t *testing.T) {
+		result := runCLI(
+			t,
+			"build",
+			"all",
+			"--path",
+			root,
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+			"--restrict-egress",
+		)
+		assert.Equal(t, result.code, 1)
+		assert.FatalIf(
+			t,
+			!strings.Contains(result.stderr, "blocked by egress restriction"),
+			"missing guard diagnostic: %s",
+			result.stderr,
+		)
+		assert.Equal(t, requests.Load(), 0)
+	})
+	t.Run("default", func(t *testing.T) {
+		result := runCLI(t, "build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir())
+		assert.FatalIf(t, result.code != 0, "exit=%d: %s", result.code, result.stderr)
+		assert.FatalIf(t, requests.Load() == 0, "missing request to %s", server.URL)
+		assert.Equal(t, substitutionOutput(t, result.stdout), value)
+	})
+}
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_ExternalSubstitution(t *testing.T) {

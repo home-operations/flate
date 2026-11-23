@@ -23,11 +23,12 @@ const ociPlexReleaseFile = "kubernetes/apps/default/plex/app/release.yaml"
 type ociChangedOnlyCase struct {
 	name, file, field, before, after string
 	unpatched                        [2]bool
-	roots                            []manifest.NamedResource
+	alsoExplicit                     bool
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
+//nolint:paralleltest // Routes share a comparison fixture and the primed cache.
 func TestRender_FluxInstanceChangedOnlySupport(t *testing.T) {
+	t.Parallel()
 	registryURL := fluxInstanceChartRegistry(t)
 	const strategy = "strategy: RemediateOnFailure"
 	const generator = "kubernetes/apps/flux-system/flux-instance/app/release.yaml"
@@ -37,25 +38,21 @@ func TestRender_FluxInstanceChangedOnlySupport(t *testing.T) {
 	}
 	for _, tc := range []ociChangedOnlyCase{
 		{name: "app input", file: ociPlexReleaseFile, field: "input", before: "plain", after: "changed"},
-		{name: "root patch", file: generator, field: "strategy", before: strategy, after: "strategy: changed"},
 		{
-			name: "explicit roots", file: generator, field: "strategy", before: strategy,
-			after: "strategy: changed", roots: roots,
+			name: "root patch", file: generator, field: "strategy", before: strategy,
+			after: "strategy: changed", alsoExplicit: true,
 		},
 		{
 			name: "withdraw patch", field: "strategy", before: strategy, after: "plain",
-			unpatched: [2]bool{false, true},
+			unpatched: [2]bool{false, true}, alsoExplicit: true,
 		},
 		{
 			name: "restore patch", field: "strategy", before: "plain", after: strategy,
 			unpatched: [2]bool{true, false},
 		},
-		{
-			name: "withdraw patch with explicit roots", field: "strategy", before: strategy, after: "plain",
-			unpatched: [2]bool{false, true}, roots: roots,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var trees [2]Tree
 			var full [2][]map[string]any
 			var fullCache [2]string
@@ -85,26 +82,31 @@ func TestRender_FluxInstanceChangedOnlySupport(t *testing.T) {
 			for i, want := range []string{tc.before, tc.after} {
 				data, _ := full[i][0]["data"].(map[string]any)
 				assert.Equal(t, data[tc.field], any(strings.TrimPrefix(want, "strategy: ")))
-			}
-			for i := range trees {
 				trees[i].ID.Side, trees[i].BaseInput = manifest.TreeSide(i), trees[1-i].Input
 			}
-			request := selection.Request{Changed: true, Roots: tc.roots}
-			runs, err := renderTreesForTest(t.Context(), t, trees[:], Config{
-				Concurrency: 2, CacheDir: t.TempDir(), RecordWork: true, Selection: request,
-			})
-			assert.NoError(t, err)
-			assert.Equal(t, len(runs), len(trees))
-			var attempts [2]map[manifest.NamedResource]uint64
-			for i := range runs {
-				attempts[i] = plexApplicationAttempts(runs[i].Result.Work)
-				assert.Diff(t, outputByParent(runs[i].Result.Manifests)[plex], full[i])
+			type selectionRoute struct {
+				name  string
+				roots []manifest.NamedResource
 			}
-			t.Logf("engine attempts: %v", attempts)
-			tc.assertAttempts(t, attempts)
+			routes := []selectionRoute{{name: "default roots"}}
+			if tc.alsoExplicit {
+				routes = append(routes, selectionRoute{name: "explicit roots", roots: roots})
+			}
+			for _, route := range routes {
+				t.Run(route.name, func(t *testing.T) {
+					request := selection.Request{Changed: true, Roots: route.roots}
+					runs, err := renderTreesForTest(t.Context(), t, trees[:], Config{
+						Concurrency: 2, CacheDir: t.TempDir(), RecordWork: true, Selection: request,
+					})
+					assert.NoError(t, err)
+					assert.Equal(t, len(runs), len(trees))
+					tc.assertSelection(t, runs, &full)
+				})
+			}
 			if tc.field != "input" {
 				return
 			}
+			request := selection.Request{Changed: true}
 			t.Run("primed generator", func(t *testing.T) {
 				runs, err := renderTreesForTest(t.Context(), t, trees[:], Config{
 					Concurrency: 2, CacheDir: fullCache[0], RecordWork: true, Selection: request,
@@ -229,8 +231,15 @@ func (tc *ociChangedOnlyCase) prepareTree(t *testing.T, registryURL string, side
 	return tree
 }
 
-func (tc *ociChangedOnlyCase) assertAttempts(t *testing.T, attempts [2]map[manifest.NamedResource]uint64) {
+func (tc *ociChangedOnlyCase) assertSelection(t *testing.T, runs []Rendered, full *[2][]map[string]any) {
 	t.Helper()
+	plex := testutil.HelmReleaseID("default", "plex")
+	var attempts [2]map[manifest.NamedResource]uint64
+	for i := range runs {
+		attempts[i] = plexApplicationAttempts(runs[i].Result.Work)
+		assert.Diff(t, outputByParent(runs[i].Result.Manifests)[plex], full[i])
+	}
+	t.Logf("engine attempts: %v", attempts)
 	generator := testutil.KustomizationID("flux-system", "flux-instance")
 	support := []manifest.NamedResource{
 		generator,
@@ -266,6 +275,22 @@ func (tc *ociChangedOnlyCase) assertAttempts(t *testing.T, attempts [2]map[manif
 	for _, got := range attempts {
 		assert.Diff(t, got, want)
 	}
+}
+
+func assertOCIPlexAttempts(t *testing.T, result *Result, covered, inspectParent bool) {
+	t.Helper()
+	want := map[manifest.NamedResource]uint64{
+		testutil.KustomizationID("default", "plex"): 1,
+		testutil.HelmReleaseID("default", "plex"):   1,
+	}
+	if covered || inspectParent {
+		want[testutil.KustomizationID("flux-system", "flux-instance")] = 1
+	}
+	if covered {
+		want[testutil.KustomizationID("flux-system", "flux-system")] = 1
+		want[testutil.HelmReleaseID("flux-system", "flux-instance")] = 1
+	}
+	assert.Diff(t, plexApplicationAttempts(result.Work), want)
 }
 
 func fluxInstanceChartRegistry(t *testing.T) string {

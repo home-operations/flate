@@ -70,8 +70,8 @@ func (f *generatedOCIFetcher) Fetch(
 	}, nil
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		producer bool
@@ -82,6 +82,7 @@ func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
 		{name: "fetch_failed", producer: true, fetchErr: manifest.NewError(manifest.ErrFlux, nil, "fixture fetch failed")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			testRenderDeferredOCIArtifactRootCase(t, &tc)
 		},
 		)

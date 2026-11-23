@@ -234,8 +234,8 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1(
 	)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}-${OLD:-gone}")
 	first := suppliedSubstitution("external")
@@ -259,6 +259,7 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 
 	for _, encryptedLast := range []bool{false, true} {
 		t.Run(fmt.Sprintf("encrypted_last=%t", encryptedLast), func(t *testing.T) {
+			t.Parallel()
 			encrypted := suppliedSubstitution("external")
 			encrypted.Obj.(*manifest.ConfigMap).Data = map[string]any{
 				"Z":     "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]",
@@ -287,10 +288,11 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSupply_IndexedIdentityDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	for _, namespace := range []string{"apps", "", "other"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
+			t.Parallel()
 			source := suppliedSubstitution("external")
 			o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.Declaration{source}, Path: t.TempDir()})
 			id := source.Obj.Named()
@@ -402,8 +404,8 @@ func testRenderTreesRequiredPostBuildPermissionCase1(t *testing.T, kind *string,
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionDeferredEntry(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [root.yaml, child.yaml, source.yaml]\n")
 	testutil.WriteFile(

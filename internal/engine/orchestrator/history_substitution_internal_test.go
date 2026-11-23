@@ -49,15 +49,17 @@ func effectiveHistoryCases() []struct {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBuildChangeFilter_EffectiveSubstitutionHistory(t *testing.T) {
+	t.Parallel()
 	for _, regime := range []string{"present", "missing", "stale", "shallow"} {
 		t.Run("dependency namespaces/"+regime, func(t *testing.T) {
+			t.Parallel()
 			testDependencyNamespaceHistory(t, regime)
 		})
 	}
 	for _, tc := range effectiveHistoryCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 				t,
 				&tc,

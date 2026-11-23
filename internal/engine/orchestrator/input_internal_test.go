@@ -37,7 +37,7 @@ func (r *scopedPeerReader) ReadDir(name string) ([]fs.DirEntry, error) {
 	return fs.ReadDir(r.FS, name)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The preparation witnesses replace the process-wide logger.
 func TestRenderTrees_AdmittedViews(t *testing.T) {
 	t.Run("prepares_each_side_once", testRenderTreesPreparesEachSideOnce)
 	t.Run("flux_instance_sync_unchanged_root", testRenderTreesFluxInstanceSyncUnchangedRoot)

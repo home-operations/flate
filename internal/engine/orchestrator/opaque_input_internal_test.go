@@ -24,8 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The opaque input witness replaces the process-wide logger.
 func TestRenderTrees_RequiredOpaqueInput(t *testing.T) {
 	for _, scenario := range []string{"tier_2", "tier_1", "tier_1_builder", "generated"} {
 		t.Run(scenario, func(t *testing.T) {

@@ -15,7 +15,6 @@ import (
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/helmchart"
 	"github.com/home-operations/flate/internal/engine/source/oci"
-	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -87,7 +86,6 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 		tailCaseInput.cfg.
 			HelmClient = helm.NewClient(tailCaseInput.cfg.Cache, nil)
 	}
-	ssrfguard.Restrict(tailCaseInput.cfg.RestrictEgress)
 	tailCaseInput.cfg.
 		chartFetcher = helmchart.New(
 		&oci.Fetcher{

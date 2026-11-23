@@ -239,7 +239,8 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 			assert.Diff(t, c.pathOrigSelfURLs, tc.want)
 			assert.Equal(t, c.pathRoot, current)
 			assert.Equal(t, c.pathOrigRoot, orig)
-			assert.Equal(t, [2]string{inputTrees(&c)[1].RepoRoot, inputTrees(&c)[0].RepoRoot}, [2]string{current, orig})
+			trees := c.bindInputTrees(inputTrees(c.hasBaseline(false)))
+			assert.Equal(t, [2]string{trees[1].RepoRoot, trees[0].RepoRoot}, [2]string{current, orig})
 		})
 	}
 }
@@ -444,18 +445,19 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	err := resolveBaseline(t.Context(), &c, false)
 	assert.NoError(t, err)
 	cfg := buildOrchCfg(&c)
-	assert.Equal(t, inputTrees(&c)[1].Input, c.input)
-	assert.Equal(t, inputTrees(&c)[0].Input, c.baseInput)
-	assert.Equal(t, inputTrees(&c)[1].Path, currentScan)
+	trees := c.bindInputTrees(inputTrees(c.hasBaseline(false)))
+	assert.Equal(t, trees[1].Input, c.input)
+	assert.Equal(t, trees[0].Input, c.baseInput)
+	assert.Equal(t, trees[1].Path, currentScan)
 	assert.Equal(t, c.pathOrig, originalScan)
-	assert.Equal(t, inputTrees(&c)[1].RepoRoot, current)
-	assert.Equal(t, inputTrees(&c)[0].RepoRoot, original)
+	assert.Equal(t, trees[1].RepoRoot, current)
+	assert.Equal(t, trees[0].RepoRoot, original)
 	for _, input := range []*gittree.FS{c.input.FS.(*gittree.FS), c.baseInput.FS.(*gittree.FS)} {
 		location := input.Location()
 		assert.Diff(t, location.URLs, []string{url})
 		assert.NoError(t, os.Remove(filepath.Join(location.RepositoryRoot, ".git", "config")))
 	}
-	runs, err := renderTreesForTest(t.Context(), t, inputTrees(&c), cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 	base, head := runs[0], runs[1]
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("gitops-system", "apps")

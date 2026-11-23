@@ -62,8 +62,7 @@ func (f *sharedRepositoryFetcher) Fetch(
 	}, nil
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The acquisition witness replaces the process-wide logger inside synctest.
 func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		for _, scenario := range []string{"unchanged", "effective_input_change", "withdrawal_reanchor"} {

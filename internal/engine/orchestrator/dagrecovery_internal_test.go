@@ -52,10 +52,11 @@ func (d fixtureDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
 	return slices.Collect(d.store.Sweep())
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
 			testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 				t,
 				&workers,
@@ -65,8 +66,8 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_RedispatchErrorPropagates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "flux/app.yaml", ksYAML("app", "app", ""))
 	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources:\n- cm.yaml\n")

@@ -20,23 +20,25 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRun_DefaultGitCache(t *testing.T) {
+	t.Parallel()
 	t.Run("supplied source references", testSuppliedSourceReferences)
 	t.Run("supplied source cycle", testSuppliedSourceCycle)
 	t.Run("supplied applier readiness", testSuppliedApplierReadiness)
 	for _, mode := range []string{"memory", "disk", "injected"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testRunDefaultGitCacheCase(t, &mode)
 		},
 		)
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_LocalSourceUsesSelectedCache(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"configured-directory", "injected-disk", "injected-memory"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			testBootstrapLocalSourceUsesSelectedCacheCase(
 				t,
 				&kind,

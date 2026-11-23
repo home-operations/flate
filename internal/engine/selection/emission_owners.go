@@ -8,15 +8,17 @@ import (
 )
 
 type documentOwner struct {
-	child    manifest.NamedResource
-	producer *manifest.DiagnosticIdentity
-	peerOnly bool
+	child       manifest.NamedResource
+	declaration *manifest.NamedResource
+	producer    *manifest.DiagnosticIdentity
+	peerOnly    bool
 }
 
 type documentOwners map[int]documentOwner
 
 func (o *documentOwners) record(position int, owner *documentOwner) {
-	if owner.child == (manifest.NamedResource{}) && owner.producer == nil && !owner.peerOnly {
+	if owner.child == (manifest.NamedResource{}) && owner.declaration == nil &&
+		owner.producer == nil && !owner.peerOnly {
 		return
 	}
 	if *o == nil {
@@ -38,7 +40,8 @@ func (o *batchOwners) set(parent manifest.NamedResource, owners documentOwners) 
 }
 
 func (o *batchOwners) record(parent manifest.NamedResource, position int, owner *documentOwner) {
-	if owner.child == (manifest.NamedResource{}) && owner.producer == nil && !owner.peerOnly {
+	if owner.child == (manifest.NamedResource{}) && owner.declaration == nil &&
+		owner.producer == nil && !owner.peerOnly {
 		return
 	}
 	owners := (*o)[parent]

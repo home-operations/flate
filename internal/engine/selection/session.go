@@ -115,6 +115,7 @@ type Admission struct {
 	EntryReceipt *manifest.EntryApplication
 	entry        *EntryRoute
 	entryReads   *store.ReadSet
+	scopes       entryScopeCapture
 	owned        store.ReadSet
 	inputStorage [2]store.Input
 	reads        *store.ReadSet
@@ -126,6 +127,7 @@ type Admission struct {
 	sources      []manifest.NamedResource
 	demands      []Demand
 	producers    []producerObligation
+	lookups      []manifest.NamedResource
 
 	producerOwner *producerObligation
 }
@@ -144,6 +146,11 @@ type missingPolicy interface {
 	Admission(*manifest.Reference, *store.ReferenceFacts) InputAdmission
 }
 
+// LookupSource identifies generated material and its known producer.
+type LookupSource struct {
+	Source, Materializer manifest.NamedResource
+}
+
 // PrepareRequest describes the evidence and selection intent for an admission proposal.
 type PrepareRequest struct {
 	construction  bool
@@ -151,6 +158,7 @@ type PrepareRequest struct {
 	ReadHistory   func(context.Context, *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
 	Changes       *change.Set
 	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
+	LookupSources []LookupSource
 	Acquired      []Acquisition
 	// Missing MUST retain one immutable policy pointer across proposal retries.
 	Missing missingPolicy
@@ -362,7 +370,7 @@ func (a *Admission) accept(stage CommitStage, decision *Decision) {
 func (s *Session) guardCurrent(a *Admission) bool {
 	return !a.stale && (a.Request.Reads == nil || a.Request.Reads.Valid()) &&
 		a.entry == s.entry.Load() &&
-		a.entryReads.Valid()
+		a.entryReads.Valid() && a.scopes.current()
 }
 
 func (a *Admission) admitObjects(ctx context.Context, session *Session) bool {

@@ -335,7 +335,7 @@ func scopeBuildIsolationState(t *testing.T, state *string, fs filesys.FileSystem
 	}
 	rm, err := func() (resmap.ResMap, error) {
 		defer BuildMutex.Unlock()
-		return Build(fs, dir)
+		return Build(fs, dir, false)
 	}()
 	select {
 	case <-done:

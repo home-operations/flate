@@ -73,14 +73,14 @@ spec: invalid
 			instancePath: apps + "/flux-instance.yaml", wantRoot: true,
 		},
 		{
-			name: "repository root enclosing package", requested: plain, probes: 1,
+			name: "repository root enclosing package", requested: plain, probes: 2,
 			appsResources: "media/plain/deploy.yaml", instancePath: "clusters/main/flux-instance.yaml", wantRoot: true,
 			extra: map[string]string{
 				"kustomization.yaml": "resources: [clusters/main/flux-instance.yaml, kubernetes/apps]\n",
 			},
 		},
 		{
-			name: "enclosing package with decode failure", requested: media, probes: 1,
+			name: "enclosing package with decode failure", requested: media, probes: 2,
 			appsResources: "media", mediaResources: "plain/deploy.yaml",
 			instancePath: "kubernetes/flux-instance.yaml", wantRoot: true,
 			extra: map[string]string{
@@ -94,7 +94,7 @@ spec: invalid
 			extra: map[string]string{"kubernetes/kustomization.yaml": "resources: [apps]\n"},
 		},
 		{
-			name: "runnable sibling in the declaring package", requested: media, probes: 1,
+			name: "runnable sibling in the declaring package", requested: media, probes: 2,
 			appsResources: "media", mediaResources: "plain/deploy.yaml",
 			instancePath: "kubernetes/flux-instance.yaml", wantRoot: true,
 			extra: map[string]string{
@@ -104,7 +104,7 @@ spec: invalid
 			},
 		},
 		{
-			name: "disjoint effective sync path", requested: plain, probes: 1,
+			name: "disjoint effective sync path", requested: plain, probes: 2,
 			appsResources: "media/plain/deploy.yaml", instancePath: "kubernetes/flux-instance.yaml",
 			extra: map[string]string{"kubernetes/kustomization.yaml": `resources: [apps, flux-instance.yaml]
 patches:
@@ -133,10 +133,10 @@ patches:
 `,
 		},
 		{
-			name: "no instance", requested: plain, appsResources: "media/plain/deploy.yaml",
+			name: "no instance", requested: plain, probes: 1, appsResources: "media/plain/deploy.yaml",
 		},
 		{
-			name: "broken enclosing package", requested: plain, probes: 1,
+			name: "broken enclosing package", requested: plain, probes: 2,
 			appsResources: "flux-instance.yaml, media", mediaResources: "plain/deploy.yaml, missing.yaml",
 			instancePath: apps + "/flux-instance.yaml",
 		},

@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"iter"
+
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -65,6 +67,21 @@ func (o OccurrenceFacts) SourcePath() (manifest.NamedResource, string, bool) {
 		object = object.WithNamespace(o.Identity.Namespace)
 	}
 	return object.SourcePath()
+}
+
+// PendingPackageProductions traverses discovered package ownership for a declaration that needs a build.
+func PendingPackageProductions(
+	id manifest.NamedResource, record *manifest.DiscoveryRecord,
+) iter.Seq2[manifest.NamedResource, *manifest.Production] {
+	return func(yield func(manifest.NamedResource, *manifest.Production) bool) {
+		for i := range record.Productions {
+			production := &record.Productions[i]
+			owner := production.Materializer(id)
+			if owner != id && owner.KindInfo().Structural && !yield(owner, production) {
+				return
+			}
+		}
+	}
 }
 
 // NativeRootFacts borrows one physical package's graph membership and construction state.
@@ -190,6 +207,7 @@ type RootEvidence struct {
 	Captured          bool
 	Stale             bool
 	PreparedRoot      string
+	EntryScope        *EntryScope
 	BuiltChild        store.Child
 	BuiltCurrent      bool
 }

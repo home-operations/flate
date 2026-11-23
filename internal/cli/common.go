@@ -575,16 +575,19 @@ func (i *selectedInvocation) preparePayload(
 	build func(*selectedInvocation) selectedPayload,
 ) selectedPayload {
 	root := req.roots[0]
-	count, complete, incomplete := 0, false, false
+	matched, complete, incomplete, lookupFailed := false, false, false, false
 	for _, group := range i.groups {
 		complete = complete || group.complete
 		incomplete = incomplete || !group.complete
 		for _, side := range group.sides {
-			count += side.Counts[root.Kind]
+			matched = matched || side.LookupMatched
+			lookupFailed = lookupFailed || side.LookupFailed
 		}
 	}
 	var result selectedPayload
-	if root.Name != "" && count == 0 && complete && !incomplete {
+	missingNamed := root.Name != "" && !matched
+	lookupComplete := complete && !incomplete && !lookupFailed
+	if missingNamed && lookupComplete {
 		path := "--path"
 		if req.pair {
 			path = "--path or --path-orig"
@@ -598,7 +601,7 @@ func (i *selectedInvocation) preparePayload(
 				return group.complete &&
 					!slices.ContainsFunc(
 						group.sides,
-						func(side *selection.Result) bool { return side.Counts[root.Kind] != 0 },
+						func(side *selection.Result) bool { return side.LookupMatched || side.LookupFailed },
 					)
 			})
 		}

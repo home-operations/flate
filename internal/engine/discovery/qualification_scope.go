@@ -49,19 +49,24 @@ func (w *qualificationWalk) entryFrontier(ctx context.Context, input *store.Sour
 	return w.q.loader.EntryFrontier(ctx, input, path, w.applicationProjection)
 }
 
-func (a *Admission) applicationReach(
-	ctx context.Context,
-	evidence *applicationEvidence,
-	application *manifest.EntryApplication,
-	resolved *entryResolution,
-) (bool, error) {
+func (a *Admission) applicationReach(evidence *applicationEvidence) bool {
 	evidence.reaches, evidence.descendant = nil, false
-	origin := a.entryOrigin(application, resolved.artifact)
+	if evidence.object.Named().ReportHidden() {
+		return false
+	}
+	material := evidence.source.artifact
+	if evidence.lookupReach && material != nil && material.Provider == store.ProviderGenerator {
+		return material.Available()
+	}
+	origin := a.entryOrigin(&evidence.application, material)
 	reach := entryReach{
-		entry: a.input.OriginPath(a.path), targets: a.entryTargets, winners: a.qualification.winners,
+		entry: a.input.OriginPath(a.path), targets: a.entryTargets,
 		packageReaches: a.generatedEntryPackageReaches,
 	}
-	return reach.includes(origin, evidence, true), ctx.Err()
+	if q := a.qualification; q != nil {
+		reach.winners = q.winners
+	}
+	return reach.includes(origin, evidence, true)
 }
 
 type entryReach struct {
@@ -110,7 +115,11 @@ func (a *Admission) generatedEntryPackageReaches(evidence *applicationEvidence, 
 		return false
 	}
 	ks, _ := evidence.object.(*manifest.Kustomization)
-	return a.qualification.loader.EntryPackageReached(input, evidence.application.Path, ks, target)
+	packageLoader := a.loader
+	if q := a.qualification; q != nil {
+		packageLoader = q.loader
+	}
+	return packageLoader.EntryPackageReached(input, evidence.application.Path, ks, target)
 }
 
 func (a *Admission) projectedEntry(named bool) bool {

@@ -6,6 +6,7 @@ import (
 	"hash/maphash"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -248,6 +249,167 @@ func TestProject_AbsentBatchIdentityValidation(t *testing.T) {
 	assert.Equal(t, len(results[0].Manifests), 0)
 	assert.Equal(t, len(results[1].Manifests), 1)
 	assert.Diff(t, results[1].Manifests[0].Documents, batch.Documents)
+}
+
+func TestProject_NamedLookupFailureSides(t *testing.T) {
+	t.Parallel()
+	target := testutil.HelmReleaseID("apps", "target")
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "candidate", manifest.NamedResource{})
+	pkg := manifest.DiagnosticFor(owner.Named(), owner)
+	request := Request{Roots: []manifest.NamedResource{target}}
+	const unresolved = "cannot establish membership"
+	const failedRelease = "release failure"
+	nonResource := errors.New("render diagnostic")
+	runErr := errors.Join(&FailuresError{Message: "raw failure"}, nonResource)
+	failed := Snapshot{
+		Store: store.New(), Complete: true, HasResult: true, Err: runErr, ErrorIdentity: runErr,
+		Failed: map[manifest.NamedResource]store.StatusInfo{target: store.FailureStatus(errors.New(failedRelease))},
+	}
+	unknown := Snapshot{
+		Store: store.New(), Complete: true, HasResult: true,
+		LookupEvidence: []LookupFailure{{Package: pkg, Path: "/entry", Cause: errors.New("bad candidate")}},
+	}
+	partial, absent := unknown, unknown
+	partial.Complete, absent.Absent = false, true
+	for _, tc := range []struct {
+		name     string
+		runs     []Snapshot
+		err      error
+		lookupAt int
+	}{
+		{name: "single without raw error", runs: []Snapshot{unknown}},
+		{name: "orig unknown", runs: []Snapshot{unknown, failed}, err: runErr},
+		{name: "current unknown", runs: []Snapshot{failed, unknown}, err: runErr, lookupAt: 1},
+		{name: "partial lookup", runs: []Snapshot{partial, failed}, err: runErr, lookupAt: -1},
+		{name: "absent lookup", runs: []Snapshot{failed, absent}, err: runErr, lookupAt: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			results, errs := Project(tc.runs, tc.err, request)
+			assert.FatalIf(t, errs.Selected == nil, "missing projected failure")
+			assert.Equal(t, errors.Is(errs.Remaining, nonResource), tc.err != nil)
+			for i, result := range results {
+				assert.Equal(t, result.LookupFailed, i == tc.lookupAt)
+			}
+			message := errs.Selected.Error()
+			if tc.lookupAt < 0 {
+				assert.Equal(t, strings.Contains(message, unresolved), false)
+				if tc.runs[0].Complete {
+					assert.Equal(t, strings.Count(message, failedRelease), 1)
+				} else {
+					assert.Equal(t, errs.Selected, tc.err)
+				}
+				return
+			}
+			lookup := results[tc.lookupAt]
+			assert.Equal(t, lookup.Diagnostic(pkg.ID), pkg)
+			assert.Equal(t, len(lookup.Failed), 1)
+			assert.Equal(t, len(lookup.Causes), 1)
+			assert.Equal(t, len(lookup.Unrelated), 0)
+			assert.Equal(t, strings.Count(message, unresolved), 1)
+			if len(tc.runs) != comparisonSides {
+				return
+			}
+			labels := [2]string{"orig snapshot:", "current snapshot:"}
+			for i, fragment := range []string{unresolved, failedRelease} {
+				start := strings.Index(message, labels[(tc.lookupAt+i)%comparisonSides])
+				end := strings.Index(message, fragment)
+				other := strings.Index(message, labels[1-(tc.lookupAt+i)%comparisonSides])
+				assert.FatalIf(t, start < 0 || end <= start || other > start && other < end,
+					"wrong snapshot for %q: %s", fragment, message)
+				assert.Equal(t, strings.Count(message, fragment), 1)
+			}
+		})
+	}
+}
+
+func TestProject_UnresolvedLookupDoesNotPairDocuments(t *testing.T) {
+	t.Parallel()
+	target := &manifest.HelmRelease{Name: "target", Namespace: "apps"}
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "candidate", manifest.NamedResource{})
+	doc := map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "paired", "namespace": "apps"},
+	}
+	id := manifest.DocIdentity(doc)
+	st := store.New()
+	st.AddObject(target)
+	known := Snapshot{
+		Store: st, Complete: true,
+		Decision:  &Decision{seed: maphash.MakeSeed()},
+		Manifests: []manifest.DocumentBatch{{Parent: target, Documents: []map[string]any{doc}}},
+	}
+	unknown := Snapshot{
+		Store: st, Complete: true,
+		Entry: EntryIdentity{
+			Producer: owner.Named(), Descendant: "entry", Documents: map[manifest.NamedResource]struct{}{id: {}},
+		},
+		Emissions: []EmissionFacts{{
+			Emitter: owner, Parent: target, Documents: []DocumentFact{{Identity: id, Document: doc}},
+		}},
+	}
+	failure := LookupFailure{
+		Package: manifest.DiagnosticFor(owner.Named(), owner),
+		Path:    "/entry",
+		Cause:   errors.New("bad candidate"),
+	}
+	request := Request{Roots: []manifest.NamedResource{target.Named()}}
+	for unresolved, label := range [comparisonSides]string{"orig snapshot", "current snapshot"} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+			var runs [comparisonSides]Snapshot
+			runs[unresolved], runs[1-unresolved] = unknown, known
+			results, errs := Project(runs[:], nil, request)
+			assert.NoError(t, errs.Selected)
+			batches := results[1-unresolved].Manifests
+			assert.FatalIf(t, len(batches) != 1, "control batches = %v, want one matching batch", batches)
+			assert.Diff(t, batches[0].Documents, []map[string]any{doc})
+
+			runs[unresolved].LookupEvidence = []LookupFailure{failure}
+			results, errs = Project(runs[:], nil, request)
+			assert.Equal(t, results[unresolved].LookupFailed, true)
+			assert.Equal(t, results[1-unresolved].LookupMatched, true)
+			for _, result := range results {
+				assert.Equal(t, len(result.Manifests), 0)
+			}
+			assert.FatalIf(t, errs.Selected == nil, "missing projected failure")
+			message := errs.Selected.Error()
+			for _, fragment := range []string{label + ":", "cannot establish membership", "/entry", "candidate"} {
+				assert.FatalIf(t, !strings.Contains(message, fragment), "missing %q: %s", fragment, message)
+			}
+		})
+	}
+}
+
+func TestProject_NamedLookupProofBeforeOutput(t *testing.T) {
+	t.Parallel()
+	target := &manifest.HelmRelease{Name: "target", Namespace: "apps"}
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "candidate", manifest.NamedResource{})
+	st := store.New()
+	st.AddObject(target)
+	decision, _ := (&Decision{seed: maphash.MakeSeed()}).include(new(Admission), true)
+	snapshot := Snapshot{
+		Store: st, Complete: true, Decision: decision,
+		Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			target.Named(): {BuilderOwner: owner.Named()},
+		}},
+		LookupEvidence: []LookupFailure{{
+			Package: manifest.DiagnosticFor(owner.Named(), owner), Path: "/entry", Cause: errors.New("bad candidate"),
+		}},
+	}
+	request := Request{Roots: []manifest.NamedResource{target.Named()}, Labels: map[string]string{"skip": "true"}}
+	results, errs := Project([]Snapshot{snapshot}, nil, request)
+	assert.NoError(t, errs.Selected)
+	assert.Equal(t, results[0].LookupMatched, true)
+	assert.Equal(t, results[0].LookupFailed, false)
+	assert.Equal(t, results[0].Counts[target.Named().Kind], 0)
+	assert.Equal(t, len(results[0].Objects), 0)
+
+	snapshot.EntryScopes = &EntryScopes{owner.Named(): {}}
+	results, errs = Project([]Snapshot{snapshot}, nil, request)
+	assert.FatalIf(t, errs.Selected == nil, "pending placement established membership")
+	assert.Equal(t, results[0].LookupMatched, false)
+	assert.Equal(t, results[0].LookupFailed, true)
 }
 
 func TestMatchesLabels_Matches(t *testing.T) {

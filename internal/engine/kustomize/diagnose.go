@@ -104,7 +104,7 @@ func entryIDs(memFS filesys.FileSystem, entry string, attempted *int) []resid.Re
 	var rm resmap.ResMap
 	var err error
 	if isDir {
-		rm, err = kustomizestate.Build(memFS, entry)
+		rm, err = kustomizestate.Build(memFS, entry, false)
 	} else {
 		rm, err = resmap.NewFactory(provider.NewDefaultDepProvider().GetResourceFactory()).NewResMapFromBytes(data)
 	}

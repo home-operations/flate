@@ -38,6 +38,7 @@ type AdmissionResult struct {
 
 	entry         *EntryRoute
 	entryReads    *store.ReadSet
+	scopes        entryScopeCapture
 	producers     []producerObligation
 	producerOwner *producerObligation
 }
@@ -60,6 +61,9 @@ type admissionDriver struct {
 func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
 	driver := admissionDriver{session: s, options: options, request: options.Request}
 	driver.request.construction = options.Stage == Construction && s.request.Changed
+	if options.Stage != Construction {
+		driver.request.LookupSources = nil
+	}
 	local := driver.request.Preparation == nil
 	var preparation *Preparation
 	if local {
@@ -80,10 +84,10 @@ func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (Admissio
 		if err := driver.prepare(ctx); err != nil {
 			return AdmissionResult{}, false, err
 		}
-		if !s.guardCurrent(driver.proposal) {
-			if options.Authority == nil && !driver.request.Reads.Valid() {
-				return AdmissionResult{}, false, nil
-			}
+		switch current := s.guardCurrent(driver.proposal); {
+		case !current && options.Authority == nil && !driver.request.Reads.Valid():
+			return AdmissionResult{}, false, nil
+		case !current:
 			continue
 		}
 		if err := driver.acquire(ctx); err != nil {
@@ -319,6 +323,7 @@ func (a *Admission) result() AdmissionResult {
 		Request: a.Request, EntryReceipt: a.EntryReceipt, Objects: a.Objects, Demands: a.demands,
 		Needed: a.Needed, Selected: a.Selected, Dirty: a.Dirty, Ordinary: a.Ordinary,
 		Blocked: a.Blocked, Revision: a.Revision, Namespaces: a.Namespaces,
-		entry: a.entry, entryReads: a.entryReads, producers: a.producers, producerOwner: a.producerOwner,
+		entry: a.entry, entryReads: a.entryReads, scopes: a.scopes,
+		producers: a.producers, producerOwner: a.producerOwner,
 	}
 }

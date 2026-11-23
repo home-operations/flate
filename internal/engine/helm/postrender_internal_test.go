@@ -206,7 +206,7 @@ func testPostRendererOriginalImage(t *testing.T, fs filesys.FileSystem) {
 	t.Helper()
 
 	kustomizestate.BuildMutex.Lock()
-	rm, err := kustomizestate.Build(fs, "/")
+	rm, err := kustomizestate.Build(fs, "/", false)
 	if err != nil {
 		t.Errorf("Build: %v", err)
 	} else {

@@ -11,7 +11,6 @@ import (
 
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chartloader "helm.sh/helm/v4/pkg/chart/v2/loader"
-	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
@@ -36,41 +35,70 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 		return decision.more
 	}
 	builder := w.documents.read(abs)
-	d, file := builder.body, builder.file
 	cached := w.documents.cache[abs]
+	input := walkDocument{abs: abs, builderDocument: builder, cached: &cached}
 	if !w.proceed(ctx) {
 		return false
 	}
-	if done := w.acceptDocument(ctx, &v, &cached, walkDocument{abs: abs, file: file, body: d}); done {
-		return true
-	}
-	if d == nil && (w.policy == traversalAdmission || cached.pathState == pathDirectory) {
-		if w.prepareDirectory(&v, &cached, abs) {
+	if w.qualify && v.enclosing == "" && input.file != "" {
+		if isKustomizeComponent(input.body) {
 			return true
 		}
-		return w.walkDirectory(ctx, &v, abs, yield)
+		v.enclosing = v.dir
+	}
+	if w.acceptDocument(ctx, &v, input) {
+		if w.qualify && v.enclosing != "" {
+			v.requiresBuild = true
+			return yield(v)
+		}
+		return true
+	}
+	return w.walkInputs(ctx, &v, input, yield)
+}
+
+func (w *traversal) walkInputs(
+	ctx context.Context,
+	visit *graphVisit,
+	input walkDocument,
+	yield func(graphVisit) bool,
+) bool {
+	enclosingPackage := visit.enclosing != "" && input.cached.pathState != pathFile
+	unreadable := input.file != "" || enclosingPackage
+	if w.qualify && input.body == nil && unreadable {
+		visit.requiresBuild = true
+		return yield(*visit)
+	}
+	if input.body == nil && (w.policy == traversalAdmission || input.cached.pathState == pathDirectory) {
+		if w.prepareDirectory(visit, input.cached, input.abs) {
+			return true
+		}
+		return w.walkDirectory(ctx, visit, input.abs, yield)
 	}
 	if w.policy == traversalScope {
-		if d == nil {
-			return w.opaqueConfiguration(ctx, &v, &cached, yield)
+		if input.body == nil {
+			visit.requiresBuild = visit.requiresBuild || input.file != ""
+			return w.opaqueConfiguration(ctx, visit, input.cached, yield)
 		}
-		if !w.publishScope(&v, &d, walkDocument{abs: abs, file: file}, yield) {
+		switch {
+		case !w.publishScope(visit, &input, yield):
 			return false
+		case w.qualify && visit.requiresBuild:
+			return true
 		}
 	}
 	if !w.documents.references(
-		abs,
-		d,
+		input.abs,
+		input.body,
 		w.policy == traversalAdmission,
 		func(ref kustomizeinput.Reference, target string) bool {
 			w.work.Add(&manifest.WorkCounts{ReaderEdges: 1})
-			return w.reference(ctx, new(v), new(traversalReference{Reference: ref, target: target}), yield)
+			return w.reference(ctx, new(*visit), new(traversalReference{Reference: ref, target: target}), yield)
 		},
 	) {
 		return false
 	}
-	if w.policy == traversalAdmission && v.role != kustomizeinput.Component && !w.build {
-		w.count += w.scanBootstrapFluxKS(ctx, v.root, abs, file)
+	if w.policy == traversalAdmission && visit.role != kustomizeinput.Component && !w.build {
+		w.count += w.scanBootstrapFluxKS(ctx, visit.root, input.abs, input.file)
 	}
 	return w.proceed(ctx)
 }
@@ -97,11 +125,13 @@ func (w *traversal) seenScopeVisit(visit *graphVisit) bool {
 }
 
 type walkDocument struct {
-	abs, file string
-	body      *types.Kustomization
+	builderDocument
+
+	abs    string
+	cached *document
 }
 
-func (w *traversal) admitDocument(ctx context.Context, visit *graphVisit, cached *document, input walkDocument) bool {
+func (w *traversal) admitDocument(ctx context.Context, visit *graphVisit, input walkDocument) bool {
 	if visit.role == kustomizeinput.Component && !isKustomizeComponent(input.body) {
 		return true
 	}
@@ -114,8 +144,8 @@ func (w *traversal) admitDocument(ctx context.Context, visit *graphVisit, cached
 		}
 		w.directories[input.abs] = struct{}{}
 	}
-	cached.traversed = true
-	w.documents.cache[input.abs] = *cached
+	input.cached.traversed = true
+	w.documents.cache[input.abs] = *input.cached
 	if input.body == nil {
 		return true
 	}
@@ -149,12 +179,11 @@ type directoryEntry struct {
 func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graphVisit) bool) traversalDecision {
 	switch w.policy {
 	case traversalScope:
-		if _, ok := kustpath.Resolve(
-			"",
-			visit.dir,
-			kustpath.Root,
-		); !ok || !safepath.Contains(visit.root, abs) ||
-			new(w.documents).mountedRoot(abs) != new(w.documents).mountedRoot(visit.root) {
+		_, validPath := kustpath.Resolve("", visit.dir, kustpath.Root)
+		insideMount := validPath && safepath.Contains(visit.root, abs) &&
+			new(w.documents).mountedRoot(abs) == new(w.documents).mountedRoot(visit.root)
+		excluded := w.qualify && visit.enclosing == "" && safepath.Contains(w.qualificationEntry, abs)
+		if !insideMount || excluded {
 			return traversalDecision{done: true, more: true}
 		}
 		visit.file, visit.coordinate, visit.document = abs, path.Join(visit.prefix, visit.dir), nil
@@ -162,14 +191,15 @@ func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graph
 			return traversalDecision{done: true, more: yield(*visit)}
 		}
 	case traversalAdmission:
-		if visit.deferMaterialization {
+		switch {
+		case visit.deferMaterialization:
 			if w.shouldSkipDir(visit.root, abs) {
 				return traversalDecision{done: true, more: true}
 			}
 			cached := w.documents.cache[abs]
 			cached.adHoc = true
 			w.documents.cache[abs] = cached
-		} else {
+		default:
 			if _, seen := w.directories[abs]; seen {
 				return traversalDecision{done: true, more: true}
 			}
@@ -187,16 +217,16 @@ func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graph
 	return traversalDecision{}
 }
 
-func (w *traversal) acceptDocument(ctx context.Context, visit *graphVisit, cached *document, input walkDocument) bool {
+func (w *traversal) acceptDocument(ctx context.Context, visit *graphVisit, input walkDocument) bool {
 	switch w.policy {
 	case traversalScope:
-		if input.body != nil || cached.pathState == pathDirectory {
+		if input.body != nil || input.cached.pathState == pathDirectory {
 			if w.seenScopeVisit(visit) {
 				return true
 			}
 		}
 	case traversalAdmission:
-		if done := w.admitDocument(ctx, visit, cached, input); done {
+		if done := w.admitDocument(ctx, visit, input); done {
 			return true
 		}
 	case traversalProof:
@@ -337,26 +367,30 @@ func (w *traversal) opaqueConfiguration(
 
 func (w *traversal) publishScope(
 	visit *graphVisit,
-	body **types.Kustomization,
-	input walkDocument,
+	input *walkDocument,
 	yield func(graphVisit) bool,
 ) bool {
-	d := *body
+	d := input.body
 	visit.deferDecode = false
 	visit.namespace = cmp.Or(visit.namespace, d.Namespace)
 	visit.namePrefix += d.NamePrefix
 	visit.nameSuffix = d.NameSuffix + visit.nameSuffix
-	visit.requiresBuild = visit.requiresBuild || !kustomizeinput.PreservesOperands(d) || len(d.Transformers) != 0
-	if visit.namespace == "" {
+	if w.qualify {
+		visit.requiresBuild = visit.requiresBuild || input.recipe&recipeResourceOnly == 0
+	} else {
+		// Authored scope must retain projected declarations and reader edges before construction.
+		visit.requiresBuild = visit.requiresBuild || input.recipe&(recipeOpaquePluginInputs|recipeTransformers) != 0
+	}
+	if !w.qualify && visit.namespace == "" {
 		visit.namespace = new(w.documents).transformerInjectedNamespace(visit.root, visit.dir, w.scopeInputs).ns
 	}
-	visit.file, visit.document, visit.readable = input.file, *body, true
+	visit.file, visit.document, visit.readable = input.file, input.body, true
 	visit.coordinate = path.Join(visit.prefix, visit.dir, filepath.Base(input.file))
 	if !yield(*visit) {
 		return false
 	}
-	*body = w.documents.cache[input.abs].body
-	if visit.role == kustomizeinput.Configuration && !kustomizeinput.PreservesOperands(*body) {
+	input.body = w.documents.cache[input.abs].body
+	if visit.role == kustomizeinput.Configuration && input.recipe&recipeOpaquePluginInputs != 0 {
 		if !w.uncertain(new(*visit), "configuration transformations may rewrite plugin file operands", yield) {
 			return false
 		}

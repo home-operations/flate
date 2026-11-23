@@ -57,6 +57,7 @@ type document struct {
 	incoming         bool
 	edgesKnown       bool
 	pathState        pathState
+	recipe           recipeClass
 	searched         bool
 }
 
@@ -360,8 +361,9 @@ func (r *documentReader) mountedRoot(file string) string {
 }
 
 type builderDocument struct {
-	body *types.Kustomization
-	file string
+	body   *types.Kustomization
+	file   string
+	recipe recipeClass
 }
 
 func (r *documentReader) read(dir string) builderDocument {
@@ -375,7 +377,7 @@ func (r *documentReader) read(dir string) builderDocument {
 			cached.pathState == pathFile || cached.pathState == pathMissing
 	}
 	if complete {
-		return builderDocument{body: cached.body, file: cached.file}
+		return builderDocument{body: cached.body, file: cached.file, recipe: cached.recipe}
 	}
 	if cached.objects != nil {
 		cached.pathState = pathFile
@@ -398,6 +400,7 @@ func (r *documentReader) read(dir string) builderDocument {
 func (r *documentReader) readBuilder(dir string, cachedValue *document) builderDocument {
 	cached := *cachedValue
 	cached.searched = true
+	var found bool
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
 		inputFile2 := new(*r).input(file)
@@ -405,6 +408,11 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) builderD
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		if found {
+			cached.recipe &^= recipeResourceOnly
+			break
+		}
+		found = true
 		var k types.Kustomization
 		if err != nil || yaml.Unmarshal(data, &k) != nil {
 			cached.file, cached.pathState = file, pathDirectory
@@ -413,17 +421,79 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) builderD
 			}
 			return builderDocument{body: nil, file: file}
 		}
+		cached.recipe = r.classifyRecipe(dir, data, &k)
 		normalizeKustomization(&k)
 		cached.body, cached.file, cached.pathState = &k, file, pathDirectory
-		if r.cache != nil {
-			r.cache[dir] = cached
+		if cached.recipe&recipeResourceOnly == 0 {
+			break
 		}
-		return builderDocument{body: &k, file: file}
 	}
 	if r.cache != nil {
 		r.cache[dir] = cached
 	}
-	return builderDocument{body: nil, file: cached.file}
+	return builderDocument{body: cached.body, file: cached.file, recipe: cached.recipe}
+}
+
+type recipeClass uint8
+
+const (
+	recipeResourceOnly recipeClass = 1 << iota
+	recipeOpaquePluginInputs
+	recipeTransformers
+)
+
+const (
+	apiVersionKey = "apiVersion"
+	kindKey       = "kind"
+)
+
+func (r *documentReader) classifyRecipe(dir string, data []byte, k *types.Kustomization) recipeClass {
+	var class recipeClass
+	if r.resourceFieldsOnly(dir, data, k) {
+		class |= recipeResourceOnly
+	}
+	if len(k.Transformers) != 0 {
+		class |= recipeTransformers
+	}
+	if len(k.Patches)+len(k.PatchesJson6902)+len(k.PatchesStrategicMerge)+len(k.Replacements)+
+		len(k.Configurations)+len(k.Crds)+len(k.Vars)+len(k.Images)+len(k.ImageTags)+len(k.Replicas) != 0 {
+		return class | recipeOpaquePluginInputs
+	}
+	for _, label := range k.Labels {
+		for _, spec := range label.FieldSpecs {
+			if !strings.HasPrefix(spec.Path, "metadata/") {
+				return class | recipeOpaquePluginInputs
+			}
+		}
+	}
+	return class
+}
+
+func (r *documentReader) resourceFieldsOnly(dir string, data []byte, k *types.Kustomization) bool {
+	if k.Kind != "" && k.Kind != types.KustomizationKind ||
+		k.APIVersion != "" && k.APIVersion != types.KustomizationVersion {
+		return false
+	}
+	var fields map[string]any
+	if err := yaml.UnmarshalStrict(data, &fields); err != nil {
+		return false
+	}
+	for field := range fields {
+		switch field {
+		case apiVersionKey, kindKey, "resources":
+		default:
+			return false
+		}
+	}
+	root := r.mountedRoot(dir)
+	relative, _ := filepath.Rel(root, dir)
+	for _, ref := range k.Resources {
+		local, ok := kustomizeinput.Local(root, relative, ref)
+		if !ok || r.mountedRoot(filepath.Join(root, local)) != root {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeKustomization(k *types.Kustomization) {

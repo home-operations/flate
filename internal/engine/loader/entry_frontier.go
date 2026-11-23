@@ -3,8 +3,7 @@ package loader
 import (
 	"context"
 	"path/filepath"
-
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"slices"
 
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
@@ -46,7 +45,7 @@ func (l *Loader) EntryFrontier(
 		return true, nil
 	}
 	possible := false
-	walk := traversal{documents: reader, policy: traversalScope}
+	walk := traversal{documents: reader, policy: traversalScope, qualify: true}
 	walk.walk(
 		ctx,
 		graphVisit{root: input.LocalPath, dir: manifest.NormalizeClaimBase(path), role: kustomizeinput.Resource},
@@ -100,11 +99,11 @@ func (r *documentReader) frontierVisit(
 	if visit.role == kustomizeinput.File {
 		return false
 	}
-	if visit.incomplete != "" || !visit.readable {
+	if visit.requiresBuild || visit.incomplete != "" || !visit.readable {
 		return true
 	}
 	if visit.document != nil {
-		return packageMayApply(visit)
+		return false
 	}
 	if visit.role != kustomizeinput.Resource {
 		return false
@@ -125,30 +124,14 @@ func (r *documentReader) frontierVisit(
 	return false
 }
 
-func packageMayApply(visit *graphVisit) bool {
-	body := visit.document
-	if !kustomizeinput.PreservesOperands(body) || len(body.Generators) != 0 || len(body.HelmCharts) != 0 {
-		return true
-	}
-	for ref := range kustomizeinput.Kustomization(body) {
-		if ref.Inline || ref.Role == kustomizeinput.File {
-			continue
-		}
-		if _, local := kustomizeinput.Local(visit.root, visit.dir, ref.Path); !local {
-			return true
-		}
-	}
-	return false
-}
-
 // EntryPackageReached uses the source's resource graph to establish a descendant entry.
 func (l *Loader) EntryPackageReached(
 	input *store.SourceArtifact,
 	root string,
-	ks *manifest.Kustomization,
+	owner *manifest.Kustomization,
 	entry string,
 ) bool {
-	return packageReached(input, l.packageResources(input, root, ks), entry)
+	return packageReached(input, l.packageResources(input, root, owner), entry)
 }
 
 func (l *Loader) packageResources(
@@ -179,9 +162,9 @@ func (v *graphVisit) reaches(input *store.SourceArtifact, entry string) bool {
 		safepath.Contains(entry, input.OriginPath(v.file))
 }
 
-// EnclosingPackages requires both a resource edge into the request and a declaration in the package.
+// EnclosingPackages retains reached ancestors with a relevant declaration or an opaque recipe.
 func (l *Loader) EnclosingPackages(
-	ctx context.Context, input *store.SourceArtifact, relative string, kind schema.GroupKind,
+	ctx context.Context, input *store.SourceArtifact, relative string, target manifest.NamedResource,
 ) ([]string, error) {
 	var dirs []string
 	entry := input.OriginPath(filepath.Join(input.LocalPath, relative))
@@ -194,32 +177,113 @@ func (l *Loader) EnclosingPackages(
 			return nil, err
 		}
 		dir = filepath.Dir(dir)
-		if reader.read(filepath.Join(input.LocalPath, dir)).body == nil {
+		builder := reader.read(filepath.Join(input.LocalPath, dir))
+		if builder.file == "" {
+			continue
+		}
+		if builder.body == nil {
+			dirs = append(dirs, filepath.ToSlash(dir))
 			continue
 		}
 		resources := l.packageResources(input, dir, nil)
 		if !packageReached(input, resources, entry) {
 			continue
 		}
-		if reader.packageDeclares(ctx, resources, kind) {
+		if reader.packageMayDeclare(ctx, resources, target) {
 			dirs = append(dirs, filepath.ToSlash(dir))
 		}
 	}
 	return dirs, ctx.Err()
 }
 
-func (r *documentReader) packageDeclares(ctx context.Context, resources []graphVisit, kind schema.GroupKind) bool {
+func (r *documentReader) packageMayDeclare(
+	ctx context.Context, resources []graphVisit, target manifest.NamedResource,
+) bool {
 	for i := range resources {
 		resource := &resources[i]
-		if resource.role != kustomizeinput.Resource || !resource.readable || resource.document != nil {
+		opaque := resource.document != nil &&
+			r.cache[filepath.Join(resource.root, resource.dir)].recipe&recipeResourceOnly == 0
+		if opaque || resource.requiresBuild || resource.incomplete != "" || !resource.readable {
+			return true
+		}
+		if resource.role != kustomizeinput.Resource || resource.document != nil || target.Name != "" {
 			continue
 		}
 		declarations, _ := r.completeFile(ctx, resource.file)
 		for id := range declarations.Objects {
-			if id.Group == kind.Group && id.Kind == kind.Kind {
+			if id.Group == target.Group && id.Kind == target.Kind {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// ApplicationPackage holds the authored routing evidence for an enclosing build.
+type ApplicationPackage struct {
+	Path          string
+	Owners        []store.Child
+	RequiresBuild bool
+}
+
+// ApplicationPackages follows listed resource edges and retains their enclosing build context.
+func ApplicationPackages(
+	ctx context.Context, input *store.SourceArtifact, root, exclude string,
+) ([]store.Child, []ApplicationPackage, error) {
+	reader := documentReader{cache: map[string]document{}, intent: manifest.IncidentalDocuments}
+	reader.setSources(map[string]*store.SourceArtifact{input.LocalPath: input})
+	var excluded string
+	if exclude != "" {
+		excluded = filepath.Join(input.LocalPath, exclude)
+	}
+	walk := traversal{documents: reader, policy: traversalScope, qualificationEntry: excluded, qualify: true}
+	var standalone []store.Child
+	var packages []ApplicationPackage
+	indices := map[string]int{}
+	walk.walk(
+		ctx,
+		graphVisit{root: input.LocalPath, dir: root, role: kustomizeinput.Resource},
+		func(visit graphVisit) bool {
+			if visit.enclosing != "" {
+				index, known := indices[visit.enclosing]
+				if !known {
+					index = len(packages)
+					indices[visit.enclosing] = index
+					packages = append(packages, ApplicationPackage{Path: visit.enclosing})
+				}
+				pkg := &packages[index]
+				pkg.RequiresBuild = pkg.RequiresBuild || visit.requiresBuild || visit.incomplete != ""
+				if pkg.RequiresBuild || visit.document != nil {
+					return true
+				}
+				pkg.Owners = reader.applicationDeclarations(ctx, visit.file, pkg.Owners)
+			} else if visit.readable {
+				standalone = reader.applicationDeclarations(ctx, visit.file, standalone)
+			}
+			return true
+		},
+	)
+	packages = slices.DeleteFunc(packages, func(pkg ApplicationPackage) bool {
+		return !pkg.RequiresBuild && len(pkg.Owners) == 0
+	})
+	return standalone, packages, ctx.Err()
+}
+
+func (r *documentReader) applicationDeclarations(ctx context.Context, path string, into []store.Child) []store.Child {
+	children, _ := r.fileObjects(ctx, path, manifest.ParseDocOptions{})
+	for i := range children {
+		if kind := manifest.KindOf(children[i].Obj); kind.Runnable && kind.Structural {
+			into = append(into, children[i].Child)
+		}
+	}
+	return into
+}
+
+// EntryContributorSides projects contributing file occurrences onto the requested path.
+func EntryContributorSides(input *store.SourceArtifact, entry string, files []string) []bool {
+	sides := make([]bool, len(files))
+	for i, file := range files {
+		sides[i] = safepath.Contains(entry, input.OriginPath(filepath.Join(input.LocalPath, file)))
+	}
+	return sides
 }

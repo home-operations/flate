@@ -6,6 +6,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/kustomize/patch"
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
@@ -64,6 +65,39 @@ func (p *packagePreparation) inventory(
 	return nil
 }
 
+func (d *Session) entryMembership(
+	ctx context.Context, frame *declarationPreparation, entry string,
+) (map[manifest.NamedResource]bool, error) {
+	ordinals := frame.preparation.EntryDocumentMembership(
+		ctx, frame.receipt,
+		func(files []string) []bool { return loader.EntryContributorSides(frame.source, entry, files) },
+	)
+	type membership struct{ inside, known bool }
+	byChild := make(map[manifest.NamedResource]membership, len(frame.children))
+	for i := range frame.children {
+		child := &frame.children[i]
+		id := child.Obj.Named()
+		inside, known := ordinals[child.Ordinal]
+		if previous, seen := byChild[id]; seen && (!previous.known || previous.inside != inside) {
+			known = false
+		}
+		byChild[id] = membership{inside: inside, known: known}
+	}
+
+	result := make(map[manifest.NamedResource]bool, len(byChild))
+	for i := range frame.children {
+		id := frame.children[i].Obj.Named()
+		placement := byChild[id]
+		if !placement.known && d.cfg.Selection.Matches(id) {
+			return nil, selection.EntryMembershipFailure(d.cfg.Path, frame.owner.Named(), id)
+		}
+		if placement.known && placement.inside {
+			result[id] = true
+		}
+	}
+	return result, nil
+}
+
 func (a *Admission) preparedInventory(
 	owner *manifest.Kustomization,
 	input *store.SourceArtifact,
@@ -90,6 +124,10 @@ func (a *Admission) packageInventory(
 	frame := &declarationRender{owner: owner, source: input}
 	work := a.loader.Options.Work.Source(owner.EffectiveSourceID()).RenderWork()
 	return frame, a.packageRender.inventory(ctx, frame, nil, work)
+}
+
+func (p *declarationPreparation) inventoryReady() bool {
+	return p.complete && p.inventoryError() == nil
 }
 
 func (p *declarationPreparation) inventoryError() error {
@@ -297,6 +335,7 @@ func (d *Session) Close() {
 	d.entryBuilderPath = ""
 	d.entryBuilder = false
 	d.pendingSources = nil
+	d.lookupSources = nil
 	d.sourceGroups = nil
 	if d.result != nil {
 		d.result.Close()

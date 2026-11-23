@@ -587,13 +587,13 @@ func (o *Orchestrator) declarationChildren(
 
 func (o *Orchestrator) promotionChildren() map[manifest.NamedResource]store.Child {
 	var prepared map[manifest.NamedResource]store.Child
-	builders := map[string]bool{}
+	builders := map[manifest.NamedResource]bool{}
 	for _, id := range slices.SortedFunc(maps.Keys(o.index.Records), manifest.NamedResource.Compare) {
 		record := o.index.Records[id]
-		if record.Builder == "" || builders[record.Builder] {
+		if record.Builder == "" || builders[record.BuilderOwner] {
 			continue
 		}
-		builders[record.Builder] = true
+		builders[record.BuilderOwner] = true
 		childValues := o.loader.PromotionDocuments(id)
 		for childIndex := range childValues {
 			child := childValues[childIndex]
@@ -604,6 +604,7 @@ func (o *Orchestrator) promotionChildren() map[manifest.NamedResource]store.Chil
 			if prepared == nil {
 				prepared = map[manifest.NamedResource]store.Child{}
 			}
+			child.Productions = fact.Productions
 			prepared[child.Obj.Named()] = child
 		}
 	}

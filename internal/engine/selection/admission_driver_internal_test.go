@@ -6,6 +6,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -109,6 +110,7 @@ func TestAdmit_EntryHistory(t *testing.T) {
 
 func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 	t.Parallel()
+	t.Run("restricted owner generation", testRestrictedHistoryPublication)
 	for _, availability := range []string{"unavailable", "incomplete", "complete empty"} {
 		t.Run(availability, func(t *testing.T) {
 			t.Parallel()
@@ -193,6 +195,93 @@ func TestAdmit_HistorySurvivesPublication(t *testing.T) {
 			assert.Equal(t, result.Request.History[owner.Named()].Complete, history.Complete)
 		})
 	}
+}
+
+func testRestrictedHistoryPublication(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "before"}
+	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	st.AddObject(owner)
+	ownerID, childID := owner.Named(), child.Named()
+
+	var scopes atomic.Pointer[EntryScopes]
+	scopes.Store(&EntryScopes{ownerID: {}})
+	facts := &solverFacts{
+		store:   st,
+		context: SourceContext{EntryPath: "/repo/leaf", Frozen: true},
+		sources: map[manifest.NamedResource]SourceFacts{manifest.BootstrapSourceID: {EntryScopes: &scopes}},
+		index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			childID: {Builder: "kustomization.yaml", BuilderOwner: ownerID, Declaration: child},
+		}},
+	}
+	session, err := New(st, facts, Request{Roots: []manifest.NamedResource{childID}})
+	assert.NoError(t, err)
+	request := PrepareRequest{Invocation: true}
+	pending, err := session.prepareTest(t.Context(), request)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(pending.Selected, childID), false)
+	pending.Retire()
+
+	proof := &store.ReadSet{}
+	proof.Init(st, ownerID, nil)
+	proof.GetDeclaration(ownerID)
+	t.Cleanup(proof.Retire)
+	scopes.Store(&EntryScopes{ownerID: {Support: proof, Children: map[manifest.NamedResource]bool{childID: true}}})
+	result, committed, err := session.admitTest(t.Context(), AdmissionOptions{Request: request, Stage: Execution})
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, slices.Contains(result.Selected, childID), true)
+	assert.Equal(t, session.Snapshot().Output(childID), true)
+
+	var preparation *Preparation
+	t.Cleanup(func() { preparation.Retire() })
+	next := PrepareRequest{Owner: ownerID, Generation: []store.Child{{Obj: child}}, Preparation: &preparation}
+	_, prepared, err := session.admitTest(t.Context(), AdmissionOptions{Request: next, Stage: Execution})
+	assert.NoError(t, err)
+	assert.Equal(t, prepared, true)
+	reused, err := session.prepareTest(t.Context(), next)
+	assert.NoError(t, err)
+	assert.Equal(t, reused.reused, true)
+	reused.Retire()
+
+	replacement := owner.Clone()
+	replacement.Path = "after"
+	st.AddObject(replacement)
+	assert.Equal(t, proof.Valid(), false)
+	stale, err := session.prepareTest(t.Context(), next)
+	assert.NoError(t, err)
+	assert.Equal(t, stale.reused, false)
+	assert.Equal(t, slices.Contains(stale.Selected, childID), false)
+	stale.Retire()
+
+	refreshed, err := session.refreshHistoryTest(t.Context(), &result, request)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(refreshed.Selected, childID), false)
+	refreshed.Retire()
+
+	next.AwaitEmission = true
+	_, published, err := session.admitTest(t.Context(), AdmissionOptions{Request: next, Stage: Execution})
+	assert.Equal(t, published, false)
+	assert.Equal(
+		t,
+		err != nil && err.Error() == EntryMembershipFailure(facts.context.EntryPath, ownerID, childID).Error(),
+		true,
+	)
+
+	scopes.Store(&EntryScopes{ownerID: {Support: &store.ReadSet{}}})
+	outside, err := session.prepareTest(t.Context(), next)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(outside.Selected, childID), false)
+	outside.Retire()
+
+	delete(facts.sources, manifest.BootstrapSourceID)
+	newSession, err := New(st, facts, Request{Roots: []manifest.NamedResource{childID}})
+	assert.NoError(t, err)
+	full, err := newSession.prepareTest(t.Context(), request)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(full.Selected, childID), true)
+	full.Retire()
 }
 
 type retryAcquisitionFacts struct {

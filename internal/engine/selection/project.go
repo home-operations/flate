@@ -12,12 +12,13 @@ import (
 const comparisonSides = 2
 
 type selectionSide struct {
-	run        Snapshot
-	request    Request
-	reads      store.ReadSet
-	result     *Result
-	namespaces map[string]struct{}
-	roots      []manifest.NamedResource
+	run            Snapshot
+	request        Request
+	reads          store.ReadSet
+	result         *Result
+	namespaces     map[string]struct{}
+	roots          []manifest.NamedResource
+	lookupFailures []LookupFailure
 }
 
 // Project projects one render, or two ordered orig/current renders,
@@ -87,7 +88,7 @@ func collectProjectionSides(
 	roots := request.Roots
 	for i := range sides {
 		run := &sides[i].run
-		if complete && !run.Absent {
+		if complete && !run.Absent && !sides[i].result.LookupFailed {
 			collections[i].collectBatches()
 		}
 		sides[i].collectWarnings(roots[0], kinds, len(sides) == comparisonSides)
@@ -477,6 +478,9 @@ func (s *selectionSide) prepareSubjects() {
 			add(manifest.DiagnosticFor(batch.Parent.Named(), batch.Parent))
 		}
 	}
+	for i := range s.lookupFailures {
+		add(s.lookupFailures[i].Package)
+	}
 	if !s.run.HasResult {
 		return
 	}
@@ -492,9 +496,10 @@ func (s *selectionSide) prepareSubjects() {
 	for itemIndex := range s.run.Warnings {
 		warning := s.run.Warnings[itemIndex]
 
-		if warning.Subject.ID != (manifest.NamedResource{}) {
+		switch {
+		case warning.Subject.ID != (manifest.NamedResource{}):
 			add(warning.Subject)
-		} else if warning.Resource != (manifest.NamedResource{}) {
+		case warning.Resource != (manifest.NamedResource{}):
 			add(s.diagnostic(warning.Resource))
 		}
 		for _, id := range warning.Related {

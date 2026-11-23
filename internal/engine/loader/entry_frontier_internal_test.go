@@ -42,8 +42,8 @@ func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 		{name: "missing resource", builder: "resources: [missing.yaml]\n", possible: true},
 		{name: "remote resource", builder: "resources: [https://example.test/resource.yaml]\n", possible: true},
 		{name: "generator", builder: "generators: [generator.yaml]\n", possible: true},
-		{name: "remote generator input", builder: "configMapGenerator: [{name: data, envs: [https://example.test/data.env]}]\n"},
-		{name: "missing generator input", builder: "configMapGenerator: [{name: data, files: [missing.txt]}]\n"},
+		{name: "remote generator input", builder: "configMapGenerator: [{name: data, envs: [https://example.test/data.env]}]\n", possible: true},
+		{name: "missing generator input", builder: "configMapGenerator: [{name: data, files: [missing.txt]}]\n", possible: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -291,4 +291,74 @@ func TestEntryFrontier_FrozenOwnership(t *testing.T) {
 	frozen := l.documents.cache[file]
 	assert.Equal(t, frozen.eligible, selection.RootEligible)
 	assert.Diff(t, frozen.rootOwners, owners)
+}
+
+func TestEnclosingApplications_ResourceMembership(t *testing.T) {
+	t.Parallel()
+	const definition = "clusters/app"
+	const entry = definition + "/leaf"
+	reference := "  path: ./" + definition + "\n  sourceRef: {kind: GitRepository, name: example}\n"
+	for _, tc := range []struct {
+		name          string
+		extra         map[string]string
+		paths         []string
+		requiresBuild bool
+	}{
+		{
+			name: "listed reach",
+			extra: map[string]string{
+				"kustomization.yaml":                     "resources: [clusters/app, clusters/management]\n",
+				"clusters/management/kustomization.yaml": "resources: [../app/listed.yaml]\n",
+			},
+			paths: []string{"."},
+		},
+		{
+			name: "configuration changes the enclosing recipe",
+			extra: map[string]string{
+				"kustomization.yaml":                            "resources: [clusters/app, clusters/management]\n",
+				"clusters/management/kustomization.yaml":        "resources: [../app/listed.yaml, config]\n",
+				"clusters/management/config/kustomization.yaml": "resources: []\nconfigurations: [config.yaml]\n",
+			},
+			paths:         []string{"."},
+			requiresBuild: true,
+		},
+		{
+			name: "separate enclosing build contexts for one resource",
+			extra: map[string]string{
+				"clusters/first/kustomization.yaml":  "resources: [../app/listed.yaml]\n",
+				"clusters/second/kustomization.yaml": "resources: [../app/listed.yaml]\n",
+			},
+			paths: []string{"clusters/first", "clusters/second"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{
+				definition + "/kustomization.yaml": {Data: []byte("resources: [leaf/release.yaml]\n")},
+				definition + "/listed.yaml": {
+					Data: []byte(testutil.KustomizationYAML("listed", "flux-system", reference)),
+				},
+				definition + "/unlisted.yaml": {
+					Data: []byte(testutil.KustomizationYAML("unlisted", "flux-system", reference)),
+				},
+				entry + "/release.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n"),
+				},
+			}
+			for name, body := range tc.extra {
+				files[name] = &fstest.MapFile{Data: []byte(body)}
+			}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: files}
+			standalone, recipes, err := ApplicationPackages(t.Context(), input, ".", entry)
+			assert.NoError(t, err)
+			assert.Equal(t, len(standalone), 0)
+			assert.FatalIf(t, len(recipes) != len(tc.paths), "enclosing recipes = %v", recipes)
+			for i, pkg := range recipes {
+				assert.Equal(t, pkg.Path, tc.paths[i])
+				assert.Equal(t, pkg.RequiresBuild, tc.requiresBuild)
+				assert.FatalIf(t, len(pkg.Owners) != 1, "enclosing applications = %v", pkg.Owners)
+				assert.Equal(t, pkg.Owners[0].Obj.Named(), testutil.KustomizationID("flux-system", "listed"))
+			}
+		})
+	}
 }

@@ -142,7 +142,9 @@ func (l *Loader) RootEvidence(
 	reads *store.ReadSet,
 ) selection.RootEvidence {
 	view := l.physicalView()
-	return view.evidence(id, reads, l)
+	facts := view.evidence(id, reads, l)
+	facts.EntryScope = l.EntryScope(id)
+	return facts
 }
 
 func physicalOccurrence(view *selection.OccurrenceFacts) authoredOccurrence {

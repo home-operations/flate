@@ -60,6 +60,7 @@ type admissionClosure struct {
 	excludedNative     map[manifest.NamedResource]bool
 	catalog            *admissionCatalog
 	context            SourceContext
+	scopes             entryScopeCapture
 	historyOwners      map[manifest.NamedResource][]manifest.SourceEvidence
 	missing            missingPolicy
 	objects            admissionReader
@@ -116,6 +117,7 @@ func (l *Session) Prepare(
 	proposal := &Admission{
 		Request: request, preparation: preparation, entry: entry, producerOwner: preparation.producerOwner,
 	}
+	proposal.scopes.capture(currentSource.EntryScopes)
 	if request.Preparation == nil {
 		proposal.local = preparation
 	}
@@ -123,6 +125,7 @@ func (l *Session) Prepare(
 		return proposal, nil
 	}
 	preparation.completed = nil
+	closure.captureEntryScopes(&proposal.scopes)
 	proposal.captureReads(l)
 	proposal.reads.SetWork(request.Reads.Work())
 	closure.proposal, closure.objects, closure.deriving, closure.decision = proposal, proposal.reads, false, l.Snapshot()
@@ -204,6 +207,8 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		return false
 	case request.Owner != c.owner, c.frozen != c.context.Frozen,
 		c.sideKnown != c.context.SideKnown, c.side != c.context.Side:
+		return false
+	case previous.scopes.scopes != proposal.scopes.scopes, !previous.scopes.current():
 		return false
 	case !p.evidence.Valid(), !c.session.guardCurrent(proposal):
 		return false
@@ -535,7 +540,14 @@ func (a *Admission) captureSources() {
 	}
 }
 
-func (c *admissionClosure) selectsChild(id manifest.NamedResource) bool {
+func (c *admissionClosure) outsideEntry(owner, child manifest.NamedResource) bool {
+	return !c.scopes.scopes.Scope(owner).Allows(child)
+}
+
+func (c *admissionClosure) selectsChild(owner, id manifest.NamedResource) bool {
+	if c.outsideEntry(owner, id) {
+		return false
+	}
 	selection := c.session.request
 	return len(selection.Roots) == 0 || selection.Matches(id) || selection.Roots[0].Name != "" ||
 		selection.Roots[0].Namespace == ""
@@ -571,6 +583,9 @@ func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
 	roles := c.decisionRoles(id, known)
 	role.needed = role.needed || roles&needed != 0
 	role.selected = role.selected || roles&selected != 0
+	if role.selected && c.scopes.scopes != nil {
+		role.selected = c.lookupEligible(id)
+	}
 	// Promotion requires reconciliation without proving that input content changed.
 	role.dirty = role.dirty || roles&dirty != 0 && roles&promoted == 0
 	role.ordinary = role.ordinary || roles&ordinary != 0
@@ -619,7 +634,7 @@ func (c *admissionClosure) assignRole(id manifest.NamedResource, role admissionR
 		_, policy := c.objects.Lookup(id)
 		root = policy.Root && c.objects.GetDeclaration(id) != nil
 	}
-	if !root {
+	if !root || role.selected && c.scopes.scopes != nil && !c.lookupEligible(id) {
 		role.selected = false
 	}
 	state := c.states[id]

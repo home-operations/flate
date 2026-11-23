@@ -14,6 +14,7 @@ const (
 	dirty
 	ordinary
 	promoted
+	namedLookup
 )
 
 const decisionBuckets = 64
@@ -90,7 +91,7 @@ func (d *Decision) include(update *Admission, execution bool) (*Decision, []mani
 	var included []manifest.NamedResource
 	nextExecution := d.execution || execution
 	changed := d.execution != nextExecution
-	for _, axis := range [4]struct {
+	for _, axis := range [5]struct {
 		ids  []manifest.NamedResource
 		role uint8
 	}{
@@ -98,6 +99,7 @@ func (d *Decision) include(update *Admission, execution bool) (*Decision, []mani
 		{update.Needed, needed},
 		{update.Selected, selected},
 		{update.Dirty, dirty},
+		{update.lookups, namedLookup},
 	} {
 		if !execution && (axis.role == selected || axis.role == dirty) {
 			continue

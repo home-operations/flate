@@ -139,7 +139,7 @@ func (c *admissionClosure) selectInventoryChildren(id manifest.NamedResource, ro
 	_, _, output := c.objects.GetEmission(id)
 	for i := range output.Children {
 		child := &output.Children[i]
-		if !c.selectsChild(child.Obj.Named()) {
+		if !c.selectsChild(id, child.Obj.Named()) {
 			continue
 		}
 		if id.ReportHidden() && c.isFileIndexed(child.Obj.Named()) {

@@ -18,11 +18,155 @@ import (
 
 	"oras.land/oras-go/v2/errdef"
 	kustomizetypes "sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	"github.com/home-operations/flate/internal/engine/kustomize/krusty"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestInputCache_RejectsFrameWithoutRecipe(t *testing.T) {
+	t.Parallel()
+	if reason := cache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skipf("render persistence disabled: %s", reason)
+	}
+	t.Log("render persistence enabled")
+	const builder = "apps/kustomization.yaml"
+	root, backing := t.TempDir(), t.TempDir()
+	files := fstest.MapFS{
+		builder: {Data: []byte(`resources: [leaf/object.yaml]
+transformers: [labels.yaml]
+patches:
+- target: {kind: ConfigMap, name: original}
+  patch: '[{"op":"replace","path":"/metadata/name","value":"patched"}]'
+`)},
+		"apps/labels.yaml": {Data: []byte(`apiVersion: builtin
+kind: LabelTransformer
+metadata: {name: labels}
+labels: {from: transformer}
+fieldSpecs: [{path: metadata/labels, create: true}]
+`)},
+		"apps/leaf/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: original}\n")},
+	}
+	fresh := cachedFixtureLoader(t, root, files, nil)
+	defer fresh.Close()
+	expected := patchedInputResult(t, fresh, files)
+	assert.Equal(t, expected, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    from: transformer
+  name: patched
+`)
+
+	owner, err := cache.New(t.Context(), backing)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	seed := cachedFixtureLoader(t, root, files, owner)
+	state := seed.inputCaches[root]
+	publishInputFrameWithoutRecipe(t, seed, builder)
+	seed.Close()
+
+	origin, url := state.input.OriginPath(root), state.input.URL
+	current, _ := cache.InputFrameIdentity(origin, url, nil)
+	policy := &cache.Policy{MaxAge: cache.Forever}
+	_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
+	assert.ErrorIf(t, !errors.Is(err, errdef.ErrNotFound), "input cache accepted the version 4 key: %v", err)
+
+	coordinate := inputCoordinate{name: builder, builder: true}
+	rebuilt := cachedFixtureLoader(t, root, files, owner)
+	_, restored := rebuilt.inputCaches[root].files[coordinate]
+	assert.Equal(t, restored, false)
+	assert.Equal(t, patchedInputResult(t, rebuilt, files), expected)
+	assert.NoError(t, rebuilt.PersistInputs(t.Context()))
+	_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
+	assert.NoError(t, err)
+	rebuilt.Close()
+	assert.NoError(t, owner.Close())
+
+	reopened, err := cache.New(t.Context(), backing)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
+	warm := cachedFixtureLoader(t, root, files, reopened)
+	defer warm.Close()
+	_, restored = warm.inputCaches[root].files[coordinate]
+	assert.Equal(t, restored, true)
+	assert.Equal(t, patchedInputResult(t, warm, files), expected)
+}
+
+func publishInputFrameWithoutRecipe(t *testing.T, l *Loader, name string) {
+	t.Helper()
+	owner, state := l.Options.Cache, l.inputCaches[l.SourceRoot]
+	origin, url := state.input.OriginPath(state.input.LocalPath), state.input.URL
+	previous := manifest.Fingerprint(struct {
+		Version             int
+		Domain, Origin, URL string
+	}{Version: 4, Domain: "loader-inputs", Origin: origin, URL: url})
+	frame := inputFrame{Files: []cachedInput{{
+		Name: name, Builder: filepath.Base(name), Digest: state.digests[name],
+		Body: l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, name))].body,
+	}}}
+	assert.NoError(t, state.certify(t.Context(), &frame))
+	content, err := frame.prepare(t.Context())
+	assert.NoError(t, err)
+	_, identity := cache.InputFrameIdentity(origin, url, content)
+	binding := inputFrameContent{Origin: origin, URL: url, Content: identity}
+	publication, err := content.PreparePublication(t.Context(), cache.FramePublicationInput{
+		Owner: manifest.BootstrapSourceID, Content: binding, Complete: true,
+		Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, cache.RecordInventory(t.Context(), owner, cache.AcceptedInventory[*cache.FramePublication]{
+		Key: previous, Acceptance: publication.Identity(), Content: publication,
+	}))
+	generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: previous, Render: cache.RenderAccepted},
+		&cache.Policy{MaxAge: cache.Forever}, nil)
+	assert.NoError(t, err)
+	var wire struct {
+		Files []map[string]json.RawMessage
+	}
+	stored, err := cache.OpenFrame(t.Context(), "loader-inputs", generation, &wire)
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(wire.Files) != 1, "version 4 frame files: %v", wire.Files)
+	_, hasRecipe := wire.Files[0]["Recipe"]
+	assert.Equal(t, hasRecipe, false)
+	_, complete := stored.History(manifest.BootstrapSourceID, binding)
+	assert.Equal(t, complete, true)
+}
+
+func patchedInputResult(t *testing.T, l *Loader, files fstest.MapFS) string {
+	t.Helper()
+	input := l.documents.artifacts[l.SourceRoot]
+	renderFS := filesys.MakeFsInMemory()
+	for name, file := range files {
+		data, err := fs.ReadFile(input.FS, name)
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), string(file.Data))
+		target := filepath.Join(l.SourceRoot, name)
+		assert.NoError(t, renderFS.MkdirAll(filepath.Dir(target)))
+		assert.NoError(t, renderFS.WriteFile(target, data))
+	}
+	const recipe = recipeTransformers | recipeOpaquePluginInputs
+	app := filepath.Join(l.SourceRoot, "apps")
+	assert.Equal(t, l.documents.read(app).recipe, recipe)
+	packages, err := l.EnclosingPackages(t.Context(), input, "apps/leaf",
+		manifest.NamedResource{Kind: "ConfigMap", Name: "patched"})
+	assert.NoError(t, err)
+	assert.FatalIf(t, !slices.Equal(packages, []string{"apps"}), "enclosing packages: %v", packages)
+	occurrences, err := l.Occurrences(t.Context(), app, "")
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(occurrences) != 1, "authored occurrences: %v", occurrences)
+	assert.Equal(t, occurrences[0].RequiresBuild, true)
+
+	krusty.BuildMutex.Lock()
+	result, err := krusty.Build(renderFS, filepath.Join(l.SourceRoot, packages[0]), false)
+	krusty.BuildMutex.Unlock()
+	assert.NoError(t, err)
+	data, err := result.AsYaml()
+	assert.NoError(t, err)
+	return string(data)
+}
 
 func TestRestoreFrameFiles_IndependentLifetime(t *testing.T) {
 	t.Parallel()

@@ -21,7 +21,7 @@ var BuildMutex sync.Mutex //nolint:gochecknoglobals // Krusty requires one proce
 // Callers MUST hold BuildMutex for the complete call.
 //
 //nolint:ireturn,wrapcheck // Krusty's result interface and exact error strings preserve Flux parity.
-func Build(fs filesys.FileSystem, dir string) (_ resmap.ResMap, err error) {
+func Build(fs filesys.FileSystem, dir string, inputOrder bool) (_ resmap.ResMap, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from kustomize build panic: %v", r)
@@ -33,8 +33,12 @@ func Build(fs filesys.FileSystem, dir string) (_ resmap.ResMap, err error) {
 	}()
 
 	openapi.Schema()
-	return krusty.MakeKustomizer(&krusty.Options{
+	opts := &krusty.Options{
 		LoadRestrictions: kustypes.LoadRestrictionsNone,
 		PluginConfig:     kustypes.DisabledPluginConfig(),
-	}).Run(fs, dir)
+	}
+	if inputOrder {
+		opts.Reorder = krusty.ReorderOptionNone
+	}
+	return krusty.MakeKustomizer(opts).Run(fs, dir)
 }

@@ -220,7 +220,7 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 		w.reuse(&prior, &scope)
 		return inputResult{}, nil // Preserve the graph so Build still rejects cycles.
 	}
-	parsed, err := w.control(file)
+	parsed, err := w.control(file, loc.pluginRoot == "")
 	if err != nil || parsed.doc == nil {
 		return inputResult{}, err
 	}
@@ -254,7 +254,7 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 	return result, w.fs.WriteFile(file, out)
 }
 
-func (w *inputWalk) control(file string) (parsedControl, error) {
+func (w *inputWalk) control(file string, resourceControl bool) (parsedControl, error) {
 	if parsed, ok := w.parsed[file]; ok {
 		return parsed, nil
 	}
@@ -272,7 +272,13 @@ func (w *inputWalk) control(file string) (parsedControl, error) {
 		if w.local != nil {
 			w.local.incomplete = true
 		}
+		if resourceControl && w.fs.contributors != nil {
+			w.fs.contributors.incomplete = true
+		}
 		return parsedControl{}, nil // Build owns local control-file diagnostics.
+	}
+	if resourceControl && w.fs.contributors != nil {
+		w.fs.contributors.recipe(&k, yaml.NewRNode(&doc))
 	}
 	parsed := parsedControl{doc: yaml.NewRNode(&doc), refs: slices.Collect(kustomizeinput.Kustomization(&k))}
 	if w.local != nil {
@@ -444,6 +450,9 @@ func (w *inputWalk) resourceOperand(
 	if err != nil {
 		return inputResult{}, err
 	}
+	if w.fs.contributors != nil && loc.pluginRoot == "" {
+		w.fs.contributors.resource(w.fs, &path)
+	}
 	if w.local != nil {
 		if path.file == "" {
 			return inputResult{}, nil
@@ -516,6 +525,9 @@ func (w *inputWalk) pluginOperand(
 }
 
 func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput, incoming *walkScope) (fs.FS, error) {
+	if w.fs.contributors != nil {
+		return nil, errors.New("entry membership requires local render inputs")
+	}
 	scope := *incoming
 	acquired, identity, err := descriptor.acquire(ctx, w.cache, w.fs)
 	w.recordRemote(descriptor, &identity, &scope)

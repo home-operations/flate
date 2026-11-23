@@ -5,6 +5,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -69,6 +70,7 @@ type SourceFile struct {
 type SourceFacts struct {
 	Comparison           *change.Set
 	Context              SourceContext
+	EntryScopes          *atomic.Pointer[EntryScopes]
 	Source               manifest.NamedResource
 	Changes, Delta       *change.Set
 	Snapshots            [2]*store.SourceArtifact

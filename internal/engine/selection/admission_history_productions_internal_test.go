@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"iter"
+	"maps"
 	"strconv"
 	"testing"
 	"testing/fstest"
@@ -53,6 +55,55 @@ func TestAdmission_HistoryProductionAllocations(t *testing.T) {
 
 func TestAdmission_HistoryProductionRefresh(t *testing.T) {
 	t.Parallel()
+
+	t.Run("self production cannot qualify lookup", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		owner := testutil.KustomizationID("apps", "owner")
+		child := testutil.KustomizationID("apps", "child")
+		productions := []manifest.Production{{Owner: child}}
+		facts := &solverFacts{store: st, index: manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child: {BuilderOwner: owner, Productions: productions},
+			},
+		}}
+		c := solverClosure(t, st, facts)
+		c.scopes.scopes = &EntryScopes{owner: {}}
+		assert.Diff(t, c.productions(child), productions)
+		assert.Equal(t, c.lookupEligible(child), false)
+	})
+
+	t.Run("restricted history", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		owner := testutil.KustomizationID("apps", "owner")
+		inside := testutil.KustomizationID("apps", "inside")
+		outside := testutil.KustomizationID("apps", "outside")
+		undeclared := manifest.Production{Owner: owner, File: "unknown.yaml"}
+		declaredOutside := manifest.Production{Owner: owner, Declaration: outside, File: "outside.yaml"}
+		records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+			inside:  {Productions: []manifest.Production{undeclared, declaredOutside}},
+			outside: {Productions: []manifest.Production{declaredOutside}},
+		}
+		facts := &solverFacts{roots: map[manifest.NamedResource]RootEvidence{
+			owner: {EntryScope: &EntryScope{Support: &store.ReadSet{}}},
+		}}
+		c := solverClosure(t, st, facts)
+		c.scopes.scopes = &EntryScopes{owner: facts.roots[owner].EntryScope}
+		c.history = map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}{owner: {Records: maps.All(records), Complete: true}}
+		c.readHistory()
+		assert.Equal(t, len(c.accepted[owner]), 0)
+		c.scopes.scopes = &EntryScopes{
+			owner: {Support: &store.ReadSet{}, Children: map[manifest.NamedResource]bool{inside: true}},
+		}
+		c.readHistory()
+		assert.Equal(t, len(c.accepted[owner]), 1)
+		assert.Diff(t, c.accepted[owner][inside].Productions, []manifest.Production{undeclared})
+		assert.Diff(t, records[inside].Productions, []manifest.Production{undeclared, declaredOutside})
+	})
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(

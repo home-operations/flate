@@ -106,6 +106,7 @@ spec:
 		{
 			name:    "transform without an instance",
 			builder: "resources: [entry/plain.yaml]\nnamePrefix: private-\n",
+			build:   true,
 		},
 		{name: "no authored builder"},
 	} {
@@ -121,6 +122,7 @@ type enclosingPackageOperandsCase struct {
 	name, builder string
 	extra         map[string]string
 	want, broken  bool
+	build         bool
 	rejected      bool
 }
 
@@ -171,7 +173,7 @@ spec:
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected one synthetic entry: %v", entries)
 	planned := entries[0].prepared.generatorPackages
-	assert.Equal(t, len(planned) != 0, tc.want)
+	assert.Equal(t, len(planned) != 0, tc.want || tc.build)
 	admission := session.admission()
 	admission.generatorPackages = planned
 	inventories := assertEnclosingInventoryReuse(t, admission, recorder.Scope(), planned)

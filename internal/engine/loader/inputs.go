@@ -54,6 +54,7 @@ type parsedDocument struct {
 	objects      []parsedObject
 	state        pathState
 	searched     bool
+	recipe       recipeClass
 	plugins      *[]pluginInputs
 	decodeErr    error
 }
@@ -281,7 +282,7 @@ func (r documentReader) restore(file string) {
 		return
 	}
 	if doc := source.lookup(file); doc != nil {
-		cached.body, cached.file, cached.sourceRoot = doc.body, doc.file, root
+		cached.body, cached.file, cached.sourceRoot, cached.recipe = doc.body, doc.file, root, doc.recipe
 		if cached.objects == nil || covers(doc.coverage, cached.coverage) {
 			cached.objects = cloneInputObjects(doc.objects)
 			cached.declarations, cached.declarationsData = doc.declarations, nil
@@ -468,13 +469,14 @@ func (d *document) snapshot() {
 		body: d.body, file: d.file, objects: objects, projection: d.projection, deferred: d.deferred,
 		coverage: d.coverage, possible: d.possible, unprepared: d.unprepared,
 		declarations: d.declarations,
-		state:        d.pathState, searched: d.searched, plugins: d.plugins, decodeErr: d.decodeErr,
+		state:        d.pathState, searched: d.searched, recipe: d.recipe, plugins: d.plugins, decodeErr: d.decodeErr,
 	}
 }
 
 func (p *parsedDocument) matchesObservation(doc *document) bool {
 	sameInputs := p.plugins == doc.plugins && p.projection == doc.projection
 	return p.declarations == doc.declarations && p.state == doc.pathState && p.searched == doc.searched &&
+		p.recipe == doc.recipe &&
 		sameInputs
 }
 

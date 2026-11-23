@@ -12,7 +12,7 @@ import (
 )
 
 func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *selectionSide) {
-	if len(s.run.Failed) == 0 {
+	if len(s.run.Failed) == 0 && len(s.lookupFailures) == 0 {
 		return
 	}
 	s.result.Failed = make(map[manifest.NamedResource]store.StatusInfo)
@@ -35,6 +35,21 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 			s.result.Blocked[id] = deps
 		}
 	}
+	for i := range s.lookupFailures {
+		failure := &s.lookupFailures[i]
+		id := failure.Package.ID
+		cause := failure.Cause.Error()
+		info, failed := s.run.Failed[id]
+		if failed {
+			cause = info.Message
+		} else {
+			info = store.FailureStatus(failure.Cause)
+		}
+		info.Message = EntryMembershipFailure(failure.Path, id, roots[0]).Error() + ": " + cause
+		s.result.Failed[id] = info
+		delete(s.result.Blocked, id)
+		delete(unrelated, id)
+	}
 	if len(unrelated) > 0 {
 		s.result.Unrelated = s.unrelatedFailures(&s.run, unrelated, required)
 	}
@@ -51,6 +66,9 @@ func (s *selectionSide) requiredClosure(
 		seen:   make(map[manifest.NamedResource]struct{}),
 	}
 	q.seedRoots()
+	for _, id := range s.run.LookupFailures {
+		q.add(id)
+	}
 	children := s.run.childrenByParent()
 	if roots[0].Name != "" {
 		for _, kids := range children {
@@ -112,6 +130,9 @@ func (q *requiredSelection) seedRoots() {
 	}
 	for id := range s.run.Failed {
 		q.seed(id)
+		if q.intent.Roots[0].Name != "" && !s.result.LookupMatched && s.run.Decision.roles(id)&namedLookup != 0 {
+			q.add(id)
+		}
 	}
 }
 
@@ -531,7 +552,13 @@ type ProjectionErrors struct {
 }
 
 func selectionError(sides []selectionSide, runErr error) ProjectionErrors {
-	if runErr == nil {
+	var lookupMask uint
+	for i := range sides {
+		if len(sides[i].lookupFailures) != 0 {
+			lookupMask |= 1 << i
+		}
+	}
+	if runErr == nil && lookupMask == 0 {
 		return ProjectionErrors{}
 	}
 	selected := make([]error, len(sides))
@@ -542,6 +569,9 @@ func selectionError(sides []selectionSide, runErr error) ProjectionErrors {
 		remainders[i] = nonResourceErrors(remainder)
 		selected[i] = errors.Join(selectedFailures(side.result), remainders[i])
 	}
+	if runErr == nil {
+		return projectSelectionSides(lookupMask, sides, selected, remainders)
+	}
 	projection := projectSelectionError(runErr, sides, selected, remainders)
 	if projection.mask == 0 {
 		projected := projectSelectionSides((1<<len(sides))-1, sides, selected, remainders)
@@ -549,6 +579,14 @@ func selectionError(sides []selectionSide, runErr error) ProjectionErrors {
 			Selected:  errors.Join(projected.Selected, projection.selected),
 			Remaining: errors.Join(projected.Remaining, projection.remaining),
 		}
+	}
+	if extra := lookupMask &^ projection.mask; extra != 0 {
+		if projection.clean {
+			return projectSelectionSides(projection.mask|extra, sides, selected, remainders)
+		}
+		added := projectSelectionSides(extra, sides, selected, remainders)
+		projection.selected = errors.Join(projection.selected, added.Selected)
+		projection.remaining = errors.Join(projection.remaining, added.Remaining)
 	}
 	return ProjectionErrors{Selected: projection.selected, Remaining: projection.remaining}
 }

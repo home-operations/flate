@@ -154,6 +154,7 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 	}
 	facts := selection.SourceFacts{
 		Context:           l.selectionContext(),
+		EntryScopes:       &l.entryScopes,
 		Comparison:        l.Options.Changes,
 		ConfiguredInput:   l.Options.ConfiguredInput,
 		Source:            e.source,

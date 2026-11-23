@@ -114,6 +114,7 @@ func (o *Orchestrator) admissionRequest(request *selection.PrepareRequest) {
 	o.loader.Options.ConfiguredInput = o.cfg.Input
 	request.Changes, request.HistoryOwners = o.cfg.ExternalChanges, o.historyOwners
 	request.Missing = o.cfg.missing
+	request.LookupSources = o.session.LookupSources()
 	request.History = o.history
 	request.ReadHistory = o.readProducerHistory
 }

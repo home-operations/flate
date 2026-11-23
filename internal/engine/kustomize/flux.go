@@ -335,7 +335,7 @@ func (r *renderRequest) produce(
 		return sourcecache.ProducerResult{}, err
 	}
 	var cleanedAbsErr error
-	result.docs, cleanedAbsErr = r.buildDocuments(ctx, memFS, files.dir, files.control)
+	result.docs, cleanedAbsErr = r.buildDocuments(ctx, memFS, files, false)
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
@@ -401,21 +401,22 @@ func buildDirectory(memFS *treeFS, subPath string) (string, error) {
 func (r *renderRequest) buildDocuments(
 	ctx context.Context,
 	memFS *treeFS,
-	subDir, kfile string,
+	files buildFiles,
+	inputOrder bool,
 ) ([]manifest.DocOccurrence, error) {
 	subPath := r.request.SubPath
 	if errErr := ctx.Err(); errErr != nil {
 		return nil, errErr
 	}
-	if slog.Default().Enabled(ctx, slog.LevelDebug) {
-		slog.Debug("kustomize: build", "path", r.request.SubPath)
+	if !inputOrder && slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.Debug("kustomize: build", "path", subPath)
 	}
 	work := r.request.Work.Engine(manifest.WorkKustomize, r.key)
 	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rm, cleanedAbsErr := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
-		return kustomizestate.Build(memFS, subDir)
+		return kustomizestate.Build(memFS, files.dir, inputOrder)
 	}()
 	work.Finish(cleanedAbsErr)
 	if cleanedAbsErr != nil {
@@ -435,11 +436,11 @@ func (r *renderRequest) buildDocuments(
 			return nil, built
 		}
 
-		readFileData, readErr := memFS.ReadFile(kfile)
+		readFileData, readErr := memFS.ReadFile(files.control)
 		if readErr != nil {
 			return nil, readErr
 		}
-		if attr := duplicateProducers(memFS, subDir, subPath, readFileData); attr != "" {
+		if attr := duplicateProducers(memFS, files.dir, subPath, readFileData); attr != "" {
 			return nil, fmt.Errorf(
 				"%w\n%s\nselect an individual overlay with -p",
 				built,

@@ -317,7 +317,7 @@ func testRenderEmittedListsCase(t *testing.T, testCaseInput *struct {
 		},
 	)
 	kustomizestate.BuildMutex.Lock()
-	rm, oracleErr := kustomizestate.Build(filesys.MakeFsOnDisk(), root)
+	rm, oracleErr := kustomizestate.Build(filesys.MakeFsOnDisk(), root, false)
 	var raw []byte
 	if oracleErr == nil {
 		raw, oracleErr = rm.AsYaml()

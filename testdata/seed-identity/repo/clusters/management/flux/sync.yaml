@@ -1,0 +1,23 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: example
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/example/example.git
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: management
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/management
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: example

@@ -27,13 +27,14 @@ import (
 
 // Entry keeps structural identity separate from the path used for admission.
 type Entry struct {
-	ID        manifest.ClusterID
-	Path      string
-	Input     *store.SourceArtifact
-	prepared  *entryInputs
-	aggregate bool
-	roots     []int
-	target    string
+	ID          manifest.ClusterID
+	Path        string
+	Input       *store.SourceArtifact
+	prepared    *entryInputs
+	aggregate   bool
+	partitioned bool
+	roots       []int
+	target      string
 }
 
 type entryInputs struct {
@@ -191,7 +192,9 @@ func (d *Session) plannedGeneratorPackages(
 ) ([]string, error) {
 	input := d.cfg.Input
 	generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
-	packages, err := d.loader.EnclosingPackages(ctx, input, relative, generator)
+	packages, err := d.loader.EnclosingPackages(ctx, input, relative, manifest.NamedResource{
+		Group: generator.Group, Kind: generator.Kind,
+	})
 	if err != nil {
 		return packages, err
 	}
@@ -355,6 +358,7 @@ func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan strin
 			}
 			entry.Path = scan
 		}
+		entry.partitioned = entry.Path != scan
 		result = append(result, entry)
 	}
 	return result

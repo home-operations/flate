@@ -39,9 +39,12 @@ func (s *Session) refreshHistory(
 	if proposal.entry != nil && proposal.entry.Bound {
 		proposal.EntryReceipt = nil
 	}
+	proposal.scopes.capture(currentSource.EntryScopes)
 	proposal.captureReads(s)
-	if previous.entry != proposal.entry || previous.entryReads != nil && !proposal.entrySupported() {
+	scopeChanged := previous.scopes.scopes != proposal.scopes.scopes || !previous.scopes.current()
+	if scopeChanged || previous.entry != proposal.entry || previous.entryReads != nil && !proposal.entrySupported() {
 		proposal.Retire()
+		request.Invocation = request.Invocation || previous.Request.Invocation
 		return s.Prepare(ctx, request)
 	}
 	preparation.acceptAcquired(request.Acquired)
@@ -121,6 +124,19 @@ func (c *admissionClosure) readHistory() {
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
 		//nolint:gocritic // The iterator supplies immutable value snapshots.
 		for id, record := range history.Records {
+			if c.outsideEntry(owner, id) {
+				continue
+			}
+			if c.scopes.scopes != nil && len(record.Productions) != 0 {
+				retained := slices.DeleteFunc(
+					slices.Clone(record.Productions),
+					func(production manifest.Production) bool {
+						return production.Declaration != (manifest.NamedResource{}) &&
+							c.outsideEntry(production.Owner, production.Declaration)
+					},
+				)
+				record.Productions = retained
+			}
 			c.resolveHistoricalRecord(owner, &record)
 			records[id] = record
 		}

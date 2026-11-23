@@ -30,7 +30,7 @@ func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifa
 
 func (r *RawObject) artifactGeneratorCatalogSpec() map[string]any {
 	fields := [...]string{"artifacts", "pathPattern"}
-	spec := make(map[string]any, len(fields))
+	spec := make(map[string]any, len(fields)+1)
 	for _, field := range fields {
 		found := false
 		for key, value := range r.Spec {
@@ -42,6 +42,9 @@ func (r *RawObject) artifactGeneratorCatalogSpec() map[string]any {
 		if !found {
 			spec[field] = nil
 		}
+	}
+	if r.artifactGeneratorSpec().spec.ManagedNamespaces != nil {
+		spec["managedNamespaces"] = map[string]any{}
 	}
 	return spec
 }
@@ -57,44 +60,82 @@ func (o *ArtifactGeneratorOutput) needsCandidates() bool {
 	return strings.ContainsAny(o.Name, "{}") || strings.ContainsAny(o.Namespace, "{}")
 }
 
-// ResolveOutput expands the output identity with normalized captures and paths with raw captures.
-// It returns the concrete identity separately from the authored declaration.
+// ResolvedArtifactGeneratorOutput carries the authored output with its expansion results.
+type ResolvedArtifactGeneratorOutput struct {
+	Artifact  NamedResource
+	Namespace NamedResource
+	Output    ArtifactGeneratorOutput
+
+	// A Namespace metadata path error is deferred until after artifact preparation.
+	NamespaceMetadataPath      string
+	NamespaceMetadataPathError error
+}
+
+// ResolveOutput uses normalized captures for identities and raw captures for file paths.
 // Nil captures retain templates for declaration validation.
-func (o *ArtifactGeneratorOutput) ResolveOutput(
-	namespace string, normalized, raw map[string]string,
-) (NamedResource, ArtifactGeneratorOutput, error) {
-	id, output := o.identityTemplate(namespace), *o
-	if normalized == nil {
-		return id, output, nil
-	}
-	var err error
-	id.Name, err = expandArtifactTemplate(id.Name, normalized)
-	if err != nil {
-		return NamedResource{}, ArtifactGeneratorOutput{}, err
-	}
-	if o.Namespace != "" {
-		id.Namespace, err = expandArtifactTemplate(id.Namespace, normalized)
-		if err != nil {
-			return NamedResource{}, ArtifactGeneratorOutput{}, err
+func (s *ArtifactGeneratorSpec) ResolveOutput(
+	o *ArtifactGeneratorOutput, namespace string, normalized, raw map[string]string,
+) (ResolvedArtifactGeneratorOutput, error) {
+	result := ResolvedArtifactGeneratorOutput{Artifact: o.identityTemplate(namespace), Output: *o}
+	if normalized != nil {
+		if err := result.expand(normalized, raw); err != nil {
+			return ResolvedArtifactGeneratorOutput{}, err
 		}
 	}
-	output.InputsFrom, err = expandArtifactTemplate(o.InputsFrom, raw)
-	if err != nil {
-		return NamedResource{}, ArtifactGeneratorOutput{}, err
+	result.Namespace = s.namespaceTarget(o, result.Artifact.Namespace, namespace)
+	if result.Namespace.Name != "" {
+		result.NamespaceMetadataPath = s.namespaceMetadataPath()
+		if normalized != nil {
+			result.NamespaceMetadataPath, result.NamespaceMetadataPathError = expandArtifactTemplate(
+				result.NamespaceMetadataPath, raw,
+			)
+		}
 	}
-	output.Copy = slices.Clone(o.Copy)
-	for i := range output.Copy {
-		operation := &output.Copy[i]
+	return result, nil
+}
+
+func (r *ResolvedArtifactGeneratorOutput) expand(normalized, raw map[string]string) error {
+	var err error
+	r.Artifact.Name, err = expandArtifactTemplate(r.Artifact.Name, normalized)
+	if err != nil {
+		return err
+	}
+	if r.Output.Namespace != "" {
+		r.Artifact.Namespace, err = expandArtifactTemplate(r.Artifact.Namespace, normalized)
+		if err != nil {
+			return err
+		}
+	}
+	r.Output.InputsFrom, err = expandArtifactTemplate(r.Output.InputsFrom, raw)
+	if err != nil {
+		return err
+	}
+	r.Output.Copy = slices.Clone(r.Output.Copy)
+	for i := range r.Output.Copy {
+		operation := &r.Output.Copy[i]
 		operation.From, err = expandArtifactTemplate(operation.From, raw)
 		if err != nil {
-			return NamedResource{}, ArtifactGeneratorOutput{}, err
+			return err
 		}
 		operation.To, err = expandArtifactTemplate(operation.To, raw)
 		if err != nil {
-			return NamedResource{}, ArtifactGeneratorOutput{}, err
+			return err
 		}
 	}
-	return id, output, nil
+	return nil
+}
+
+func (s *ArtifactGeneratorSpec) namespaceTarget(
+	o *ArtifactGeneratorOutput, target, ownerNamespace string,
+) NamedResource {
+	if s.ManagedNamespaces == nil || o.Namespace == "" || !managedNamespaceEligible(target, ownerNamespace) {
+		return NamedResource{}
+	}
+	return NamedResource{Kind: namespaceKind, Name: target}
+}
+
+func managedNamespaceEligible(target, ownerNamespace string) bool {
+	return target != "" && target != ownerNamespace
 }
 
 func expandArtifactTemplate(template string, captures map[string]string) (string, error) {
@@ -188,12 +229,10 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		if output.Name == "" {
 			continue
 		}
-		if !output.needsCandidates() {
-			targets = append(targets, ProducerTarget{NamedResource: output.identityTemplate(r.Namespace)})
-			continue
-		}
-		if len(captures) != 0 {
-			targets = output.appendMatches(targets, candidates, output.identityTemplate(r.Namespace), captures)
+		id := output.identityTemplate(r.Namespace)
+		targets = r.appendArtifactTargets(targets, id, candidates, captures)
+		if namespace := spec.namespaceTarget(output, id.Namespace, r.Namespace); namespace.Name != "" {
+			targets = r.appendArtifactTargets(targets, namespace, candidates, captures)
 		}
 	}
 	slices.SortFunc(targets, func(a, b ProducerTarget) int { return a.Compare(b.NamedResource) })
@@ -347,15 +386,19 @@ func (s *ArtifactGeneratorSpec) inputPaths(alias string) []string {
 			files = append(files, name)
 		}
 	}
+	addFile := func(value string) {
+		if alias != "artifact" {
+			add(value, "{", true)
+		}
+	}
 	add(s.PathPattern, "*?[{", false)
 	for i := range s.Artifacts {
 		for _, operation := range s.Artifacts[i].Copy {
 			add(operation.From, "*?[{", false)
 		}
-		if alias != "artifact" {
-			add(s.Artifacts[i].InputsFrom, "{", true)
-		}
+		addFile(s.Artifacts[i].InputsFrom)
 	}
+	addFile(s.namespaceMetadataPath())
 	slices.Sort(files)
 	return files
 }
@@ -364,11 +407,17 @@ const (
 	maxArtifactCaptureLength = 63
 )
 
-func (o *ArtifactGeneratorOutput) appendMatches(
-	targets []ProducerTarget, candidates []NamedResource, id NamedResource, captures []string,
+func (r *RawObject) appendArtifactTargets(
+	targets []ProducerTarget, id NamedResource, candidates []NamedResource, captures []string,
 ) []ProducerTarget {
+	dynamicNamespace := id.Namespace != r.Namespace && strings.ContainsAny(id.Namespace, "{}")
+	if !dynamicNamespace && !strings.ContainsAny(id.Name, "{}") {
+		return append(targets, ProducerTarget{NamedResource: id})
+	}
+	if len(captures) == 0 {
+		return targets
+	}
 	template := id.Name
-	dynamicNamespace := strings.ContainsAny(o.Namespace, "{}")
 	if dynamicNamespace {
 		// A capture is a label value and can never consume the identity separator.
 		template = id.Namespace + "/" + id.Name
@@ -377,11 +426,18 @@ func (o *ArtifactGeneratorOutput) appendMatches(
 	if !ok {
 		return targets
 	}
+	validateName := apivalidation.NameIsDNSSubdomain
+	isNamespace := id.Kind == namespaceKind
+	if isNamespace {
+		validateName = apivalidation.ValidateNamespaceName
+	}
 	bound := make([]string, len(captures))
 	for _, candidate := range candidates {
-		if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
-			!dynamicNamespace && candidate.Namespace != id.Namespace ||
-			len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
+		switch {
+		case candidate.Group != id.Group || candidate.Kind != id.Kind,
+			!dynamicNamespace && candidate.Namespace != id.Namespace,
+			len(validateName(candidate.Name, false)) != 0,
+			isNamespace && !managedNamespaceEligible(candidate.Name, r.Namespace):
 			continue
 		}
 		name := candidate.Name

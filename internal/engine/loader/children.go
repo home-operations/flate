@@ -55,6 +55,7 @@ func (p *childDocumentParser) parse() store.ChildDocuments {
 		p.bindWarnings(&outcome)
 		if child.Obj != nil && child.Obj.Named() != p.parent.Named() {
 			child.Warnings = outcome.Warnings
+			child.Ordinal = doc.Ordinal
 			children = append(children, child)
 		}
 		p.docs[i] = outcome

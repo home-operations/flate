@@ -13,9 +13,39 @@ type ArtifactGeneratorSpec struct {
 		Labels      map[string]string `json:"labels"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"commonMetadata"`
-	Sources     []ArtifactGeneratorSource `json:"sources"`
-	PathPattern string                    `json:"pathPattern"`
-	Artifacts   []ArtifactGeneratorOutput `json:"artifacts"`
+	Sources            []ArtifactGeneratorSource           `json:"sources"`
+	PathPattern        string                              `json:"pathPattern"`
+	Artifacts          []ArtifactGeneratorOutput           `json:"artifacts"`
+	ManagedNamespaces  *ArtifactGeneratorManagedNamespaces `json:"managedNamespaces,omitempty"`
+	ServiceAccountName string                              `json:"serviceAccountName,omitempty"`
+}
+
+// ArtifactGeneratorManagedNamespaces is present even when its name policy is empty.
+type ArtifactGeneratorManagedNamespaces struct {
+	AllowedNames []string                            `json:"allowedNames"`
+	Prune        bool                                `json:"prune"`
+	Metadata     *ArtifactGeneratorNamespaceMetadata `json:"metadata,omitempty"`
+}
+
+// ArtifactGeneratorNamespaceMetadata applies From entries in declaration order after FromSource.
+type ArtifactGeneratorNamespaceMetadata struct {
+	FromSource *ArtifactGeneratorNamespaceMetadataSource `json:"fromSource,omitempty"`
+	From       []ArtifactGeneratorNamespaceMetadataEntry `json:"from,omitempty"`
+}
+
+// ArtifactGeneratorNamespaceMetadataSource only admits keys listed in its assertions.
+type ArtifactGeneratorNamespaceMetadataSource struct {
+	Path               string            `json:"path"`
+	AllowedAnnotations map[string]string `json:"allowedAnnotations,omitempty"`
+	AllowedLabels      map[string]string `json:"allowedLabels,omitempty"`
+}
+
+// ArtifactGeneratorNamespaceMetadataEntry can use "*" to apply to every managed namespace.
+type ArtifactGeneratorNamespaceMetadataEntry struct {
+	Strategy    string            `json:"strategy"`
+	Namespace   string            `json:"namespace"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 // ArtifactGeneratorSource keeps namespace presence outside its serialized content fingerprint.
@@ -111,6 +141,7 @@ func (r *RawObject) ArtifactGeneratorSpec() (ArtifactGeneratorSpec, error) {
 	spec := decoded.spec
 	spec.CommonMetadata.Labels = maps.Clone(spec.CommonMetadata.Labels)
 	spec.CommonMetadata.Annotations = maps.Clone(spec.CommonMetadata.Annotations)
+	spec.ManagedNamespaces = spec.ManagedNamespaces.clone()
 	spec.Sources = slices.Clone(spec.Sources)
 	spec.Artifacts = slices.Clone(spec.Artifacts)
 	for i := range spec.Artifacts {
@@ -121,4 +152,38 @@ func (r *RawObject) ArtifactGeneratorSpec() (ArtifactGeneratorSpec, error) {
 		}
 	}
 	return spec, decoded.err
+}
+
+func (m *ArtifactGeneratorManagedNamespaces) clone() *ArtifactGeneratorManagedNamespaces {
+	if m == nil {
+		return nil
+	}
+	out := *m
+	out.AllowedNames = slices.Clone(m.AllowedNames)
+	if m.Metadata == nil {
+		return &out
+	}
+	metadata := *m.Metadata
+	out.Metadata = &metadata
+	if source := metadata.FromSource; source != nil {
+		cloned := *source
+		cloned.AllowedAnnotations = maps.Clone(source.AllowedAnnotations)
+		cloned.AllowedLabels = maps.Clone(source.AllowedLabels)
+		metadata.FromSource = &cloned
+	}
+	metadata.From = slices.Clone(metadata.From)
+	for i := range metadata.From {
+		entry := &metadata.From[i]
+		entry.Annotations = maps.Clone(entry.Annotations)
+		entry.Labels = maps.Clone(entry.Labels)
+	}
+	return &out
+}
+
+func (s *ArtifactGeneratorSpec) namespaceMetadataPath() string {
+	m := s.ManagedNamespaces
+	if m == nil || m.Metadata == nil || m.Metadata.FromSource == nil {
+		return ""
+	}
+	return m.Metadata.FromSource.Path
 }

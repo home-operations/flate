@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -446,13 +447,62 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 		)
 		spec, err := raw.ArtifactGeneratorSpec()
 		assert.NoError(t, err)
-		resolved, _, err := spec.Artifacts[3].ResolveOutput(
-			"generator",
+		resolved, err := spec.ResolveOutput(
+			&spec.Artifacts[3], "generator",
 			map[string]string{"left": "ab", "right": "cd"},
 			nil,
 		)
 		assert.NoError(t, err)
-		assert.Equal(t, resolved, both)
+		assert.Equal(t, resolved.Artifact, both)
+	})
+	t.Run("managed namespace identities", func(t *testing.T) {
+		t.Parallel()
+		raw := &RawObject{
+			APIVersion: SourceExtensionsDomain + "/v1beta1", Kind: KindArtifactGenerator, Namespace: "generator",
+			Spec: map[string]any{
+				"pathPattern":       "@repo/{tenant}/{app}",
+				"managedNamespaces": map[string]any{},
+				"artifacts": []any{
+					map[string]any{"name": "a-{app}", "namespace": "fixed"},
+					map[string]any{"name": "b-{app}", "namespace": "fixed"},
+					map[string]any{"name": "{app}-{tenant}", "namespace": "{tenant}"},
+					map[string]any{"name": "implicit"},
+					map[string]any{"name": "own", "namespace": "generator"},
+				},
+			},
+		}
+		fixed := NamedResource{Kind: "Namespace", Name: "fixed"}
+		dynamic := NamedResource{Kind: "Namespace", Name: "tenant-a"}
+		own := NamedResource{Kind: "Namespace", Name: "generator"}
+		namespaced := NamedResource{Kind: "Namespace", Namespace: "generator", Name: "tenant-a"}
+		artifact := NamedResource{
+			Group:     SourceDomain,
+			Kind:      KindExternalArtifact,
+			Namespace: "tenant-a",
+			Name:      "api-tenant-a",
+		}
+		mismatch := artifact
+		mismatch.Name = "api-tenant-b"
+		want := []ProducerTarget{
+			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "generator", Name: "implicit"},
+			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "generator", Name: "own"},
+			{NamedResource: fixed},
+		}
+		assert.Diff(t, ProducerTargets(raw), want)
+		want = slices.Insert(want, 2, ProducerTarget{NamedResource: artifact})
+		want = append(want, ProducerTarget{NamedResource: dynamic})
+		assert.Diff(t, ProducerTargets(raw, own, namespaced, dynamic, dynamic, artifact, mismatch), want)
+		spec, err := raw.ArtifactGeneratorSpec()
+		assert.NoError(t, err)
+		captures := map[string]string{"tenant": "tenant-a", "app": "api"}
+		resolved, err := spec.ResolveOutput(&spec.Artifacts[2], raw.Namespace, captures, captures)
+		assert.NoError(t, err)
+		assert.Equal(t, resolved.Artifact, artifact)
+		assert.Equal(t, resolved.Namespace, dynamic)
+		captures["tenant"] = raw.Namespace
+		resolved, err = spec.ResolveOutput(&spec.Artifacts[2], raw.Namespace, captures, captures)
+		assert.NoError(t, err)
+		assert.Equal(t, resolved.Namespace, NamedResource{})
 	})
 	t.Run("invalid identity template", func(t *testing.T) {
 		t.Parallel()
@@ -475,7 +525,7 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 				assert.Equal(t, len(ProducerTargets(generator, target)), 0)
 				spec, err := generator.ArtifactGeneratorSpec()
 				assert.NoError(t, err)
-				_, _, err = spec.Artifacts[0].ResolveOutput("apps", map[string]string{"tenant": "team"}, nil)
+				_, err = spec.ResolveOutput(&spec.Artifacts[0], "apps", map[string]string{"tenant": "team"}, nil)
 				assert.FatalIf(
 					t,
 					err == nil || !strings.Contains(err.Error(), tc.diagnostic),

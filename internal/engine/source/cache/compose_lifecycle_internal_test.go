@@ -212,12 +212,17 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 		},
 	})
 	captures := []struct {
-		path, value   string
-		key, identity string
-		descriptor    ocispec.Descriptor
+		purpose, path, value string
+		key, identity        string
+		descriptor           ocispec.Descriptor
 	}{
-		{path: "cloudbuild.yaml", value: "region: east"},
-		{path: "appveyor.yml", value: "region: west"},
+		{purpose: "annotations", path: "cloudbuild.yaml", value: "region: east"},
+		{purpose: "settings", path: "cloudbuild.yaml", value: "region: east"},
+		{purpose: "settings", path: "appveyor.yml", value: "region: west"},
+	}
+	readCapture := func(_ context.Context, path string, staged fs.FS) (string, error) {
+		data, err := fs.ReadFile(staged, path)
+		return string(data), err
 	}
 	for _, backend := range []string{"memory", "disk"} {
 		root := ""
@@ -233,10 +238,9 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 			}
 			for i := range captures {
 				capture := &captures[i]
-				request.CapturePath = capture.path
-				request.Capture = func(_ context.Context, staged fs.FS) (string, error) {
-					data, err := fs.ReadFile(staged, capture.path)
-					return string(data), err
+				request.Captures = []StagedCapture{
+					{Purpose: capture.purpose, Path: capture.path, Read: readCapture},
+					{Purpose: "archive-member", Path: "out/member", Read: readCapture},
 				}
 				output, descriptor, key, err := owner.Compose(t.Context(), request, &policy)
 				assert.NoError(t, err)
@@ -246,7 +250,9 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 					t,
 					descriptor,
 					ocispec.Descriptor{Annotations: map[string]string{
-						"flate.tree-digest": expectedTree, CompositionCapture: capture.value,
+						"flate.tree-digest":                       expectedTree,
+						StagedCaptureAnnotation(capture.purpose):  capture.value,
+						StagedCaptureAnnotation("archive-member"): "archive",
 					}},
 				)
 				identity := AcquisitionIdentity(output)
@@ -260,6 +266,7 @@ func TestCompose_MemoryAndDiskAgree(t *testing.T) {
 				capture.descriptor, capture.key, capture.identity = descriptor, key, identity
 			}
 			assert.Equal(t, captures[0].key != captures[1].key, true)
+			assert.Equal(t, captures[1].key != captures[2].key, true)
 			assert.NoError(t, owner.Close())
 		}
 	}

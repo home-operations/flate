@@ -321,6 +321,14 @@ without selecting an unrelated consumer. Each case runs with
 two workers and compares two equal CLI runs. Consumed-input successor scheduling
 remains deferred to X2 and is not asserted by these fixtures.
 
+Each managed Namespace case runs twice with two workers and reuses its cache.
+
+- `artifact-managed-namespaces/artifact-generator--managed-render` renders a Kustomization that reads a generated ExternalArtifact and targets its Namespace. The full build includes the Namespace and ConfigMap. The targeted build includes the ConfigMap. An unresolvable account leaves the generated children identical.
+- `artifact-managed-namespaces/artifact-generator--managed-namespace-target` targets a Kustomization that reads Git directly. A rejected generator reports a warning. The Kustomization also renders when no generator produces its Namespace.
+- `artifact-managed-namespaces/artifact-generator--managed-metadata-forward` and `artifact-managed-namespaces/artifact-generator--managed-metadata-reverse` compare an edit outside the copied files in both directions.
+- `artifact-managed-namespaces/artifact-generator--managed-rejected-metadata` compares the complete diagnostic and exit code 1 for a rejected label.
+- `artifact-managed-namespaces/artifact-generator--managed-removal-prune-false` and `artifact-managed-namespaces/artifact-generator--managed-removal-prune-true` expect the same Namespace removal for both pruning values.
+
 `TestE2E_ArtifactGeneratorChangedArtifactReach` uses three apps from one generator.
 Each app reads a named artifact and renders a local Helm chart.
 The test edits one app, a shared chart, or a file that the copy excludes.

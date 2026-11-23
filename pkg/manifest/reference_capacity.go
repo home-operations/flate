@@ -13,6 +13,9 @@ func (k *Kustomization) ReferenceCapacity() ReferenceLimits {
 	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" || k.Path != "" {
 		n++
 	}
+	if k.TargetNamespace != "" {
+		n++
+	}
 	if k.PostBuild != nil {
 		data = len(k.PostBuild.SubstituteFrom)
 		n += data

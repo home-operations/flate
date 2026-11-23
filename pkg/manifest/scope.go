@@ -26,13 +26,17 @@ func RegisterScopeResolver(resolver scopeResolver) {
 	scopes = resolver
 }
 
-// Namespaced resolves the authored GVK through the registered scope owner.
-// Unknown or versionless kinds use the upstream namespaced fallback.
+// Namespaced resolves resource scope through the registered scope owner.
+// Core identities without a version use v1. Unknown scopes use the upstream fallback.
 func (k KindInfo) Namespaced() bool {
 	if k.Kind == "" {
 		return false
 	}
-	return scopes.ResolveScope(yaml.TypeMeta{APIVersion: k.apiVersion, Kind: k.Kind}).Namespaced
+	version := k.apiVersion
+	if version == "" && k.Group == "" {
+		version = "v1"
+	}
+	return scopes.ResolveScope(yaml.TypeMeta{APIVersion: version, Kind: k.Kind}).Namespaced
 }
 
 // AdmitsRoot reports whether an object's scope and identity permit independent admission.

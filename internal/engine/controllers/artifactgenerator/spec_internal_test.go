@@ -204,3 +204,57 @@ func testArtifactGeneratorValidationCase2(t *testing.T, testCaseInput testArtifa
 
 	testArtifactGeneratorValidationCase(t, testCaseInput.tc)
 }
+
+func TestValidateSpec_NamespaceMetadataSource(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path, pattern, inputsFrom, want string
+	}{
+		{name: "known_alias", path: "@repo/metadata.yaml"},
+		{name: "artifact_alias", path: "@artifact/metadata.yaml"},
+		{name: "capture_with_pattern", path: "@repo/{Tenant}.yaml", pattern: "@repo/{Tenant}"},
+		{
+			name: "capture_without_pattern", path: "@repo/{Tenant}.yaml",
+			want: `namespaces metadata fromSource path "@repo/{Tenant}.yaml" uses capture placeholders but pathPattern is not set`,
+		},
+		{
+			name: "unknown_alias", path: "@unknown/metadata.yaml",
+			want: `namespaces metadata fromSource path "@unknown/metadata.yaml": source alias 'unknown' not found`,
+		},
+		{
+			name: "bad_format", path: "@repo/",
+			want: `namespaces metadata fromSource path "@repo/": path must be in the format '@<alias>/<path>'`,
+		},
+		{
+			name: "output_before_namespace_metadata", inputsFrom: "@unknown/inputs.yaml", path: "metadata.yaml",
+			want: `artifact output inputsFrom "@unknown/inputs.yaml": source alias 'unknown' not found`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			spec := manifest.ArtifactGeneratorSpec{
+				PathPattern: tc.pattern,
+				Sources: []manifest.ArtifactGeneratorSource{
+					{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
+				},
+				Artifacts: []manifest.ArtifactGeneratorOutput{{
+					Name:       "output",
+					InputsFrom: tc.inputsFrom,
+					Copy:       []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+				}},
+				ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
+					Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
+						FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: tc.path},
+					},
+				},
+			}
+			err := validateSpec(&spec, "apps")
+			if tc.want == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.FatalIf(t, err == nil, "expected spec validation error")
+			assert.Equal(t, err.Error(), tc.want)
+		})
+	}
+}

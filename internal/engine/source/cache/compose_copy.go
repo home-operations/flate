@@ -460,14 +460,6 @@ func (e *composition) produce(ctx context.Context, target ProducerInput) (Produc
 				fmt.Errorf("copy %d %q to %q: %w", i, op.From, op.To, err), err.Error())
 		}
 	}
-	var result ProducerResult
-	if e.request.Capture != nil {
-		captured, err := e.request.Capture(ctx, builder)
-		if err != nil {
-			return ProducerResult{}, err
-		}
-		result.Annotations = map[string]string{CompositionCapture: captured}
-	}
 	var input fs.FS = builder
 	if e.request.Policy == fixedPolicy {
 		matcher, err := sourceignore.NewFS(builder, []string{}, e.request.Ignore, true)
@@ -482,6 +474,18 @@ func (e *composition) produce(ctx context.Context, target ProducerInput) (Produc
 	}
 	if err := writer.Close(); err != nil {
 		return ProducerResult{}, fmt.Errorf("close: %w", err)
+	}
+	var result ProducerResult
+	if captures := e.request.Captures; len(captures) != 0 {
+		result.Annotations = make(map[string]string, len(captures))
+		for i := range captures {
+			capture := &captures[i]
+			value, err := capture.Read(ctx, capture.Path, builder)
+			if err != nil {
+				return ProducerResult{}, err
+			}
+			result.Annotations[StagedCaptureAnnotation(capture.Purpose)] = value
+		}
 	}
 	return result, nil
 }

@@ -1,0 +1,4 @@
+
+  ⚠ warnings (<PERSISTENCE:1|2>)
+<PERSISTENCE:|    [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available
+>    [UnrelatedFailure] ArtifactGenerator flux-system/generator: namespace reconciliation failed: namespace metadata file "@repo/metadata/tenant-a.yaml": label "region" with value "central" is rejected by the allowed expression "value in [\"east\", \"west\"]"

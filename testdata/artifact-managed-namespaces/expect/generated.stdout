@@ -1,0 +1,39 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: ExternalArtifact
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    source.extensions.fluxcd.io/generator: fixture
+  name: app
+  namespace: flux-system
+spec:
+  sourceRef:
+    apiVersion: source.extensions.fluxcd.io/v1beta1
+    kind: ArtifactGenerator
+    name: generator
+    namespace: flux-system
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: ExternalArtifact
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    source.extensions.fluxcd.io/generator: fixture
+  name: managed
+  namespace: tenant-a
+spec:
+  sourceRef:
+    apiVersion: source.extensions.fluxcd.io/v1beta1
+    kind: ArtifactGenerator
+    name: generator
+    namespace: flux-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    region: east
+    source.extensions.fluxcd.io/generator: fixture
+  name: tenant-a

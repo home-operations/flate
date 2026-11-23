@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  message: local artifact
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: app
+  namespace: tenant-a

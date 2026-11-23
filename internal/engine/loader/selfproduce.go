@@ -356,14 +356,15 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 }
 
 func (b *selfProduceBuilder) recordTarget(target *manifest.ProducerTarget, p *manifest.Production) {
-	if target.Namespace == "" || target.Name == "" {
+	kind := target.KindInfo()
+	if target.Name == "" || target.Namespace == "" && kind.Namespaced() {
 		return
 	}
 	r := b.idx.Records[target.NamedResource]
 	if !slices.Contains(r.Productions, *p) {
 		r.Productions = append(r.Productions, *p)
 	}
-	if target.NamedResource.KindInfo().Data && !slices.ContainsFunc(
+	if kind.Data && !slices.ContainsFunc(
 		r.ReferenceData,
 		func(candidate manifest.ReferenceData) bool { return candidate.Production == *p },
 	) {

@@ -2,14 +2,21 @@ package loader
 
 import (
 	"errors"
+	"io/fs"
+	"maps"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"testing/fstest"
 
 	"github.com/google/go-cmp/cmp"
 	"oras.land/oras-go/v2/errdef"
 
+	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -182,4 +189,151 @@ func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	assert.Equal(t, got.Authored.Namespace, "${NS}")
 	assert.Equal(t, got.Declaration.File, "children/child.yaml")
 	assert.NoError(t, restored.PersistInputs(t.Context()))
+}
+
+func TestInputCache_ArtifactGeneratorProduction(t *testing.T) {
+	t.Parallel()
+	const generatorFile = "shared/generator.yaml"
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [entry.yaml]\n")},
+		"entry.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: entry, namespace: apps}
+spec: {path: ./apps}
+`)},
+		"apps/kustomization.yaml": {Data: []byte("resources: [consumer.yaml]\ncomponents: [../shared]\n")},
+		"apps/consumer.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: apps}
+spec:
+  path: ./leaf
+  targetNamespace: delivery-api
+  sourceRef: {kind: ExternalArtifact, namespace: delivery, name: bundle-api}
+`)},
+		"shared/kustomization.yaml": {Data: []byte(`apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources: [generator.yaml]
+`)},
+		generatorFile: {Data: []byte(`apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: apps}
+spec:
+  sources: [{alias: repo, kind: GitRepository, namespace: flux-system, name: flux-system}]
+  pathPattern: '@repo/apps/{app}'
+  artifacts:
+  - {name: 'bundle-{app}', namespace: delivery, copy: [{from: '@repo/copied/', to: '@artifact/'}]}
+  - {name: 'branch-{app}', namespace: 'delivery-{app}', copy: [{from: '@repo/copied/', to: '@artifact/'}]}
+  managedNamespaces:
+    allowedNames: ['true']
+    metadata: {fromSource: {path: '@repo/metadata/{app}.yaml'}}
+`)},
+	}
+	const metadataFile = "metadata/api.yaml"
+	withMetadata := maps.Clone(files)
+	withMetadata[metadataFile] = &fstest.MapFile{Data: []byte("labels: {team: api}\n")}
+	const unrelatedFile = "unrelated/file.yaml"
+	withUnrelated := maps.Clone(files)
+	withUnrelated[unrelatedFile] = &fstest.MapFile{Data: []byte("labels: {team: other}\n")}
+	c, err := cache.New(t.Context(), t.TempDir())
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, c.Close()) })
+	generator := manifest.NamedResource{
+		Group:     manifest.SourceExtensionsDomain,
+		Kind:      manifest.KindArtifactGenerator,
+		Namespace: "apps",
+		Name:      "generator",
+	}
+	cold := cachedFixtureLoader(t, root, files, c)
+	defer cold.Close()
+	_, err = cold.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, cold.FinalizeIndex(t.Context(), root, false))
+	assert.NoError(t, cold.PersistInputs(t.Context()))
+	warm := cachedFixtureLoader(t, root, files, c)
+	defer warm.Close()
+	if c.CanPersistRenders() {
+		_, restored := warm.inputCaches[root].files[inputCoordinate{name: generatorFile}]
+		assert.Equal(t, restored, true)
+		t.Log("generator restored from the persistent input frame")
+	} else {
+		restoreGeneratorInputFrame(t, cold, warm, generatorFile)
+		t.Log("generator restored from an in-process input frame")
+	}
+	_, err = warm.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, warm.FinalizeIndex(t.Context(), root, false))
+
+	want := []manifest.Production{
+		{
+			Owner: manifest.NamedResource{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
+				Namespace: "apps", Name: "entry",
+			},
+			Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: generatorFile,
+		},
+	}
+	for _, l := range []*Loader{cold, warm} {
+		assert.Equal(t, l.Store.GetDeclaration(generator), nil)
+		refs := slices.Collect(l.References(generator))
+		assert.FatalIf(t, len(refs) != 1, "generator references = %v", refs)
+		assert.Diff(t, refs[0].Files, []string{"apps", "copied", "metadata"})
+		for _, id := range []manifest.NamedResource{
+			{Kind: "Namespace", Name: "delivery"},
+			{Kind: "Namespace", Name: "delivery-api"},
+			{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "delivery", Name: "bundle-api"},
+		} {
+			assert.Equal(t, l.Store.GetObject(id), nil)
+			assert.Equal(t, l.Store.GetArtifact(id, store.ArtifactContent), nil)
+			if diff := cmp.Diff(want, l.Store.Productions(id, l.Index)); diff != "" {
+				t.Errorf("%s productions (-want +got):\n%s", id, diff)
+			}
+		}
+		for _, tc := range []struct {
+			trees [2]fstest.MapFS
+			path  string
+			reach bool
+		}{
+			{[2]fstest.MapFS{files, withMetadata}, metadataFile, true},
+			{[2]fstest.MapFS{withMetadata, files}, metadataFile, true},
+			{[2]fstest.MapFS{files, withUnrelated}, unrelatedFile, false},
+		} {
+			delta, err := change.Detect(
+				t.Context(),
+				&store.SourceArtifact{FS: tc.trees[0]},
+				&store.SourceArtifact{FS: tc.trees[1]},
+				change.DetectConfig{},
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, delta.Paths(), []string{tc.path})
+			l.Options.Changes = delta
+			proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
+			assert.NoError(t, err)
+			reached := slices.Contains(proposal.Needed, generator)
+			assert.ErrorIf(t, reached != tc.reach,
+				"%s reach = %v, wanted %v; needed = %v", tc.path, reached, tc.reach, proposal.Needed)
+			proposal.Retire()
+		}
+	}
+}
+
+func restoreGeneratorInputFrame(t *testing.T, cold, warm *Loader, file string) {
+	t.Helper()
+	input := warm.documents.artifacts[warm.SourceRoot]
+	doc := cold.documents.cache[filepath.Join(cold.SourceRoot, file)]
+	saved, known, err := cacheInput(file, "generator-digest", &doc)
+	assert.NoError(t, err)
+	assert.FatalIf(t, !known || len(saved.Objects) != 1, "missing generator occurrence in input frame")
+	encoded := encodeInputFrame(t, &inputFrame{Files: []cachedInput{saved}})
+	frame, err := readInputFrame(t.Context(), fstest.MapFS{"content": {Data: encoded}})
+	assert.NoError(t, err)
+	state := &inputCache{
+		input:   input,
+		digests: map[string]string{file: saved.Digest},
+		types:   map[string]fs.FileMode{file: 0o644},
+		files:   map[inputCoordinate]inputEvidence{},
+	}
+	assert.NoError(t, warm.restoreFrameFiles(state, frame))
+	_, restored := state.files[inputCoordinate{name: file}]
+	assert.Equal(t, restored, true)
 }

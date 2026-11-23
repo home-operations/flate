@@ -1,4 +1,4 @@
-// Package artifactgenerator evaluates ArtifactGenerators and publishes their ExternalArtifacts.
+// Package artifactgenerator evaluates ArtifactGenerators and publishes their outputs.
 package artifactgenerator
 
 import (
@@ -7,13 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"maps"
 	"strings"
 	"time"
 
 	"github.com/home-operations/flate/internal/engine/schedule"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -104,11 +101,15 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		return nil
 	}
 	spec, err := raw.ArtifactGeneratorSpec()
-	if err == nil {
-		err = validateSpec(&spec, id.Namespace)
-	}
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", err), "")
+	}
+	policies, err := compileNamespacePolicies(spec.ManagedNamespaces)
+	if err != nil {
+		return manifest.NewError(manifest.ErrInput, err, "")
+	}
+	if specErr := validateSpec(&spec, id.Namespace); specErr != nil {
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", specErr), "")
 	}
 	raw, err = c.run.RequireRefresh(ctx, raw, manifest.GateArtifacts, level)
 	if err != nil {
@@ -141,29 +142,17 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}
 	publication := generatorPublication{
-		execution:  c,
-		id:         id,
-		raw:        raw,
-		spec:       &spec,
-		uid:        uid,
-		evaluation: &localEvaluation,
-		attempt:    &attempt,
+		execution:   c,
+		id:          id,
+		raw:         raw,
+		spec:        &spec,
+		policies:    policies,
+		uid:         uid,
+		fingerprint: fingerprint,
+		evaluation:  &localEvaluation,
+		attempt:     &attempt,
 	}
-	for i := range requests {
-		req := &requests[i]
-		req.work.Scope = c.run.Reads.Work().Scope()
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("context: %w", err)
-		}
-		if err := publication.publish(ctx, req, i); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context: %w", err)
-	}
-	attempt.Children, attempt.Manifests, attempt.Complete, attempt.Fingerprint = publication.desired, publication.documents, true, fingerprint
-	return c.run.Emit(ctx, id, &attempt, nil)
+	return publication.render(ctx, requests)
 }
 
 func validateGenerator(
@@ -235,139 +224,4 @@ func generatorReadSelections(spec *manifest.ArtifactGeneratorSpec) map[string]st
 		}
 	}
 	return selections
-}
-
-type generatorPublication struct {
-	execution  *execution
-	id         manifest.NamedResource
-	raw        *manifest.RawObject
-	spec       *manifest.ArtifactGeneratorSpec
-	uid        string
-	evaluation *evaluation
-	attempt    *store.Emission
-	desired    []store.Child
-	documents  []manifest.DocOccurrence
-}
-
-func (p *generatorPublication) generatedSource(
-	ctx context.Context,
-	req *request,
-) (*store.SourceArtifact, map[string]any, error) {
-	composition, err := p.evaluation.composition(req)
-	if err != nil {
-		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
-	}
-	if from := req.Output.InputsFrom; strings.HasPrefix(from, "@artifact/") {
-		composition.CapturePath = from
-		composition.Capture = func(ctx context.Context, staged fs.FS) (string, error) {
-			inputs, readErr := p.evaluation.exportedInputs(ctx, from, staged)
-			if readErr != nil {
-				return "", manifest.NewError(manifest.ErrInput, readErr, "")
-			}
-			encoded, encodeErr := json.Marshal(inputs)
-			if encodeErr != nil {
-				return "", fmt.Errorf("encode staged inputs: %w", encodeErr)
-			}
-			return string(encoded), nil
-		}
-	}
-	input, descriptor, _, err := p.execution.cache.Compose(
-		ctx,
-		composition,
-		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err)
-	}
-	digest := descriptor.Annotations["flate.tree-digest"]
-	if input == nil || digest == "" {
-		return nil, nil, manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			fmt.Sprintf("incomplete generated source %q", req.Identity.Name),
-		)
-	}
-	payload := &store.SourceArtifact{
-		Provider: store.ProviderGenerator,
-		Kind:     manifest.KindExternalArtifact,
-		FS:       input,
-		Content:  digest,
-		Digest:   digest,
-		Revision: "latest@" + digest,
-	}
-	if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
-		payload.Revision = p.evaluation.identity[p.evaluation.inputIndex(alias)].Input.Revision
-	}
-	if position := p.evaluation.inputIndex(strings.TrimPrefix(req.Output.OriginRevision, "@")); position >= 0 {
-		source := &p.evaluation.identity[position].Input
-		origin := source.Origin
-		if origin == "" {
-			origin = source.Revision
-		}
-		payload.Metadata = map[string]string{"org.opencontainers.image.revision": origin}
-	}
-	var inputs map[string]any
-	if captured := descriptor.Annotations[cache.CompositionCapture]; captured != "" {
-		err = json.Unmarshal([]byte(captured), &inputs)
-	} else {
-		inputs, err = p.evaluation.exportedInputs(ctx, req.Output.InputsFrom, nil)
-	}
-	if err != nil {
-		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
-	}
-	return payload, inputs, nil
-}
-
-func (p *generatorPublication) generatedDocument(req *request) (map[string]any, error) {
-	labels := maps.Clone(p.spec.CommonMetadata.Labels)
-	if labels == nil {
-		labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
-	}
-	maps.Copy(labels, req.Captures)
-	labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", p.uid
-	declaration := p.raw.ExternalArtifact(
-		metav1.ObjectMeta{
-			Name:        req.Identity.Name,
-			Namespace:   req.Identity.Namespace,
-			Labels:      labels,
-			Annotations: p.spec.CommonMetadata.Annotations,
-		},
-	)
-	return declaration.RenderDocument()
-}
-
-func (p *generatorPublication) publish(ctx context.Context, req *request, ordinal int) error {
-	payload, inputs, err := p.generatedSource(ctx, req)
-	if err != nil {
-		return err
-	}
-	doc, err := p.generatedDocument(req)
-	if err != nil {
-		return err
-	}
-	if len(inputs) != 0 {
-		doc["status"] = map[string]any{"exportedInputs": inputs}
-	}
-	parsed := p.execution.run.ParseChildren(
-		p.raw,
-		[]manifest.DocOccurrence{{Document: doc, Ordinal: ordinal}},
-		manifest.ParseDocOptions{DefaultNamespace: p.id.Namespace},
-	)
-	if err := manifest.DocumentFailure(parsed.Failures); err != nil {
-		return err
-	}
-	targetID := parsed.Children[0].Obj.Named()
-	payload.Key = targetID.NamespacedName()
-	p.attempt.Children, p.attempt.Manifests, p.attempt.Complete = parsed.Children, parsed.Visible, false
-	if err := p.execution.run.Emit(
-		ctx,
-		p.id,
-		p.attempt,
-		map[manifest.NamedResource]*store.SourceArtifact{targetID: payload},
-	); err != nil {
-		return err
-	}
-	p.desired = append(p.desired, parsed.Children...)
-	p.documents = append(p.documents, parsed.Visible...)
-	return nil
 }

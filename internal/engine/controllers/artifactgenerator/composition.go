@@ -1,10 +1,22 @@
 package artifactgenerator
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+const (
+	inputsCapture   = "inputs"
+	metadataCapture = "namespace-metadata"
 )
 
 func (e *evaluation) composition(req *request) (cache.Composition, error) {
@@ -71,4 +83,96 @@ func (e *evaluation) inputIndex(alias string) int {
 		}
 	}
 	return -1
+}
+
+func (p *generatorPublication) generatedSource(
+	ctx context.Context,
+	req *request,
+	captureMetadata bool,
+) (*store.SourceArtifact, map[string]any, error) {
+	composition, err := p.evaluation.composition(req)
+	if err != nil {
+		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
+	}
+	from := req.Output.InputsFrom
+	stagedInputs := strings.HasPrefix(from, "@"+artifactAlias+"/")
+	if stagedInputs {
+		composition.Captures = append(composition.Captures,
+			cache.StagedCapture{Purpose: inputsCapture, Path: from, Read: p.evaluation.captureInputs})
+	}
+	metadataPath := req.NamespaceMetadataPath
+	stagedMetadata := captureMetadata && strings.HasPrefix(metadataPath, "@"+artifactAlias+"/")
+	if stagedMetadata {
+		composition.Captures = append(
+			composition.Captures,
+			cache.StagedCapture{
+				Purpose: metadataCapture,
+				Path:    metadataPath,
+				Read:    p.evaluation.captureNamespaceMetadata,
+			},
+		)
+	}
+	input, descriptor, _, composeErr := p.execution.cache.Compose(
+		ctx,
+		composition,
+		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
+	)
+	if composeErr != nil {
+		if _, deferred := errors.AsType[*namespaceMetadataReadError](composeErr); !deferred || ctx.Err() != nil {
+			return nil, nil, fmt.Errorf("evaluate %s: %w", req.Identity.Name, composeErr)
+		}
+	}
+	var inputs map[string]any
+	if !stagedInputs {
+		inputs, err = p.evaluation.exportedInputs(ctx, from, nil)
+	} else if composeErr == nil {
+		var staged map[string]any
+		captured := descriptor.Annotations[cache.StagedCaptureAnnotation(inputsCapture)]
+		err = json.Unmarshal([]byte(captured), &staged)
+		inputs = staged
+	}
+	if err != nil {
+		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
+	}
+	if composeErr != nil {
+		return nil, nil, composeErr
+	}
+	if stagedMetadata {
+		captured := descriptor.Annotations[cache.StagedCaptureAnnotation(metadataCapture)]
+		if err := json.Unmarshal([]byte(captured), &req.stagedMetadata); err != nil {
+			return nil, nil, fmt.Errorf("decode captured namespace metadata: %w", err)
+		}
+	}
+	digest := descriptor.Annotations["flate.tree-digest"]
+	if input == nil || digest == "" {
+		return nil, nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			fmt.Sprintf("incomplete generated source %q", req.Identity.Name),
+		)
+	}
+	return p.evaluation.generatedPayload(req, input, digest), inputs, nil
+}
+
+func (e *evaluation) generatedPayload(req *request, input fs.FS, digest string) *store.SourceArtifact {
+	payload := &store.SourceArtifact{
+		Provider: store.ProviderGenerator,
+		Kind:     manifest.KindExternalArtifact,
+		FS:       input,
+		Content:  digest,
+		Digest:   digest,
+		Revision: "latest@" + digest,
+	}
+	if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
+		payload.Revision = e.identity[e.inputIndex(alias)].Input.Revision
+	}
+	if position := e.inputIndex(strings.TrimPrefix(req.Output.OriginRevision, "@")); position >= 0 {
+		source := &e.identity[position].Input
+		origin := source.Origin
+		if origin == "" {
+			origin = source.Revision
+		}
+		payload.Metadata = map[string]string{"org.opencontainers.image.revision": origin}
+	}
+	return payload
 }

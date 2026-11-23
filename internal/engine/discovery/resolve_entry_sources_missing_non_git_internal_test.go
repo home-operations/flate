@@ -61,7 +61,7 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 
 			count, err := d.resolveTestSources(t.Context(), true)
 			assert.NoError(t, err)
-			_, artifact, err := d.admission().Resolve(t.Context(), id, nil, nil)
+			_, artifact, _, err := d.admission().Resolve(t.Context(), id, nil, nil)
 			assert.NoError(t, err)
 			if kind == manifest.KindHelmRepository || kind == manifest.KindExternalArtifact {
 				assert.Equal(t, count, 0)

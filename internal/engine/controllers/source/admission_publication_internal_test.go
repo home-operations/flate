@@ -30,9 +30,11 @@ func TestSource_PublishCheckoutReads(t *testing.T) {
 		name    string
 		extent  store.SourceExtent
 		current bool
+		reused  bool
 	}{
 		{name: "fleet", current: true},
 		{name: "flux-system", current: true},
+		{name: "reused-entry", current: true, reused: true},
 		{name: "composed", extent: store.ExtentComposed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,21 +65,46 @@ spec:
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
 			id := source.Named()
-			assert.Equal(t, result.Admission.CheckoutEntry(id), true)
+			_, _, checkoutEntry, err := result.Admission.Resolve(t.Context(), id, source, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, checkoutEntry, true)
 			st := store.New()
 			st.AddObject(source)
 			entry := manifest.NewEntryKustomization(id, "./", manifest.NamedResource{})
 			st.AddObject(entry)
 			c := execution{Controller: &Controller{
 				Controller: &base.Controller{Store: st}, admission: result.Admission,
-			}}
+			}, checkoutEntry: checkoutEntry}
 			c.run.Reads.Init(st, id, nil)
 			defer c.run.Reads.Retire()
 			assert.Equal(t, c.run.Reads.GetDeclaration(id), manifest.BaseManifest(source))
 			assert.Equal(t, c.run.Reads.GetObject(entry.Named()), manifest.BaseManifest(entry))
-			c.publish(&store.SourceArtifact{Provider: store.ProviderAlias, Extent: tc.extent, FS: fstest.MapFS{}})
+			const payload = "checkout material"
+			artifact := &store.SourceArtifact{
+				Provider: store.ProviderAlias,
+				Extent:   tc.extent,
+				FS:       fstest.MapFS{"payload": {Data: []byte(payload)}},
+			}
+			if tc.reused {
+				prior := new(store.ReadSet)
+				prior.Init(st, id, nil)
+				defer prior.Retire()
+				assert.Equal(t, prior.GetDeclaration(id), manifest.BaseManifest(source))
+				artifact = artifact.WithReads(prior)
+				st.SetArtifact(id, artifact)
+				assert.Equal(t, artifact.Available(), true)
+			}
+			c.publish(artifact, tc.reused)
 			view := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, view.Reads.Valid(), true)
+			assert.Equal(t, view.Reads == nil, tc.current)
+			c.publish(view, true)
+			assert.FatalIf(
+				t,
+				st.GetArtifact(id, store.ArtifactContent) != view,
+				"reused current artifact was republished",
+			)
+
 			applied := *source
 			applied.Labels = map[string]string{"applied": "true"}
 			st.RecordEmitted(
@@ -88,6 +115,14 @@ spec:
 			assert.Equal(t, st.GetObject(id), manifest.BaseManifest(&applied))
 			assert.Equal(t, c.run.Reads.Valid(), false)
 			assert.Equal(t, view.Reads.Valid(), tc.current)
+			assert.Equal(t, view.Available(), tc.current)
+			if tc.current {
+				current, _ := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+				assert.FatalIf(t, !current.Available(), "checkout became unreadable after declaration replacement")
+				data, err := fs.ReadFile(current.FS, "payload")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), payload)
+			}
 		})
 	}
 }
@@ -190,7 +225,7 @@ func TestAdmission_PublishCompletesAcceptedRecord(t *testing.T) {
 		)
 	})
 	<-entered
-	accepted, material, err := result.Admission.Resolve(t.Context(), id, nil, nil)
+	accepted, material, _, err := result.Admission.Resolve(t.Context(), id, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, material != nil, true)
 	tasks := task.NewBounded(2)

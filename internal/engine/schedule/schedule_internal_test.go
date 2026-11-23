@@ -266,13 +266,120 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 
 func TestScheduler_RunStopDrains(t *testing.T) {
 	t.Parallel()
-	for _, capFirst := range []bool{false, true} {
-		t.Run(fmt.Sprintf("cap_first=%t", capFirst), func(t *testing.T) {
-			t.Parallel()
-			testSchedulerRunStopDrainsCase(t, &capFirst)
-		},
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		started, stopping := make(chan struct{}, 2), make(chan struct{}, 2)
+		release := make(chan struct{})
+		var active, runs atomic.Int64
+		s := New(
+			task.NewBounded(2),
+			dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel, _ Result) Result {
+				active.Add(1)
+				defer active.Add(-1)
+				runs.Add(1)
+				started <- struct{}{}
+				<-ctx.Done()
+				stopping <- struct{}{}
+				<-release
+				return Result{Assessment: &testAssessment{}}
+			}),
 		)
-	}
+		s.Seed([]NodeID{testutil.KustomizationID("ns", "feedback"), testutil.KustomizationID("ns", "held")})
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx) }()
+		<-started
+		<-started
+		assert.Equal(t, active.Load(), int64(2))
+		cancel()
+		<-stopping
+		<-stopping
+		synctest.Wait()
+		s.OnArrival(testutil.KustomizationID("ns", "late"), true)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned before body drain: %v", err)
+		default:
+		}
+		close(release)
+		assert.Equal(t, errors.Is(<-done, context.Canceled), true)
+		assert.Equal(t, active.Load(), int64(0))
+		assert.Equal(t, runs.Load(), int64(2))
+		assert.Equal(t, len(s.nodes), 2)
+	})
+}
+
+func TestScheduler_RedispatchLimitKeepsSharedWorkLive(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		invocation := t.Context()
+		tasks := task.NewBounded(2)
+		first := testutil.KustomizationID("ns", "initiator")
+		peer := testutil.KustomizationID("ns", "peer")
+		cancelFirst := make(chan context.CancelFunc, 1)
+		peerWaiting, release, ready := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		var produced, received []byte
+		var firstErr, peerErr error
+		wait := func(ctx context.Context) ([]byte, error) {
+			var data []byte
+			var err error
+			tasks.YieldSlot(func() {
+				select {
+				case <-ready:
+					data = produced
+				case <-ctx.Done():
+					err = ctx.Err()
+				}
+			})
+			return data, err
+		}
+		s := New(tasks, dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel, _ Result) Result {
+			a := &testAssessment{}
+			if id == first {
+				caller, cancel := context.WithCancel(ctx)
+				defer cancel()
+				tasks.Go(invocation, "shared producer", func(context.Context) {
+					<-release
+					produced = []byte("shared result")
+					close(ready)
+				})
+				cancelFirst <- cancel
+				_, firstErr = wait(caller)
+				a.invalid.Store(true)
+			} else {
+				close(peerWaiting)
+				received, peerErr = wait(ctx)
+			}
+			return Result{Assessment: a}
+		}))
+		s.Seed([]NodeID{first, peer})
+		s.nodes[first].redispatches = maxRedispatches
+		done := make(chan error, 1)
+		go func() { done <- s.Run(invocation) }()
+		cancel := <-cancelFirst
+		<-peerWaiting
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		s.OnArrival(testutil.KustomizationID("ns", "late"), true)
+		select {
+		case err := <-done:
+			close(release)
+			t.Fatalf("Run returned before shared work completed: %v", err)
+		default:
+		}
+		close(release)
+		err := <-done
+		assert.FatalIf(t, err == nil, "Run did not report the redispatch limit")
+		assert.Equal(t, errors.Is(err, context.Canceled), false)
+		assert.Equal(t, strings.Contains(err.Error(), first.String()), true)
+		assert.Equal(t, strings.Contains(err.Error(), "exceeded 32 redispatches"), true)
+		assert.Equal(t, errors.Is(firstErr, context.Canceled), true)
+		assert.NoError(t, peerErr)
+		assert.Diff(t, received, []byte("shared result"))
+		assert.Equal(t, len(s.nodes), 2)
+	})
 }
 
 func TestScheduler_InvalidAcceptance(t *testing.T) {
@@ -614,76 +721,6 @@ func testSchedulerWakeOrderCase(t *testing.T, testCaseInput *testSchedulerWakeOr
 		}
 	}
 	assert.Diff(t, tasks.names, want)
-}
-
-func testSchedulerRunStopDrainsCase(t *testing.T, testCaseInput *bool,
-) {
-	t.Helper()
-
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		started, stopping := make(chan struct{}, 2), make(chan struct{}, 2)
-		fail, release := make(chan struct{}), make(chan struct{})
-		victim, held := testutil.KustomizationID("ns", "feedback"), testutil.KustomizationID("ns", "held")
-		var active, runs atomic.Int64
-		s := New(
-			task.NewBounded(2),
-			dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel, _ Result) Result {
-				active.Add(1)
-				defer active.Add(-1)
-				runs.Add(1)
-				started <- struct{}{}
-				if (*testCaseInput) && id == victim {
-					<-fail
-					a := &testAssessment{}
-					a.invalid.Store(true)
-					return Result{Assessment: a}
-				}
-				<-ctx.Done()
-				stopping <- struct{}{}
-				<-release
-				return Result{Assessment: &testAssessment{}}
-			}),
-		)
-		s.Seed([]NodeID{victim, held})
-		if *testCaseInput {
-			s.nodes[victim].redispatches = maxRedispatches
-		}
-		done := make(chan error, 1)
-		go func() { done <- s.Run(ctx) }()
-		<-started
-		<-started
-		assert.Equal(t, active.Load(), int64(2))
-		wantStopping := 2
-		if *testCaseInput {
-			close(fail)
-			wantStopping = 1
-		} else {
-			cancel()
-		}
-		for range wantStopping {
-			<-stopping
-		}
-		synctest.Wait()
-		s.OnArrival(testutil.KustomizationID("ns", "late"), true)
-		synctest.Wait()
-		select {
-		case err := <-done:
-			t.Fatalf("Run returned before body drain: %v", err)
-		default:
-		}
-		close(release)
-		err := <-done
-		assert.Equal(t, errors.Is(err, context.Canceled), !(*testCaseInput))
-		if *testCaseInput {
-			assert.Equal(t, strings.Contains(err.Error(), victim.String()), true)
-			assert.Equal(t, strings.Contains(err.Error(), "exceeded 32 redispatches"), true)
-		}
-		assert.Equal(t, active.Load(), int64(0))
-		assert.Equal(t, runs.Load(), int64(2))
-		assert.Equal(t, len(s.nodes), 2)
-	})
 }
 
 func testSchedulerCompletionRetainsRunningInvalidationCase(

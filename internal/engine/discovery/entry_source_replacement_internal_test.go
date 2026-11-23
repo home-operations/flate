@@ -41,7 +41,7 @@ func TestAdmission_ReplacementKeepsSelfSourceMaterial(t *testing.T) {
 	replacement := updated.Object
 	st.AddObject(replacement)
 	assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
-	child, material, err := result.Admission.Resolve(t.Context(), id, replacement, nil)
+	child, material, _, err := result.Admission.Resolve(t.Context(), id, replacement, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, child.Obj == replacement, true)
 	assert.Equal(
@@ -97,7 +97,7 @@ func TestAdmission_ReplacementWithdrawsSyntheticArtifact(t *testing.T) {
 						st.SetArtifact(id, material)
 					}
 					assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
-					child, local, err := result.Admission.Resolve(t.Context(), id, actual.Object, nil)
+					child, local, _, err := result.Admission.Resolve(t.Context(), id, actual.Object, nil)
 					assert.NoError(t, err)
 					assert.Equal(t, child.Obj == actual.Object, true)
 					assert.Equal(t, local == nil, true)
@@ -152,7 +152,7 @@ func TestResolveEntrySources_RefreshPreservesSuppliedArtifact(t *testing.T) {
 	currentStatus, currentReady := st.GetStatus(id)
 	assert.Equal(t, currentReady, ready)
 	assert.Equal(t, currentStatus, status)
-	child, artifact, err := a.Resolve(t.Context(), id, accepted.object, nil)
+	child, artifact, _, err := a.Resolve(t.Context(), id, accepted.object, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, child.Obj == nil, true)
 	assert.Equal(t, artifact == nil, true)

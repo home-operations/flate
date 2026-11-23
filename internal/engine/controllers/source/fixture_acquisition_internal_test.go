@@ -34,7 +34,7 @@ func TestController_FixtureLocalSourcesNeverFetch(t *testing.T) {
 			artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, ok, true)
 			assert.Equal(t, (artifact.Provider == store.ProviderAlias), true)
-			child, resolved, err := result.Admission.Resolve(t.Context(), id, st.GetObject(id), nil)
+			child, resolved, _, err := result.Admission.Resolve(t.Context(), id, st.GetObject(id), nil)
 			assert.NoError(t, err)
 			assert.Equal(t, child.Obj == st.GetObject(id), true)
 			assert.Equal(t, resolved == artifact, true)

@@ -210,14 +210,12 @@ func constructDiscoveredSource(
 
 type panickingConstructionSources struct{}
 
-func (panickingConstructionSources) CheckoutEntry(manifest.NamedResource) bool { return false }
-
 func (panickingConstructionSources) Resolve(
 	context.Context,
 	manifest.NamedResource,
 	manifest.BaseManifest,
 	*store.ReadSet,
-) (store.Child, *store.SourceArtifact, error) {
+) (store.Child, *store.SourceArtifact, bool, error) {
 	panic("construction source failure")
 }
 

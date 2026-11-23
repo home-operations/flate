@@ -1,0 +1,8 @@
+
+  ⚠ warnings (3)
+    [ConflictingProducers] HelmRelease flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] OCIRepository flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] PrometheusRule flux-system/flux-instance-rules: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system

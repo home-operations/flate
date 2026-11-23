@@ -1,51 +1,156 @@
 package selection
 
 import (
+	"cmp"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-type materializerMatch func(manifest.NamedResource, manifest.BaseManifest, *manifest.DiscoveryRecord) bool
-
-func (c *admissionClosure) materializerMatcher(demand *materializerDemand) (manifest.NamedResource, materializerMatch) {
-	if demand.application == "" {
-		return manifest.NamedResource{}, func(id manifest.NamedResource, _ manifest.BaseManifest, _ *manifest.DiscoveryRecord) bool {
-			return matchesMaterializerIdentity(demand.target, id)
-		}
-	}
-	input, _ := c.objects.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	relative, _ := filepath.Rel(c.context.Root, demand.application)
-	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{}).
-		Named()
-	return entry, func(id manifest.NamedResource, object manifest.BaseManifest, record *manifest.DiscoveryRecord) bool {
-		if record != nil && record.Application != "" {
-			var valid bool
-			object, valid = parseApplication(record.Application)
-			if !valid || object == nil || object.Named() != id {
-				return false
+func (c *admissionClosure) applicationDeclaration(id manifest.NamedResource) ([]manifest.NamedResource, OccurrenceID) {
+	var chain []manifest.NamedResource
+	for id != (manifest.NamedResource{}) && !id.ReportHidden() && !slices.Contains(chain, id) {
+		chain = append(chain, id)
+		occurrence, known := c.catalogOccurrence(id)
+		if _, _, applies := occurrence.SourcePath(); known && applies {
+			location := c.boundSource(c.source(id))
+			if location.Pinned || location.External {
+				break
 			}
+			input := c.occurrenceMount(id, occurrence.Declaration.Source)
+			if input != nil && c.context.EntryPath != "" {
+				return chain, occurrence.Declaration
+			}
+			break
 		}
-		if object == nil {
-			return false
-		}
-		application, valid := manifest.ApplicationFor(object)
-		if !valid && id == entry {
-			application.Source, application.Path, valid = object.SourcePath()
-		}
-		if !valid || input == nil {
-			return false
-		}
-		source := c.boundSource(application.Source)
-		if source.Input == nil || source.Pinned || source.External {
-			return false
-		}
-		target := filepath.Join(source.Path, manifest.NormalizeClaimBase(application.Path))
-		return containsPath(source.Path, target) &&
-			input.OriginPath(demand.application) == source.Input.OriginPath(target)
+		root := c.rootEvidence(id)
+		id = cmp.Or(root.Owner, c.declarationEvidence(id).owner)
 	}
+	return nil, OccurrenceID{}
+}
+
+func (c *admissionClosure) prepareApplicationDemand(route *EntryRoute, literalChanged bool) {
+	named := slices.ContainsFunc(c.session.request.Roots, func(id manifest.NamedResource) bool { return id.Name != "" })
+	switch {
+	case route.Bound && route.Winners == nil && (!route.Changed || !c.session.request.Changed):
+		return
+	case named:
+		if !route.possibleSelectedApplication() {
+			return
+		}
+	case !c.session.request.Changed || !c.session.request.Matches(manifest.NamedResource{}):
+		return
+	case literalChanged || !route.Projected && !route.ProjectedPatches:
+		return
+	}
+	for _, identity := range c.identities {
+		chain, query := c.applicationDemand(identity.id, route, named)
+		if query == (OccurrenceID{}) || !c.acquireApplication(chain, query, route) {
+			continue
+		}
+		if c.entryPending == nil {
+			c.entryPending = map[manifest.NamedResource]bool{}
+		}
+		for _, owner := range chain {
+			c.entryPending[owner] = true
+		}
+	}
+}
+
+func (c *admissionClosure) applicationDemand(
+	id manifest.NamedResource, route *EntryRoute, named bool,
+) ([]manifest.NamedResource, OccurrenceID) {
+	if named && !c.namedSelection(id) {
+		return nil, OccurrenceID{}
+	}
+	if !named && (!c.role(id).needed || !c.states[id].changed) {
+		return nil, OccurrenceID{}
+	}
+	chain, query := c.applicationDeclaration(id)
+	if query == (OccurrenceID{}) || named {
+		return chain, query
+	}
+	if !containsPath(c.context.EntryPath, filepath.Join(query.Source, query.File)) ||
+		!route.ProjectedPatches && !c.fileChanged(c.source(chain[len(chain)-1]), query.File) {
+		return nil, OccurrenceID{}
+	}
+	return chain, query
+}
+
+func (r *EntryRoute) possibleSelectedApplication() bool {
+	return r.Selected || r.Changed || !r.Bound && r.Projected
+}
+
+func (c *admissionClosure) acquireApplication(
+	chain []manifest.NamedResource,
+	query OccurrenceID,
+	route *EntryRoute,
+) bool {
+	id, declaration := chain[0], chain[len(chain)-1]
+	if !route.Bound && route.Winners == nil {
+		source := c.source(declaration)
+		c.acquire(Demand{
+			Identity: id, Application: query, Source: source, Artifact: c.occurrenceMount(declaration, query.Source),
+		})
+		return true
+	}
+	if route.Changed && c.session.request.Changed {
+		c.add(id, admissionRole{needed: true, selected: true, dirty: true})
+	}
+	var producer manifest.NamedResource
+	if route.Winners != nil {
+		producer = (*route.Winners)[query]
+	}
+	if producer == (manifest.NamedResource{}) || producer == declaration {
+		return false
+	}
+	for _, owner := range chain[1:] {
+		c.add(owner, admissionRole{needed: true, ordinary: true, dirty: c.states[owner].changed})
+	}
+	c.add(producer, admissionRole{needed: true, ordinary: true, dirty: c.states[producer].changed})
+	output, _ := c.objects.GetArtifact(producer, store.ArtifactContent).(*store.Emission)
+	status, _ := c.objects.GetStatus(producer)
+	return (output == nil || !output.Complete || !output.OutputReads.Valid()) &&
+		status.Outcome() == store.OutcomePending
+}
+
+func (c *admissionClosure) acquireEntryPath() bool {
+	if c.pendingEntrySources() {
+		return true
+	}
+	application := c.proposal.entry.Application
+	root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
+	_, acquired := c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
+	return !acquired
+}
+
+func (c *admissionClosure) demandEntryPath(
+	id, source manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+) bool {
+	route := c.proposal.entry
+	if route == nil || route.Application == nil || route.Selected || c.proposal.entrySupported() {
+		return false
+	}
+	if !c.context.PlainEntry || !containsPath(c.context.EntryPath, record.Path) {
+		return false
+	}
+	if c.session.request.Changed && !route.Projected && !c.fileChanged(c.source(id), record.File) {
+		return false
+	}
+	location := c.boundSource(source)
+	input := location.Input
+	if !input.WorkingTree() || !input.Reads.Valid() ||
+		input.Provider == store.ProviderInput || input == location.ConfiguredInput {
+		return false
+	}
+	if input == c.boundSource(manifest.BootstrapSourceID).Input {
+		return false
+	}
+	return c.acquireEntryPath()
 }
 
 func parseApplication(application string) (manifest.BaseManifest, bool) {

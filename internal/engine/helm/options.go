@@ -25,6 +25,7 @@ type RenderOptions struct {
 	Omitted          []manifest.NamedResource            `json:"Omitted"`
 	Admit            func(RenderAdmission) (bool, error) `json:"Admit"`
 	Previous         *RenderAdmission                    `json:"-"`
+	EntryReach       func([]manifest.BaseManifest) bool  `json:"-"`
 }
 
 // RenderAdmission carries accepted cache evidence bound to the current request.

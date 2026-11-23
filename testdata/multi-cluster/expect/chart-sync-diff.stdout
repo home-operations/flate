@@ -1,0 +1,105 @@
+[
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "cluster-apps",
+          "path": "apps/main"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "apps",
+        "name": "workload",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "CLUSTER": "main"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "workload",
+            "namespace": "apps"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "CLUSTER": "main-new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "workload",
+            "namespace": "apps"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      },
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "flux-system",
+          "path": "clusters/main"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "flux-system",
+        "name": "cluster-info",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "CLUSTER": "main"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "flux-system",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "cluster-info",
+            "namespace": "flux-system"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "CLUSTER": "main-new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "flux-system",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "cluster-info",
+            "namespace": "flux-system"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "clusters/main",
+    "suppressed": []
+  },
+  {
+    "changes": [],
+    "cluster": "clusters/test",
+    "suppressed": []
+  }
+]

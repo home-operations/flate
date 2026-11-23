@@ -79,6 +79,7 @@ type admissionClosure struct {
 	queue              []manifest.NamedResource
 	roots              []string
 	searched           map[materializerDemand]bool
+	entryPending       map[manifest.NamedResource]bool
 	inputScratch       [1]manifest.NamedResource
 	accepted           map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord
 	historyProductions map[manifest.NamedResource][]manifest.Production
@@ -208,12 +209,8 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		return false
 	}
 	decision := c.session.Snapshot()
-	if previous.Revision != decision.version() {
-		for id := range c.states {
-			if p.decision.roles(id) != decision.roles(id) {
-				return false
-			}
-		}
+	if previous.Revision != decision.version() && !c.sameDecisionRoles(p.decision, decision) {
+		return false
 	}
 	owner := manifest.NamedResource{}
 	if request.Reads != nil {
@@ -234,6 +231,18 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 	proposal.Revision, proposal.reads, proposal.reused = decision.version(), p.evidence, true
 	if previous.entryReads != nil {
 		proposal.entryReads = proposal.reads
+	}
+	return true
+}
+
+func (c *admissionClosure) sameDecisionRoles(previous, current *Decision) bool {
+	if previous.execution != current.execution || previous.unrestricted != current.unrestricted {
+		return false
+	}
+	for id := range c.states {
+		if previous.roles(id) != current.roles(id) {
+			return false
+		}
 	}
 	return true
 }
@@ -420,6 +429,7 @@ func (c *admissionClosure) resetDemand() {
 	c.candidatesKnown = [2]bool{}
 	c.queue, c.roots = c.queue[:0], c.roots[:0]
 	clear(c.searched)
+	clear(c.entryPending)
 	clear(c.historyProductions)
 	clear(c.accepted)
 	clear(c.replace)
@@ -558,19 +568,23 @@ func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
 	if !snapshot.execution {
 		return role
 	}
-	if !known {
-		if c.states == nil {
-			c.states = make(map[manifest.NamedResource]admissionState)
-		}
-		c.states[id] = state
-	}
-	roles := snapshot.roles(id)
+	roles := c.decisionRoles(id, known)
 	role.needed = role.needed || roles&needed != 0
 	role.selected = role.selected || roles&selected != 0
 	// Promotion requires reconciliation without proving that input content changed.
 	role.dirty = role.dirty || roles&dirty != 0 && roles&promoted == 0
 	role.ordinary = role.ordinary || roles&ordinary != 0
 	return role
+}
+
+func (c *admissionClosure) decisionRoles(id manifest.NamedResource, known bool) uint8 {
+	if !known {
+		if c.states == nil {
+			c.states = make(map[manifest.NamedResource]admissionState)
+		}
+		c.states[id] = admissionState{}
+	}
+	return c.decision.roles(id)
 }
 
 func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
@@ -723,7 +737,11 @@ func (c *admissionClosure) collectRoles() {
 	}
 	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
-		if state.role.needed && len(c.historyOwners[id]) != 0 {
+		pending := c.entryPending[id]
+		if pending && (c.proposal.entry == nil || c.proposal.entry.Producer == (manifest.NamedResource{})) {
+			continue
+		}
+		if state.role.needed && !pending && len(c.historyOwners[id]) != 0 {
 			c.requestHistory(id)
 		}
 		for axis, present := range [4]bool{state.role.needed, state.role.selected, state.role.dirty, state.role.ordinary} {
@@ -731,17 +749,21 @@ func (c *admissionClosure) collectRoles() {
 				*roles[axis] = append(*roles[axis], id)
 			}
 		}
-		if !state.role.needed || !id.KindInfo().Runnable {
+		if pending || !state.role.needed || !id.KindInfo().Runnable {
 			continue
 		}
-		evidence := c.declarationEvidence(id)
-		if evidence.known() && (!id.KindInfo().SourceArtifact || !c.producerPending(id)) {
-			continue
-		}
-		productions := c.productions(id)
-		for i := range productions {
-			c.requestProducer(id, &productions[i])
-		}
+		c.collectProducerObligations(id)
+	}
+}
+
+func (c *admissionClosure) collectProducerObligations(id manifest.NamedResource) {
+	evidence := c.declarationEvidence(id)
+	if evidence.known() && (!id.KindInfo().SourceArtifact || !c.producerPending(id)) {
+		return
+	}
+	productions := c.productions(id)
+	for i := range productions {
+		c.requestProducer(id, &productions[i])
 	}
 }
 

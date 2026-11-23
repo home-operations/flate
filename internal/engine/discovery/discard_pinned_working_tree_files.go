@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -218,14 +219,7 @@ func (d *Session) Load(ctx context.Context) (bool, error) {
 }
 
 func (d *Session) load(ctx context.Context) error {
-	if _, err := d.resolveEntrySources(ctx, false); err != nil {
-		return err
-	}
-	root := d.cfg.Input.LocalPath
-	if err := d.loadManifests(ctx, root, d.aggregateRequiresBuild); err != nil {
-		return err
-	}
-	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
+	if err := d.refreshDeclarations(ctx, d.cfg.Input.LocalPath, d.aggregateRequiresBuild); err != nil {
 		return err
 	}
 	admission := d.admission()
@@ -272,9 +266,7 @@ func (d *Session) advance(ctx context.Context, admission *selection.AdmissionRes
 	if err != nil {
 		return false, err
 	}
-	if d.refreshEntryReceipt(ctx, previousReceipt) {
-		changed, refresh = true, true
-	}
+	changed = d.refreshEntryReceipt(ctx, previousReceipt) || changed
 	root := d.cfg.Input.LocalPath
 	prepared, err := d.prepareDemandedProducers(ctx, admission.Demands, root)
 	if err != nil {
@@ -299,7 +291,7 @@ func (d *Session) advance(ctx context.Context, admission *selection.AdmissionRes
 	if !refresh {
 		return changed, nil
 	}
-	if err := d.refreshDeclarations(ctx, root); err != nil {
+	if err := d.refreshDeclarations(ctx, root, false); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -343,7 +335,7 @@ func (d *Session) refreshEntryReceipt(ctx context.Context, previous *manifest.En
 		return false
 	}
 	current := d.admission()
-	if current.qualification == nil {
+	if current.qualification == nil || current.qualification.receiptRead {
 		return false
 	}
 	d.entryReceipt(ctx, current, d.cfg.Input)
@@ -389,10 +381,22 @@ func (d *Session) pendingProducers(
 	demands []selection.Demand,
 	root string,
 ) (map[manifest.NamedResource]selection.Demand, error) {
+	var selected []*selection.Demand
+	for i := range demands {
+		if demands[i].Application != (selection.OccurrenceID{}) {
+			selected = append(selected, &demands[i])
+		}
+	}
+	if len(selected) != 0 {
+		if err := d.qualifySelectedEntry(ctx, selected, root); err != nil {
+			return nil, err
+		}
+	}
 	pending := map[manifest.NamedResource]selection.Demand{}
 	for i := range demands {
 		demand := &demands[i]
-		if demand.History || demand.Materialize || demand.Occurrence.Identity != (manifest.NamedResource{}) {
+		if demand.History || demand.Materialize || demand.Occurrence.Identity != (manifest.NamedResource{}) ||
+			demand.Application != (selection.OccurrenceID{}) {
 			continue
 		}
 		ks, err := d.pendingProducer(ctx, demand, root)
@@ -426,12 +430,70 @@ func (d *Session) pendingProducer(
 	}
 	if filepath.Join(root, demand.Root) == d.cfg.Path {
 		d.entryDemand = true
-		if a := d.admission(); a.qualification != nil && !a.entryBound.Load() {
+		a := d.admission()
+		if len(a.entryTargets) != 0 {
+			previous, _ := d.cfg.Store.GetObject(d.binding.Producer).(*manifest.Kustomization)
+			return previous, nil
+		}
+		if a.qualification != nil && !a.entryBound.Load() {
 			a.entryDemand, a.qualification.closed = true, false
 		}
 		return d.bindEntry(ctx, root)
 	}
 	return manifest.NewEntryKustomization(demand.Source, demand.Root, manifest.NamedResource{}), nil
+}
+
+func (d *Session) qualifySelectedEntry(ctx context.Context, demands []*selection.Demand, root string) error {
+	a := d.admission()
+	if a.entryBound.Load() {
+		return nil
+	}
+	coverEntry := d.cfg.Selection.Matches(manifest.NamedResource{})
+	updated := false
+	for _, demand := range demands {
+		query := demand.Application
+		if slices.ContainsFunc(a.entryTargets, func(target entryTarget) bool { return target.occurrence == query }) {
+			continue
+		}
+		file := demand.Artifact.OriginPath(filepath.Join(query.Source, query.File))
+		origin := a.input.OriginPath(a.input.LocalPath)
+		if !safepath.Contains(origin, file) {
+			continue
+		}
+		a.entryTargets = append(a.entryTargets, entryTarget{occurrence: query, origin: file, coverEntry: coverEntry})
+		updated = true
+	}
+	if len(a.entryTargets) == 0 {
+		return nil
+	}
+	if updated {
+		slices.SortFunc(a.entryTargets, func(left, right entryTarget) int {
+			l, r := left.occurrence, right.occurrence
+			return cmp.Or(
+				cmp.Compare(left.origin, right.origin),
+				cmp.Compare(l.Document, r.Document),
+				cmp.Compare(l.Item, r.Item),
+			)
+		})
+		origin := a.input.OriginPath(a.input.LocalPath)
+		a.entryOccurrences = make([]kustomize.EntryOccurrence, len(a.entryTargets))
+		for i, target := range a.entryTargets {
+			relative, err := filepath.Rel(origin, target.origin)
+			if err != nil {
+				return fmt.Errorf("resolve selected application coordinate: %w", err)
+			}
+			a.entryOccurrences[i] = kustomize.EntryOccurrence{
+				File: filepath.ToSlash(relative), Document: target.occurrence.Document, Item: target.occurrence.Item,
+			}
+		}
+		d.entryDemand, a.entryDemand = true, true
+		a.qualification.closed, a.qualification.receiptRead = false, false
+		a.qualification.previous, a.qualification.refresh = kustomize.EntryEvidence{}, nil
+		a.publishEntry(nil, manifest.NamedResource{})
+	}
+	_, err := d.bindEntry(ctx, root)
+	d.entryState.changed = d.entryState.changed || a.entryBound.Load()
+	return err
 }
 
 func (d *Session) preparePendingProducer(
@@ -467,15 +529,28 @@ func (d *Session) preparePendingProducer(
 	return true, nil
 }
 
-func (d *Session) refreshDeclarations(ctx context.Context, root string) error {
+func (d *Session) refreshDeclarations(ctx context.Context, root string, build bool) error {
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return err
 	}
-	if err := d.loadManifests(ctx, root, false); err != nil {
+	if err := d.loadManifests(ctx, root, build); err != nil {
 		return err
 	}
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
 		return err
+	}
+	named := slices.ContainsFunc(d.cfg.Selection.Roots, func(id manifest.NamedResource) bool { return id.Name != "" })
+	if named || d.cfg.Selection.Changed {
+		a := d.admission()
+		projected := a.entryProjected
+		if !a.entryBound.Load() && a.qualification != nil && len(a.entryTargets) == 0 {
+			projected = a.projectedEntry(named)
+		}
+		patches := !named && a.projectedEntryPatches()
+		if projected != a.entryProjected || patches != a.entryProjectedPatches {
+			a.entryProjected, a.entryProjectedPatches = projected, patches
+			a.publishEntry(nil, manifest.NamedResource{})
+		}
 	}
 	return nil
 }

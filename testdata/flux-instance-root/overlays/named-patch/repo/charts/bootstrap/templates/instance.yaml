@@ -1,0 +1,40 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: 2.6.x}
+  cluster: {multitenant: true}
+  sync: {name: sync, kind: GitRepository, url: https://example.invalid/fixture, ref: refs/heads/main, path: ./kubernetes/apps}
+  kustomize:
+    patches:
+      - target: {kind: Kustomization, name: sync, namespace: flux-system}
+        patch: |
+          - op: replace
+            path: /spec/serviceAccountName
+            value: sync-service-account
+          - op: add
+            path: /spec/patches
+            value:
+              - target: {kind: Kustomization, name: plex, namespace: media}
+                patch: |
+                  - op: add
+                    path: /spec/patches
+                    value:
+                      - target: {kind: HelmRelease, name: plex, namespace: media}
+                        patch: |
+                          - op: add
+                            path: /spec/install
+                            value: {crds: CreateReplace}
+                          - op: add
+                            path: /spec/rollback
+                            value: {cleanupOnFail: true}
+                          - op: add
+                            path: /spec/upgrade
+                            value:
+                              cleanupOnFail: true
+                              crds: CreateReplace
+                              strategy: {name: RemediateOnFailure}
+                              remediation: {remediateLastFailure: true, retries: 2}
+                          - op: add
+                            path: /spec/values
+                            value: {mode: changed}

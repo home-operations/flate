@@ -13,7 +13,9 @@ import (
 )
 
 // EntryFrontier must conservatively retain packages whose applications cannot be ruled out.
-func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact, path string) (bool, error) {
+func (l *Loader) EntryFrontier(
+	ctx context.Context, input *store.SourceArtifact, path string, projected func(manifest.BaseManifest) bool,
+) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return true, err
 	}
@@ -49,7 +51,7 @@ func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact,
 		ctx,
 		graphVisit{root: input.LocalPath, dir: manifest.NormalizeClaimBase(path), role: kustomizeinput.Resource},
 		func(v graphVisit) bool {
-			possible = reader.frontierVisit(ctx, &v)
+			possible = reader.frontierVisit(ctx, &v, projected)
 			return !possible
 		},
 	)
@@ -92,7 +94,9 @@ func (l *Loader) EntryProducerHint(ctx context.Context, input *store.SourceArtif
 	return false, ctx.Err()
 }
 
-func (r *documentReader) frontierVisit(ctx context.Context, visit *graphVisit) bool {
+func (r *documentReader) frontierVisit(
+	ctx context.Context, visit *graphVisit, projected func(manifest.BaseManifest) bool,
+) bool {
 	if visit.role == kustomizeinput.File {
 		return false
 	}
@@ -113,7 +117,8 @@ func (r *documentReader) frontierVisit(ctx context.Context, visit *graphVisit) b
 		return true
 	}
 	for i := range objects {
-		if parsedApplication(&objects[i]) {
+		child := &objects[i]
+		if parsedApplication(child) || projected != nil && projected(parsedFactObject(child)) {
 			return true
 		}
 	}

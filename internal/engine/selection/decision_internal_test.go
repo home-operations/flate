@@ -162,6 +162,48 @@ func TestSession_StaleCaptureRejectsPublication(t *testing.T) {
 	assert.Equal(t, session.store.GetObject(child.Named()), nil)
 }
 
+func TestSession_PublicationAcrossSelectionRevision(t *testing.T) {
+	t.Parallel()
+	for _, related := range []bool{false, true} {
+		name := "unrelated selection"
+		if related {
+			name = "observed selection"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			child := &manifest.ConfigMap{Name: "child", Namespace: "apps"}
+			session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{child.Named()}})
+			before := session.Snapshot()
+			_, retry := publishDecision(t, session, new(Admission{}), before.version())
+			assert.Equal(t, retry, false)
+			proposal, err := session.Prepare(t.Context(), PrepareRequest{
+				Generation: []store.Child{{Obj: child}},
+			})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, len(proposal.demands), 0)
+			_, observed := proposal.preparation.closure.states[child.Named()]
+			assert.Equal(t, observed, true)
+			id := testutil.KustomizationID("apps", "unrelated")
+			if related {
+				id = child.Named()
+			}
+			published := make(chan bool, 1)
+			go func() {
+				_, retry := publishDecision(t, session, new(Admission{Needed: []manifest.NamedResource{id}}),
+					proposal.Revision)
+				published <- !retry
+			}()
+			assert.Equal(t, <-published, true)
+			_, committed := session.publishAdmission(t.Context(), proposal, Execution)
+			assert.Equal(t, committed, !related)
+			assert.Equal(t, session.Snapshot().Reconcile(id), true)
+			assert.Equal(t, session.Snapshot().Output(child.Named()), !related)
+		})
+	}
+}
+
 func TestSession_ConcurrentMembershipBeforeArrival(t *testing.T) {
 	t.Parallel()
 	session := newPublicationSession(t)

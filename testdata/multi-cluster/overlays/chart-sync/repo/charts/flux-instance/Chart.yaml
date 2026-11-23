@@ -1,0 +1,3 @@
+apiVersion: v2
+name: flux-instance
+version: 1.0.0

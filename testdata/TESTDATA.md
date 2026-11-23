@@ -337,6 +337,10 @@ Each invocation uses a fresh cache and two workers.
 
 The `flux-instance-root/` fixture uses a local chart to emit a FluxInstance. It checks the generated root and its Plex patches in full and narrow builds. Its diff changes the Plex Kustomization timeout to two minutes.
 
+The named case places the chart under a bootstrap Kustomization. It builds Plex by name from the repository and apps directories. It changes the chart patch and removes the FluxInstance to exercise receipt reuse. An unrelated Kustomization renders a separate ConfigMap in full builds.
+
+The OCI case serves the generator chart archive from fixed registry responses. The chart sits outside the repository. The release values set the sync path to the apps directory and apply the strategy patch to Plex. Plex sits two directories below the sync path. The full build renders Plex and a disjoint sibling. Each named build prints only Plex. Each command has its own cache, which the second run reuses.
+
 The descendant case requests `kubernetes/apps/media`. The FluxInstance sync root covers that directory. Two builds share one cache and show one sync root and the patched Plex HelmRelease. The sibling package stays outside the output.
 
 The `flux-instance-authored-parent/` fixture requests a cluster directory without a Kustomize builder. The generated sync root publishes `cluster-apps` and the `cluster-info` ConfigMap. The authored parent uses the ConfigMap to substitute the child path and add a post-build value. The child renders one ConfigMap with that value. Both builds share one cache. The aggregate-values fixture also applies two chart edits. One settles on its third input. The other returns to its first input and reports `DependencyCycle`.
@@ -1679,6 +1683,10 @@ Named symlink operations supply their synthetic paths to the catalog without req
 
 `multi-cluster/root-partition`: Repository-root discovery uses three explicit bootstrap roots and retains colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
 
+`multi-cluster/chart-sync`: A local Helm chart emits a FluxInstance in each of two sibling cluster paths. Root build and test keep the two copies of `cluster-info` and `cluster-apps` in their own clusters. The root diff contains one cluster's edit and leaves the other cluster unchanged.
+
+`multi-cluster/chart-sync-overlap`: The authored `flux-instance` Kustomization and the generated `flux-system` Kustomization apply the same nested package. Both builds require one copy of each disputed resource, with the generated root's owner label and one warning naming both producers.
+
 `multi-cluster/one-sided-diff`: The diff removes the utility cluster and the reverse diff adds it. Both show only the main cluster change and leave the test cluster unchanged. Independent selected entries establish the payloads.
 
 Each fixture entry includes a FluxInstance that names its own path and repository URL.
@@ -2069,6 +2077,12 @@ The `entry-unknown-projection/` fixture covers the replacement overlay from issu
 | Case | Behavior |
 | --- | --- |
 | `flux-instance-root/patch-chain` | Apply the generated root patches in full and narrow builds, then compare the Plex timeout edit. |
+| `flux-instance-root/named` | Build Plex through its generated root at repository and apps scope, before and after the patch changes or the generator stops. |
+| `flux-instance-root/named-oci` | Apply the Plex patch from the OCI generator in full and named builds. Keep the sibling out of named output. |
+| `flux-instance-root/named-oci-valuesfrom` | Compare the full and named Plex HelmRelease when a ConfigMap supplies the sync path. Each build uses a separate cold cache. |
+| `flux-instance-root/changed-only-authored-crds` | The generated root's patch makes the authored CRD edit a no-op. |
+| `flux-instance-root/changed-only-interval` | The interval edit reports only the Plex Kustomization under the generated root. |
+| `flux-instance-root/named-restore` | Compare both named renders after the generator returns. |
 | `flux-instance-root/descendant` | Build a requested descendant twice through its generated sync root. Keep the sibling outside the output. |
 | `flux-instance-ancestor/ancestor` | Render the sync root at the repository root. Preserve standalone output at both narrow paths. |
 | `flux-instance-ancestor/separate` | Apply the patch from the separate instance package only when the request reaches it. |

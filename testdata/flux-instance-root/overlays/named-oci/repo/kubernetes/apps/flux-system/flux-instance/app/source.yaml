@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: flux-instance, namespace: flux-system}
+spec:
+  interval: 10m
+  url: oci://registry.invalid/flux-instance
+  ref: {tag: 1.0.0}
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy

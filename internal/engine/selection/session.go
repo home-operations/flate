@@ -14,14 +14,27 @@ import (
 
 // Session publishes immutable decisions from guarded admission proposals.
 type Session struct {
-	store               *store.Store
-	facts               census
-	request             Request
-	mu                  sync.Mutex
-	decision            atomic.Pointer[Decision]
-	entry               atomic.Pointer[EntryRoute]
-	catalog             atomic.Pointer[admissionCatalog]
-	readKustomizeInputs func(context.Context, manifest.NamedResource, manifest.BaseManifest, *SourceFacts) ([2]SourceReadPaths, bool)
+	store                   *store.Store
+	facts                   census
+	request                 Request
+	mu                      sync.Mutex
+	decision                atomic.Pointer[Decision]
+	entry                   atomic.Pointer[EntryRoute]
+	catalog                 atomic.Pointer[admissionCatalog]
+	readKustomizeInputs     func(context.Context, manifest.NamedResource, manifest.BaseManifest, *SourceFacts) ([2]SourceReadPaths, bool)
+	entryComparisonPending  bool
+	entryComparisonComplete bool
+}
+
+// DeferEntryComparison MUST precede dispatch of both trees.
+func (s *Session) DeferEntryComparison() { s.entryComparisonPending = true }
+
+// EntryComparisonPending reports whether root outputs are still being collected.
+func (s *Session) EntryComparisonPending() bool { return s != nil && s.entryComparisonPending }
+
+// ResolveEntryComparison MUST run after every render task in the pair drains.
+func (s *Session) ResolveEntryComparison(compared bool) {
+	s.entryComparisonPending, s.entryComparisonComplete = false, compared
 }
 
 // New MUST retain an admission session for every request.
@@ -236,6 +249,7 @@ type admissionReader interface {
 type Demand struct {
 	Identity    manifest.NamedResource
 	Occurrence  OccurrenceFacts
+	Application OccurrenceID
 	Source      manifest.NamedResource
 	Root        string
 	History     bool
@@ -255,18 +269,18 @@ type Acquisition struct {
 }
 
 type acquisitionKey struct {
-	identity, source     manifest.NamedResource
-	occurrence           OccurrenceID
-	root                 string
-	history, materialize bool
-	witness              manifest.BaseManifest
-	declarationWitness   any
-	artifact             *store.SourceArtifact
+	identity, source        manifest.NamedResource
+	occurrence, application OccurrenceID
+	root                    string
+	history, materialize    bool
+	witness                 manifest.BaseManifest
+	declarationWitness      any
+	artifact                *store.SourceArtifact
 }
 
 func (d *Demand) key() acquisitionKey {
 	return acquisitionKey{
-		identity: d.Identity, source: d.Source, occurrence: d.Occurrence.Declaration,
+		identity: d.Identity, source: d.Source, occurrence: d.Occurrence.Declaration, application: d.Application,
 		root: d.Root, history: d.History, materialize: d.Materialize, witness: d.Witness, artifact: d.Artifact,
 		declarationWitness: d.Occurrence.Witness,
 	}

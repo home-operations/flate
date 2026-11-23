@@ -26,8 +26,9 @@ import (
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
-	Preparation *Preparation `json:"-"`
-	LocalInputs *LocalInputs `json:"-"`
+	Preparation      *Preparation      `json:"-"`
+	EntryOccurrences []EntryOccurrence `json:"-"`
+	LocalInputs      *LocalInputs      `json:"-"`
 	// Work borrows stage counters from this render execution.
 	Work *manifest.RenderWork `json:"-"`
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
@@ -120,7 +121,7 @@ func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
 	if p == nil || !p.complete {
 		return false
 	}
-	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
+	owner := samePreparationDeclaration(p.spec, request.Spec)
 	policy := p.binding.Policy.Strict == request.StrictSubstitutions &&
 		slices.Equal(p.binding.Policy.Skip, request.SkipKinds)
 	location := p.label == request.Label && p.subPath == request.SubPath
@@ -128,6 +129,19 @@ func (p *Preparation) Matches(cache *TreeCache, request *RenderRequest) bool {
 		location = location && p.policyKey == gittree.PolicyKey(inputprojection.Authored(request.Source).FS)
 	}
 	return cache != nil && p.cache == cache.owner && owner && policy && location
+}
+
+func samePreparationDeclaration(previous, current *manifest.Kustomization) bool {
+	if manifest.Equal(previous, current) {
+		return true
+	}
+	if previous == nil || current == nil ||
+		!manifest.LabelsEqual(previous, current, [2]map[string]any{}, manifest.IsOwnershipLabel) {
+		return false
+	}
+	declaration := *current
+	declaration.Labels = previous.Labels
+	return manifest.Equal(previous, &declaration)
 }
 
 type renderRequest struct {
@@ -188,7 +202,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	req.Work.Fingerprint(key)
 	work.Finish(nil)
 	prepared := Preparation{
-		cache: c.owner, spec: req.Spec, label: req.Label, subPath: req.SubPath,
+		cache: c.owner, label: req.Label, subPath: req.SubPath,
 		policyKey: policyKey,
 		lower:     lower, root: root, key: key,
 	}
@@ -218,7 +232,7 @@ func (p *Preparation) bindSource(req *RenderRequest) {
 	}
 	p.binding.Policy = renderPolicy{Strict: req.StrictSubstitutions, Skip: skip}
 	p.binding.Refresh(p.key, source, req.Source)
-	p.source = req.Source
+	p.spec, p.source = req.Spec, req.Source
 	p.complete = true
 }
 

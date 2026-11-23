@@ -169,7 +169,13 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 			t.Cleanup(func() { successor = Preparation{} })
 			source := localSource(t, root)
 			source.Content, source.Revision, source.URL = "equal-entry-content", "same-revision", "https://example.test/before"
-			request := RenderRequest{Source: source, SubPath: ".", Preparation: &preparation}
+			occurrence := EntryOccurrence{File: "generator.yaml", Document: 1, Item: 1}
+			request := RenderRequest{
+				Source:           source,
+				SubPath:          ".",
+				Preparation:      &preparation,
+				EntryOccurrences: []EntryOccurrence{occurrence},
+			}
 			before, err := renderer.prepareRender(t.Context(), &request)
 			assert.NoError(t, err)
 			entryBefore, err := renderer.prepareEntry(t.Context(), &request)
@@ -187,6 +193,17 @@ func TestPreviousEntry_SourceBinding(t *testing.T) {
 				assert.Equal(t, accepted.Producer, owner)
 			} else {
 				assert.Diff(t, accepted, EntryEvidence{})
+			}
+			for _, other := range []EntryOccurrence{
+				{File: occurrence.File, Document: 2, Item: occurrence.Item},
+				{File: occurrence.File, Document: occurrence.Document, Item: 2},
+			} {
+				otherRequest := request
+				otherRequest.EntryOccurrences = []EntryOccurrence{other}
+				otherEntry, otherErr := renderer.prepareEntry(t.Context(), &otherRequest)
+				assert.NoError(t, otherErr)
+				assert.Equal(t, otherEntry.key == entryBefore.key, false)
+				assert.Equal(t, renderer.PreviousEntry(t.Context(), otherRequest).Receipt == nil, true)
 			}
 			prior := first.Receipt.Value().(entrySnapshot)
 			var priorWire bytes.Buffer
@@ -295,11 +312,13 @@ func TestApplicationReceipt_FrameHistory(t *testing.T) {
 	child := manifest.NamedResource{Kind: "ConfigMap", Name: "child"}
 	evidence := EntryEvidence{
 		Producer: owner, Root: owner, Owner: owner,
-		Application: map[string]any{"kind": "Kustomization"},
-		Records:     maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Path: "first"}}),
+		GeneratedEntry: true,
+		Application:    map[string]any{"kind": "Kustomization"},
+		Records:        maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Path: "first"}}),
 	}
 	first, err := cache.ApplicationReceipt(t.Context(), request, evidence, []string{"producer.yaml"})
 	assert.NoError(t, err)
+	assert.Equal(t, first.GeneratedEntry, true)
 	assert.Equal(t, maps.Collect(first.Records)[child].Path, "first")
 	before := first.Receipt.Value().(entrySnapshot)
 	_, complete := before.publication.Frame().History(owner, before)
@@ -309,6 +328,9 @@ func TestApplicationReceipt_FrameHistory(t *testing.T) {
 	_, complete = before.publication.Frame().History(owner, changed)
 	assert.Equal(t, complete, false)
 	assert.Equal(t, equalEntryApplication(before, before), true)
+	assert.Equal(t, equalEntryApplication(before, changed), false)
+	changed = before
+	changed.Application.GeneratedEntry = false
 	assert.Equal(t, equalEntryApplication(before, changed), false)
 	evidence.Records = maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Path: "second"}})
 	second, err := cache.ApplicationReceipt(t.Context(), request, evidence, []string{"producer.yaml"})

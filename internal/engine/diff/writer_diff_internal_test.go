@@ -54,16 +54,25 @@ func TestEncoderDiffGroups_ReturnsErrors(t *testing.T) {
 
 func TestEncoderLines_ReturnsErrors(t *testing.T) {
 	t.Parallel()
-	bad := prepared{Pairs: []pair{{New: map[string]any{"bad": make(chan int)}}}}
-	{
-		lines, err := prepareLines(bad)
-		assert.FatalIf(
-			t,
-			err == nil || len(lines) != 0,
-			"PrepareLines = %+v, %v; want serialization failure without partial output",
-			lines,
-			err,
-		)
+	invalid := map[string]any{"bad": make(chan int)}
+	for _, tc := range []struct {
+		name string
+		pair pair
+	}{
+		{name: "invalid new document", pair: pair{New: invalid}},
+		{name: "equal invalid documents", pair: pair{Old: invalid, New: invalid}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lines, err := prepareLines(prepared{Pairs: []pair{tc.pair}})
+			assert.FatalIf(
+				t,
+				err == nil || len(lines) != 0,
+				"PrepareLines = %+v, %v; want serialization failure without partial output",
+				lines,
+				err,
+			)
+		})
 	}
 	t.Run("writer returns error after preparation", func(t *testing.T) {
 		t.Parallel()

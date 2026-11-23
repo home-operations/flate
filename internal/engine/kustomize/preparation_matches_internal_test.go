@@ -38,6 +38,21 @@ func TestPreparation_Matches(t *testing.T) {
 	}{
 		{"same owner", func(*RenderRequest) {}, true},
 		{"equal declaration", func(r *RenderRequest) { r.Spec = r.Spec.Clone() }, true},
+		{"ownership labels", func(r *RenderRequest) {
+			r.Spec = r.Spec.Clone()
+			r.Spec.Labels = map[string]string{
+				manifest.FluxKustomizeDomain + "/name":      "parent",
+				manifest.FluxKustomizeDomain + "/namespace": "apps",
+			}
+		}, true},
+		{"changed ordinary label", func(r *RenderRequest) {
+			r.Spec = r.Spec.Clone()
+			r.Spec.Labels = map[string]string{"team": "apps"}
+		}, false},
+		{"changed annotation", func(r *RenderRequest) {
+			r.Spec = r.Spec.Clone()
+			r.Spec.Annotations = map[string]string{"team": "apps"}
+		}, false},
 		{"missing declaration", func(r *RenderRequest) { r.Spec = nil }, false},
 		{"different declaration", func(r *RenderRequest) { r.Spec = r.Spec.Clone(); r.Spec.Path = "other" }, false},
 		{"different label", func(r *RenderRequest) { r.Label = "other" }, false},

@@ -254,7 +254,7 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 	for publication := a.applications.Load(); publication != nil; publication = publication.next {
 		appliers = append(appliers, publication.object)
 	}
-	_, err := a.qualifyEntry(t.Context(), st, nil)
+	err := a.qualifyEntry(t.Context(), st, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(appliers) != 1, "qualifying publications: got %d, want 1", len(appliers))
 	assert.Equal(t, appliers[0], manifest.BaseManifest(applier))

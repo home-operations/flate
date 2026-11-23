@@ -1,0 +1,202 @@
+[
+  {
+    "cluster": "clusters/main",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "CLUSTER": "main"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "data": {
+          "CLUSTER": "main"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-info",
+          "namespace": "flux-system"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-apps",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./apps/main",
+          "postBuild": {
+            "substituteFrom": [
+              {
+                "kind": "ConfigMap",
+                "name": "cluster-info"
+              }
+            ]
+          },
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "flux-instance",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./clusters/main/flux-instance",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "flux-system",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "10m0s",
+          "path": "./clusters/main",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "clusters/test",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "CLUSTER": "test"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "data": {
+          "CLUSTER": "test"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-info",
+          "namespace": "flux-system"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-apps",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./apps/test",
+          "postBuild": {
+            "substituteFrom": [
+              {
+                "kind": "ConfigMap",
+                "name": "cluster-info"
+              }
+            ]
+          },
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "flux-system",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "flux-instance",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./clusters/test/flux-instance",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "flux-system",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "interval": "10m0s",
+          "path": "./clusters/test",
+          "prune": true,
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      }
+    ]
+  }
+]

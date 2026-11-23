@@ -35,10 +35,14 @@ func TestEntryReceipt_RecordsHistory(t *testing.T) {
 		Cache: owner,
 		Trees: kustomize.NewTreeCache(owner, nil, nil),
 		Work:  scope,
+		Store: store.New(),
 	}}
 	admission := &Admission{qualification: &entryQualification{}}
+	d.entryAdmission = admission
 	d.entryReceipt(t.Context(), admission, d.cfg.Input)
 	d.entryReceipt(t.Context(), admission, d.cfg.Input)
+	d.entryReceiptRequest = &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "."}
+	assert.Equal(t, d.refreshEntryReceipt(t.Context(), nil), false)
 	var preparation, service manifest.WorkCounts
 	for _, record := range scope.Snapshot(0) {
 		assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/diff"
+	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -88,6 +89,51 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 			workload+"/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\ndata: {value: old}\n",
 		)
+		if *testCaseInput == "content" {
+			testutil.WriteFile(
+				t,
+				dir,
+				"entry/sibling/child.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n",
+			)
+			testutil.WriteFile(
+				t,
+				dir,
+				"entry/unrelated.yaml",
+				`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: unrelated, namespace: apps}
+spec:
+  interval: 1h
+  chart:
+    spec: {chart: unrelated-chart, sourceRef: {kind: GitRepository, name: self}}
+`,
+			)
+			testutil.WriteFile(
+				t,
+				dir,
+				"unrelated-chart/Chart.yaml",
+				"apiVersion: v2\nname: unrelated\nversion: 1.0.0\n",
+			)
+			testutil.WriteFile(
+				t,
+				dir,
+				"unrelated-chart/templates/application.yaml",
+				`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: unrelated, namespace: apps}
+spec:
+  sync: {name: unrelated-sync, kind: GitRepository, url: `+url+`, ref: refs/heads/main, path: ./unrelated}
+`,
+			)
+			testutil.WriteFile(t, dir, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(
+				t,
+				dir,
+				"unrelated/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n",
+			)
+		}
 		if (*testCaseInput) == "owned_source" {
 			testutil.WriteFile(t, dir, workload+"/kustomization.yaml", "resources: [cm.yaml, input.yaml]\n")
 			testutil.WriteFile(
@@ -98,12 +144,16 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 			)
 		}
 	}
+	syncPath := "./entry"
+	if *testCaseInput == "content" {
+		syncPath = "./entry/sibling"
+	}
 	testutil.WriteFile(t, chart, "fixture/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(
 		t,
 		chart,
 		"fixture/templates/application.yaml",
-		"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: refs/heads/main, path: ./entry}\n",
+		"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: refs/heads/main, path: "+syncPath+"}\n",
 	)
 	if (*testCaseInput) == "templated_group" {
 		testutil.WriteFile(
@@ -208,71 +258,83 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		BaseInput:       (*tailCaseInput.before),
 		ExternalChanges: changes,
 	}
-	for run := range 2 {
+	scenario := **tailCaseInput.testCaseInput
+	primeCache := persistent && scenario == "content"
+	comparisons := []Tree{tree, tree}
+	if primeCache {
+		prime := tree
+		prime.BaseInput, prime.ExternalChanges = nil, nil
+		comparisons = []Tree{tree, prime, tree}
+	}
+	wantFetches := int64(0)
+	if scenario == "owned_source" {
+		wantFetches = 1
+	}
+	for run := range comparisons {
+		priming := primeCache && run == 1
 		applier := tailCaseInput.entryApplicationApplier(t, run)
 		var logs bytes.Buffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 		t.Cleanup(func() { slog.SetDefault(previous) })
-		o, err := newTestOrchestrator(t, tree, cfg)
+		o, err := newTestOrchestrator(t, comparisons[run], cfg)
 		assert.NoError(t, err)
 		fetcher := &countedChartFetcher{
 			chart:      (*tailCaseInput.chart),
 			charts:     (*tailCaseInput.charts),
-			incomplete: (*(*tailCaseInput.testCaseInput)) == "incomplete_inputs",
+			incomplete: scenario == "incomplete_inputs",
 		}
 		o.src.Fetchers[manifest.KindOCIRepository] = fetcher
-		warmNested := run == 1 && persistent && **tailCaseInput.testCaseInput == "nested_unchanged"
+		warmNested := run == 1 && persistent && scenario == "nested_unchanged"
 		rebindNested := observeWarmNestedBindings(t, o, applier, warmNested)
 		assert.NoError(t, o.bootstrap(t.Context()))
 		id := testutil.HelmReleaseID("apps", "generator")
-		calls, admitted := map[manifest.NamedResource]*atomic.Int64{
-			id: {},
-		}, map[manifest.NamedResource]*atomic.Int64{
-			id: {},
-		}
+		unrelated := testutil.HelmReleaseID("apps", "unrelated")
+		calls := map[manifest.NamedResource]*atomic.Int64{id: {}, unrelated: {}}
+		admitted := map[manifest.NamedResource]*atomic.Int64{id: {}, unrelated: {}}
 		nested := testutil.HelmReleaseID("apps", "nested")
-		if *tailCaseInput.nested {
+		switch {
+		case primeCache && run == 2:
+			assertSiblingEntryReceipt(t, o)
+		case *tailCaseInput.nested:
 			calls[nested], admitted[nested] = new(atomic.Int64), new(atomic.Int64)
 		}
 		o.controllers.HelmRelease = countedNodeController{o.hrc, calls, admitted}
-		assert.NoError(t, o.run(t.Context()))
+		err = o.run(t.Context())
+		assert.FatalIf(t, err != nil, "render entry: %v\n%s", err, logs.String())
 		rebindNested()
 		entryApplicationWorkResult1 := entryApplicationWork(t, &logs)
 		renders, reused := entryApplicationWorkResult1.renders, entryApplicationWorkResult1.reused
 		slog.SetDefault(previous)
-		if *tailCaseInput.declaration {
+		wantReuse := 0
+		if run == 1 && persistent &&
+			slices.Contains([]string{"declaration", "templated_group", "nested_unchanged"}, scenario) {
+			wantReuse = 1
+		}
+		switch {
+		case priming:
+			assert.Equal(t, fetcher.calls.Load(), int64(1))
+			assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "self"))
+			assert.Equal(t, o.entryBinding.Entry != nil && o.entryBinding.Entry.Receipt != nil, true)
+		case *tailCaseInput.declaration:
 			tailCaseInput.assertEntryApplicationDeclaration(t, o, applier, &logs)
-			if run == 0 || (*(*tailCaseInput.testCaseInput)) == "mutable_chart" ||
-				(*(*tailCaseInput.testCaseInput)) == "nested_chart" ||
-				(*(*tailCaseInput.testCaseInput)) ==
-					"incomplete_inputs" ||
-				!persistent {
+			if wantReuse == 0 {
 				tailCaseInput.assertEntryApplicationRendered(t, fetcher, renders, run)
 				assert.Equal(t, o.selection.Snapshot().Reconcile(id), true)
 			} else {
 				tailCaseInput.assertEntryApplicationReused(t, fetcher, renders, admitted[id])
 			}
-		} else {
-			fetches := int64(0)
-			if (*(*tailCaseInput.testCaseInput)) == "owned_source" {
-				fetches = 1
-			}
+		default:
 			assert.Equal(t, renders, 0)
-			assert.Equal(t, fetcher.calls.Load(), fetches)
+			assert.Equal(t, fetcher.calls.Load(), wantFetches)
 			assert.Equal(t, admitted[id].Load(), int64(0))
-		}
-		wantReuse := 0
-		if run == 1 &&
-			((*(*tailCaseInput.testCaseInput)) == "declaration" || (*(*tailCaseInput.testCaseInput)) == "templated_group" || (*(*tailCaseInput.testCaseInput)) == "nested_unchanged") &&
-			persistent {
-			wantReuse = 1
+			assert.Equal(t, admitted[unrelated].Load(), int64(0))
 		}
 		assert.Equal(t, reused, wantReuse)
 		tailCaseInput.assertNestedAdmissions(t, admitted[nested], run, persistent)
 		t.Logf(
-			"run=%d declaration=%t renders=%d fetches=%d admissions=%d reused=%d persist=%t",
-			run, (*tailCaseInput.declaration), renders,
+			"run=%d declaration=%t priming=%t renders=%d fetches=%d admissions=%d reused=%d persist=%t",
+			run, (*tailCaseInput.declaration), priming, renders,
 			fetcher.calls.Load(),
 			admitted[id].Load(),
 			reused,
@@ -281,6 +343,19 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		o.stop()
 		assert.NoError(t, o.cache.Close())
 	}
+}
+
+func assertSiblingEntryReceipt(t *testing.T, o *Orchestrator) {
+	t.Helper()
+	stored := o.ksc.Trees.PreviousEntry(t.Context(), kustomize.RenderRequest{
+		Source: o.cfg.Input, SubPath: "entry",
+	})
+	assert.FatalIf(t, stored.Receipt == nil, "comparison cannot read the primed sibling receipt")
+	parsed, err := manifest.ParseDoc(stored.Application, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	application, ok := manifest.ApplicationFor(parsed.Object)
+	assert.FatalIf(t, !ok, "stored receipt has no application")
+	assert.Equal(t, manifest.NormalizeClaimBase(application.Path), "entry/sibling")
 }
 
 type testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs struct {

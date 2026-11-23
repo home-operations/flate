@@ -18,13 +18,16 @@ import (
 func TestAdmission_NamedDeclarationAndInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	input := fstest.MapFS{"objects.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+	input := fstest.MapFS{
+		"objects.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: app, namespace: apps}
 spec:
   interval: 1m
-  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}
+  chart: {spec: {chart: ./demo, sourceRef: {kind: GitRepository, name: charts}, valuesFiles: [demo/values.yaml]}}
   valuesFrom: [{kind: ConfigMap, name: values}]
+  values:
+    sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./inline}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -34,7 +37,7 @@ spec:
   chart: {spec: {chart: other, sourceRef: {kind: HelmRepository, name: unrelated}}}
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+kind: GitRepository
 metadata: {name: charts, namespace: apps}
 spec: {url: https://fixture.invalid/charts}
 ---
@@ -42,12 +45,21 @@ apiVersion: v1
 kind: ConfigMap
 metadata: {name: values, namespace: apps}
 data: {values.yaml: '{}'}
-`)}}
+`)},
+		"demo/Chart.yaml":  {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+		"demo/values.yaml": {Data: []byte("enabled: true\n")},
+		"demo/templates/sync.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: apps}
+spec:
+  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./external}
+`)},
+	}
 	st := store.New()
-	st.SetArtifact(
-		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
-	)
+	artifact := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input}
+	st.SetArtifact(manifest.BootstrapSourceID, artifact)
+	charts := (&manifest.GitRepository{Name: "charts", Namespace: "apps"}).Named()
+	st.SetArtifact(charts, artifact)
 	l := New(st)
 	app := manifest.NamedResource{
 		Group:     manifest.HelmReleaseDomain,
@@ -70,6 +82,17 @@ data: {values.yaml: '{}'}
 	assert.NoError(t, err)
 	names := make([]string, 0, len(proposal.Objects))
 	for _, child := range proposal.Objects {
+		if child.Obj.Named() == app {
+			candidates := l.ProjectedObjects(child.Obj)
+			paths := make([]string, 0, len(candidates))
+			for _, candidate := range candidates {
+				application, known := manifest.ApplicationFor(candidate)
+				assert.Equal(t, known, true)
+				paths = append(paths, application.Path)
+			}
+			slices.Sort(paths)
+			assert.Diff(t, paths, []string{"./external", "./inline"})
+		}
 		names = append(names, child.Obj.Named().Name)
 		assert.Equal(t, child.Obj.Named().Namespace, "apps")
 	}

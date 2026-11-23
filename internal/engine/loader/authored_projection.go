@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"slices"
+
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -26,6 +28,7 @@ func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
 		} else {
 			facts.catalog = manifest.CatalogObject(facts.catalog, projected.Identity)
 		}
+		facts.projectTemplateNamespace(projected.Identity.Namespace)
 		projected.facts = &facts
 		if projected.object == nil {
 			projected.object = facts.catalog
@@ -35,6 +38,24 @@ func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
 		l.locations = map[manifest.NamedResource]authoredOccurrence{}
 	}
 	l.locations[projected.Identity] = *projected
+}
+
+func (f *occurrenceFacts) projectTemplateNamespace(namespace string) {
+	if namespace == "" {
+		return
+	}
+	var projected []manifest.BaseManifest
+	for i, object := range f.templateObjects {
+		if object.Named().Namespace == "" && manifest.KindOf(object).Namespaced() {
+			if projected == nil {
+				projected = slices.Clone(f.templateObjects)
+			}
+			projected[i] = object.WithNamespace(namespace)
+		}
+	}
+	if projected != nil {
+		f.templateObjects = projected
+	}
 }
 
 func (l *Loader) publishAuthoredObject(

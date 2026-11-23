@@ -1,19 +1,57 @@
 package selection
 
 import (
+	"maps"
+
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // EntryRoute borrows discovery's immutable matched support and its captured observations.
 type EntryRoute struct {
-	Application *manifest.EntryApplication
-	Previous    manifest.NamedResource
-	Producer    manifest.NamedResource
-	Root        manifest.NamedResource
-	Replay      manifest.NamedResource
-	Reads       *store.ReadSet
-	Bound       bool
+	Application            *manifest.EntryApplication
+	Selected               bool
+	Winners                *map[OccurrenceID]manifest.NamedResource
+	PreviousGeneratedEntry bool
+	Previous               manifest.NamedResource
+	Producer               manifest.NamedResource
+	Root                   manifest.NamedResource
+	Replay                 manifest.NamedResource
+	Reads                  *store.ReadSet
+	Reach                  *EntryReach
+	Bound                  bool
+	Changed                bool
+	Projected              bool
+	ProjectedPatches       bool
+}
+
+// EntryReach binds immutable reach evidence to the current qualification producer.
+type EntryReach struct {
+	Producer manifest.NamedResource
+	Possible func([]manifest.BaseManifest) bool
+}
+
+func (r *EntryRoute) equal(other *EntryRoute) bool {
+	if r == other {
+		return true
+	}
+	if r == nil || other == nil {
+		return false
+	}
+	left, right := *r, *other
+	left.Winners, right.Winners = nil, nil
+	if left != right {
+		return false
+	}
+	if r.Winners == other.Winners {
+		return true
+	}
+	return r.Winners != nil && other.Winners != nil && maps.Equal(*r.Winners, *other.Winners)
+}
+
+func (r *EntryRoute) generatedPath(reads *store.ReadSet) bool {
+	return r != nil && !r.Selected && r.Producer != (manifest.NamedResource{}) &&
+		reads.GeneratedDocument(r.Producer)
 }
 
 // PublishEntry MUST receive a completed immutable route from the entry qualification owner.
@@ -22,7 +60,7 @@ func (s *Session) PublishEntry(route *EntryRoute) {
 		return
 	}
 	previous := s.entry.Load()
-	if previous == route || previous != nil && route != nil && *previous == *route {
+	if previous.equal(route) {
 		return
 	}
 	s.entry.Store(route)
@@ -35,6 +73,22 @@ func (s *Session) EntryReplay(id manifest.NamedResource) bool {
 	}
 	route := s.entry.Load()
 	return route != nil && route.Replay == id
+}
+
+// QualifiedEntryReach borrows the evidence for the current qualification candidate.
+func (s *Session) QualifiedEntryReach(id manifest.NamedResource) func([]manifest.BaseManifest) bool {
+	if s != nil {
+		route := s.entry.Load()
+		if route != nil && route.Reach != nil && route.Reach.Producer == id {
+			reach := route.Reach
+			return func(objects []manifest.BaseManifest) bool {
+				possible := reach.Possible(objects)
+				current := s.entry.Load()
+				return possible || current == nil || current.Reach != reach
+			}
+		}
+	}
+	return nil
 }
 
 func (a *Admission) entrySupported() bool {

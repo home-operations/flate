@@ -117,7 +117,7 @@ func TestExecution_PreparationTransferDistinctOwners(t *testing.T) {
 
 func TestExecution_PreparationTransferGuards(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"same", "resource", "declaration"} {
+	for _, change := range []string{"same", "resource", "declaration", "pending declaration"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -135,13 +135,27 @@ func TestExecution_PreparationTransferGuards(t *testing.T) {
 			if change == "declaration" {
 				current.Path = "after"
 			}
-			next.InitProbe(controller, current)
+			if change == "pending declaration" {
+				previous.RetainPreparation = true
+				var pending Execution
+				pending.Init(controller, current.Named())
+				defer pending.Close()
+				pending.Take(schedule.Result{Assessment: &previous})
+				assert.Equal(t, pending.declaration == nil, true)
+				assert.Equal(t, previous.preparation == nil, true)
+				next.InitProbe(controller, current)
+				next.Take(schedule.Result{Assessment: &pending})
+				assert.Equal(t, pending.preparation == nil, true)
+			} else {
+				next.InitProbe(controller, current)
+				next.Take(schedule.Result{Assessment: &previous})
+			}
 			defer next.Close()
-			next.Take(schedule.Result{Assessment: &previous})
 			var destination Preparation[string]
 			got := next.Prepare(&destination, nil, func(value *string) bool { return *value != "" })
-			assert.Equal(t, *got == "retained", change == "same")
-			assert.Equal(t, holder.value == "", change == "same")
+			retained := change == "same" || change == "pending declaration"
+			assert.Equal(t, *got == "retained", retained)
+			assert.Equal(t, holder.value == "", retained)
 		})
 	}
 }

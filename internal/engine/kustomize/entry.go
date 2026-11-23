@@ -16,14 +16,15 @@ import (
 
 // EntryEvidence retains the accepted producer inventory that qualified an entry application.
 type EntryEvidence struct {
-	Producer    manifest.NamedResource                                      `json:"Producer"`
-	Application map[string]any                                              `json:"Application"`
-	Root        manifest.NamedResource                                      `json:"Root"`
-	Owner       manifest.NamedResource                                      `json:"Owner"`
-	Records     iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
-	Receipt     *manifest.RenderReceipt                                     `json:"Receipt"`
-	Inputs      []EntryInput                                                `json:"Inputs"`
-	Renders     []*manifest.RenderReceipt                                   `json:"Renders"`
+	GeneratedEntry bool                                                        `json:"GeneratedEntry"`
+	Producer       manifest.NamedResource                                      `json:"Producer"`
+	Application    map[string]any                                              `json:"Application"`
+	Root           manifest.NamedResource                                      `json:"Root"`
+	Owner          manifest.NamedResource                                      `json:"Owner"`
+	Records        iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
+	Receipt        *manifest.RenderReceipt                                     `json:"Receipt"`
+	Inputs         []EntryInput                                                `json:"Inputs"`
+	Renders        []*manifest.RenderReceipt                                   `json:"Renders"`
 }
 
 // EntryInput binds one resolved qualification input to owner-derived content.
@@ -120,11 +121,12 @@ func (c *TreeCache) ApplicationReceipt(
 		Producer: evidence.Producer,
 		Owner:    evidence.Owner,
 		Application: entryApplication{
-			Application: evidence.Application,
-			Root:        evidence.Root,
-			Reads:       reads.snapshot(),
-			Inputs:      inputs,
-			Complete:    true,
+			Application:    evidence.Application,
+			Root:           evidence.Root,
+			Reads:          reads.snapshot(),
+			Inputs:         inputs,
+			Complete:       true,
+			GeneratedEntry: evidence.GeneratedEntry,
 		},
 	}
 	frame, err := sourcecache.NewFrame("kustomize-entry", snapshot, nil)
@@ -149,7 +151,7 @@ func equalEntryApplication(a, b any) bool {
 	left, right := x.Application, y.Application
 	bound := x.Key == y.Key && x.Binding == y.Binding && x.Producer == y.Producer && x.Owner == y.Owner
 	application := left.Complete && right.Complete && left.Root == right.Root &&
-		manifest.ValueEqual(left.Application, right.Application)
+		left.GeneratedEntry == right.GeneratedEntry && manifest.ValueEqual(left.Application, right.Application)
 	inputs := slices.Equal(left.Reads.Files, right.Reads.Files) &&
 		slices.EqualFunc(left.Inputs, right.Inputs, equalEntryInput)
 	return bound && application && inputs && x.publication.Identity() == y.publication.Identity()
@@ -191,12 +193,20 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 	return evidence.Receipt != nil && ctx.Err() == nil
 }
 
+// EntryOccurrence identifies the declaration that an entry receipt qualifies.
+type EntryOccurrence struct {
+	File     string
+	Document int
+	Item     int
+}
+
 type entryApplication struct {
-	Root        manifest.NamedResource `json:"Root"`
-	Application map[string]any         `json:"Application"`
-	Reads       readSetSnapshot        `json:"Reads"`
-	Inputs      []EntryInput           `json:"Inputs"`
-	Complete    bool                   `json:"Complete"`
+	Root           manifest.NamedResource `json:"Root"`
+	Application    map[string]any         `json:"Application"`
+	Reads          readSetSnapshot        `json:"Reads"`
+	Inputs         []EntryInput           `json:"Inputs"`
+	Complete       bool                   `json:"Complete"`
+	GeneratedEntry bool                   `json:"GeneratedEntry"`
 }
 
 type entrySnapshot struct {
@@ -215,9 +225,10 @@ func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (rende
 		return renderRequest{}, err
 	}
 	prepared.key = manifest.Fingerprint(struct {
-		EntryPath string
-		Source    sourcecache.RenderBinding[renderPolicy]
-	}{manifest.NormalizeClaimBase(req.SubPath), prepared.binding})
+		EntryPath   string
+		Source      sourcecache.RenderBinding[renderPolicy]
+		Occurrences []EntryOccurrence `json:",omitempty"`
+	}{manifest.NormalizeClaimBase(req.SubPath), prepared.binding, req.EntryOccurrences})
 	req.Work.Fingerprint(prepared.key)
 	return prepared, nil
 }
@@ -286,9 +297,12 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 		return EntryEvidence{}
 	}
 	valid, err := application.Reads.localsValid(ctx, req.Source.FS, false)
+	work := req.Work.Attribution().Record(manifest.WorkValidation, "entry-receipt")
 	if err != nil || !valid {
+		work.Add(&manifest.WorkCounts{Attempts: 1, Failures: 1})
 		return EntryEvidence{}
 	}
+	work.Add(&manifest.WorkCounts{Attempts: 1, Completed: 1})
 	return snapshot.evidence()
 }
 
@@ -296,12 +310,13 @@ func (s *entrySnapshot) evidence() EntryEvidence {
 	application := s.Application
 	records, _ := s.publication.Frame().History(s.Owner, s)
 	return EntryEvidence{
-		Producer:    s.Producer,
-		Application: application.Application,
-		Root:        application.Root,
-		Owner:       s.Owner,
-		Records:     records,
-		Inputs:      application.Inputs,
-		Receipt:     manifest.NewRenderReceipt(*s, equalEntryApplication),
+		GeneratedEntry: application.GeneratedEntry,
+		Producer:       s.Producer,
+		Application:    application.Application,
+		Root:           application.Root,
+		Owner:          s.Owner,
+		Records:        records,
+		Inputs:         application.Inputs,
+		Receipt:        manifest.NewRenderReceipt(*s, equalEntryApplication),
 	}
 }

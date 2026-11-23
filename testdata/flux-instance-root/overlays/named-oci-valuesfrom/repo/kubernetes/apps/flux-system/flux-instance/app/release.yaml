@@ -1,0 +1,33 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: flux-instance}
+spec:
+  interval: 10m
+  chartRef: {kind: OCIRepository, name: flux-instance}
+  valuesFrom:
+    - {kind: ConfigMap, name: flux-instance-sync}
+  values:
+    instance:
+      distribution: {version: 2.6.x}
+      cluster: {multitenant: true}
+      sync: {url: https://example.invalid/fixture, ref: refs/heads/main}
+      kustomize:
+        patches:
+          - target: {kind: Kustomization, name: flux-system, namespace: flux-system}
+            patch: |
+              - op: add
+                path: /spec/patches
+                value:
+                  - target: {kind: Kustomization, name: plex, namespace: default}
+                    patch: |
+                      - op: add
+                        path: /spec/patches
+                        value:
+                          - target: {kind: HelmRelease, name: plex, namespace: default}
+                            patch: |
+                              - op: add
+                                path: /spec/upgrade
+                                value: {strategy: {name: RemediateOnFailure}}
+                              - op: add
+                                path: /spec/values
+                                value: {strategy: RemediateOnFailure}

@@ -1,0 +1,17 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: flux-instance, namespace: flux-system}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/flux-instance
+      sourceRef: {kind: GitRepository, name: flux-system}
+  values:
+    instance:
+      sync:
+        kind: GitRepository
+        name: flux-system
+        url: https://example.invalid/cluster.git
+        ref: refs/heads/main
+        path: ./clusters/test

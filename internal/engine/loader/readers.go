@@ -601,7 +601,7 @@ func (rf *readerFinalizer) observeChart(
 		return nil
 	}
 	rf.templateWalks[key] = true
-	rf.retainTemplateProjection(reader.Reader, &refs)
+	rf.loader.retainTemplateProjection(reader.Reader, &refs)
 	{
 		inputValues := refs.Inputs
 		for inputIndex := range inputValues {
@@ -714,27 +714,6 @@ func (rf *readerFinalizer) appendEntryInputs(inputs []string, visits []graphVisi
 		}
 	}
 	return inputs
-}
-
-func (rf *readerFinalizer) retainTemplateProjection(
-	consumer manifest.NamedResource,
-	refs *manifest.TemplateProjection,
-) {
-	if len(refs.Targets)+len(refs.Objects) != 0 {
-		if rf.loader.templateProjections == nil {
-			rf.loader.templateProjections = map[manifest.NamedResource]manifest.TemplateProjection{}
-		}
-		projection := rf.loader.templateProjections[consumer]
-		for _, target := range refs.Targets {
-			if !slices.ContainsFunc(projection.Targets, func(known manifest.ProducerTarget) bool {
-				return known.NamedResource == target.NamedResource
-			}) {
-				projection.Targets = append(projection.Targets, target)
-			}
-		}
-		projection.Objects = append(projection.Objects, refs.Objects...)
-		rf.loader.templateProjections[consumer] = projection
-	}
 }
 
 func (rf *readerFinalizer) observeRepositories(

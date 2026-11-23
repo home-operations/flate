@@ -3,6 +3,7 @@ package discovery
 import (
 	"cmp"
 	"context"
+	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
@@ -12,12 +13,39 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (w *qualificationWalk) advance(ctx context.Context, hadCandidates bool) error {
+	a, q := w.admission, w.q
+	w.prepareProjectedOperands()
+	if !q.closed && a.entryDemand && (len(q.packages) != 0 || len(q.active) != 0) {
+		if err := w.advanceOperands(ctx); err != nil {
+			return err
+		}
+		if q.pending || w.enoughMatches() {
+			if q.pending {
+				q.matches, q.winners = nil, nil
+			}
+			return nil
+		}
+	}
+	if err := w.visitPublishedRoots(ctx); err != nil {
+		return err
+	}
+	lostMatch := !q.pending && len(q.matches) == 0 && hadCandidates
+	fullMatch := w.enoughMatches() && q.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
+	if q.closed || lostMatch || fullMatch {
+		if err := w.observe(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (w *qualificationWalk) advanceOperands(ctx context.Context) error {
 	q := w.q
 	if err := w.observe(ctx); err != nil {
 		return err
 	}
-	if q.pending {
+	if q.pending || w.selectedTargetsReached() {
 		return nil
 	}
 	q.operandsSettled = false
@@ -27,18 +55,15 @@ func (w *qualificationWalk) advanceOperands(ctx context.Context) error {
 	}
 	before := len(q.active)
 	for _, operands := range q.packages {
-		if q.changedOnly && len(operands) > 1 {
-			ranked, err := w.rankEntryOperands(ctx, operands)
-			if err != nil {
-				return err
-			}
-			operands = ranked
+		ranked, err := w.rankEntryOperands(ctx, operands)
+		if err != nil {
+			return err
 		}
-		w.admitOperandPackage(operands)
+		w.admitOperandPackage(ranked)
 	}
 	q.packages = nil
 	if len(q.active) > before {
-		if q.changedOnly {
+		if q.changedOnly || len(w.admission.entryTargets) != 0 {
 			q.candidates = []manifest.NamedResource{q.active[before]}
 		} else {
 			q.candidates = slices.Clone(q.active[before:])
@@ -63,6 +88,9 @@ func (w *qualificationWalk) advanceOperands(ctx context.Context) error {
 func (w *qualificationWalk) rankEntryOperands(
 	ctx context.Context, operands []selection.OccurrenceFacts,
 ) ([]selection.OccurrenceFacts, error) {
+	if !w.q.changedOnly || len(operands) <= 1 {
+		return operands, nil
+	}
 	hints := make(map[manifest.NamedResource]int)
 	for i := range operands {
 		operand := &operands[i]
@@ -86,6 +114,82 @@ func (w *qualificationWalk) rankEntryOperands(
 		return cmp.Compare(hints[b.Identity], hints[a.Identity])
 	})
 	return ranked, nil
+}
+
+func (w *qualificationWalk) prepareProjectedOperands() {
+	a, q := w.admission, w.q
+	if len(a.entryTargets) != 0 {
+		a.entryChanged = slices.ContainsFunc(a.changedApplications, w.projectedApplication)
+	}
+	if q.closed || len(q.active) != 0 {
+		return
+	}
+	changedPath := a.entryDemand && len(q.packages) == 0 && q.session != nil && q.session.cfg.Selection.Changed
+	if len(a.entryTargets) == 0 && !changedPath {
+		return
+	}
+	qualifies := w.projectedApplication
+	if len(a.entryTargets) == 0 {
+		direct := *w
+		direct.projectedTargets = w.changedDefinitionTargets()
+		qualifies = func(object manifest.BaseManifest) bool {
+			projection := projectedPatch(object)
+			if !projection.valid {
+				return false
+			}
+			if projection.patches {
+				return w.projectedApplication(object)
+			}
+			return len(direct.projectedTargets) != 0 && direct.projectedApplication(object)
+		}
+	}
+	if operands := w.projectedOperands(qualifies); len(operands) != 0 {
+		q.packages = [][]selection.OccurrenceFacts{operands}
+	}
+}
+
+func (w *qualificationWalk) projectedOperands(qualifies func(manifest.BaseManifest) bool) []selection.OccurrenceFacts {
+	loader := w.q.loader
+	projections := loader.SourceFacts(manifest.BootstrapSourceID, w.reads).Context.TemplateProjections
+	if len(projections) == 0 {
+		return nil
+	}
+	var operands []selection.OccurrenceFacts
+	seen := make(map[manifest.NamedResource]bool)
+	visited := make(map[manifest.NamedResource]bool)
+	for producer, projection := range projections {
+		if !slices.ContainsFunc(projection.Objects, qualifies) &&
+			(len(projection.Objects) == 0 || !w.projectedValuesMayChange(loader.CatalogObject(producer))) {
+			continue
+		}
+		clear(visited)
+		id := producer
+		for !visited[id] {
+			record, known := loader.Index.Lookup(id)
+			if !known || record.Parent == (manifest.NamedResource{}) || record.Parent.ReportHidden() {
+				break
+			}
+			visited[id] = true
+			id = record.Parent
+		}
+		if visited[id] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		occurrence, known := loader.Occurrence(id)
+		if !known || !occurrence.Located || occurrence.Mounted == nil ||
+			!safepath.Contains(
+				w.admission.input.OriginPath(w.admission.path),
+				occurrence.Mounted.OriginPath(
+					filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File),
+				),
+			) {
+			continue
+		}
+		operands = append(operands, occurrence)
+	}
+	slices.SortFunc(operands, func(a, b selection.OccurrenceFacts) int { return a.Identity.Compare(b.Identity) })
+	return operands
 }
 
 func (w *qualificationWalk) visitActiveOperands(ctx context.Context) (manifest.NamedResource, error) {
@@ -119,7 +223,7 @@ func (w *qualificationWalk) visitActiveOperands(ctx context.Context) (manifest.N
 		evidence := applicationEvidence{object: obj, root: id}
 		w.captureOwner(&evidence)
 		_, err := w.visit(ctx, &evidence)
-		if err != nil || q.pending {
+		if err != nil || q.pending || w.selectedTargetsReached() {
 			return failed, err
 		}
 	}
@@ -163,8 +267,8 @@ func (w *qualificationWalk) visitPublishedRoots(ctx context.Context) error {
 			continue
 		}
 		q.root = evidence.object.Named()
-		matched, err := w.visit(ctx, evidence)
-		if err != nil || matched || q.pending {
+		_, err = w.visit(ctx, evidence)
+		if err != nil || w.enoughMatches() || q.pending {
 			return err
 		}
 	}
@@ -177,8 +281,8 @@ func (w *qualificationWalk) visitPublishedRoots(ctx context.Context) error {
 	}
 	for _, frame := range inventories {
 		batch := qualificationBatch{children: frame.children, private: true}
-		matched, err := w.follow(ctx, &batch, manifest.NamedResource{})
-		if err != nil || matched || q.pending {
+		_, err := w.follow(ctx, &batch, manifest.NamedResource{})
+		if err != nil || w.enoughMatches() || q.pending {
 			return err
 		}
 	}

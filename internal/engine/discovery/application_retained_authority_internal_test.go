@@ -606,6 +606,10 @@ func testBindEntryPackageRootOrder(t *testing.T) {
 			if first == second {
 				second = "z"
 			}
+			partialRoot := &manifest.Kustomization{Name: second, Namespace: "apps", Path: "./entry"}
+			st.RecordEmitted(owners[second], &store.Emission{
+				Children: []store.Child{{Obj: partialRoot, VisibleGeneration: true}},
+			}, nil)
 			for index, name := range [2]string{first, second} {
 				winner := &manifest.Kustomization{Name: name, Namespace: "apps", Path: "./entry"}
 				st.RecordEmitted(owners[name], &store.Emission{

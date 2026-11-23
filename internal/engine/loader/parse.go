@@ -614,7 +614,7 @@ func applicationView(objects []parsedObject, coverage, intent manifest.DocumentR
 	return applications
 }
 
-func parsedApplication(child *parsedObject) bool {
+func parsedFactObject(child *parsedObject) manifest.BaseManifest {
 	object := child.Obj
 	if child.fact != nil {
 		object = child.fact.object
@@ -622,6 +622,10 @@ func parsedApplication(child *parsedObject) bool {
 			object = child.fact.facts.catalog
 		}
 	}
-	_, valid := manifest.ApplicationFor(object)
+	return object
+}
+
+func parsedApplication(child *parsedObject) bool {
+	_, valid := manifest.ApplicationFor(parsedFactObject(child))
 	return child.outcome.Err != nil || valid
 }

@@ -383,7 +383,7 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	session, err := beginTest(t.Context(), cfg)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Load(), before)
-	assert.NoError(t, session.refreshDeclarations(t.Context(), root))
+	assert.NoError(t, session.refreshDeclarations(t.Context(), root, false))
 	assert.Equal(t, reads.Load(), before)
 	assert.Equal(t, requiredReads.Load(), int64(2))
 	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}

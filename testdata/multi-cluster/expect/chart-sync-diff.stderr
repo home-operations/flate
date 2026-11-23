@@ -1,0 +1,18 @@
+
+  ⚠ warnings (6)
+    [ConflictingProducers] orig snapshot: HelmRelease clusters/main: flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] orig snapshot: OCIRepository clusters/main: flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] orig snapshot: PrometheusRule clusters/main: flux-system/flux-instance-rules: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] current snapshot: HelmRelease clusters/main: flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] current snapshot: OCIRepository clusters/main: flux-system/flux-instance: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+    [ConflictingProducers] current snapshot: PrometheusRule clusters/main: flux-system/flux-instance-rules: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance, Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-system
+
+  clusters/main: ✓ 0 failed
+
+  clusters/test: ✓ 0 failed

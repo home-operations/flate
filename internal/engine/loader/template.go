@@ -23,11 +23,56 @@ func (l *Loader) projectTemplates() {
 		if len(productions) == 0 {
 			continue
 		}
-		objects := append(slices.Clone(occurrence.facts.templateObjects), l.templateProjections[owner].Objects...)
-		for _, object := range objects {
+		l.retainTemplateProjection(owner, &manifest.TemplateProjection{Objects: occurrence.facts.templateObjects})
+		for _, object := range l.templateProjections[owner].Objects {
 			l.projectTemplate(owner, parent.File, object, productions)
 		}
 	}
+}
+
+func (l *Loader) retainTemplateProjection(consumer manifest.NamedResource, refs *manifest.TemplateProjection) {
+	if len(refs.Targets)+len(refs.Objects) == 0 {
+		return
+	}
+	if l.templateProjections == nil {
+		l.templateProjections = map[manifest.NamedResource]manifest.TemplateProjection{}
+	}
+	projection := l.templateProjections[consumer]
+	for _, target := range refs.Targets {
+		if !slices.ContainsFunc(projection.Targets, func(known manifest.ProducerTarget) bool {
+			return known.NamedResource == target.NamedResource
+		}) {
+			projection.Targets = append(projection.Targets, target)
+		}
+	}
+	projection.Objects = mergeProjectedObjects(projection.Objects, refs.Objects)
+	l.templateProjections[consumer] = projection
+}
+
+// ProjectedObjects borrows the combined declaration and chart projections for one producer.
+func (l *Loader) ProjectedObjects(producer manifest.BaseManifest) []manifest.BaseManifest {
+	id := producer.Named()
+	indexed := l.templateProjections[id].Objects
+	if occurrence, known := l.catalogOccurrence(id); known && occurrence.object == producer && occurrence.facts != nil {
+		return mergeProjectedObjects(indexed, occurrence.facts.templateObjects)
+	}
+	return mergeProjectedObjects(indexed, l.ProducerFacts(producer).Occurrence.TemplateObjects)
+}
+
+func mergeProjectedObjects(indexed, candidates []manifest.BaseManifest) []manifest.BaseManifest {
+	objects := indexed
+	for _, object := range candidates {
+		if slices.ContainsFunc(objects, func(known manifest.BaseManifest) bool {
+			return manifest.Equal(known, object)
+		}) {
+			continue
+		}
+		if len(objects) == len(indexed) {
+			objects = slices.Clone(indexed)
+		}
+		objects = append(objects, object)
+	}
+	return objects
 }
 
 func (l *Loader) templateProductions(
@@ -75,7 +120,8 @@ func (l *Loader) projectTemplate(
 		object = object.WithNamespace(owner.Namespace)
 		id = object.Named()
 	}
-	if id == owner {
+	// A values projection carries a possible application without an emitted identity.
+	if id == owner || id.Name == "" {
 		return
 	}
 	previous, known := l.Index.Lookup(id)

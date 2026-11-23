@@ -2,6 +2,7 @@ package helm
 
 import (
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
@@ -23,6 +24,8 @@ func TestPreparation_Matches(t *testing.T) {
 	assert.NoError(t, err)
 	changed := hr.Clone()
 	changed.TargetNamespace = "other"
+	patched := hr.Clone()
+	patched.Interval.Duration += time.Minute
 	policy := input
 	policy.SkipTests = true
 	for _, tc := range []struct {
@@ -39,7 +42,8 @@ func TestPreparation_Matches(t *testing.T) {
 		{"equal declaration", &preparation, client, hr.Clone(), &input, true},
 		{"different client", &preparation, nil, hr, &input, false},
 		{"missing declaration", &preparation, client, nil, &input, false},
-		{"different declaration", &preparation, client, changed, &input, false},
+		{"different render inputs", &preparation, client, changed, &input, false},
+		{"reconcile policy only", &preparation, client, patched, &input, true},
 		{"different policy", &preparation, client, hr, &policy, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

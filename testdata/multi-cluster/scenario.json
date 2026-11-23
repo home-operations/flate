@@ -148,6 +148,18 @@
       "time": "2000-01-01T00:00:00Z",
       "parents": [],
       "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "chart-sync",
+      "overlay": "chart-sync",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
     }
   ],
   "overlays": [
@@ -220,6 +232,14 @@
     {
       "name": "shared-member",
       "directory": "overlays/shared-member"
+    },
+    {
+      "name": "chart-sync",
+      "directory": "overlays/chart-sync"
+    },
+    {
+      "name": "chart-sync-edit",
+      "directory": "overlays/chart-sync-edit"
     }
   ],
   "cases": [
@@ -1401,6 +1421,140 @@
           }
         }
       ]
+    },
+    {
+      "name": "chart-sync",
+      "description": "Partition cluster paths before rendering each chart-emitted sync root.",
+      "setup": [
+        {
+          "commit": "chart-sync"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--only-kinds=ConfigMap,Kustomization",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-sync-build.stdout",
+              "stderr": "expect/chart-sync-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/chart-sync-test.stdout",
+              "stderr": "expect/chart-sync-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "chart-sync-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:chart-sync@@"
+            ],
+            "expect": {
+              "stdout": "expect/chart-sync-diff.stdout",
+              "stderr": "expect/chart-sync-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-sync-overlap",
+      "description": "Keep both producer claims when the authored producer installs its own sync root.",
+      "setup": [
+        {
+          "commit": "chart-sync"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/main",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--only-kinds=HelmRelease,OCIRepository,PrometheusRule"
+            ],
+            "expect": {
+              "stdout": "expect/chart-sync-overlap-build.stdout",
+              "stderr": "expect/chart-sync-overlap-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -2411,6 +2565,190 @@
         "shared-member"
       ],
       "purpose": "Complete cluster output for the authored package topology."
+    },
+    {
+      "path": "overlays/chart-sync/repo/charts/flux-instance/Chart.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Declare the offline chart."
+    },
+    {
+      "path": "overlays/chart-sync/repo/charts/flux-instance/templates/instance.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Render the configured sync path into a FluxInstance."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/main/info.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Give the cluster its own value."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/main/apps.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Apply the cluster-specific workload."
+    },
+    {
+      "path": "overlays/chart-sync/repo/apps/main/kustomization.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Include the cluster workload."
+    },
+    {
+      "path": "overlays/chart-sync/repo/apps/main/workload.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Show which cluster value the application receives."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/main/flux-instance.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Apply the package that produces the chart-emitted instance."
+    },
+    {
+      "path": "overlays/chart-sync-edit/repo/clusters/main/info.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Edit the main cluster value."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/main/flux-instance/resources.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Declare the HelmRelease and the documents that its two parents both apply."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/main/flux-instance/kustomization.yaml",
+      "cases": [
+        "chart-sync",
+        "chart-sync-overlap"
+      ],
+      "purpose": "Include the nested package in both inventories."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/test/info.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Give the cluster its own value."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/test/apps.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Apply the cluster-specific workload."
+    },
+    {
+      "path": "overlays/chart-sync/repo/apps/test/kustomization.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Include the cluster workload."
+    },
+    {
+      "path": "overlays/chart-sync/repo/apps/test/workload.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Show which cluster value the application receives."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/test/flux-instance.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Apply the package that produces the chart-emitted instance."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/test/flux-instance/resources.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Declare the HelmRelease and the documents that its two parents both apply."
+    },
+    {
+      "path": "overlays/chart-sync/repo/clusters/test/flux-instance/kustomization.yaml",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Include the nested package in both inventories."
+    },
+    {
+      "path": "expect/chart-sync-build.stdout",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-build.stderr",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-test.stdout",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-test.stderr",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-diff.stdout",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-diff.stderr",
+      "cases": [
+        "chart-sync"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-overlap-build.stdout",
+      "cases": [
+        "chart-sync-overlap"
+      ],
+      "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "expect/chart-sync-overlap-build.stderr",
+      "cases": [
+        "chart-sync-overlap"
+      ],
+      "purpose": "Record all output for the invocation."
     }
   ]
 }

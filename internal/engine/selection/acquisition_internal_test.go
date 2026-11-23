@@ -2,6 +2,7 @@ package selection
 
 import (
 	"iter"
+	"path/filepath"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -201,6 +202,50 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			assert.Equal(t, proposal.EntryReceipt != nil, tc.want)
+		})
+	}
+}
+
+func TestAdmission_EntryReceiptReachesIndexedWorkloadHistory(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		name, file         string
+		history, generated bool
+		want               bool
+	}{
+		{name: "entry", file: "entry/workload.yaml", history: true, generated: true, want: true},
+		{name: "unrelated", file: "other/workload.yaml", history: true, generated: true},
+		{name: "no evidence", file: "entry/workload.yaml", generated: true},
+		{name: "other application", file: "entry/workload.yaml", history: true},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			workload := &manifest.Kustomization{Name: "workload", Namespace: "apps", Path: "./workload"}
+			occurrence := applicationOccurrence(workload, root)
+			occurrence.Declaration.File = fixture.file
+			facts := &solverFacts{
+				store: st, context: SourceContext{Root: root, EntryPath: filepath.Join(root, "entry")},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{workload.Named(): occurrence},
+			}
+			session, err := New(st, facts, Request{Changed: true})
+			assert.NoError(t, err)
+			entry := &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"}
+			session.PublishEntry(&EntryRoute{
+				Application: entry, Previous: testutil.KustomizationID("apps", "previous"),
+				PreviousGeneratedEntry: fixture.generated,
+			})
+			var history []manifest.SourceEvidence
+			if fixture.history {
+				history = []manifest.SourceEvidence{{Path: "workload/changed.yaml"}}
+			}
+			proposal, err := session.prepareTest(t.Context(), PrepareRequest{
+				HistoryOwners: map[manifest.NamedResource][]manifest.SourceEvidence{workload.Named(): history},
+			})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, proposal.EntryReceipt != nil, fixture.want)
 		})
 	}
 }

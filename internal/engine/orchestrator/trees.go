@@ -443,6 +443,7 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 	if other != nil {
 		other.cfg.ExternalChanges = resolved
 		current.bindKustomizeInputs(ctx, other, resolved)
+		current.session.CompareEntryApplications(other.session, resolved, !r.Config.HeadOnly)
 	}
 	return ctx.Err()
 }
@@ -680,6 +681,7 @@ func (r *Invocation) installAdmission(ctx context.Context) {
 }
 
 func (r *Invocation) renderTrees(ctx context.Context) {
+	paired := r.renderEntryPairs(ctx)
 	for i := range r.results {
 		o := r.results[i].Orchestrator
 		if o == nil {
@@ -689,6 +691,9 @@ func (r *Invocation) renderTrees(ctx context.Context) {
 			r.results[i].Result = &Result{Work: o.freezeWork()}
 			o.stop()
 			r.results[i].Orchestrator = nil
+			continue
+		}
+		if paired[i] {
 			continue
 		}
 		r.wg.Go(func() {
@@ -705,14 +710,19 @@ func (r *Invocation) renderTrees(ctx context.Context) {
 					return
 				}
 			}
-			result, failure := o.collectResult(ctx, o.run(ctx))
-			r.results[i].Result = result
-			if failure != nil {
-				r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
-			}
+			r.collectTree(ctx, i, o.run(ctx))
 		})
 	}
 	r.wg.Wait()
+}
+
+func (r *Invocation) collectTree(ctx context.Context, i int, runErr error) {
+	rendered := &r.results[i]
+	result, failure := rendered.collectResult(ctx, runErr)
+	rendered.Result = result
+	if failure != nil {
+		rendered.Err = &treeError{id: rendered.ID, err: failure, attributed: len(r.results) > 1}
+	}
 }
 
 func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.SourceArtifact]*change.Set) error {

@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"cmp"
 	"iter"
 	"path/filepath"
 	"slices"
@@ -186,7 +187,7 @@ func (c *admissionClosure) bootstrapInputRequired(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) bool {
-	if owner.Object == nil {
+	if owner.Object == nil || record.Parent != owner.Identity && !c.coversDeclaration(owner, id) {
 		return false
 	}
 	for ref := range manifest.References(owner.Object, manifest.ReferenceRelations) {
@@ -194,18 +195,18 @@ func (c *admissionClosure) bootstrapInputRequired(
 			continue
 		}
 		if ref.NamedResource == id {
-			return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
+			return true
 		}
 		input := c.record(ref.NamedResource)
 		productions := c.productions(ref.NamedResource)
 		if len(input.Productions) == 0 && len(productions) == 0 && input.Parent == id {
-			return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
+			return true
 		}
 		for i := range productions {
 			production := &productions[i]
 			if (production.Materializer(ref.NamedResource) == id || production.Declaration == id) &&
 				c.bootstrapProductionCurrent(ref.NamedResource, production) {
-				return record.Parent == owner.Identity || c.coversDeclaration(owner, id)
+				return true
 			}
 		}
 	}
@@ -270,6 +271,9 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 	if declared.Known && declared.Changed {
 		return false
 	}
+	if stability := c.generatedDeclarationStability(id, owner, object); stability.known {
+		return stability.stable
+	}
 	if declared.Known &&
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
 		return true
@@ -291,6 +295,51 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 		record.File != record.Builder &&
 		record.Declaration != nil &&
 		manifest.Equal(record.Declaration, object)
+}
+
+func (c *admissionClosure) generatedDeclarationStability(
+	id, owner manifest.NamedResource, object manifest.BaseManifest,
+) declarationStability {
+	if c.session.entryComparisonComplete && c.entryDeclarationChanged(owner, c.object(owner)) {
+		return declarationStability{known: true}
+	}
+	route := c.proposal.entry
+	if route == nil || (!route.ProjectedPatches && !c.session.entryComparisonPending) || !c.session.request.Changed {
+		return declarationStability{}
+	}
+	if !c.session.request.Matches(manifest.NamedResource{}) || object == nil ||
+		!c.role(owner).dirty || c.ownerDeclarationStable(id, owner) {
+		return declarationStability{}
+	}
+	if c.session.entryComparisonPending {
+		return declarationStability{known: true, stable: true}
+	}
+	// An effective declaration can change while its authored file remains stable.
+	occurrence, _ := c.catalogOccurrence(id)
+	equal, err := manifest.OutputEqual(cmp.Or(occurrence.Object, occurrence.Catalog), object, [2]map[string]any{})
+	return declarationStability{known: true, stable: err == nil && equal}
+}
+
+func (c *admissionClosure) ownerDeclarationStable(id, owner manifest.NamedResource) bool {
+	state := c.states[id]
+	if state.comparingDeclaration {
+		return false
+	}
+	state.comparingDeclaration = true
+	c.states[id] = state
+	generated := c.proposal.reads.GeneratedDocument(owner)
+	stable := !slices.ContainsFunc(c.productions(owner), func(proof manifest.Production) bool {
+		if generated {
+			return proof.Declaration != owner && c.role(proof.Declaration).dirty
+		}
+		parent := proof.Materializer(owner)
+		return parent != id && parent != owner && c.role(parent).dirty &&
+			!c.unchangedDeclaration(owner, parent, c.object(owner))
+	})
+	state = c.states[id]
+	state.comparingDeclaration = false
+	c.states[id] = state
+	return stable
 }
 
 func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, owner *RootCoveringOwner) bool {
@@ -426,12 +475,7 @@ func (c *admissionClosure) extendProductionInput(
 				!c.declarationLocated(owner, c.objects) || !c.readerEmissionAllowed(target, owner) {
 				continue
 			}
-			if !c.materializerOutputMatches(
-				owner,
-				func(id manifest.NamedResource, _ manifest.BaseManifest, _ *manifest.DiscoveryRecord) bool {
-					return matchesMaterializerIdentity(target, id)
-				},
-			).include {
+			if !c.materializerOutputMatches(owner, target).include {
 				continue
 			}
 			c.qualifyProductionSource(&production)

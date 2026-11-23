@@ -212,6 +212,8 @@ func (d *admissionDriver) acquire(ctx context.Context) error {
 			result.Root, result.Available, err = d.session.facts.ResolveRoot(
 				ctx, demand.Reads, demand.Source, demand.Root,
 			)
+		case demand.Application != (OccurrenceID{}) && d.options.Stage == Construction:
+			continue
 		case demand.Occurrence.Identity != (manifest.NamedResource{}):
 			result.Child, err = d.session.facts.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
 			result.Available = result.Child.Obj != nil
@@ -277,6 +279,13 @@ func (s *Session) publishAdmission(ctx context.Context, proposal *Admission, sta
 		return nil, false
 	}
 	current := s.Snapshot()
+	if proposal.Revision != current.version() {
+		closure := &proposal.preparation.closure
+		if stage != Execution || closure.proposal != proposal || !closure.sameDecisionRoles(closure.decision, current) {
+			return nil, false
+		}
+		proposal.Revision = current.version()
+	}
 	next, included := current.include(proposal, stage == Execution)
 	if !s.publish(proposal, current, next) {
 		return nil, false

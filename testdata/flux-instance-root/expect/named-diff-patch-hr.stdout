@@ -1,0 +1,51 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "media",
+        "name": "plex",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "media",
+      "name": "plex",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "mode": "patched"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "plex",
+            "helm.toolkit.fluxcd.io/namespace": "media"
+          },
+          "name": "plex",
+          "namespace": "media"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "mode": "changed"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "plex",
+            "helm.toolkit.fluxcd.io/namespace": "media"
+          },
+          "name": "plex",
+          "namespace": "media"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

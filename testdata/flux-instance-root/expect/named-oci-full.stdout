@@ -1,0 +1,32 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "scope": "sibling"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "sibling",
+        "kustomize.toolkit.fluxcd.io/namespace": "default"
+      },
+      "name": "sibling",
+      "namespace": "default"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "strategy": "RemediateOnFailure"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "plex",
+        "helm.toolkit.fluxcd.io/namespace": "default"
+      },
+      "name": "plex",
+      "namespace": "default"
+    }
+  }
+]

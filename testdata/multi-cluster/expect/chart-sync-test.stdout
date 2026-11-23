@@ -1,0 +1,18 @@
+
+  ✓  Kustomization  clusters/main: flux-system/cluster-apps
+  ✓  Kustomization  clusters/main: flux-system/flux-instance
+  ✓  Kustomization  clusters/main: flux-system/flux-system
+  ✓  HelmRelease    clusters/main: flux-system/flux-instance
+  ‒  OCIRepository  clusters/main: flux-system/flux-instance  suspended
+
+  ✓  Kustomization  clusters/test: flux-system/cluster-apps
+  ✓  Kustomization  clusters/test: flux-system/flux-instance
+  ✓  Kustomization  clusters/test: flux-system/flux-system
+  ✓  HelmRelease    clusters/test: flux-system/flux-instance
+
+  clusters/main: ✓ 4 passed · 1 skipped
+
+  clusters/test: ✓ 4 passed
+
+Invocation totals
+  ✓ 8 passed · 1 skipped   <DUR>

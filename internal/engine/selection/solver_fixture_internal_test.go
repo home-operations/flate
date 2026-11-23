@@ -3,6 +3,7 @@ package selection
 import (
 	"context"
 	"path"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/engine/change"
@@ -329,4 +330,21 @@ func (*solverFacts) DeclarationContents() func(map[string]any) store.Declaration
 
 func (*solverFacts) ChartReadPaths(context.Context, *store.SourceArtifact, string) SourceReadPaths {
 	return SourceReadPaths{}
+}
+
+func applicationOccurrence(object manifest.BaseManifest, root string) OccurrenceFacts {
+	source, sourcePath, hasPath := object.SourcePath()
+	targets := manifest.ProducerTargets(object)
+	occurrence := OccurrenceFacts{
+		Declaration: OccurrenceID{Source: root}, Identity: object.Named(), Authored: object.Named(),
+		Catalog: manifest.CatalogObject(object, object.Named()), Witness: object, Located: true, CatalogKnown: true,
+		Source: source, Path: sourcePath, HasPath: hasPath, NeedsCandidates: manifest.ProducerNeedsCandidates(object),
+		Roots: slices.Collect(manifest.RenderRoots(object)), Targets: targets, AuthoredTargets: targets,
+	}
+	occurrence.Structural, _ = occurrence.Catalog.(*manifest.Kustomization)
+	if manifest.KindOf(object).Parent {
+		policy := object.EmissionPolicy()
+		occurrence.Policy = &policy
+	}
+	return occurrence
 }

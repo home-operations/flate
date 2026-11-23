@@ -1,0 +1,9 @@
+--- ExternalArtifact media/sonarr
++++ ExternalArtifact media/sonarr
+@@ -16,5 +16,5 @@
+     namespace: flux-system
+ status:
+   exportedInputs:
+-    release: media
++    release: refreshed
+ 

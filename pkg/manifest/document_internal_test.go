@@ -7,6 +7,7 @@ import (
 	"github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -32,12 +33,17 @@ func TestObjectDocument_Ownership(t *testing.T) {
 func TestExternalArtifact_RenderDocument(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
-		ref  *meta.NamespacedObjectKindReference
+		name   string
+		ref    *meta.NamespacedObjectKindReference
+		inputs map[string]*apiextensionsv1.JSON
 	}{
 		{name: "absent"},
 		{name: "local", ref: &meta.NamespacedObjectKindReference{Kind: "ArtifactGenerator", Name: "generator"}},
 		{name: "qualified", ref: &meta.NamespacedObjectKindReference{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "sources"}},
+		{name: "exported_inputs", inputs: map[string]*apiextensionsv1.JSON{
+			"nested": {Raw: []byte(`{"list":[true,null,{"integer":9007199254740993}]}`)},
+			"empty":  nil,
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -47,16 +53,30 @@ func TestExternalArtifact_RenderDocument(t *testing.T) {
 				Labels:      map[string]string{"capture": "value"},
 				Annotations: map[string]string{"annotation": "value"},
 				Spec:        sourcev1.ExternalArtifactSpec{SourceRef: tc.ref},
+				Status:      sourcev1.ExternalArtifactStatus{ExportedInputs: tc.inputs},
 			}
 			want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr)
 			assert.NoError(t, err)
 			delete(want, "status")
+			if tc.inputs != nil {
+				want["status"] = map[string]any{"exportedInputs": map[string]any{
+					"nested": map[string]any{
+						"list": []any{true, nil, map[string]any{"integer": int64(9007199254740993)}},
+					},
+					"empty": nil,
+				}}
+			}
 			delete(want["metadata"].(map[string]any), "creationTimestamp")
 			want["kind"], want["apiVersion"] = KindExternalArtifact, sourceAPIVersion
 			object := newExternalArtifact(cr)
 			got, err := object.RenderDocument()
 			assert.NoError(t, err)
 			assert.Diff(t, got, want)
+			parsed, err := ParseDoc(got, ParseDocOptions{})
+			assert.NoError(t, err)
+			again, err := parsed.Object.(*ExternalArtifact).RenderDocument()
+			assert.NoError(t, err)
+			assert.Diff(t, again, want)
 			got["metadata"].(map[string]any)["labels"].(map[string]any)["capture"] = "changed"
 			assert.Equal(t, object.Labels["capture"], "value")
 		})

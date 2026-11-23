@@ -1,0 +1,27 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: flux-system
+  uid: fixture
+spec:
+  sources:
+    - alias: repo
+      kind: GitRepository
+      name: repo
+  pathPattern: "@repo/kube/clusters/a/apps/{namespace}/{app}"
+  artifacts:
+    - name: "{app}"
+      namespace: "{namespace}"
+      inputsFrom: "@repo/kube/inputs/{namespace}/{app}.yaml"
+      copy:
+        - from: "@repo/kube/clusters/a/apps/{namespace}/{app}/**"
+          to: "@artifact/"
+        - from: "@repo/kube/base/{namespace}/{app}/**"
+          to: "@artifact/"
+          optional: true
+        - from: "@repo/kube/ci/{namespace}/{app}.yaml"
+          to: "@artifact/app/cloudbuild.yaml"
+          optional: true
+        - from: "@repo/kube/shared/**"
+          to: "@artifact/components/"

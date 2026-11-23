@@ -85,6 +85,25 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 			spec["artifacts"] = outputs
 		}, false},
 		{"duplicate_template_name", func(spec, _, output, _ map[string]any) { spec["artifacts"] = []any{output, output} }, false},
+		{"default_namespace_duplicate", func(spec, _, _, op map[string]any) {
+			spec["artifacts"] = append(spec["artifacts"].([]any), map[string]any{"name": "output", "namespace": "apps", "copy": []any{op}})
+		}, false},
+		{"same_name_across_namespaces", func(spec, _, _, op map[string]any) {
+			spec["artifacts"] = append(spec["artifacts"].([]any), map[string]any{"name": "output", "namespace": "other", "copy": []any{op}})
+		}, true},
+		{"invalid_namespace", func(_, _, output, _ map[string]any) { output["namespace"] = "not_valid" }, false},
+		{"long_authored_template", func(spec, _, output, _ map[string]any) {
+			spec["pathPattern"] = "@repo/{app}"
+			output["name"] = strings.Repeat("{app}", 204)
+			output["namespace"] = strings.Repeat("{app}", 204)
+		}, true},
+		{"inputs_known", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "@repo/settings.yaml" }, true},
+		{"inputs_artifact", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "@artifact/settings.yaml" }, true},
+		{"inputs_unknown_alias", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "@missing/settings.yaml" }, false},
+		{"inputs_empty_path", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "@repo/" }, false},
+		{"inputs_bad_selector", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "settings.yaml" }, false},
+		{"inputs_no_pattern", func(_, _, output, _ map[string]any) { output["inputsFrom"] = "@repo/{app}/settings.yaml" }, false},
+
 		{"output_name_required", func(_, _, output, _ map[string]any) { delete(output, "name") }, false},
 		{"output_name_at_cap", func(_, _, output, _ map[string]any) { output["name"] = strings.Repeat("a", 253) }, true},
 		{"output_name_over_cap", func(_, _, output, _ map[string]any) { output["name"] = strings.Repeat("a", 254) }, false},
@@ -96,7 +115,7 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 		{"selector_over_cap", func(_, _, output, _ map[string]any) { output["originRevision"] = "@" + strings.Repeat("a", 64) }, false},
 		{"selector_prefix", func(_, _, output, _ map[string]any) { output["revision"] = "repo" }, false},
 		{"unknown_revision", func(_, _, output, _ map[string]any) { output["revision"] = "@missing" }, false},
-		{"absent_origin_alias", func(_, _, output, _ map[string]any) { output["originRevision"] = "@missing" }, true},
+		{"absent_origin_alias", func(_, _, output, _ map[string]any) { output["originRevision"] = "@missing" }, false},
 		{"from_required", func(_, _, _, op map[string]any) { delete(op, "from") }, false},
 		{"from_at_cap", func(_, _, _, op map[string]any) { op["from"] = "@repo/" + strings.Repeat("a", 1018) }, true},
 		{"from_over_cap", func(_, _, _, op map[string]any) { op["from"] = "@repo/" + strings.Repeat("a", 1019) }, false},
@@ -156,7 +175,7 @@ func testArtifactGeneratorValidationCase(t *testing.T, testCaseInput *struct {
 	testCaseInput.edit(spec, source, output, op)
 	decoded, err := (&manifest.RawObject{Spec: spec}).ArtifactGeneratorSpec()
 	if err == nil {
-		err = validateSpec(&decoded)
+		err = validateSpec(&decoded, "apps")
 	}
 	assert.FatalIf(
 		t,

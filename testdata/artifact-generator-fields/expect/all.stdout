@@ -1,0 +1,66 @@
+---
+apiVersion: v1
+data:
+  value: common
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: sonarr
+    kustomize.toolkit.fluxcd.io/namespace: media
+  name: shared
+  namespace: media
+---
+apiVersion: v1
+data:
+  value: media
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: sonarr
+    kustomize.toolkit.fluxcd.io/namespace: media
+  name: sonarr
+  namespace: media
+---
+apiVersion: v1
+data:
+  value: ns1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: gateway
+    kustomize.toolkit.fluxcd.io/namespace: ns1
+  name: gateway
+  namespace: ns1
+---
+apiVersion: v1
+data:
+  value: common
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: gateway
+    kustomize.toolkit.fluxcd.io/namespace: ns1
+  name: shared
+  namespace: ns1
+---
+apiVersion: v1
+data:
+  value: ns2
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: gateway
+    kustomize.toolkit.fluxcd.io/namespace: ns2
+  name: gateway
+  namespace: ns2
+---
+apiVersion: v1
+data:
+  value: common
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: gateway
+    kustomize.toolkit.fluxcd.io/namespace: ns2
+  name: shared
+  namespace: ns2

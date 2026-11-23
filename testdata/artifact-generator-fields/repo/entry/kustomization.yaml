@@ -1,0 +1,1 @@
+resources: [repo.yaml, generator.yaml, media, ns1, ns2]

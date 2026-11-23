@@ -52,11 +52,14 @@ func (l *Loader) unownedProductionDeclaration(
 	}) {
 		return producerDeclaration{}, false
 	}
-	ownership := l.Index.OwnersOfFile(r.File)
-	if slices.ContainsFunc(append(ownership.Owners, ownership.Ancestors...), func(owner manifest.NamedResource) bool {
-		return owner != id
-	}) {
+	if hasOtherFileOwner(l.Index, id, r.File) {
 		return producerDeclaration{}, false
 	}
 	return declaration, true
+}
+
+func hasOtherFileOwner(index *manifest.DiscoveryIndex, id manifest.NamedResource, file string) bool {
+	ownership := index.OwnersOfFile(file)
+	other := func(owner manifest.NamedResource) bool { return owner != id }
+	return slices.ContainsFunc(ownership.Owners, other) || slices.ContainsFunc(ownership.Ancestors, other)
 }

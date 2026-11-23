@@ -31,7 +31,8 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 			fstest.MapFS{"apps/Prod/file": {Data: []byte("x")}},
 			[]request{
 				{
-					Output:   manifest.ArtifactGeneratorOutput{Name: "prod", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Identity: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod"},
+					Output:   manifest.ArtifactGeneratorOutput{Name: "{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
 					Captures: map[string]string{"App": "prod"},
 				},
 			},
@@ -65,7 +66,7 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 						},
 					},
 				}
-				got, err := expand(t.Context(), &spec, map[string]fs.FS{"repo": tc.input})
+				got, err := expand(t.Context(), &spec, "apps", map[string]fs.FS{"repo": tc.input})
 				assert.FatalIf(t, (err != nil) != tc.invalid, "expand() = %v; invalid=%v", err, tc.invalid)
 				assert.FatalIf(t, tc.name == "invalid_capture" &&
 					!strings.Contains(
@@ -100,6 +101,7 @@ func TestExpand_Canceled(t *testing.T) {
 		_, err := expand(
 			ctx,
 			&manifest.ArtifactGeneratorSpec{PathPattern: "@repo/{App}"},
+			"apps",
 			map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
 		)
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "expand() = %v", err)

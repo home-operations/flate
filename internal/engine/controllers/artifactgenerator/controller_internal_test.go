@@ -62,7 +62,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 		path, want string
 		skipOutput bool
 	}{
-		{"directory", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}, "app/app/file.txt", "file", false},
+		{"directory", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/", "exclude": []string{"app"}}}, "app/app/file.txt", "file", false},
 		{
 			"merge",
 			[]any{
@@ -79,6 +79,17 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			"out/inside.txt",
 			"inside",
 			false,
+		},
+		{
+			"optional_misses_and_match",
+			[]any{
+				map[string]any{"from": "@repo/absent", "to": "@artifact/first", "optional": true},
+				map[string]any{"from": "@repo/absent/**", "to": "@artifact/second", "optional": true},
+				map[string]any{"from": "@repo/app/*.txt", "to": "@artifact/third", "exclude": []string{"*.txt"}, "optional": true},
+				map[string]any{"from": "@repo/app/*.txt", "to": "@artifact/archive", "strategy": "Extract"},
+				map[string]any{"from": "@repo/app/file.txt", "to": "@artifact/selected", "optional": true},
+			},
+			"selected", "file", false,
 		},
 		{"skip_output", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/"}}, "app/app/file.txt", "file", true},
 	} {
@@ -175,6 +186,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 
 func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	t.Parallel()
+	t.Run("late_invalid_inputs", testArtifactGeneratorLateInputs)
 	c, obj, input, failedInput := partialGeneratorFixture(t)
 	st := c.Store
 	repo := manifest.NamedResource{
@@ -283,7 +295,7 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	{
 		decoded, err := obj.ArtifactGeneratorSpec()
 		if err == nil {
-			err = validateSpec(&decoded)
+			err = validateSpec(&decoded, "apps")
 		}
 		assert.FatalIf(t, err == nil, "%v", "disabled fixture should be invalid when enabled")
 	}
@@ -323,6 +335,18 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			t.Parallel()
 			f := &metadataFixture{}
 			f.prepare(t, &tc)
+			if tc.origin == "@absent" {
+				runForTest(t, f.c, f.obj.Named())
+				status, _ := f.c.Store.GetStatus(f.obj.Named())
+				assert.Equal(t, status.Status, store.StatusFailed)
+				assert.Equal(
+					t,
+					strings.Contains(status.String(), "origin revision source alias 'absent' not found"),
+					true,
+				)
+				assert.Equal(t, f.c.Store.GetObject(f.target), nil)
+				return
+			}
 			artifact := f.assertMetadata(t, &tc)
 			assertReplayResult := f.assertReplay(t, &tc, artifact)
 			updatedDoc, updatedMetadata := assertReplayResult.document, assertReplayResult.metadata
@@ -458,7 +482,7 @@ func partialGeneratorFixture(t *testing.T) (*Controller, *manifest.RawObject, fs
 			outputs,
 			map[string]any{
 				"name": name,
-				"copy": []any{map[string]any{"from": "@repo/" + name, "to": "@artifact/file"}},
+				"copy": []any{map[string]any{"from": "@repo/" + name, "to": "@artifact/file", "optional": name == "c"}},
 			},
 		)
 	}

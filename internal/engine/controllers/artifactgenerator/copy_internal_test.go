@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -39,6 +40,62 @@ func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
 
 func TestEvaluate(t *testing.T) {
 	t.Parallel()
+	t.Run("optional_and_required_cache", func(t *testing.T) {
+		t.Parallel()
+		owner := cachetest.New(t, "", cache.New)
+		e := evaluation{
+			identity: []inputIdentity{{Alias: "repo", Input: store.ArtifactInput{Content: "generation"}}},
+			inputs:   map[string]fs.FS{"repo": fstest.MapFS{"app/file": {Data: []byte("file")}}},
+		}
+		for _, tc := range []struct {
+			source, cause string
+			exclude       []string
+		}{
+			{"@repo/missing", "source 'missing' does not exist", []string{"missing"}},
+			{"@repo/empty/*.txt", "no files match pattern 'empty/*.txt' in source 'repo'", nil},
+			{"@repo/app/*", "all files matching pattern 'app/*' in source 'repo' were excluded", []string{"file"}},
+		} {
+			for _, optional := range []bool{true, false} {
+				req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
+					{From: tc.source, To: "@artifact/", Optional: optional, Exclude: tc.exclude},
+				}}}
+				composition, err := e.composition(&req)
+				assert.NoError(t, err)
+				out, _, _, err := owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever})
+				if optional {
+					assert.NoError(t, err)
+					entries, readErr := fs.ReadDir(out, ".")
+					assert.NoError(t, readErr)
+					assert.Equal(t, len(entries), 0)
+					continue
+				}
+				assert.FatalIf(t, out != nil || err == nil || !strings.Contains(err.Error(), tc.cause),
+					"required miss for %s reused the optional result: %v, %v", tc.source, out, err)
+			}
+		}
+	})
+	for _, tc := range []struct{ name, source string }{
+		{"optional_extract_literal_failure", "@repo/bad.tgz"},
+		{"optional_extract_glob_failure", "@repo/*.tgz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			owner := cachetest.New(t, "", cache.New)
+			e := evaluation{
+				identity: []inputIdentity{{Alias: "repo", Input: store.ArtifactInput{Content: "generation"}}},
+				inputs:   map[string]fs.FS{"repo": fstest.MapFS{"bad.tgz": {Data: []byte("invalid gzip header")}}},
+			}
+			req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
+				{From: tc.source, To: "@artifact/", Optional: true, Strategy: strategyExtract},
+			}}}
+			composition, err := e.composition(&req)
+			assert.NoError(t, err)
+			out, _, _, err := owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever})
+			assert.Equal(t, out == nil, true)
+			assert.ErrorIf(t, !errors.Is(err, gzip.ErrHeader), "optional extract %q: got %v, want %v",
+				tc.source, err, gzip.ErrHeader)
+		})
+	}
 	for _, tc := range []struct {
 		name       string
 		operations []manifest.ArtifactGeneratorCopy

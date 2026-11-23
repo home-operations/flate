@@ -82,7 +82,7 @@ func (t *tarFS) identify(content digest.Digest, key ArchiveKey) {
 		Ignore  string
 		Policy  string
 		Version int
-	}{content, key.Ignore, key.Policy, archiveShapeVersion})
+	}{content, key.Ignore, key.Policy, key.shapeVersion()})
 }
 
 func (t *tarFS) Open(name string) (fs.File, error) {
@@ -346,20 +346,16 @@ func (a *archiveReader) finish() (*tarFS, error) {
 }
 
 func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
-	if key.Policy == extractPolicy || key.Policy == "bucket" {
+	if key.Policy == extractPolicy || key.Policy == "bucket" || key.Policy == fixedPolicy {
 		return nil
 	}
-	var files []string
-	if key.Policy == fixedPolicy {
-		files = []string{}
-	}
-	matcher, err := sourceignore.NewFS(raw, files, key.Ignore, key.Policy == "source" || key.Policy == fixedPolicy)
+	matcher, err := sourceignore.NewFS(raw, nil, key.Ignore, key.Policy == "source")
 	if err != nil {
 		return err
 	}
 	kept := map[string]bool{".": true}
 	for name, node := range nodes {
-		retainDirectory := node.IsDir() && (key.Policy == fixedPolicy || node.explicit)
+		retainDirectory := node.IsDir() && node.explicit
 		if name == "." || !node.Mode().IsRegular() && !retainDirectory {
 			continue
 		}

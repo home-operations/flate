@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -15,6 +16,7 @@ const (
 	maxGlobCommas    = 20
 	maxEntries       = 1000
 	maxResourceName  = 253
+	maxAliasLength   = 63
 )
 
 var (
@@ -22,7 +24,7 @@ var (
 	sourceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 )
 
-func validateSpec(spec *manifest.ArtifactGeneratorSpec) error {
+func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) error {
 	sourcesOutsideBounds := len(spec.Sources) < 1 || len(spec.Sources) > maxEntries
 	artifactsOutsideBounds := len(spec.Artifacts) < 1 || len(spec.Artifacts) > maxEntries
 	if sourcesOutsideBounds || artifactsOutsideBounds || len(spec.PathPattern) > maxPatternLength {
@@ -34,9 +36,15 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec) error {
 			return err
 		}
 	}
-	names := map[string]bool{}
+	identities := make(map[manifest.NamedResource]bool, len(spec.Artifacts))
 	for i := range spec.Artifacts {
-		if err := validateArtifact(&spec.Artifacts[i], aliases, names); err != nil {
+		artifact := &spec.Artifacts[i]
+		id, _, _ := artifact.ResolveOutput(namespace, nil, nil)
+		if identities[id] {
+			return fmt.Errorf("duplicate artifact name '%s' found in namespace '%s'", id.Name, id.Namespace)
+		}
+		identities[id] = true
+		if err := validateArtifact(artifact, id, spec.PathPattern, aliases); err != nil {
 			return err
 		}
 	}
@@ -44,7 +52,10 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec) error {
 }
 
 func validateSource(input *manifest.ArtifactGeneratorSource, aliases map[string]bool) error {
-	invalidAlias := len(input.Alias) > 63 || !aliasName.MatchString(input.Alias) || aliases[input.Alias]
+	if aliases[input.Alias] {
+		return fmt.Errorf("duplicate source alias '%s' found", input.Alias)
+	}
+	invalidAlias := len(input.Alias) > maxAliasLength || !aliasName.MatchString(input.Alias)
 	invalidName := len(input.Name) > maxResourceName || !sourceName.MatchString(input.Name)
 	invalidNamespace := input.NamespaceSet && (len(input.Namespace) > 63 || !sourceName.MatchString(input.Namespace))
 	if invalidAlias || invalidName || invalidNamespace {
@@ -57,25 +68,94 @@ func validateSource(input *manifest.ArtifactGeneratorSource, aliases map[string]
 	return nil
 }
 
-func validateArtifact(artifact *manifest.ArtifactGeneratorOutput, aliases, names map[string]bool) error {
-	if len(artifact.Name) < 1 || len(artifact.Name) > maxResourceName || names[artifact.Name] ||
+func validateArtifact(
+	artifact *manifest.ArtifactGeneratorOutput, id manifest.NamedResource, pattern string, aliases map[string]bool,
+) error {
+	if artifact.Name == "" || len(artifact.Name) > maxPatternLength || len(artifact.Namespace) > maxPatternLength ||
 		len(artifact.Copy) == 0 {
-		return fmt.Errorf("invalid or duplicate artifact %q", artifact.Name)
+		return fmt.Errorf("artifact %q outside API bounds", artifact.Name)
 	}
-	names[artifact.Name] = true
-	for _, selector := range []string{artifact.Revision, artifact.OriginRevision} {
-		if selector != "" &&
-			(len(selector) > 64 || !strings.HasPrefix(selector, "@") || !aliasName.MatchString(selector[1:])) {
-			return fmt.Errorf("invalid revision selector %q", selector)
+	if pattern == "" {
+		if err := validateArtifactIdentity(id, artifact.Namespace != "", "artifact"); err != nil {
+			return err
 		}
 	}
-	if artifact.Revision != "" && !aliases[strings.TrimPrefix(artifact.Revision, "@")] {
-		return fmt.Errorf("unknown revision source %q", artifact.Revision)
+	if err := validateRevisionSource(artifact.Name, "revision", artifact.Revision, aliases); err != nil {
+		return err
+	}
+	if err := validateRevisionSource(artifact.Name, "origin revision", artifact.OriginRevision, aliases); err != nil {
+		return err
+	}
+	if from := artifact.InputsFrom; from != "" {
+		if len(from) > maxPatternLength {
+			return fmt.Errorf("artifact %s inputsFrom outside API bounds", artifact.Name)
+		}
+		if err := validateInputsSource(from, aliases); err != nil {
+			return fmt.Errorf("artifact %s inputsFrom %q: %w", artifact.Name, from, err)
+		}
+		if pattern == "" && strings.ContainsAny(from, "{}") {
+			return fmt.Errorf(
+				"artifact %s inputsFrom %q uses capture placeholders but pathPattern is not set",
+				artifact.Name,
+				from,
+			)
+		}
 	}
 	for i := range artifact.Copy {
 		if err := validateOperation(&artifact.Copy[i]); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateRevisionSource(name, kind, selector string, aliases map[string]bool) error {
+	if selector == "" {
+		return nil
+	}
+	alias, marked := strings.CutPrefix(selector, "@")
+	if !marked || len(alias) > maxAliasLength || !aliasName.MatchString(alias) {
+		return fmt.Errorf("invalid revision selector %q", selector)
+	}
+	if !aliases[alias] {
+		return fmt.Errorf("artifact %s %s source alias '%s' not found", name, kind, alias)
+	}
+	return nil
+}
+
+func validateArtifactIdentity(id manifest.NamedResource, explicitNamespace bool, subject string) error {
+	if errs := apivalidation.NameIsDNSSubdomain(id.Name, false); len(errs) != 0 {
+		return fmt.Errorf(
+			"%s name %q is not a valid Kubernetes object name: %s",
+			subject,
+			id.Name,
+			strings.Join(errs, "; "),
+		)
+	}
+	if explicitNamespace {
+		if errs := apivalidation.ValidateNamespaceName(id.Namespace, false); len(errs) != 0 {
+			return fmt.Errorf(
+				"%s namespace %q is not a valid Kubernetes namespace: %s",
+				subject,
+				id.Namespace,
+				strings.Join(errs, "; "),
+			)
+		}
+	}
+	return nil
+}
+
+func validateInputsSource(value string, aliases map[string]bool) error {
+	source, marked := strings.CutPrefix(value, "@")
+	if !marked {
+		return fmt.Errorf("path must start with '@'")
+	}
+	alias, name, ok := strings.Cut(source, "/")
+	if !ok || alias == "" || name == "" {
+		return fmt.Errorf("path must be in the format '@<alias>/<path>'")
+	}
+	if alias != "artifact" && !aliases[alias] {
+		return fmt.Errorf("source alias '%s' not found", alias)
 	}
 	return nil
 }
@@ -87,10 +167,10 @@ func validateOperation(op *manifest.ArtifactGeneratorCopy) error {
 		return fmt.Errorf("copy operation outside API bounds")
 	}
 	if _, err := sourcePath(op.From); err != nil {
-		return err
+		return fmt.Errorf("invalid copy source '%s': %w", op.From, err)
 	}
 	if _, err := destinationPath(op.To); err != nil {
-		return err
+		return fmt.Errorf("invalid copy destination '%s': %w", op.To, err)
 	}
 	if op.Strategy != "" && op.Strategy != "Overwrite" && op.Strategy != "Merge" && op.Strategy != strategyExtract {
 		return fmt.Errorf("unsupported strategy %q", op.Strategy)
@@ -100,10 +180,10 @@ func validateOperation(op *manifest.ArtifactGeneratorCopy) error {
 			return fmt.Errorf("exclude pattern outside API bounds")
 		}
 		if err := validateGlob(pattern); err != nil {
-			return err
+			return fmt.Errorf("invalid exclude pattern '%s': %w", pattern, err)
 		}
-		if _, err := doublestar.Match(pattern, "."); err != nil {
-			return fmt.Errorf("match: %w", err)
+		if !doublestar.ValidatePattern(pattern) {
+			return fmt.Errorf("invalid exclude pattern '%s'", pattern)
 		}
 	}
 	return nil

@@ -188,14 +188,24 @@ type producerDeclaration struct {
 }
 
 func (d *producerDeclaration) producerTargets(candidates []manifest.NamedResource) ([]manifest.ProducerTarget, bool) {
-	if d.fact == nil {
-		return manifest.ProducerTargets(d.obj, candidates...), d.substituteDisabled
+	obj, disabled := d.obj, d.substituteDisabled
+	if d.fact != nil {
+		facts := d.fact.facts
+		obj, disabled = facts.catalog, facts.substituteDisabled
+		if !facts.needsCandidates && (len(facts.authoredTargets) == 0 || d.authored.Namespace == d.identity.Namespace) {
+			return facts.authoredTargets, disabled
+		}
 	}
-	facts := d.fact.facts
-	if facts.needsCandidates && len(candidates) != 0 {
-		return manifest.ProducerTargets(facts.catalog, candidates...), facts.substituteDisabled
+	if obj == nil {
+		return nil, disabled
 	}
-	return facts.authoredTargets, facts.substituteDisabled
+	if obj.Named().Namespace != d.identity.Namespace {
+		if d.fact == nil && !manifest.ProducerNeedsCandidates(obj) && len(manifest.ProducerTargets(obj)) == 0 {
+			return nil, disabled
+		}
+		obj = obj.WithNamespace(d.identity.Namespace)
+	}
+	return manifest.ProducerTargets(obj, candidates...), disabled
 }
 
 type pendingProduction struct {
@@ -313,6 +323,10 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 	projected := declaration.identity
 	if v.owner == (manifest.NamedResource{}) &&
 		(manifest.KindOf(obj).Runnable || declaration.fact != nil && projected.KindInfo().Runnable) {
+		// Application contributions record their readers before standalone scopes are joined.
+		if hasOtherFileOwner(b.idx, projected, cmp.Or(v.localCoordinate(), v.coordinate)) {
+			return
+		}
 		v.owner = projected
 	}
 	targets, disabled := declaration.producerTargets(candidates)
@@ -322,7 +336,6 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 	}
 	uncertain := manifest.HasEnvsubstReference(projected.Name) || manifest.HasEnvsubstReference(projected.Namespace)
 	for _, target := range targets {
-		target.NamedResource = manifest.Resolve(target.NamedResource, v.namespace, v.fallback)
 		p := production
 		if manifest.HasEnvsubstReference(target.Name) || manifest.HasEnvsubstReference(target.Namespace) ||
 			uncertain && !disabled {

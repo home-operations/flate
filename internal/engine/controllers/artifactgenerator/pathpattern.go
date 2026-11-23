@@ -4,108 +4,108 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"maps"
 	"regexp"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/validate/content"
-	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type request struct {
 	work     manifest.AcquisitionWork
+	Identity manifest.NamedResource
 	Output   manifest.ArtifactGeneratorOutput
 	Captures map[string]string
 }
 
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func expand(ctx context.Context, spec *manifest.ArtifactGeneratorSpec, inputs map[string]fs.FS) ([]request, error) {
+func expand(
+	ctx context.Context,
+	spec *manifest.ArtifactGeneratorSpec,
+	namespace string,
+	inputs map[string]fs.FS,
+) ([]request, error) {
 	matcher, input, err := pathMatcher(spec.PathPattern, inputs)
 	if err != nil {
 		return nil, err
 	}
-
-	x := requestExpansion{spec: spec, names: map[string]bool{}}
-	add := x.add
 	if matcher == nil {
-		addErr := add(nil)
-		return x.requests, addErr
+		requests := make([]request, 0, len(spec.Artifacts))
+		for i := range spec.Artifacts {
+			output := &spec.Artifacts[i]
+			id, artifact, _ := output.ResolveOutput(namespace, nil, nil)
+			requests = append(requests, request{Identity: id, Output: artifact})
+		}
+		return requests, nil
+	}
+	x := requestExpansion{
+		spec: spec, namespace: namespace, captures: matcher.SubexpNames()[1:],
+		seen: make(map[manifest.NamedResource]string),
 	}
 	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to walk source directory: %w", err)
 		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
 		}
-		if name == "." || !entry.IsDir() {
-			return nil
-		}
-		matches := matcher.FindStringSubmatch(name)
-		if matches == nil {
-			return nil
-		}
-		captures := map[string]string{}
-		for i, key := range matcher.SubexpNames() {
-			if i != 0 {
-				captures[key] = matches[i]
+		if name != "." && entry.IsDir() {
+			if matches := matcher.FindStringSubmatch(name); matches != nil {
+				return x.add(name, matches[1:])
 			}
 		}
-		return add(captures)
+		return nil
 	})
 	if err != nil {
-		return x.requests, fmt.Errorf("walkdir: %w", err)
+		//nolint:wrapcheck // The walk callback attaches the source or artifact operation to each error.
+		return nil, err
 	}
 	return x.requests, nil
 }
 
 type requestExpansion struct {
-	spec     *manifest.ArtifactGeneratorSpec
-	requests []request
-	names    map[string]bool
+	spec      *manifest.ArtifactGeneratorSpec
+	namespace string
+	captures  []string
+	requests  []request
+	seen      map[manifest.NamedResource]string
 }
 
-func (x *requestExpansion) add(raw map[string]string) error {
-	normalized := make(map[string]string, len(raw))
-	for k, v := range raw {
-		normalized[k] = strings.ToLower(v)
-		if len(content.IsLabelValue(normalized[k])) != 0 {
-			return fmt.Errorf("invalid capture value %q", v)
+func (x *requestExpansion) add(dir string, values []string) error {
+	raw := make(map[string]string, len(values))
+	normalized := make(map[string]string, len(values))
+	for i, key := range x.captures {
+		raw[key] = values[i]
+		value := strings.ToLower(values[i])
+		if errs := content.IsLabelValue(value); len(errs) != 0 {
+			return fmt.Errorf(
+				"pathPattern %q: captured value %q for variable %q is not a valid Kubernetes label value: %s",
+				x.spec.PathPattern,
+				value,
+				key,
+				strings.Join(errs, "; "),
+			)
 		}
+		normalized[key] = value
 	}
-	for _, artifact := range x.spec.Artifacts {
-		var err error
-		artifact.Name, err = render(artifact.Name, normalized)
+	for i := range x.spec.Artifacts {
+		output := &x.spec.Artifacts[i]
+		id, artifact, err := output.ResolveOutput(x.namespace, normalized, raw)
 		if err != nil {
-			return err
+			return fmt.Errorf("pathPattern %q: failed to render artifact %s for match %s: %w",
+				x.spec.PathPattern, output.Name, dir, err)
 		}
-		if len(apivalidation.NameIsDNSSubdomain(artifact.Name, false)) != 0 || x.names[artifact.Name] {
-			return fmt.Errorf("invalid or duplicate output name %q", artifact.Name)
+		if err := validateArtifactIdentity(id, artifact.Namespace != "", "rendered artifact"); err != nil {
+			return fmt.Errorf("pathPattern %q: %w", x.spec.PathPattern, err)
 		}
-		x.names[artifact.Name] = true
-		if err := renderCopies(&artifact, raw); err != nil {
-			return err
+		if previous, exists := x.seen[id]; exists {
+			return fmt.Errorf("pathPattern %q: directories %q and %q both resolve to artifact name %q in namespace %q",
+				x.spec.PathPattern, previous, dir, id.Name, id.Namespace)
 		}
-		x.requests = append(x.requests, request{Output: artifact, Captures: maps.Clone(normalized)})
-	}
-	return nil
-}
-
-func renderCopies(artifact *manifest.ArtifactGeneratorOutput, raw map[string]string) error {
-	var err error
-	artifact.Copy = append([]manifest.ArtifactGeneratorCopy(nil), artifact.Copy...)
-	for i := range artifact.Copy {
-		artifact.Copy[i].From, err = render(artifact.Copy[i].From, raw)
-		if err != nil {
-			return err
-		}
-		artifact.Copy[i].To, err = render(artifact.Copy[i].To, raw)
-		if err != nil {
-			return err
-		}
+		x.seen[id] = dir
+		x.requests = append(x.requests, request{Identity: id, Output: artifact, Captures: normalized})
 	}
 	return nil
 }
@@ -121,7 +121,11 @@ func pathMatcher(patternValue string, inputs map[string]fs.FS) (*regexp.Regexp, 
 		}
 		input = inputs[alias]
 		if input == nil {
-			return nil, nil, fmt.Errorf("unknown pathPattern source %q", alias)
+			return nil, nil, fmt.Errorf(
+				"pathPattern %q: source alias %s not found in local sources",
+				patternValue,
+				alias,
+			)
 		}
 		matcher, err = compilePathPattern(pattern)
 		if err != nil {
@@ -157,24 +161,4 @@ func compilePathPattern(pattern string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("compile: %w", err)
 	}
 	return matcher, nil
-}
-
-func render(template string, captures map[string]string) (string, error) {
-	var out strings.Builder
-	for template != "" {
-		i := strings.IndexAny(template, "{}")
-		if i < 0 {
-			out.WriteString(template)
-			break
-		}
-		out.WriteString(template[:i])
-		name, rest, ok := strings.Cut(template[i+1:], "}")
-		value, exists := captures[name]
-		if template[i] != '{' || !ok || !exists {
-			return "", fmt.Errorf("undefined template capture %q", name)
-		}
-		out.WriteString(value)
-		template = rest
-	}
-	return out.String(), nil
 }

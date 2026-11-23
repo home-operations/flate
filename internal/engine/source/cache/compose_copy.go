@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,36 +22,10 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/engine/source/safepath"
+	"github.com/home-operations/flate/internal/engine/source/sourceignore"
 	"github.com/home-operations/flate/internal/engine/tree"
 	"github.com/home-operations/flate/pkg/manifest"
 )
-
-func (e *composition) apply(ctx context.Context, builder *tree.Builder, op *Copy) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context: %w", err)
-	}
-	plan, err := e.prepareCopy(op)
-	if err != nil {
-		return err
-	}
-	selected := 0
-	for _, name := range plan.matches {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("context: %w", err)
-		}
-		if plan.glob && name == "." || excluded(name, plan.root, op.Exclude) {
-			continue
-		}
-		selected++
-		if err := plan.apply(ctx, builder, name); err != nil {
-			return err
-		}
-	}
-	if plan.glob && selected == 0 {
-		return fmt.Errorf("no unexcluded files match %q", plan.pattern)
-	}
-	return nil
-}
 
 type copyPlan struct {
 	owner                      *Cache
@@ -62,6 +37,84 @@ type copyPlan struct {
 	pattern, destination, root string
 	glob                       bool
 	matches                    []string
+}
+
+func (e *composition) apply(ctx context.Context, builder *tree.Builder, op *Copy) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
+	}
+	plan, err := e.prepareCopy(op)
+	if err != nil {
+		return err
+	}
+	if !plan.glob {
+		return plan.applySingle(ctx, builder)
+	}
+	return plan.applyGlob(ctx, builder)
+}
+
+func (p *copyPlan) applySingle(ctx context.Context, builder *tree.Builder) error {
+	name, op := p.matches[0], p.op
+	if op.Mode == PlaceTree && excluded(name, p.root, op.Exclude) {
+		return nil
+	}
+	info, err := fs.Stat(p.input, name)
+	if err != nil {
+		if op.Mode == PlaceTree {
+			return fmt.Errorf("stat: %w", err)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("failed to stat source '%s': %w", name, err)
+		}
+		if op.Optional {
+			return nil
+		}
+		return manifest.NewError(manifest.ErrInput, err, fmt.Sprintf("source '%s' does not exist", name))
+	}
+	if op.Mode != PlaceTree && !info.IsDir() && excluded(name, ".", op.Exclude) {
+		return nil
+	}
+	return p.apply(ctx, builder, name, info)
+}
+
+func (p *copyPlan) applyGlob(ctx context.Context, builder *tree.Builder) error {
+	if len(p.matches) == 0 && !p.op.Optional {
+		return fmt.Errorf("no files match pattern '%s' in source '%s'", p.pattern, p.identity.Alias)
+	}
+	selected := false
+	for _, name := range p.matches {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
+		if name == "." || name == ".." || excluded(name, p.root, p.op.Exclude) {
+			continue
+		}
+		selected = true
+		if err := p.applyMatch(ctx, builder, name); err != nil {
+			return err
+		}
+	}
+	if !selected && !p.op.Optional {
+		return fmt.Errorf("all files matching pattern '%s' in source '%s' were excluded", p.pattern, p.identity.Alias)
+	}
+	return nil
+}
+
+func (p *copyPlan) applyMatch(ctx context.Context, builder *tree.Builder, name string) error {
+	if p.op.Mode == ExtractArchive {
+		if !isTarball(name) {
+			return nil
+		}
+		if err := p.extract(ctx, builder, name); err != nil {
+			return fmt.Errorf("failed to extract tarball '%s' to '%s': %w", name, p.destination, err)
+		}
+		return nil
+	}
+	info, err := fs.Stat(p.input, name)
+	if err != nil {
+		return fmt.Errorf("failed to stat source '%s': %w", name, err)
+	}
+	return p.apply(ctx, builder, name, info)
 }
 
 func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
@@ -108,7 +161,7 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 			matches, err = fs.Glob(input, pattern)
 		}
 		if err != nil {
-			return copyPlan{}, fmt.Errorf("glob: %w", err)
+			return copyPlan{}, fmt.Errorf("invalid glob pattern '%s': %w", pattern, err)
 		}
 	}
 	return copyPlan{
@@ -118,21 +171,21 @@ func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
 	}, nil
 }
 
-func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string) error {
-	info, err := fs.Stat(p.input, name)
-	if err != nil {
-		return fmt.Errorf("stat: %w", err)
-	}
+func isTarball(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz")
+}
+
+func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string, info fs.FileInfo) error {
 	if p.op.Mode == PlaceTree {
 		return p.place(ctx, builder, name, info)
 	}
 	if p.op.Mode == ExtractArchive {
-		lower := strings.ToLower(name)
-		if info.IsDir() || !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
-			if p.glob {
-				return nil
-			}
-			return fmt.Errorf("extract requires a tarball, got %q", name)
+		if info.IsDir() {
+			return fmt.Errorf("extract strategy is not supported for directories, got '%s'", name)
+		}
+		if !isTarball(name) {
+			return fmt.Errorf("extract strategy requires tarball file (.tar.gz or .tgz), got '%s'", name)
 		}
 		return p.extract(ctx, builder, name)
 	}
@@ -387,30 +440,64 @@ func (p *copyPlan) extract(ctx context.Context, builder *tree.Builder, name stri
 }
 
 func (p *copyPlan) extractionKey(name string) ArchiveKey {
+	input := p.identity
+	input.Alias = ""
 	return ArchiveKey{Policy: extractPolicy, Content: struct {
 		Input compositionIdentity
 		Path  string
-	}{p.identity, name}}
+	}{input, name}}
 }
 
-func (e *composition) produce(ctx context.Context, target ProducerInput) error {
+func (e *composition) produce(ctx context.Context, target ProducerInput) (ProducerResult, error) {
 	builder := tree.NewBuilder(e.request.Base.FS)
 	for i := range e.request.Copies {
 		op := &e.request.Copies[i]
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("context: %w", err)
+			return ProducerResult{}, fmt.Errorf("context: %w", err)
 		}
 		if err := e.apply(ctx, builder, op); err != nil {
-			return manifest.NewError(manifest.ErrInput,
+			return ProducerResult{}, manifest.NewError(manifest.ErrInput,
 				fmt.Errorf("copy %d %q to %q: %w", i, op.From, op.To, err), err.Error())
 		}
 	}
+	var result ProducerResult
+	if e.request.Capture != nil {
+		captured, err := e.request.Capture(ctx, builder)
+		if err != nil {
+			return ProducerResult{}, err
+		}
+		result.Annotations = map[string]string{CompositionCapture: captured}
+	}
+	var input fs.FS = builder
+	if e.request.Policy == fixedPolicy {
+		matcher, err := sourceignore.NewFS(builder, []string{}, e.request.Ignore, true)
+		if err != nil {
+			return ProducerResult{}, fmt.Errorf("composition membership: %w", err)
+		}
+		input = compositionArchive{FS: builder, matcher: matcher}
+	}
 	writer := tar.NewWriter(target)
-	if err := writer.AddFS(builder); err != nil {
-		return fmt.Errorf("addfs: %w", err)
+	if err := writer.AddFS(input); err != nil {
+		return ProducerResult{}, fmt.Errorf("addfs: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close: %w", err)
+		return ProducerResult{}, fmt.Errorf("close: %w", err)
 	}
-	return nil
+	return result, nil
+}
+
+type compositionArchive struct {
+	fs.FS
+
+	matcher *sourceignore.Matcher
+}
+
+func (a compositionArchive) ReadDir(dir string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(a.FS, dir)
+	if err != nil {
+		return nil, fmt.Errorf("read staged directory: %w", err)
+	}
+	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
+		return a.matcher.Match(path.Join(dir, entry.Name()), entry.IsDir())
+	}), nil
 }

@@ -401,6 +401,90 @@ func TestArtifactMatch_Budget(t *testing.T) {
 
 func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 	t.Parallel()
+	t.Run("identity_pair", func(t *testing.T) {
+		t.Parallel()
+		raw := &RawObject{
+			APIVersion: SourceExtensionsDomain + "/v1beta1", Kind: KindArtifactGenerator, Namespace: "generator",
+			Spec: map[string]any{
+				"pathPattern": "@repo/{left}/{right}",
+				"artifacts": []any{
+					map[string]any{"name": "fixed", "namespace": "elsewhere"},
+					map[string]any{"name": "defaulted"},
+					map[string]any{"name": "literal", "namespace": "{left}"},
+					map[string]any{"name": "{left}-{left}", "namespace": "{left}{right}"},
+				},
+			},
+		}
+		fixed := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "elsewhere", Name: "fixed"}
+		defaulted := NamedResource{
+			Group:     SourceDomain,
+			Kind:      KindExternalArtifact,
+			Namespace: "generator",
+			Name:      "defaulted",
+		}
+		literalName := NamedResource{
+			Group:     SourceDomain,
+			Kind:      KindExternalArtifact,
+			Namespace: "abcd",
+			Name:      "literal",
+		}
+		both := literalName
+		both.Name = "ab-ab"
+		inconsistent := both
+		inconsistent.Name = "bc-bc"
+		assert.Equal(t, ProducerNeedsCandidates(raw), true)
+		assert.Diff(t, ProducerTargets(raw), []ProducerTarget{{NamedResource: fixed}, {NamedResource: defaulted}})
+		assert.Diff(
+			t,
+			ProducerTargets(raw, literalName, both, inconsistent),
+			[]ProducerTarget{
+				{NamedResource: both},
+				{NamedResource: literalName},
+				{NamedResource: fixed},
+				{NamedResource: defaulted},
+			},
+		)
+		spec, err := raw.ArtifactGeneratorSpec()
+		assert.NoError(t, err)
+		resolved, _, err := spec.Artifacts[3].ResolveOutput(
+			"generator",
+			map[string]string{"left": "ab", "right": "cd"},
+			nil,
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, resolved, both)
+	})
+	t.Run("invalid identity template", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct{ field, template, diagnostic string }{
+			{"name", "api}", "missing opening brace"},
+			{"namespace", "{tenant", "missing closing brace"},
+			{"name", "api-{}", "empty capture variable"},
+			{"namespace", "{tenant.bad}", "must be a valid capture name"},
+			{"namespace", "{missing}", "is not defined by pathPattern"},
+		} {
+			t.Run(tc.template, func(t *testing.T) {
+				t.Parallel()
+				fields := map[string]any{"name": "api", "namespace": "{tenant}"}
+				fields[tc.field] = tc.template
+				generator := &RawObject{
+					Kind: KindArtifactGenerator, APIVersion: SourceExtensionsDomain + "/v1beta1",
+					Spec: map[string]any{"pathPattern": "@repo/{tenant}", "artifacts": []any{fields}},
+				}
+				target := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "team", Name: "api"}
+				assert.Equal(t, len(ProducerTargets(generator, target)), 0)
+				spec, err := generator.ArtifactGeneratorSpec()
+				assert.NoError(t, err)
+				_, _, err = spec.Artifacts[0].ResolveOutput("apps", map[string]string{"tenant": "team"}, nil)
+				assert.FatalIf(
+					t,
+					err == nil || !strings.Contains(err.Error(), tc.diagnostic),
+					"template error = %v",
+					err,
+				)
+			})
+		}
+	})
 	ea := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "api-prod"}
 	raw := &RawObject{
 		APIVersion: "source.extensions.fluxcd.io/v1beta1",

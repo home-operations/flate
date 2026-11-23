@@ -17,11 +17,20 @@ type Composition struct {
 	Copies []Copy
 	Policy string
 	Ignore string
+	// CapturePath keys the bounded value returned by Capture before archive filtering.
+	CapturePath string
+	Capture     func(context.Context, fs.FS) (string, error)
 }
+
+const compositionCaptureName = "composition-capture"
+
+// CompositionCapture is the descriptor annotation for a captured staging value.
+const CompositionCapture = prefix + compositionCaptureName
 
 // CompositionInput MUST identify immutable backing or force fresh production.
 type CompositionInput struct {
-	FS fs.FS
+	FS    fs.FS
+	Alias string
 	// Empty Content forces fresh production because the backing can change.
 	Content string
 	// Backing distinguishes mutable inputs that can coexist under the same recipe.
@@ -30,11 +39,12 @@ type CompositionInput struct {
 
 // Copy paths MUST use secure resolution for PlaceTree and relative archive paths otherwise.
 type Copy struct {
-	Input   int
-	From    string
-	To      string
-	Exclude []string
-	Mode    CopyMode
+	Input    int
+	From     string
+	To       string
+	Exclude  []string
+	Optional bool
+	Mode     CopyMode
 }
 
 // CopyMode MUST select one of the supported operations.
@@ -50,19 +60,21 @@ const (
 
 type compositionIdentity struct {
 	Content, Backing string
+	Alias            string `json:",omitempty"`
 }
 
 func (i *CompositionInput) identity() compositionIdentity {
 	if i.Content != "" {
-		return compositionIdentity{Content: i.Content}
+		return compositionIdentity{Content: i.Content, Alias: i.Alias}
 	}
-	return compositionIdentity{Backing: i.Backing}
+	return compositionIdentity{Backing: i.Backing, Alias: i.Alias}
 }
 
 type copyIdentity struct {
 	Input    int
 	From, To string
 	Exclude  []string
+	Optional bool `json:",omitempty"`
 	Mode     CopyMode
 }
 
@@ -74,17 +86,22 @@ func (r *Composition) key() ArchiveKey {
 	copies := make([]copyIdentity, len(r.Copies))
 	for i := range r.Copies {
 		op := &r.Copies[i]
-		copies[i] = copyIdentity{op.Input, op.From, op.To, op.Exclude, op.Mode}
+		copies[i] = copyIdentity{op.Input, op.From, op.To, op.Exclude, op.Optional, op.Mode}
 	}
-	return ArchiveKey{
+	key := ArchiveKey{
 		Content: struct {
 			BasePresent bool
 			Base        compositionIdentity
 			Inputs      []compositionIdentity
 			Copies      []copyIdentity
-		}{r.Base.FS != nil, r.Base.identity(), inputs, copies},
+			CapturePath string `json:",omitempty"`
+		}{r.Base.FS != nil, r.Base.identity(), inputs, copies, r.CapturePath},
 		Policy: r.Policy, Ignore: r.Ignore,
 	}
+	if r.CapturePath != "" {
+		key.Required = []string{compositionCaptureName}
+	}
+	return key
 }
 
 type composition struct {
@@ -126,9 +143,9 @@ func (c *Cache) Compose(
 			}
 			work := e.work.Attribution().Record(manifest.WorkEvaluation, identity)
 			work.Add(&manifest.WorkCounts{Attempts: 1})
-			err := e.produce(ctx, target)
+			result, err := e.produce(ctx, target)
 			work.Finish(err)
-			return ProducerResult{}, err
+			return result, err
 		},
 	)
 }

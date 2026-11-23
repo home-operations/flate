@@ -1,0 +1,12 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sonarr
+spec:
+  interval: 1m
+  path: ./app
+  targetNamespace: media
+  components: [../components]
+  sourceRef:
+    kind: ExternalArtifact
+    name: sonarr

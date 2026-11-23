@@ -19,6 +19,7 @@ func (e *evaluation) composition(req *request) (cache.Composition, error) {
 		identity := &e.identity[i]
 		result.Inputs[i] = cache.CompositionInput{
 			FS:      e.inputs[identity.Alias],
+			Alias:   identity.Alias,
 			Content: identity.Input.Content,
 			Backing: identity.Input.LocalPath,
 		}
@@ -29,27 +30,28 @@ func (e *evaluation) composition(req *request) (cache.Composition, error) {
 			var err error
 			selection, err = sourcePath(op.From)
 			if err != nil {
-				return cache.Composition{}, err
+				return cache.Composition{}, fmt.Errorf("invalid copy source '%s': %w", op.From, err)
 			}
 			if globErr := validateGlob(selection.pattern); globErr != nil {
-				return cache.Composition{}, globErr
+				return cache.Composition{}, fmt.Errorf("invalid copy source '%s': %w", op.From, globErr)
 			}
 			e.lastFrom, e.lastSelection = op.From, selection
 		}
-		position := e.inputIndex(selection.alias)
-		if position == -1 {
-			return cache.Composition{}, fmt.Errorf("unknown source alias %q", selection.alias)
-		}
 		to, err := destinationPath(op.To)
 		if err != nil {
-			return cache.Composition{}, err
+			return cache.Composition{}, fmt.Errorf("invalid copy destination '%s': %w", op.To, err)
+		}
+		position := e.inputIndex(selection.alias)
+		if position == -1 {
+			return cache.Composition{}, fmt.Errorf("source alias '%s' not found", selection.alias)
 		}
 		lowered := cache.Copy{
-			Input:   position,
-			From:    selection.pattern,
-			To:      to,
-			Exclude: op.Exclude,
-			Mode:    cache.CopyFiles,
+			Input:    position,
+			From:     selection.pattern,
+			To:       to,
+			Exclude:  op.Exclude,
+			Optional: op.Optional,
+			Mode:     cache.CopyFiles,
 		}
 		switch op.Strategy {
 		case "Merge":

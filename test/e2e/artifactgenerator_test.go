@@ -25,6 +25,10 @@ func TestE2E_ArtifactGenerator(t *testing.T) {
 		{"artifact-reach", "artifact-generator--copied-unrelated-path"},
 		{"artifact-reach", "artifact-generator--copied-consumer-edit"},
 		{"artifact-reach", "artifact-generator--copied-reverse-committed"},
+		{"artifact-generator-fields", "artifact-generator--output-fields"},
+		{"artifact-generator-fields", "artifact-generator--required-copy"},
+		{"artifact-generator-fields", "artifact-generator--inputs-forward"},
+		{"artifact-generator-fields", "artifact-generator--inputs-reverse"},
 		{"artifact-convergence", "artifact-generator--consumed-input-convergence"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

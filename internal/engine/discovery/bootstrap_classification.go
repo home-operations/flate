@@ -135,7 +135,15 @@ func (a *Admission) projectedProvider(id manifest.NamedResource, request *source
 }
 
 func (r *entryResolution) inheritEntry(previous *entryResolution, scoped bool) {
-	if scoped || !previous.sameDeclaration(r) {
+	if scoped || previous.input != r.input {
+		return
+	}
+	// The arriving generation must use the same admitted checkout as its placeholder.
+	if r.projected && previous.synthetic && previous.artifact.WorkingTree() {
+		r.entry = true
+		return
+	}
+	if !previous.sameDeclaration(r) {
 		return
 	}
 	if previous.entryScoped {

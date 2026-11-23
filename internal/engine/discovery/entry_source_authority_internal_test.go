@@ -50,7 +50,7 @@ func TestAdmission_EntrySourceAuthority(t *testing.T) {
 			}))
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
-			child, material, err := result.Admission.Resolve(t.Context(), id, nil, nil)
+			child, material, _, err := result.Admission.Resolve(t.Context(), id, nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, child.Obj.Named(), id)
 			assert.Equal(t, material != nil, true)
@@ -90,7 +90,7 @@ spec: {url: https://mirror.invalid/source}
 	replacement := *before.object.(*manifest.GitRepository)
 	replacement.URL = "https://upstream.invalid/independent"
 	st.AddDeclaration(store.Declaration{Obj: &replacement, Origin: manifest.SuppliedDeclaration})
-	child, material, err := result.Admission.Resolve(t.Context(), id, &replacement, aliasRequestReads(t, st, id))
+	child, material, _, err := result.Admission.Resolve(t.Context(), id, &replacement, aliasRequestReads(t, st, id))
 	assert.NoError(t, err)
 	assert.Equal(t, child.Obj, manifest.BaseManifest(&replacement))
 	assert.Equal(t, material == nil, true)
@@ -135,7 +135,7 @@ spec:
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "entry"}
-			child, material, err := result.Admission.Resolve(t.Context(), id, nil, nil)
+			child, material, _, err := result.Admission.Resolve(t.Context(), id, nil, nil)
 			assert.NoError(t, err)
 			resolution := result.Admission.resolvedSources.snapshot()[id]
 			assert.Equal(t, resolution.entry, tc.entry)
@@ -169,7 +169,7 @@ spec:
 				assert.Equal(t, warning.Category == manifest.WarnBootstrapAliases, false)
 			}
 			for range 2 {
-				child, artifact, resolveErr := result.Admission.Resolve(
+				child, artifact, _, resolveErr := result.Admission.Resolve(
 					t.Context(),
 					id,
 					declaration,
@@ -287,7 +287,7 @@ func TestAdmission_IndexOnlyProducerAuthority(t *testing.T) {
 			assert.Equal(t, resolved.projected, true)
 			a.resolvedSources.record(id, &resolved)
 			a.resolvedSources.freeze()
-			_, material, err := a.Resolve(t.Context(), id, nil, aliasRequestReads(t, st, id))
+			_, material, _, err := a.Resolve(t.Context(), id, nil, aliasRequestReads(t, st, id))
 			assert.NoError(t, err)
 			assert.Equal(t, material == nil, true)
 			published, err := a.Publish(t.Context(), id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {

@@ -2,6 +2,7 @@
 package schedule
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -257,6 +258,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.settleLocked(runCtx, parked, level)
 	}
 	s.stopped = true
+	// Active reconciles can still depend on shared work during a structural stop.
+	for s.inFlight != 0 && ctx.Err() == nil {
+		s.cond.Wait()
+	}
 	s.mu.Unlock()
 	cancel()
 	s.tasks.BlockTillDone()
@@ -268,9 +273,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	s.disp.Sweep(runCtx, true)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.err == nil {
-		s.err = ctx.Err()
-	}
+	s.err = cmp.Or(s.err, ctx.Err())
 	return s.err
 }
 

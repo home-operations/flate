@@ -30,13 +30,12 @@ import (
 )
 
 type localSources interface {
-	CheckoutEntry(manifest.NamedResource) bool
 	Resolve(
 		context.Context,
 		manifest.NamedResource,
 		manifest.BaseManifest,
 		*store.ReadSet,
-	) (store.Child, *store.SourceArtifact, error)
+	) (store.Child, *store.SourceArtifact, bool, error)
 }
 
 type sourceFacts interface {
@@ -76,9 +75,10 @@ type FetchOptions struct {
 type execution struct {
 	*Controller
 
-	run         base.Execution
-	acquired    *store.SourceArtifact
-	acquisition *store.ReadSet
+	run           base.Execution
+	acquired      *store.SourceArtifact
+	acquisition   *store.ReadSet
+	checkoutEntry bool
 }
 
 // New requires fetcher registration before StartLifecycle.
@@ -175,7 +175,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 				return false, nil
 			}
 			var err error
-			_, selected, err = c.admission.Resolve(ctx, id, obj, &c.run.Reads)
+			_, selected, c.checkoutEntry, err = c.admission.Resolve(ctx, id, obj, &c.run.Reads)
 			return selected != nil, err
 		},
 		Resolve: func(ctx context.Context, level manifest.DrainLevel) (*store.SourceArtifact, error) {
@@ -282,8 +282,8 @@ func (c *execution) completeFetch(
 		return manifest.NewError(manifest.ErrSourceSkipped, completion.unavailable, "")
 	}
 	if c.run.Disposition == store.AssessmentReused {
-		if artifact != nil && !artifact.Reads.Valid() {
-			c.publish(artifact)
+		if artifact != nil {
+			c.publish(artifact, true)
 		}
 		return nil
 	}
@@ -300,7 +300,7 @@ func (c *execution) completeFetch(
 			c.acquired = artifact
 			return nil
 		}
-		c.publish(completed)
+		c.publish(completed, false)
 	}
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.DebugContext(ctx, "source: fetch complete", "id", manifest.DiagnosticFor(facts.Named(), facts).String())
@@ -308,11 +308,19 @@ func (c *execution) completeFetch(
 	return nil
 }
 
-func (c *execution) publish(artifact *store.SourceArtifact) {
+func (c *execution) publish(artifact *store.SourceArtifact, reused bool) {
 	// The entry checkout MUST NOT depend on a declaration that the same entry applies.
 	id := c.run.Reads.ID()
 	checkout := artifact.CheckoutView() && c.admission != nil
-	if !checkout || !c.admission.CheckoutEntry(id) {
+	entry := checkout && c.checkoutEntry
+	rebind := entry && artifact.Reads != nil && artifact.Reads.ID() == id
+	if reused && !rebind && artifact.Reads.Valid() {
+		return
+	}
+	switch {
+	case rebind:
+		artifact = artifact.WithReads(nil)
+	case !entry:
 		for input := range c.run.Reads.Inputs() {
 			if checkout && input == id {
 				continue

@@ -488,30 +488,17 @@ func (d *Session) refreshAdmission(admission *Admission) {
 	}
 }
 
-// CheckoutEntry reports whether the accepted source supplies its own entry declaration.
-func (a *Admission) CheckoutEntry(id manifest.NamedResource) bool {
-	if a == nil {
-		return false
-	}
-	resolution := a.resolvedSources.snapshot()[id]
-	entry := resolution.entry || resolution.projected
-	return resolution.provider == store.ProviderInput || resolution.provider == store.ProviderAlias && entry
-}
-
 // Resolve preserves the accepted classification for a known source.
 // A nil artifact leaves normal acquisition responsible for the source.
+// The boolean reports whether the checkout publishes its own declaration.
 func (a *Admission) Resolve(
 	ctx context.Context,
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
 	reads *store.ReadSet,
-) (
-	store.Child,
-	*store.SourceArtifact,
-	error,
-) {
+) (store.Child, *store.SourceArtifact, bool, error) {
 	if a == nil {
-		return store.Child{}, nil, nil
+		return store.Child{}, nil, false, nil
 	}
 	var work manifest.WorkScope
 	if reads != nil {
@@ -534,7 +521,9 @@ func (a *Admission) Resolve(
 		resolved.artifact = captured
 	}
 
-	return store.Child{Obj: resolved.object}, resolved.artifact, err
+	checkoutEntry := resolved.provider == store.ProviderInput ||
+		resolved.provider == store.ProviderAlias && (resolved.entry || resolved.projected)
+	return store.Child{Obj: resolved.object}, resolved.artifact, checkoutEntry, err
 }
 
 func (r *entryResolution) reusesMaterial(current *store.SourceArtifact) bool {

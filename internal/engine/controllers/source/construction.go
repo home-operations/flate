@@ -18,7 +18,8 @@ func (c *Controller) construct(ctx context.Context, id manifest.NamedResource, c
 	ex.run.Controller = c.Controller
 	ex.run.Reads.Init(c.Store, id, nil)
 	defer ex.run.Retire()
-	child, selected, err := c.admission.Resolve(ctx, id, nil, &ex.run.Reads)
+	child, selected, checkoutEntry, err := c.admission.Resolve(ctx, id, nil, &ex.run.Reads)
+	ex.checkoutEntry = checkoutEntry
 	obj := child.Obj
 
 	if err != nil {

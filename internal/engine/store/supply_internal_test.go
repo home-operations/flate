@@ -11,6 +11,63 @@ import (
 
 func TestDeclaration_Authority(t *testing.T) {
 	t.Parallel()
+	t.Run("child_equality", func(t *testing.T) {
+		t.Parallel()
+		obj := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+		doc := testutil.ObjectDocument(obj)
+		id := obj.Named()
+		repository := Child{Obj: obj, Doc: doc}
+		for _, tc := range []struct {
+			name     string
+			admit    func(*Store)
+			supplied bool
+		}{
+			{name: "repository", admit: func(s *Store) { s.AddObject(obj, doc) }},
+			{name: "construction", admit: func(s *Store) { s.AddConstructionDeclaration(obj, doc) }},
+			{
+				name: "supplied",
+				admit: func(s *Store) {
+					s.AddDeclaration(Declaration{Obj: obj, Doc: doc, Role: SuppliedDeclaration})
+				},
+				supplied: true,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				s := New()
+				tc.admit(s)
+				declared, policy := s.Lookup(id)
+				assert.Equal(t, declared, manifest.BaseManifest(obj))
+				assert.Equal(t, policy.Reconcile, true)
+				assert.Equal(t, policy.Supplied(), tc.supplied)
+				assert.Equal(t, policy.RootCandidate(), tc.name != "construction")
+				child := policy.Child(declared)
+				child.Doc = doc
+				assert.Equal(t, child.sameDeclaration(repository), !tc.supplied)
+
+				var reads ReadSet
+				reads.Init(s, ownerID("reader"), nil)
+				t.Cleanup(reads.Retire)
+				captured, capturedPolicy := reads.Lookup(id)
+				assert.Equal(t, captured, declared)
+				assert.Equal(t, capturedPolicy, policy)
+				child = capturedPolicy.Child(captured)
+				child.Doc = doc
+				assert.Equal(t, child.sameDeclaration(repository), !tc.supplied)
+
+				projected := obj.WithNamespace("target")
+				child.Obj, child.Doc = projected, testutil.ObjectDocument(projected)
+				projectedID := projected.Named()
+				assert.Equal(t, child.Policy(projectedID), policy)
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				s.AddObject(owner)
+				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+				published, publishedPolicy := s.Lookup(projectedID)
+				assert.Equal(t, published, projected)
+				assert.Equal(t, publishedPolicy, policy)
+			})
+		}
+	})
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
@@ -26,13 +83,18 @@ func TestDeclaration_Authority(t *testing.T) {
 			last := object(map[string]any{"value": "supplied"})
 			for _, obj := range []manifest.BaseManifest{first, last} {
 				s.AddDeclaration(
-					Declaration{Obj: obj, Doc: testutil.ObjectDocument(obj), Origin: manifest.SuppliedDeclaration},
+					Declaration{Obj: obj, Doc: testutil.ObjectDocument(obj), Role: SuppliedDeclaration},
 				)
 			}
 			assert.Equal(t, s.GetObject(id), last)
 			assert.Equal(t, s.GetDeclaration(id), last)
 			assert.Equal(t, len(s.ListObjects("", kind)), 1)
-			assert.Equal(t, s.Policy(id).Root, false)
+			supplied, policy := s.Lookup(id)
+			assert.Equal(t, supplied, last)
+			assert.Equal(t, policy.Supplied(), true)
+			assert.Equal(t, policy.Root, false)
+			assert.Equal(t, policy.RootCandidate(), true)
+			assert.Equal(t, policy.Child(last).Policy(id), policy)
 			assert.Equal(t, s.ReportHidden(id), true)
 			if value, _ := s.ReferenceFacts(id, nil, manifest.NamedResource{}).Data.Value("old"); value.Found {
 				t.Fatal("duplicate retained old key")
@@ -70,19 +132,40 @@ func TestDeclaration_Authority(t *testing.T) {
 			assert.Equal(t, obj, last)
 			assert.Equal(t, len(s.ListObjects("", kind)), 1)
 			assert.Equal(t, s.ReportHidden(id), true)
+
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			s.AddObject(owner)
+			for _, visible := range []bool{false, true} {
+				s.RecordEmitted(owner.Named(), &Emission{
+					Children: []Child{{Obj: last, Generated: true, VisibleGeneration: visible}},
+					Complete: true,
+				}, nil)
+				obj, currentPolicy := s.Lookup(id)
+				assert.Equal(t, obj, last)
+				assert.Equal(t, currentPolicy.Supplied(), false)
+				assert.Equal(t, currentPolicy.Root, true)
+				assert.Equal(t, currentPolicy.Report, visible)
+				var current ReadSet
+				current.Init(s, testutil.KustomizationID("apps", "published"), nil)
+				captured, capturedPolicy := current.Lookup(id)
+				current.Retire()
+				assert.Equal(t, captured, obj)
+				assert.Equal(t, capturedPolicy, currentPolicy)
+				assert.Equal(t, reads.Policy(id), policy)
+			}
 		})
 	}
 }
 
 func TestDeclaration_ContentReplacement(t *testing.T) {
 	t.Parallel()
-	for _, origin := range []manifest.DeclarationOrigin{manifest.RepositoryDeclaration, manifest.SuppliedDeclaration} {
-		t.Run(fmt.Sprint(origin), func(t *testing.T) {
+	for _, role := range []DeclarationRole{RepositoryDeclaration, SuppliedDeclaration} {
+		t.Run(fmt.Sprint(role), func(t *testing.T) {
 			t.Parallel()
 			st := New()
 			obj := &manifest.Kustomization{Name: "input", Namespace: "apps"}
 			first := testutil.ObjectDocument(obj)
-			st.AddDeclaration(Declaration{Obj: obj, Doc: first, Origin: origin})
+			st.AddDeclaration(Declaration{Obj: obj, Doc: first, Role: role})
 			var reads ReadSet
 			reads.Init(st, ownerID("reader"), nil)
 			defer reads.Retire()
@@ -91,17 +174,17 @@ func TestDeclaration_ContentReplacement(t *testing.T) {
 			assert.Diff(t, before.inputDoc, first)
 			second := manifest.DeepCopyMap(first)
 			second["unmodeled"] = "replacement"
-			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Origin: origin})
+			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Role: role})
 			_, document, current := st.GetEmission(obj.Named())
 			assert.Diff(t, document, second)
 			assert.Diff(t, current.inputDoc, second)
 			current.Finish()
-			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Origin: origin})
+			st.AddDeclaration(Declaration{Obj: obj, Doc: second, Role: role})
 			_, document, unknown := st.GetEmission(obj.Named())
 			assert.Diff(t, document, second)
 			assert.Diff(t, unknown.inputDoc, second)
 			unknown.Finish()
-			st.AddDeclaration(Declaration{Obj: obj, Origin: origin})
+			st.AddDeclaration(Declaration{Obj: obj, Role: role})
 			_, document, missing := st.GetEmission(obj.Named())
 			assert.Equal(t, document == nil, true)
 			assert.Equal(t, missing.inputDoc == nil, true)
@@ -143,7 +226,7 @@ func TestDeclaration_SourceWithdrawal(t *testing.T) {
 			if tc.construction {
 				s.AddConstructionDeclaration(reference, document)
 			} else {
-				s.AddDeclaration(Declaration{Obj: reference, Doc: document, Origin: manifest.SuppliedDeclaration})
+				s.AddDeclaration(Declaration{Obj: reference, Doc: document, Role: SuppliedDeclaration})
 			}
 			producer := parent
 			if tc.ancestor {
@@ -190,7 +273,7 @@ func TestDeclaration_ProducerWithdrawal(t *testing.T) {
 	leaf := &manifest.ConfigMap{Name: "leaf", Namespace: "apps"}
 	s.AddObject(parent)
 	s.AddDeclaration(
-		Declaration{Obj: reference, Doc: testutil.ObjectDocument(reference), Origin: manifest.SuppliedDeclaration},
+		Declaration{Obj: reference, Doc: testutil.ObjectDocument(reference), Role: SuppliedDeclaration},
 	)
 	s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: repository}}, Complete: true}, nil)
 	s.RecordEmitted(repository.Named(), &Emission{Children: []Child{{Obj: leaf}}, Complete: true}, nil)
@@ -226,29 +309,47 @@ func TestPolicy_CapabilityReplacement(t *testing.T) {
 	}
 	first := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "first"}
 	second := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "second"}
+	source := &manifest.GitRepository{Name: "input", Namespace: "apps"}
+	rawSource := &manifest.RawObject{
+		APIVersion: manifest.SourceDomain + "/v1",
+		Kind:       manifest.KindGitRepository,
+		Name:       source.Name,
+		Namespace:  source.Namespace,
+	}
 	for _, tc := range []struct {
 		name            string
 		before, after   manifest.BaseManifest
 		beforeReconcile bool
 		afterReconcile  bool
+		construction    bool
 	}{
-		{"raw_to_typed", raw, first, false, true},
-		{"typed_to_raw", first, raw, true, false},
-		{"typed_update", first, second, true, true},
+		{name: "raw_to_typed", before: raw, after: first, afterReconcile: true},
+		{name: "typed_to_raw", before: first, after: raw, beforeReconcile: true},
+		{name: "typed_update", before: first, after: second, beforeReconcile: true, afterReconcile: true},
+		{name: "construction_source", before: rawSource, after: source, afterReconcile: true, construction: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := New()
 			id := tc.before.Named()
-			s.AddObject(tc.before)
+			admit := func(obj manifest.BaseManifest) { s.AddObject(obj) }
+			if tc.construction {
+				admit = func(obj manifest.BaseManifest) { s.AddConstructionDeclaration(obj, nil) }
+			}
+			admit(tc.before)
 			var before ReadSet
 			before.Init(s, ownerID("reader"), nil)
 			defer before.Retire()
 			assert.Equal(t, before.Policy(id).Reconcile, tc.beforeReconcile)
-			s.AddObject(tc.after)
+			admit(tc.after)
 			assert.Equal(t, before.Valid(), false)
 			assert.Equal(t, before.Policy(id).Reconcile, tc.beforeReconcile)
-			assert.Equal(t, s.Policy(id).Reconcile, tc.afterReconcile)
+			obj, policy := s.Lookup(id)
+			assert.Equal(t, obj, tc.after)
+			assert.Equal(t, policy.Reconcile, tc.afterReconcile)
+			assert.Equal(t, policy.Supplied(), false)
+			assert.Equal(t, policy.RootCandidate(), !tc.construction)
+			assert.Equal(t, policy.Child(obj).Policy(id), policy)
 			var current ReadSet
 			current.Init(s, ownerID("current"), nil)
 			defer current.Retire()

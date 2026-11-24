@@ -25,7 +25,6 @@ type Child struct {
 	Doc               map[string]any
 	Generated         bool
 	VisibleGeneration bool
-	Origin            manifest.DeclarationOrigin
 	policy            DeclarationPolicy
 	Productions       []manifest.Production
 	Warnings          []manifest.Warning `json:"-"`

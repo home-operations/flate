@@ -33,7 +33,7 @@ func TestPrepare_UnreadableBeforeValidation(t *testing.T) {
 		store.Declaration{
 			Obj:      child.Obj,
 			Doc:      child.Doc,
-			Origin:   manifest.SuppliedDeclaration,
+			Role:     store.SuppliedDeclaration,
 			Warnings: child.Warnings,
 		},
 	)

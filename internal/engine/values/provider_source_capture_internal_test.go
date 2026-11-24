@@ -32,7 +32,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	s := store.New()
 	supplied := &manifest.Secret{Name: "supplied", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
 	s.AddDeclaration(
-		store.Declaration{Obj: supplied, Doc: testutil.ObjectDocument(supplied), Origin: manifest.SuppliedDeclaration},
+		store.Declaration{Obj: supplied, Doc: testutil.ObjectDocument(supplied), Role: store.SuppliedDeclaration},
 	)
 	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	s.AddObject(first)

@@ -179,13 +179,12 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 	}
 	if liveWorktree && !opts.membership.captured {
-		directory, err := openDirectoryAt(ctx, opts.Location, opts.membership.directory)
+		directory, err := openDirectoryAt(ctx, opts.Location, opts.membership.excluded)
 		if err != nil {
 			return nil, "", err
 		}
 		captured := directory.membership
 		_ = directory.Close()
-		captured.extra = opts.membership.extra
 		opts.membership = captured
 	}
 	if liveWorktree && opts.Mode == Direct {
@@ -703,8 +702,15 @@ func (o *ViewOptions) refreshCurrent(
 		return nil, matcher, reuse, nil
 	}
 
-	o.membership.directory = cmp.Or(o.membership.directory, current.membership.directory)
-	o.membership.extra = append(slices.Clone(current.membership.extra), o.membership.extra...)
+	excluded := o.membership.excluded
+	switch {
+	case len(excluded) == 0:
+		o.membership.excluded = current.membership.excluded
+	case len(current.membership.excluded) > 1:
+		o.membership.excluded = slices.Concat(
+			excluded[:1], current.membership.excluded.tail(), excluded.tail(),
+		).normalizeTail()
+	}
 	o.membership.ignored, o.membership.captured = current.membership.ignored, current.membership.captured
 	if commit != plumbing.ZeroHash {
 		o.membership.ignored = nil
@@ -724,18 +730,15 @@ func (o *ViewOptions) refreshCurrent(
 			current, v = refreshed, refreshed.view.(*gitView) //nolint:errcheck // New publishes *gitView before refreshCurrent reads the refreshed representation; corruption MUST panic.
 		}
 		o.CurrentContent = v.identity
-		if commit == plumbing.ZeroHash {
+		if commit == plumbing.ZeroHash && !source {
 			matcher = current.policy
-		}
-		if source && matcher != nil && o.Ignore != "" {
-			matcher = matcher.WithExtra(o.Ignore)
 		}
 		reuse = reuse ||
 			commit == plumbing.ZeroHash && source && v.mode == Source && o.Ignore == "" && len(o.Sparse) == 0
 	}
-	if source && commit == plumbing.ZeroHash && matcher == nil {
+	if source && commit == plumbing.ZeroHash {
 		var err error
-		matcher, err = o.currentPolicy(ctx, current)
+		matcher, err = current.sourcePolicy(ctx, o.Ignore, false)
 		if err != nil {
 			return current, nil, false, err
 		}
@@ -765,7 +768,10 @@ func (g *FS) finishGitView(
 			Ignore          string
 			Excluded        string   `json:",omitempty"`
 			ExcludedPaths   []string `json:",omitempty"`
-		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore, opts.membership.directory, opts.membership.extra})
+		}{
+			opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore,
+			opts.membership.excluded.primary(), opts.membership.excluded.tail(),
+		})
 		if v.identity == "" {
 			return warningOnly(
 					g,

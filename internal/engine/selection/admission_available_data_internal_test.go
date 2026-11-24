@@ -74,7 +74,7 @@ func TestAdmission_MaterializersSkipAvailableData(t *testing.T) {
 			st := store.New()
 			input := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
 			if tc.available {
-				st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
+				st.AddDeclaration(store.Declaration{Obj: input, Role: store.SuppliedDeclaration})
 			}
 			consumer := (&manifest.HelmRelease{Name: "consumer", Namespace: "apps"}).Named()
 			producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}

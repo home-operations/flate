@@ -222,8 +222,8 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 		ref.Namespace = "explicit"
 	case "object", "supplied", "present invalid expression":
 		obj := &manifest.RawObject{APIVersion: ref.Group + "/v1", Kind: ref.Kind, Name: ref.Name}
-		origin := map[string]manifest.DeclarationOrigin{"supplied": manifest.SuppliedDeclaration}[*testCaseInput.state]
-		s.AddDeclaration(store.Declaration{Obj: obj, Origin: origin})
+		role := map[string]store.DeclarationRole{"supplied": store.SuppliedDeclaration}[*testCaseInput.state]
+		s.AddDeclaration(store.Declaration{Obj: obj, Role: role})
 		want = schedule.Terminal
 		msg = ""
 		if (*testCaseInput.state) == "present invalid expression" {

@@ -127,6 +127,7 @@ func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 func TestArtifactGenerator_InputIdentity(t *testing.T) {
 	t.Parallel()
 	t.Run("exported_inputs", testArtifactGeneratorExportedInputs)
+	t.Run("exported_input_documents", testArtifactGeneratorExportedDocuments)
 	for _, tc := range []struct {
 		name string
 		edit func(*store.SourceArtifact)

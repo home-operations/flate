@@ -21,14 +21,47 @@ import (
 )
 
 type membership struct {
-	directory string
-	extra     []string
-	ignored   map[string]struct{}
-	captured  bool
+	excluded excludedDirectories
+	ignored  map[string]struct{}
+	captured bool
+}
+
+// An excludedDirectories value is immutable and puts the primary directory first.
+type excludedDirectories []string
+
+func (d excludedDirectories) primary() string {
+	if len(d) == 0 {
+		return ""
+	}
+	return d[0]
+}
+
+func (d excludedDirectories) tail() []string {
+	if len(d) <= 1 {
+		return nil
+	}
+	return d[1:]
+}
+
+// normalizeTail MUST only receive a new slice. A directory in the tail stays excluded when refresh replaces the primary.
+func (d excludedDirectories) normalizeTail() excludedDirectories {
+	tail := d.tail()
+	if len(tail) <= 1 {
+		return d
+	}
+	slices.Sort(tail)
+	return d[:1+len(slices.Compact(tail))]
+}
+
+func (d excludedDirectories) withPrimary(directory string) excludedDirectories {
+	if directory == d.primary() {
+		return d
+	}
+	return slices.Concat(excludedDirectories{directory}, d.tail())
 }
 
 func (m *membership) matches(other *membership) bool {
-	return m.directory == other.directory && slices.Equal(m.extra, other.extra) && maps.Equal(m.ignored, other.ignored)
+	return slices.Equal(m.excluded, other.excluded) && maps.Equal(m.ignored, other.ignored)
 }
 
 func sourceOrigin(previous *FS, mode ViewMode, commit plumbing.Hash) *FS {
@@ -94,7 +127,7 @@ func ExcludeDirectory(input *store.SourceArtifact, directory string) *store.Sour
 		return input
 	}
 	rel = filepath.ToSlash(rel)
-	if native && (rel == g.membership.directory || slices.Contains(g.membership.extra, rel)) {
+	if native && slices.Contains(g.membership.excluded, rel) {
 		return input
 	}
 	selected := &FS{snapshot: &localPolicy{}}
@@ -106,11 +139,7 @@ func ExcludeDirectory(input *store.SourceArtifact, directory string) *store.Sour
 		selected.view = &directView{input.FS}
 		selected.location = &gitrepo.Location{ContentRoot: root}
 	}
-	if selected.membership.directory == "" {
-		selected.membership.directory = rel
-	} else {
-		selected.membership.extra = append(slices.Clone(selected.membership.extra), rel)
-	}
+	selected.membership.excluded = slices.Concat(selected.membership.excluded, []string{rel}).normalizeTail()
 	return input.WithSourceView(selected)
 }
 
@@ -135,17 +164,13 @@ func (g *FS) excludes(name string) bool {
 	if _, ignored := g.membership.ignored[name]; ignored {
 		return true
 	}
-	directory := g.membership.directory
-	if directory == "" {
+	if len(g.membership.excluded) == 0 {
 		if scoped, ok := g.view.(*scopedView); ok {
 			return scoped.parent.excludes(path.Join(scoped.path, name))
 		}
 		return false
 	}
-	if inDirectory(name, directory) {
-		return true
-	}
-	return slices.ContainsFunc(g.membership.extra, func(dir string) bool { return inDirectory(name, dir) })
+	return slices.ContainsFunc(g.membership.excluded, func(dir string) bool { return inDirectory(name, dir) })
 }
 
 func inDirectory(name, directory string) bool {
@@ -161,7 +186,7 @@ func (g *FS) Open(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	file, err := g.view.Open(name)
-	if err != nil || g.membership.directory == "" && len(g.membership.ignored) == 0 {
+	if err != nil || len(g.membership.excluded) == 0 && len(g.membership.ignored) == 0 {
 		return file, err
 	}
 	info, err := file.Stat()
@@ -266,7 +291,7 @@ func (g *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	entries, err := g.view.ReadDir(name)
-	if g.membership.directory == "" && len(g.membership.ignored) == 0 {
+	if len(g.membership.excluded) == 0 && len(g.membership.ignored) == 0 {
 		return entries, err
 	}
 	index := slices.IndexFunc(
@@ -296,7 +321,7 @@ type memberFilesystem struct {
 // Only native Billy backends may enumerate the host directory.
 func (g *FS) memberFilesystem(files billy.Filesystem, root string) *memberFilesystem {
 	bridge := &memberFilesystem{Filesystem: files, input: g, root: root}
-	for selected := g; selected.membership.directory == ""; {
+	for selected := g; len(selected.membership.excluded) == 0; {
 		scoped, ok := selected.view.(*scopedView)
 		if !ok {
 			return bridge

@@ -23,6 +23,7 @@ import (
 
 func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 	t.Parallel()
+	const discoveryFile = "unclaimed.yaml"
 	for _, name := range []string{"unchanged", "builder", "precedence", "removed", "added", "list", "declaration forward", "declaration reverse", "discovery only"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -45,7 +46,7 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 				files["object.yaml"].Data = declaration("after")
 			case "discovery only":
 				delete(files, "kustomization.yml")
-				files["unclaimed.yaml"] = &fstest.MapFile{Data: declaration("unclaimed")}
+				files[discoveryFile] = &fstest.MapFile{Data: declaration("unclaimed")}
 			}
 			owner, err := cache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
@@ -85,16 +86,6 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 			cold := cachedFixtureLoader(t, root, files, nil)
 			defer cold.Close()
 			assert.Diff(t, repaired.Index, cold.Index)
-			if name == "discovery only" {
-				id := manifest.NamedResource{
-					Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
-					Namespace: "flux-system", Name: "child",
-				}
-				_, indexed := cold.Index.Records[id]
-				assert.Equal(t, indexed, true)
-				assert.Equal(t, cold.Store.GetObject(id), nil)
-				assert.Equal(t, repaired.Store.GetObject(id), nil)
-			}
 			assert.NoError(t, repaired.PersistInputs(t.Context()))
 			restored := cachedFixtureLoader(t, root, files, owner)
 			defer restored.Close()
@@ -118,6 +109,35 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 				assert.NoError(t, gotErr)
 				assert.Diff(t, gotChild.Doc, wantChild.Doc)
 			}
+			if name != "discovery only" {
+				return
+			}
+			id := manifest.NamedResource{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
+				Namespace: "flux-system", Name: "child",
+			}
+			_, indexed := cold.Index.Records[id]
+			assert.Equal(t, indexed, true)
+			assert.Equal(t, cold.Store.GetObject(id), nil)
+			assert.Equal(t, repaired.Store.GetObject(id), nil)
+			assert.Equal(t, restored.Store.GetObject(id), nil)
+			if persistent {
+				_, fromFrame := restored.inputCaches[root].files[inputCoordinate{name: discoveryFile}]
+				assert.Equal(t, fromFrame, true)
+			}
+			want, found := cold.catalogOccurrence(id)
+			assert.FatalIf(t, !found, "cold discovery omitted %v", id)
+			got, found := restored.catalogOccurrence(id)
+			assert.FatalIf(t, !found, "restored discovery omitted %v", id)
+			wantRefs, gotRefs := want.facts.relations(), got.facts.relations()
+			assert.FatalIf(t, len(wantRefs) != 1, "cold discovery has %d references, want 1", len(wantRefs))
+			assert.FatalIf(t, len(gotRefs) != 1, "restored discovery has %d references, want 1", len(gotRefs))
+			wantRef, gotRef := wantRefs[0], gotRefs[0]
+			assert.Equal(t, gotRef.NamedResource, wantRef.NamedResource)
+			assert.Equal(t, wantRef.BindsSource(), true)
+			assert.Equal(t, wantRef.ReadsSourceTree(), true)
+			assert.Equal(t, gotRef.BindsSource(), wantRef.BindsSource())
+			assert.Equal(t, gotRef.ReadsSourceTree(), wantRef.ReadsSourceTree())
 		})
 	}
 }
@@ -202,7 +222,9 @@ kind: Kustomization
 metadata: {name: entry, namespace: apps}
 spec: {path: ./apps}
 `)},
-		"apps/kustomization.yaml": {Data: []byte("resources: [consumer.yaml]\ncomponents: [../shared]\n")},
+		"apps/kustomization.yaml": {
+			Data: []byte("namespace: apps\nresources: [consumer.yaml]\ncomponents: [../shared]\n"),
+		},
 		"apps/consumer.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: consumer, namespace: apps}
@@ -217,11 +239,12 @@ resources: [generator.yaml]
 `)},
 		generatorFile: {Data: []byte(`apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
-metadata: {name: generator, namespace: apps}
+metadata: {name: generator, namespace: authored}
 spec:
   sources: [{alias: repo, kind: GitRepository, namespace: flux-system, name: flux-system}]
   pathPattern: '@repo/apps/{app}'
   artifacts:
+  - {name: local, copy: [{from: '@repo/copied/', to: '@artifact/'}]}
   - {name: 'bundle-{app}', namespace: delivery, copy: [{from: '@repo/copied/', to: '@artifact/'}]}
   - {name: 'branch-{app}', namespace: 'delivery-{app}', copy: [{from: '@repo/copied/', to: '@artifact/'}]}
   managedNamespaces:
@@ -264,13 +287,15 @@ spec:
 	assert.NoError(t, err)
 	assert.NoError(t, warm.FinalizeIndex(t.Context(), root, false))
 
+	authored := generator
+	authored.Namespace = "authored"
 	want := []manifest.Production{
 		{
 			Owner: manifest.NamedResource{
 				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
 				Namespace: "apps", Name: "entry",
 			},
-			Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: generatorFile,
+			Declaration: generator, Authored: authored, Source: manifest.BootstrapSourceID, File: generatorFile,
 		},
 	}
 	for _, l := range []*Loader{cold, warm} {
@@ -282,6 +307,7 @@ spec:
 			{Kind: "Namespace", Name: "delivery"},
 			{Kind: "Namespace", Name: "delivery-api"},
 			{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "delivery", Name: "bundle-api"},
+			{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "local"},
 		} {
 			assert.Equal(t, l.Store.GetObject(id), nil)
 			assert.Equal(t, l.Store.GetArtifact(id, store.ArtifactContent), nil)

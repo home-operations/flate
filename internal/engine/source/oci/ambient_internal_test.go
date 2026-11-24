@@ -168,7 +168,7 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 			{
 				Obj:       secret,
 				Doc:       testutil.ObjectDocument(secret),
-				Origin:    manifest.SuppliedDeclaration,
+				Role:      store.SuppliedDeclaration,
 				InputPath: tc.path,
 			},
 		}

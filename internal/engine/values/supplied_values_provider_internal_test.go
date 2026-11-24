@@ -27,7 +27,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 		store.Declaration{
 			Obj:       supplied,
 			Doc:       testutil.ObjectDocument(supplied),
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: "credentials.yaml",
 		},
 	)
@@ -104,7 +104,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		StringData: map[string]any{"VALUE": "supplied", "VALUES": "greeting: supplied\n", "tag": "supplied-tag"},
 	}
 	s.AddDeclaration(
-		store.Declaration{Obj: secret, Doc: testutil.ObjectDocument(secret), Origin: manifest.SuppliedDeclaration},
+		store.Declaration{Obj: secret, Doc: testutil.ObjectDocument(secret), Role: store.SuppliedDeclaration},
 	)
 	s.AddObject(
 		&manifest.Secret{

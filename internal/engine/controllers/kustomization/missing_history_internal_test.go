@@ -283,7 +283,7 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 				)
 				assert.NoError(t, outcome.Err)
 				st.AddDeclaration(store.Declaration{
-					Obj: child.Obj, Doc: child.Doc, Origin: manifest.RepositoryDeclaration, Warnings: child.Warnings,
+					Obj: child.Obj, Doc: child.Doc, Role: store.RepositoryDeclaration, Warnings: child.Warnings,
 				})
 			}
 			beforeWarnings := st.Warnings()
@@ -488,7 +488,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	for _, object := range []manifest.BaseManifest{owner, input, producer} {
 		st.AddObject(object)
 	}
-	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: input, Role: store.SuppliedDeclaration})
 	st.SetArtifact(source, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		input.Named(): {

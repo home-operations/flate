@@ -2,6 +2,7 @@ package artifactgenerator
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -32,7 +33,7 @@ func TestComposition_Lowering(t *testing.T) {
 		{From: "@first/**/*.TGZ", To: "@artifact/one/", Strategy: "Extract"},
 		{From: "@second/*.tar.gz", To: "@artifact/two", Strategy: "Extract"},
 	}}}
-	got, err := e.composition(&req)
+	got, err := e.composition(prepareCompositionRequest(t, &e, &req))
 	assert.NoError(t, err)
 	assert.Equal(t, len(got.Inputs), 3)
 	for i, want := range []string{"second", "first", "unused"} {
@@ -57,4 +58,95 @@ func TestComposition_Lowering(t *testing.T) {
 		assert.Equal(t, op.Mode, want.Mode)
 		assert.Diff(t, op.Exclude, want.Exclude)
 	}
+}
+
+func TestComposition_ResolvedOutputs(t *testing.T) {
+	t.Parallel()
+	spec := manifest.ArtifactGeneratorSpec{
+		PathPattern: "@repo/apps/{App}",
+		Sources: []manifest.ArtifactGeneratorSource{
+			{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
+		},
+		Artifacts: []manifest.ArtifactGeneratorOutput{{
+			Name: "{App}", InputsFrom: "@artifact/{App}.yaml",
+			Copy: []manifest.ArtifactGeneratorCopy{
+				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/{App}.yaml", Exclude: []string{"{App}.bak"}},
+				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/backup/{App}.yaml"},
+				{From: "@repo/shared.yaml", To: "@artifact/shared.yaml", Strategy: "Merge"},
+				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/again/{App}.yaml"},
+				{From: "@repo/shared.yaml", To: "@artifact/backup/shared.yaml", Strategy: "Merge"},
+			},
+		}},
+	}
+	prepared, err := validateSpec(&spec, "apps")
+	assert.NoError(t, err)
+	e := evaluation{
+		identity:  []inputIdentity{{Alias: "repo"}},
+		inputs:    map[string]fs.FS{"repo": fstest.MapFS{"apps/Prod/values.yaml": {}, "apps/Stage/values.yaml": {}}},
+		selectors: &prepared.selectors, copyModes: prepared.copyModes,
+	}
+	key := selectorKey{use: copySourceSelector, text: "@repo/shared.yaml"}
+	parsed, ok := prepared.selectors.more[key]
+	assert.FatalIf(t, !ok, "missing prepared copy source %q", key.text)
+	parsed.selector.Path = "prepared.yaml"
+	prepared.selectors.more[key] = parsed
+	authoredFirst, authoredCount := prepared.selectors.first, len(prepared.selectors.more)
+	requests, err := prepared.expand(t.Context(), "apps", e.inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, len(requests), 2)
+	for i, dir := range []string{"Prod", "Stage"} {
+		req := &requests[i]
+		got, err := e.composition(req)
+		assert.NoError(t, err)
+		from := "apps/" + dir + "/values.yaml"
+		assert.Diff(t, got.Copies, []cache.Copy{
+			{From: from, To: dir + ".yaml", Exclude: []string{"{App}.bak"}},
+			{From: from, To: "backup/" + dir + ".yaml"},
+			{From: "prepared.yaml", To: "shared.yaml", Mode: cache.MergeYAML},
+			{From: from, To: "again/" + dir + ".yaml"},
+			{From: "prepared.yaml", To: "backup/shared.yaml", Mode: cache.MergeYAML},
+		})
+		assert.Equal(t, req.inputsFrom.Path, dir+".yaml")
+		assert.Equal(t, req.inputsFrom.StagedFile(), true)
+	}
+	assert.Equal(t, prepared.selectors.first, authoredFirst)
+	assert.Equal(t, len(prepared.selectors.more), authoredCount)
+	for _, tc := range []struct {
+		name, from, to, want string
+	}{
+		{"invalid expanded source", "@repo/{App}:file", "@artifact/file", "invalid copy source '@repo/A:file':"},
+		{"invalid expanded destination", "@repo/file", "@artifact/{App}:file", "invalid copy destination '@artifact/A:file':"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			invalid := spec
+			invalid.Artifacts = []manifest.ArtifactGeneratorOutput{{
+				Name: "{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: tc.from, To: tc.to}},
+			}}
+			prepared, err := validateSpec(&invalid, "apps")
+			assert.NoError(t, err)
+			e := evaluation{
+				identity:  []inputIdentity{{Alias: "repo"}},
+				inputs:    map[string]fs.FS{"repo": fstest.MapFS{"apps/A/file": {}}},
+				selectors: &prepared.selectors,
+			}
+			requests, err := prepared.expand(t.Context(), "apps", e.inputs)
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(requests) != 1, "got %d requests, want one", len(requests))
+			_, err = e.composition(&requests[0])
+			assert.ErrorIf(
+				t, err == nil || !strings.HasPrefix(err.Error(), tc.want), "got %v, want prefix %q", err, tc.want,
+			)
+		})
+	}
+}
+
+func prepareCompositionRequest(t *testing.T, e *evaluation, req *request) *request {
+	t.Helper()
+	var prepared generatorSpec
+	for i := range req.Output.Copy {
+		assert.NoError(t, prepared.prepareOperation(&req.Output.Copy[i]))
+	}
+	e.selectors, e.copyModes = &prepared.selectors, prepared.copyModes
+	return req
 }

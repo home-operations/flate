@@ -8,19 +8,15 @@ type ReferenceLimits struct {
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (k *Kustomization) ReferenceCapacity() ReferenceLimits {
-	data := 0
-	n := len(k.DependsOn)
-	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" || k.Path != "" {
+	fields := k.referenceFields(ReferenceAll)
+	n := fields.dependencies + fields.substitutions
+	if fields.source != noKustomizationSource {
 		n++
 	}
-	if k.TargetNamespace != "" {
+	if fields.targetNamespace {
 		n++
 	}
-	if k.PostBuild != nil {
-		data = len(k.PostBuild.SubstituteFrom)
-		n += data
-	}
-	return ReferenceLimits{References: n, DataInputs: data}
+	return ReferenceLimits{References: n, DataInputs: fields.substitutions}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.

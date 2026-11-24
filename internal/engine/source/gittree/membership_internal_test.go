@@ -28,6 +28,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestSameView_CapturedMembership(t *testing.T) {
@@ -59,7 +60,10 @@ func TestSameView_CapturedMembership(t *testing.T) {
 			if tc.uncaptured {
 				identity = ""
 			}
-			first := &FS{view: &gitView{identity: identity}, membership: membership{directory: "cache"}}
+			first := &FS{
+				view:       &gitView{identity: identity},
+				membership: membership{excluded: excludedDirectories{"cache"}},
+			}
 			second := &FS{view: &gitView{identity: identity}, membership: first.membership}
 			if tc.edit != nil {
 				second = tc.edit(second)
@@ -272,7 +276,7 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 			input, _, newErr := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: tc.mode, Current: filtered})
 			assert.NoError(t, newErr)
 			for _, candidate := range []*FS{input, input.OperationView()} {
-				fresh, freshErr := candidate.freshInput(t.Context(), candidate.membership.directory)
+				fresh, freshErr := candidate.freshInput(t.Context(), "")
 				assert.NoError(t, freshErr)
 				for _, view := range []*FS{candidate, fresh} {
 					_, statErr := fs.Stat(view, ".cache/payload")
@@ -467,9 +471,9 @@ func TestContentFingerprint_ExcludedGitReaders(t *testing.T) {
 			assert.Equal(t, admitted.FileDigests()[".absolute-cache/oci/acquire-witness"], "")
 			testutil.WriteFile(t, root, "nested/.gitignore", "*.fresh\n")
 			testutil.WriteFile(t, root, "nested/new.fresh", "ignored after refresh")
-			refreshed, err := admitted.freshInput(t.Context(), admitted.membership.directory)
+			refreshed, err := admitted.freshInput(t.Context(), "")
 			assert.NoError(t, err)
-			assert.Equal(t, refreshed.membership.directory, ".absolute-cache")
+			assert.Diff(t, refreshed.membership.excluded, excludedDirectories{".absolute-cache"})
 			assert.Equal(t, refreshed.excludes("new.fresh"), true)
 			observed, err := admitted.FreshInputs(t.Context(), nil, nil)
 			assert.NoError(t, err)
@@ -505,23 +509,74 @@ func TestContentFingerprint_OuterExclusionSurvivesRefresh(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, observed.Files["object.yaml"] != "", true)
 	assert.Equal(t, witness.excluded.Load(), int64(0))
-	t.Run("scoped exclusion", func(t *testing.T) {
+	t.Run("nested exclusions", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "nested/object.yaml", "kept")
-		witness := &metadataObservationFS{FS: os.DirFS(root)}
+		testutil.WriteFile(t, root, "nested/deep/visible.yaml", "kept")
+		witness := &metadataObservationFS{FS: os.DirFS(root), allowExcluded: true}
 		input := &FS{view: &directView{FS: witness}, snapshot: &localPolicy{}}
-		scoped, err := Sub(input, "nested")
+		deepRoot := filepath.Join(root, "nested", "deep")
+		parent := &store.SourceArtifact{FS: input, LocalPath: root}
+		for _, dir := range []string{".absolute-cache-parent", ".absolute-cache-parent-tail"} {
+			parent = ExcludeDirectory(parent, filepath.Join(deepRoot, dir))
+		}
+		scoped, err := Sub(parent.FS, "nested")
 		assert.NoError(t, err)
-		testutil.WriteFile(t, root, "nested/.absolute-cache/payload.yaml", "excluded")
+		deep, err := Sub(scoped, "deep")
+		assert.NoError(t, err)
 		selected := ExcludeDirectory(
-			&store.SourceArtifact{FS: scoped, LocalPath: filepath.Join(root, "nested")},
-			filepath.Join(root, "nested", ".absolute-cache"),
-		).FS.(*FS)
-		observed, err := selected.FreshInputs(t.Context(), nil, nil)
+			&store.SourceArtifact{FS: deep, LocalPath: deepRoot}, filepath.Join(deepRoot, ".absolute-cache"),
+		)
+		selected = ExcludeDirectory(selected, filepath.Join(deepRoot, ".absolute-cache-extra"))
+		view := selected.FS.(*FS)
+		before, err := view.FreshInputs(t.Context(), nil, nil)
 		assert.NoError(t, err)
-		assert.Equal(t, observed.Files["object.yaml"] != "", true)
-		assert.Equal(t, observed.Files[".absolute-cache/payload.yaml"], "")
+		assert.Equal(t, len(before.Files), 1)
+		assert.Equal(t, before.Files["visible.yaml"] != "", true)
+		witness.excluded.Store(0)
+		assert.Equal(t, view.excludes(".absolute-cache-parent/payload.yaml"), false)
+		for _, dir := range []string{
+			".absolute-cache-parent", ".absolute-cache-parent-tail", ".absolute-cache", ".absolute-cache-extra",
+		} {
+			name := dir + "/payload.yaml"
+			testutil.WriteFile(t, deepRoot, name, "excluded")
+			_, openErr := view.OpenRegular(name)
+			assert.Equal(t, errors.Is(openErr, fs.ErrNotExist), true)
+		}
+		directory, err := view.Open(".")
+		assert.NoError(t, err)
+		entries, err := directory.(fs.ReadDirFile).ReadDir(-1)
+		assert.NoError(t, err)
+		assert.NoError(t, directory.Close())
+		assert.Equal(t, len(entries), 1)
+		assert.Equal(t, entries[0].Name(), "visible.yaml")
 		assert.Equal(t, witness.excluded.Load(), int64(0))
+
+		observed, err := view.FreshInputs(t.Context(), nil, nil)
+		assert.NoError(t, err)
+		digest := manifest.Fingerprint(testutil.GitBlobHash(t, []byte("excluded")))
+		assert.Diff(t, observed.Files, map[string]string{
+			".absolute-cache-parent/payload.yaml": digest,
+			".absolute-cache-extra/payload.yaml":  digest,
+			"visible.yaml":                        before.Files["visible.yaml"],
+		})
+		_, err = fs.Stat(parent.FS, "nested/deep/.absolute-cache-extra/payload.yaml")
+		assert.NoError(t, err)
+	})
+
+	t.Run("fallback policy", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "ignored\n")
+		input := &FS{view: &directView{FS: os.DirFS(root)}, snapshot: &localPolicy{}}
+		policy, err := input.SourcePolicy(t.Context())
+		assert.NoError(t, err)
+		input.policy, input.policyKey = policy, "captured"
+		input.Warnings = []manifest.Warning{{Category: manifest.WarnInputReadFailed}}
+		refreshed, err := input.freshInput(t.Context(), "")
+		assert.NoError(t, err)
+		assert.Equal(t, refreshed.policy == nil, true)
+		assert.Equal(t, PolicyKey(refreshed), "")
+		assert.Equal(t, refreshed.Warnings == nil, true)
 	})
 }

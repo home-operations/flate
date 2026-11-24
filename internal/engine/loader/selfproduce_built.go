@@ -61,13 +61,12 @@ func (l *Loader) prepareBuiltProductions(
 				record.BuilderOwner == owner && record.Declaration == obj {
 				prepared[record.File] = append(prepared[record.File], *child)
 				preparedOwners[obj.Named()] = batch.input.Owner
-				b.recordProducer(
-					&producerDeclaration{
-						obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root,
-						substituteDisabled: manifest.HasSubstituteDisabled(child.Doc),
-					},
-					candidates,
-				)
+				declaration := producerDeclaration{
+					obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root,
+					substituteDisabled: manifest.HasSubstituteDisabled(child.Doc),
+				}
+				declaration.project(false)
+				b.recordProducer(&declaration, candidates)
 			}
 		}
 	}

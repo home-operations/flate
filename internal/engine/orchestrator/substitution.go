@@ -44,7 +44,7 @@ func snapshotSubstitutions(cfg *Config) error {
 		inputs[child.Obj.Named()] = store.Declaration{
 			Obj:       child.Obj,
 			Doc:       child.Doc,
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: path,
 			Ordinal:   input.Ordinal,
 			Warnings:  child.Warnings,

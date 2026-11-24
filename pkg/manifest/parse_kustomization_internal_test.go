@@ -2,11 +2,88 @@ package manifest
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
+
+//nolint:tparallel // testing.AllocsPerRun measures process-wide allocation counters.
+func TestReferenceCapacity_KustomizationFieldOrder(t *testing.T) {
+	k := &Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
+	k.TargetNamespace = "target"
+	k.DependsOn = []kustomizev1.DependencyReference{{Name: "prerequisite"}}
+	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
+		{Kind: KindConfigMap, Name: "vars"},
+		{Kind: "unsupported", Name: "invalid"},
+		{Kind: KindSecret},
+	}}
+	assert.Equal(t, k.ReferenceCapacity(), ReferenceLimits{References: 6, DataInputs: 3})
+	assert.Equal(t, testing.AllocsPerRun(10, func() { k.ReferenceCapacity() }), float64(0))
+	relations := slices.Collect(References(k, ReferenceRelations))
+	all := slices.Collect(References(k, ReferenceAll))
+	assert.Equal(t, len(all), 5)
+	assert.Equal(t, all[0].Use, "")
+	assert.Equal(t, all[0].NamedResource, k.EffectiveSourceID())
+	assert.Equal(t, len(relations), 4)
+	assert.Equal(t, relations[0].Use, "targetNamespace")
+	assert.Equal(t, relations[1].Use, dependsOnKey)
+	assert.Equal(t, relations[1].Namespace, "apps")
+	assert.Equal(t, relations[1].NamespaceDefault, true)
+	assert.Equal(t, relations[2].Use, substituteFromKey)
+	assert.Equal(t, relations[2].Namespace, "apps")
+	assert.Equal(t, relations[2].NamespaceDefault, true)
+	assert.Equal(t, relations[3].Position, 2)
+	assert.Equal(t, relations[3].Name, "")
+	for _, tc := range []struct {
+		view ReferenceView
+		refs []Reference
+	}{{ReferenceAll, all}, {ReferenceRelations, relations}} {
+		for stop := range tc.refs {
+			count := 0
+			References(k, tc.view)(func(ref Reference) bool {
+				assert.FatalIf(t, count > stop, "reference iterator continued after position %d", stop)
+				assert.Equal(t, ref.NamedResource, tc.refs[count].NamedResource)
+				assert.Equal(t, ref.Use, tc.refs[count].Use)
+				assert.Equal(t, ref.Position, tc.refs[count].Position)
+				count++
+				return count <= stop
+			})
+			assert.Equal(t, count, stop+1)
+		}
+	}
+
+	t.Run("partial_source", func(t *testing.T) {
+		t.Parallel()
+		allowUnexported := cmp.AllowUnexported(Reference{})
+		partial := *k
+		partial.SourceRef.Name = "repo"
+		assert.Equal(t, partial.ReferenceCapacity(), k.ReferenceCapacity())
+		assert.Equal(t, cmp.Diff(all, slices.Collect(References(&partial, ReferenceAll)), allowUnexported), "")
+		gotRelations := slices.Collect(References(&partial, ReferenceRelations))
+		assert.Equal(t, cmp.Diff(relations, gotRelations, allowUnexported), "")
+
+		partial.Path = ""
+		authored := Reference{
+			NamedResource:    partial.SourceID(),
+			sourceRoles:      bindsSource | readsSourceTree,
+			Use:              sourceKey,
+			Gate:             GateInputs | GateArtifacts,
+			Artifact:         true,
+			ArtifactStages:   GateInputs | GateArtifacts,
+			NamespaceDefault: true,
+		}
+		want := slices.Concat([]Reference{authored}, relations)
+		assert.Equal(t, partial.ReferenceCapacity(), k.ReferenceCapacity())
+		assert.Equal(t, cmp.Diff(want, slices.Collect(References(&partial, ReferenceAll)), allowUnexported), "")
+		gotRelations = slices.Collect(References(&partial, ReferenceRelations))
+		assert.Equal(t, cmp.Diff(want, gotRelations, allowUnexported), "")
+	})
+}
 
 func TestParseKustomization_DependsOnReadyExpr(t *testing.T) {
 	t.Parallel()

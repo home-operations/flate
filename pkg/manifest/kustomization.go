@@ -164,11 +164,14 @@ func (k *Kustomization) SourceID() NamedResource {
 
 // EffectiveSourceID defaults incomplete execution coordinates without changing authored facts.
 func (k *Kustomization) EffectiveSourceID() NamedResource {
-	source := k.SourceID()
-	if source.Kind == "" || source.Name == "" {
+	if !k.hasCompleteSource() {
 		return BootstrapSourceID
 	}
-	return source
+	return k.SourceID()
+}
+
+func (k *Kustomization) hasCompleteSource() bool {
+	return k.SourceRef.Kind != "" && k.SourceRef.Name != ""
 }
 
 // IsFragment identifies patch fragments without a render path or source name.
@@ -179,30 +182,62 @@ func (k *Kustomization) SubstituteStrategy() kustomizev1.SubstituteStrategy {
 	return (kustomizev1.Kustomization{Spec: k.KustomizationSpec}).GetSubstituteStrategy()
 }
 
+type kustomizationSourceField uint8
+
+const (
+	noKustomizationSource kustomizationSourceField = iota
+	kustomizationSource
+	kustomizationContentSource
+	kustomizationBootstrapSource
+)
+
+type kustomizationReferenceFields struct {
+	source          kustomizationSourceField
+	targetNamespace bool
+	dependencies    int
+	substitutions   int
+}
+
+func (k *Kustomization) referenceFields(view ReferenceView) kustomizationReferenceFields {
+	fields := kustomizationReferenceFields{
+		targetNamespace: k.TargetNamespace != "",
+		dependencies:    len(k.DependsOn),
+	}
+	if k.PostBuild != nil {
+		fields.substitutions = len(k.PostBuild.SubstituteFrom)
+	}
+	switch {
+	case k.hasCompleteSource():
+		fields.source = kustomizationContentSource
+	case k.Path != "":
+		if view == ReferenceAll {
+			fields.source = kustomizationBootstrapSource
+		}
+	case k.SourceRef.Kind != "" || k.SourceRef.Name != "":
+		fields.source = kustomizationSource
+	}
+	return fields
+}
+
 func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
-	if !k.sourceReference(yield, view) {
+	fields := k.referenceFields(view)
+	if fields.source != noKustomizationSource && !k.sourceReference(yield, fields.source) {
 		return
 	}
-	if k.TargetNamespace != "" && !yield(Reference{
-		Kind: namespaceKind, Name: k.TargetNamespace,
-		Use:      "targetNamespace",
-		Optional: true,
+	if fields.targetNamespace && !yield(Reference{
+		Kind: namespaceKind, Name: k.TargetNamespace, Use: "targetNamespace", Optional: true,
 	}) {
 		return
 	}
-	for i := range k.DependsOn {
+	for i := range k.DependsOn[:fields.dependencies] {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
-			NamedResource: Resolve(
-				NamedResource{
-					Group:     kindTable[kindKustomization].Group,
-					Kind:      KindKustomization,
-					Namespace: dep.Namespace,
-					Name:      dep.Name,
-				},
-				"",
-				k.Namespace,
-			),
+			NamedResource: Resolve(NamedResource{
+				Group:     kindTable[kindKustomization].Group,
+				Kind:      KindKustomization,
+				Namespace: dep.Namespace,
+				Name:      dep.Name,
+			}, "", k.Namespace),
 			Use:              dependsOnKey,
 			Position:         i,
 			ReadyExpr:        referenceExpression(&dep.ReadyExpr),
@@ -213,20 +248,19 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 			return
 		}
 	}
-	if k.PostBuild == nil {
+	if fields.substitutions == 0 {
 		return
 	}
-	for i, ref := range k.PostBuild.SubstituteFrom {
+	for i, ref := range k.PostBuild.SubstituteFrom[:fields.substitutions] {
 		if ref.Kind != KindConfigMap && ref.Kind != KindSecret {
 			continue
 		}
-		content := !ref.Optional && ref.Name != ""
 		if !yield(Reference{
 			NamedResource:    Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
 			Use:              substituteFromKey,
 			Position:         i,
 			Optional:         ref.Optional,
-			Content:          content,
+			Content:          !ref.Optional && ref.Name != "",
 			NamespaceDefault: true,
 		}) {
 			return
@@ -329,27 +363,19 @@ func (*Kustomization) outputFields() string {
 		" spec.dependsOn.name spec.dependsOn.namespace spec.dependsOn.readyExpr"
 }
 
-func (k *Kustomization) sourceReference(yield func(Reference) bool, view ReferenceView) bool {
-	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
-	implicitSource := view == ReferenceAll && k.Path != ""
-	if authoredSource || implicitSource {
-		src := k.SourceID()
-		content := src.Kind != "" && src.Name != ""
-		use := sourceKey
-		if !content && k.Path != "" {
-			src = k.EffectiveSourceID()
-			use = ""
-		}
-		if (view == ReferenceAll || use != "") && !yield(Reference{
-			NamedResource: src,
-			sourceRoles:   bindsSource | readsSourceTree,
-			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
-			ArtifactStages: GateInputs | GateArtifacts,
-
-			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
-		}) {
-			return false
-		}
+func (k *Kustomization) sourceReference(yield func(Reference) bool, field kustomizationSourceField) bool {
+	id, use := BootstrapSourceID, ""
+	if field != kustomizationBootstrapSource {
+		id, use = k.SourceID(), sourceKey
 	}
-	return true
+	return yield(Reference{
+		NamedResource:    id,
+		sourceRoles:      bindsSource | readsSourceTree,
+		Use:              use,
+		Content:          field == kustomizationContentSource,
+		Gate:             GateInputs | GateArtifacts,
+		Artifact:         true,
+		ArtifactStages:   GateInputs | GateArtifacts,
+		NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
+	})
 }

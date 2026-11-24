@@ -31,7 +31,7 @@ func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
 	opts := Options{}
 	if *supplied {
 		st.AddDeclaration(
-			store.Declaration{Obj: cm, Doc: testutil.ObjectDocument(cm), Origin: manifest.SuppliedDeclaration},
+			store.Declaration{Obj: cm, Doc: testutil.ObjectDocument(cm), Role: store.SuppliedDeclaration},
 		)
 	} else {
 		st.AddObject(cm)

@@ -33,10 +33,11 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 	}
 	o = projected
 	id := o.Identity
+	declaration := producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}
+	// Compact application lookup defaults the source in the visit namespace.
+	declaration.project(!o.facts.uncertain && declaration.hasApplicationOwner())
 	if o.facts.uncertain {
-		b.recordProducer(&producerDeclaration{
-			fact: &o, visit: pr.visit, identity: id, authored: o.Authored,
-		}, nil)
+		b.recordProducer(&declaration, nil)
 		return
 	}
 
@@ -68,8 +69,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 	if r.Path == pr.visit.file && r.Authored == o.Authored {
 		b.locations[id] = o
 	}
-	declaration := producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}
-	pr.recordDeclaration(b, &declaration, o.facts.needsCandidates)
+	pr.recordDeclaration(b, &declaration)
 	b.recordApplication(l, &declaration)
 	if id.KindInfo().Structural {
 		b.emittedFiles[pr.coordinate] = appendUniqueProducer(b.emittedFiles[pr.coordinate], pr.visit.owner)
@@ -122,9 +122,11 @@ func (pr *productionRecorder) projectObject(
 			return production, true
 		}
 		if !pr.visit.deferMaterialization {
-			b.recordProducer(&producerDeclaration{
+			declaration := producerDeclaration{
 				fact: &projected, visit: pr.visit, identity: projected.Identity, authored: projected.Authored,
-			}, nil)
+			}
+			declaration.project(false)
+			b.recordProducer(&declaration, nil)
 		}
 		return objectProduction{}, false
 	}
@@ -146,12 +148,13 @@ func (pr *productionRecorder) projectObject(
 
 func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilder, l *Loader) {
 	r := b.idx.Records[op.identity]
-	projected := op.object
-	needsCandidates := manifest.ProducerNeedsCandidates(op.object)
-	if op.identity.Namespace != op.object.Named().Namespace &&
-		(r.Authored == (manifest.NamedResource{}) || needsCandidates || op.identity.Namespace != op.resolved.Namespace) {
-		projected = op.object.WithNamespace(op.identity.Namespace)
+	declaration := producerDeclaration{
+		obj: op.object, fact: op.fact, identity: op.identity, authored: op.object.Named(),
+		visit: pr.visit, substituteDisabled: op.substituteDisabled,
 	}
+	declaration.project(
+		r.Authored == (manifest.NamedResource{}) || op.identity.Namespace != op.resolved.Namespace,
+	)
 	if r.Authored == (manifest.NamedResource{}) {
 		r.Authored, r.Path, r.File = op.object.Named(), pr.visit.file, pr.coordinate
 		if op.identity.Name != op.object.Named().Name {
@@ -160,7 +163,7 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		if op.fact != nil {
 			r.Refs = authoredReferences(op.fact)
 		} else {
-			r.Refs = discoveryReferences(nil, projected)
+			r.Refs = discoveryReferences(nil, declaration.obj)
 		}
 	}
 	p := manifest.Production{
@@ -186,48 +189,18 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		r.Productions = append(r.Productions, p)
 	}
 	b.idx.Records[op.identity] = r
-	b.recordApplication(
-		l,
-		&producerDeclaration{
-			obj:      projected,
-			fact:     op.fact,
-			identity: op.identity,
-			authored: op.object.Named(),
-			visit:    pr.visit,
-		},
-	)
-	op.recordDeclaration(pr, b, projected, needsCandidates)
+	b.recordApplication(l, &declaration)
+	if !pr.visit.deferMaterialization ||
+		op.kind.Runnable && (b.reader.cache[pr.visit.file].loaded || b.store.GetObject(op.identity) != nil) {
+		pr.recordDeclaration(b, &declaration)
+	}
 	if op.kind.Structural {
 		b.emittedFiles[pr.coordinate] = appendUniqueProducer(b.emittedFiles[pr.coordinate], pr.visit.owner)
 	}
 }
 
-func (op *objectProduction) recordDeclaration(
-	pr *productionRecorder,
-	b *selfProduceBuilder,
-	projected manifest.BaseManifest,
-	needsCandidates bool,
-) {
-	if !pr.visit.deferMaterialization ||
-		op.kind.Runnable && (b.reader.cache[pr.visit.file].loaded || b.store.GetObject(op.identity) != nil) {
-		declaration := producerDeclaration{
-			obj:                projected,
-			identity:           op.identity,
-			authored:           op.object.Named(),
-			visit:              pr.visit,
-			substituteDisabled: op.substituteDisabled,
-		}
-		if !needsCandidates {
-			declaration.fact = op.fact
-		}
-		pr.recordDeclaration(b, &declaration, needsCandidates)
-	}
-}
-
-func (pr *productionRecorder) recordDeclaration(
-	b *selfProduceBuilder, declaration *producerDeclaration, needsCandidates bool,
-) {
-	if needsCandidates {
+func (pr *productionRecorder) recordDeclaration(b *selfProduceBuilder, declaration *producerDeclaration) {
+	if declaration.needsCandidates {
 		pr.declarations = append(pr.declarations, *declaration)
 		return
 	}

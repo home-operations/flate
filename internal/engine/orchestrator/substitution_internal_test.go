@@ -82,7 +82,7 @@ func suppliedSubstitution(name string) store.Declaration {
 			Namespace: "apps",
 			Data:      map[string]any{"VALUE": "supplied"},
 		},
-		Origin: manifest.SuppliedDeclaration,
+		Role: store.SuppliedDeclaration,
 	}
 }
 
@@ -129,7 +129,7 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 			Doc:       secretChild.Doc,
 			Obj:       secretChild.Obj,
 			InputPath: "secret-values.yaml",
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			Warnings:  secretChild.Warnings,
 		},
 		{Doc: customDoc},
@@ -239,7 +239,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 				[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}},
 				Config{
 					Supply: []store.Declaration{
-						{Obj: tc.object, Doc: testutil.ObjectDocument(tc.object), Origin: manifest.SuppliedDeclaration},
+						{Obj: tc.object, Doc: testutil.ObjectDocument(tc.object), Role: store.SuppliedDeclaration},
 					},
 				},
 			)
@@ -254,9 +254,9 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 				CacheDir: root,
 				Supply: []store.Declaration{
 					{
-						Obj:    &manifest.ConfigMap{Namespace: "apps"},
-						Doc:    testutil.ObjectDocument(&manifest.ConfigMap{Namespace: "apps"}),
-						Origin: manifest.SuppliedDeclaration,
+						Obj:  &manifest.ConfigMap{Namespace: "apps"},
+						Doc:  testutil.ObjectDocument(&manifest.ConfigMap{Namespace: "apps"}),
+						Role: store.SuppliedDeclaration,
 					},
 				},
 				Path: t.TempDir(),

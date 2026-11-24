@@ -21,9 +21,9 @@ func TestDispatch_SuppliedWithdrawal(t *testing.T) {
 	s.AddObject(parent)
 	s.AddDeclaration(
 		store.Declaration{
-			Obj:    reference,
-			Doc:    testutil.ObjectDocument(reference),
-			Origin: manifest.SuppliedDeclaration,
+			Obj:  reference,
+			Doc:  testutil.ObjectDocument(reference),
+			Role: store.SuppliedDeclaration,
 		},
 	)
 	s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repository}}, Complete: true}, nil)

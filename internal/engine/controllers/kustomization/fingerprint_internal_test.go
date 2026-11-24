@@ -157,9 +157,9 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				st := store.New()
 				st.AddDeclaration(
 					store.Declaration{
-						Obj:    source,
-						Doc:    testutil.ObjectDocument(source),
-						Origin: manifest.SuppliedDeclaration,
+						Obj:  source,
+						Doc:  testutil.ObjectDocument(source),
+						Role: store.SuppliedDeclaration,
 					},
 				)
 				provider := values.NewStoreProvider(st, manifest.NamedResource{})

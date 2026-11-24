@@ -154,7 +154,7 @@ func testReferenceFactsSourceContextWithdrawalCase(
 		Namespace:  target.Namespace,
 		StringData: map[string]any{"VALUE": "supplied"},
 	}
-	st.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(Declaration{Obj: supplied, Role: SuppliedDeclaration})
 	var captured ReadSet
 	captured.Init(st, ownerID("consumer"), nil)
 	defer captured.Retire()
@@ -304,7 +304,7 @@ func TestReferenceFacts_ProducedSupplyKeepsUnknownCoverage(t *testing.T) {
 				Namespace:  target.Namespace,
 				StringData: map[string]any{"FIRST": "supplied"},
 			},
-			Origin: manifest.SuppliedDeclaration,
+			Role: SuppliedDeclaration,
 		},
 	)
 	var reads ReadSet
@@ -321,7 +321,7 @@ func TestReferenceFacts_ProducedSupplyKeepsUnknownCoverage(t *testing.T) {
 				Namespace:  target.Namespace,
 				StringData: map[string]any{"SECOND": "replacement"},
 			},
-			Origin: manifest.SuppliedDeclaration,
+			Role: SuppliedDeclaration,
 		},
 	)
 	assert.Equal(t, reads.Valid(), false)

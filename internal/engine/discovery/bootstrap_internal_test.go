@@ -339,7 +339,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			})
 		l := loader.New(st)
 		src := &manifest.GitRepository{Name: "external", Namespace: "apps", URL: "https://fixture.invalid/external"}
-		l.AdmitDeclarations([]store.Declaration{{Obj: src, Origin: manifest.SuppliedDeclaration}})
+		l.AdmitDeclarations([]store.Declaration{{Obj: src, Role: store.SuppliedDeclaration}})
 		for _, name := range []string{"first", "second"} {
 			st.AddObject(&manifest.Kustomization{
 				Name:      name,

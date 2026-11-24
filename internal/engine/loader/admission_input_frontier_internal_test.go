@@ -240,7 +240,7 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 						Namespace: dependency.Namespace,
 						Data:      map[string]any{"VALUE": "supplied"},
 					},
-					Origin: manifest.SuppliedDeclaration,
+					Role: store.SuppliedDeclaration,
 				},
 			},
 		)

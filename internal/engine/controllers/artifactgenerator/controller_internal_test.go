@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io/fs"
 	"maps"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -51,6 +53,77 @@ func runForTest(t *testing.T, c *Controller, id manifest.NamedResource) {
 	c.Tasks.BlockTillDone()
 
 	assert.FatalIf(t, c.Tasks.Failures() != 0, "%v", "reconcile task panicked")
+}
+
+func TestArtifactGenerator_CopyValidationPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, pattern, from, to, strategy, want string
+		sourceReady                             bool
+	}{
+		{
+			"missing source", "@repo/absent/{App}", "@repo/file", "@artifact/file", "",
+			"generator spec: invalid exclude pattern '['", false,
+		},
+		{
+			"ready source with no matches", "@repo/absent/{App}", "@repo/file", "@artifact/file", "Overwrite",
+			"generator spec: invalid exclude pattern '['", true,
+		},
+		{
+			"source before destination", "@repo/absent/{App}", "@repo", "file", "Append",
+			"generator spec: invalid copy source '@repo': source format must be '@alias/pattern'", true,
+		},
+		{
+			"destination before strategy", "@repo/absent/{App}", "@repo/file", "file", "Append",
+			"generator spec: invalid copy destination 'file': destination must start with '@artifact/'", true,
+		},
+		{
+			"strategy before exclude", "@repo/absent/{App}", "@repo/file", "@artifact/file", "Append",
+			`generator spec: unsupported strategy "Append"`, true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := cachetest.New(t, "", cache.New)
+			c := New(st, task.NewBounded(2), owner)
+			fixture := generatorForTest(t, []any{map[string]any{
+				"name": "output",
+				"copy": []any{map[string]any{
+					"from": tc.from, "to": tc.to, "strategy": tc.strategy, "exclude": []string{"["},
+				}},
+			}})
+			doc := fixture.document
+			doc["spec"].(map[string]any)["pathPattern"] = tc.pattern
+			parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			st.AddObject(parsed.Object, parsed.Document)
+			if tc.sourceReady {
+				repo := manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo",
+				}
+				st.SetArtifact(repo, &store.SourceArtifact{FS: fstest.MapFS{"apps/Prod/file": {}}, Content: "source"})
+			}
+			id := parsed.Object.Named()
+			ex := &execution{Controller: c}
+			ex.run.Init(c.Controller, id)
+			defer ex.run.Close()
+			var reconcileErr error
+			c.Tasks.Go(t.Context(), "generator", func(ctx context.Context) {
+				ex.run.Dispatch(ctx, manifest.DrainNone, ex,
+					func(ex *execution, ctx context.Context, obj *manifest.RawObject, level manifest.DrainLevel) error {
+						reconcileErr = ex.reconcile(ctx, obj, level)
+						return reconcileErr
+					})
+			})
+			c.Tasks.BlockTillDone()
+			assert.Equal(t, c.Tasks.Failures(), 0)
+			assert.ErrorIf(t, !errors.Is(reconcileErr, manifest.ErrInput), "reconcile error category: %v", reconcileErr)
+			status, _ := st.GetStatus(id)
+			assert.Equal(t, status.Status, store.StatusFailed)
+			assert.Equal(t, status.Message, tc.want)
+		})
+	}
 }
 
 func TestArtifactGenerator_AllStrategies(t *testing.T) {
@@ -187,6 +260,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	t.Parallel()
 	t.Run("late_invalid_inputs", testArtifactGeneratorLateInputs)
+	t.Run("invalid_exclude", testArtifactGeneratorInvalidExclude)
 	c, obj, input, failedInput := partialGeneratorFixture(t)
 	st := c.Store
 	repo := manifest.NamedResource{
@@ -257,6 +331,47 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	}
 }
 
+func testArtifactGeneratorInvalidExclude(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		input fstest.MapFS
+	}{
+		{name: "zero_matches", input: fstest.MapFS{"elsewhere/file": {}}},
+		{name: "one_match", input: fstest.MapFS{"apps/prod/file": {}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			c := New(st, task.NewBounded(2), cachetest.New(t, "", cache.New))
+			fixture := generatorForTest(t, []any{
+				map[string]any{"name": "first-{app}", "copy": []any{
+					map[string]any{"from": "@repo/apps/{app}/file", "to": "@artifact/file"},
+				}},
+				map[string]any{"name": "second-{app}", "copy": []any{
+					map[string]any{"from": "@repo/apps/{app}/file", "to": "@artifact/file", "exclude": []any{"["}},
+				}},
+			})
+			fixture.document["spec"].(map[string]any)["pathPattern"] = "@repo/apps/{app}"
+			parsed, err := manifest.ParseDoc(fixture.document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			id := parsed.Object.Named()
+			st.AddObject(parsed.Object, parsed.Document)
+			repo := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo",
+			}
+			st.SetArtifact(repo, &store.SourceArtifact{Content: "input", FS: tc.input})
+			runForTest(t, c, id)
+			status, _ := st.GetStatus(id)
+			assert.Equal(t, status.Status, store.StatusFailed)
+			assert.Equal(t, status.Message, "generator spec: invalid exclude pattern '['")
+			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
+			assert.Equal(t, st.GetArtifact(managedArtifact("first-prod", "apps"), store.ArtifactContent) == nil, true)
+		})
+	}
+}
+
 func TestArtifactGenerator_Disabled(t *testing.T) {
 	t.Parallel()
 	st := store.New()
@@ -295,7 +410,7 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	{
 		decoded, err := obj.ArtifactGeneratorSpec()
 		if err == nil {
-			err = validateSpec(&decoded, "apps")
+			_, err = validateSpec(&decoded, "apps")
 		}
 		assert.FatalIf(t, err == nil, "%v", "disabled fixture should be invalid when enabled")
 	}

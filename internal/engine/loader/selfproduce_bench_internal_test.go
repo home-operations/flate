@@ -38,6 +38,7 @@ func BenchmarkSelfProduceBuilder_ArtifactJoin(b *testing.B) {
 		authored: obj.Named(),
 		visit:    graphVisit{source: manifest.BootstrapSourceID, coordinate: "generator.yaml"},
 	}
+	declaration.project(false)
 	reader := documentReader{cache: map[string]document{"consumers.yaml": {objects: consumers}}}
 	scope := []graphVisit{{file: "consumers.yaml", readable: true}}
 	s := store.New()

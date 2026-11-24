@@ -32,10 +32,14 @@ type Directory struct {
 // OpenDirectory completes admission before returning the scoped resource.
 // Synthetic source labels MUST use their already admitted filesystem instead.
 func OpenDirectory(ctx context.Context, location *gitrepo.Location) (*Directory, error) {
-	return openDirectoryAt(ctx, location, "")
+	return openDirectoryAt(ctx, location, nil)
 }
 
-func openDirectoryAt(ctx context.Context, location *gitrepo.Location, excluded string) (*Directory, error) {
+func openDirectoryAt(
+	ctx context.Context,
+	location *gitrepo.Location,
+	excluded excludedDirectories,
+) (*Directory, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -70,10 +74,10 @@ func openDirectory(
 	ctx context.Context,
 	location *gitrepo.Location,
 	backing billy.Filesystem,
-	excluded string,
+	excluded excludedDirectories,
 ) (*Directory, error) {
-	if backing != nil && excluded != "" {
-		input := &FS{membership: membership{directory: excluded}}
+	if backing != nil && len(excluded) != 0 {
+		input := &FS{membership: membership{excluded: excluded[:1]}}
 		backing = input.memberFilesystem(backing, location.ContentRoot)
 	}
 	d := &Directory{
@@ -88,7 +92,7 @@ func openDirectory(
 	if err != nil {
 		return nil, err
 	}
-	captured.directory = excluded
+	captured.excluded = excluded
 	d.membership = captured
 	root := location.ContentRoot
 	input := newLocal(root, false, &localPolicy{})
@@ -272,7 +276,7 @@ func (f *directoryFilesystem) admits(parent, name string, mode func() fs.FileMod
 	if filepath.Base(name) == gitDirectory {
 		return false
 	}
-	if f.current.membership.directory == "" && len(f.current.membership.ignored) == 0 {
+	if len(f.current.membership.excluded) == 0 && len(f.current.membership.ignored) == 0 {
 		return true
 	}
 	if kind := mode(); !kind.IsRegular() && !kind.IsDir() {

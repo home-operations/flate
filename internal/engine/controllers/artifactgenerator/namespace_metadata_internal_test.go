@@ -9,6 +9,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -17,7 +18,10 @@ func TestNamespaceTargets_ValidationOrder(t *testing.T) {
 	t.Parallel()
 	paths := &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: "@repo/{Module}.yaml"}
 	makeRequest := func(name, path string) request {
-		return request{Namespace: manifest.NamedResource{Name: name}, NamespaceMetadataPath: path}
+		return request{
+			Namespace:         manifest.NamedResource{Name: name},
+			namespaceMetadata: artifactsyntax.ParseSelector(path),
+		}
 	}
 	first := makeRequest("tenant-a", "@repo/First.yaml")
 	next := makeRequest("tenant-a", "@repo/Second.yaml")
@@ -29,7 +33,7 @@ func TestNamespaceTargets_ValidationOrder(t *testing.T) {
 		want     string
 	}{
 		{name: "no_targets", requests: []request{makeRequest("", ""), makeRequest("", "@repo/Other.yaml")}},
-		{name: "shared_path_and_distinct_targets", requests: []request{first, first, makeRequest("tenant-b", next.NamespaceMetadataPath)}},
+		{name: "shared_path_and_distinct_targets", requests: []request{first, first, makeRequest("tenant-b", next.namespaceMetadata.Text)}},
 		{
 			name: "names_before_path_errors", requests: []request{first, next, makeRequest("default", "")},
 			want: `namespace "default" cannot be managed by an ArtifactGenerator`,
@@ -92,7 +96,7 @@ func TestNamespaceMetadata_ReadSource(t *testing.T) {
 				"Team.yaml": {Data: []byte(metadata)}, "large.yaml": {Data: make([]byte, maxInputsFileSize+1)},
 			}}}
 			staged := fstest.MapFS{"Team.yaml": {Data: []byte("{}")}}
-			data, err := e.readSourceFile(t.Context(), tc.path, staged, namespaceFile)
+			data, err := e.readSourceFile(t.Context(), artifactsyntax.ParseSelector(tc.path), staged, namespaceFile)
 			if tc.cause != "" {
 				assert.FatalIf(t, err == nil, "expected metadata read error")
 				assert.Equal(t, strings.HasPrefix(err.Error(), tc.cause), true)
@@ -208,7 +212,13 @@ func TestNamespaceMetadata_OrderedStrategiesAndOwnership(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := namespaceMetadataFor(&spec, tc.name, "generator", sourced)
+			rules, err := resolveNamespaceMetadataRules(spec.ManagedNamespaces.Metadata)
+			assert.NoError(t, err)
+			publication := generatorPublication{
+				spec: &generatorSpec{declaration: spec, namespaceRules: rules},
+				uid:  "generator",
+			}
+			got, err := publication.namespaceMetadataFor(tc.name, sourced)
 			assert.NoError(t, err)
 			tc.labels["app.kubernetes.io/managed-by"] = "source-watcher"
 			tc.labels["source.extensions.fluxcd.io/generator"] = "generator"

@@ -441,7 +441,7 @@ func TestAdmit_AcceptedChildCiphertextSurvivesPublication(t *testing.T) {
 				Namespace:  id.Namespace,
 				StringData: map[string]any{"identity": "supplied"},
 			}
-			st.AddDeclaration(store.Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+			st.AddDeclaration(store.Declaration{Obj: supplied, Role: store.SuppliedDeclaration})
 			occurrence, known := l.Occurrence(id)
 			assert.Equal(t, known, true)
 			child, err := l.OccurrenceObject(t.Context(), &occurrence, input)

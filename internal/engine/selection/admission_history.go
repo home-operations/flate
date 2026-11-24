@@ -179,7 +179,7 @@ func (c *admissionClosure) declarationRecord(
 	record *manifest.DiscoveryRecord,
 ) manifest.DiscoveryRecord {
 	if incoming := c.incoming(id); incoming.Obj != nil {
-		record.Origin = incoming.Origin
+		record.Origin = incoming.Origin()
 	} else if !record.Origin.Policy(id, nil).Root && c.session.store.Policy(id).Root {
 		record.Origin = manifest.RepositoryDeclaration
 	}

@@ -16,6 +16,12 @@ import (
 
 func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 	t.Parallel()
+	const syncInstance = `apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance, namespace: authored}
+spec:
+  sync: {kind: GitRepository, url: https://example.test/repo, ref: refs/heads/main, path: ./entry}
+`
 	for _, tc := range []struct {
 		name     string
 		builder  string
@@ -28,6 +34,9 @@ func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 		}},
 		{name: "application", builder: "resources: [object.yaml]\n", files: map[string]string{
 			"object.yaml": testutil.KustomizationYAML("child", "apps", "  path: ./entry\n"),
+		}, possible: true},
+		{name: "FluxInstance application", builder: "resources: [object.yaml]\n", files: map[string]string{
+			"object.yaml": syncInstance,
 		}, possible: true},
 		{name: "nested application", builder: "resources: [nested]\n", files: map[string]string{
 			"nested/kustomization.yaml": "resources: [object.yaml]\n",
@@ -69,6 +78,91 @@ func TestEntryFrontier_ApplicationEvidence(t *testing.T) {
 				possible, err = physical.EntryFrontier(t.Context(), input, ".", nil)
 				assert.NoError(t, err)
 				assert.Equal(t, possible, tc.possible)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name                  string
+		compact, patched      bool
+		repeatSourceNamespace string
+	}{
+		{name: "parsed", repeatSourceNamespace: "authored"},
+		{name: "parsed with sync patches", patched: true, repeatSourceNamespace: "projected"},
+		{name: "indexed", compact: true, repeatSourceNamespace: "projected"},
+		{name: "indexed with sync patches", compact: true, patched: true, repeatSourceNamespace: "projected"},
+	} {
+		t.Run("FluxInstance repeat visit/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			instance := syncInstance
+			if tc.patched {
+				instance += "  kustomize: {patches: [{target: {kind: GitRepository}, patch: '[{op: replace, path: /spec/interval, value: 2m}]'}]}\n"
+			}
+			const objectFile = "object.yaml"
+			root := t.TempDir()
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+				objectFile: {Data: []byte(instance)},
+				"consumer.yaml": {Data: []byte(testutil.KustomizationYAML(
+					"consumer",
+					"projected",
+					"  path: ./payload\n  sourceRef: {kind: GitRepository, name: projected}\n  dependsOn: [{name: projected}]\n",
+				))},
+			}}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			l := New(st)
+			l.SourceRoot, l.entryPath = root, filepath.Join(root, "entry")
+			l.ensureScopes()
+			l.documents.compact = tc.compact
+			l.documents.intent = manifest.IncidentalDocuments
+			l.documents.setSources(map[string]*store.SourceArtifact{root: input})
+			b := selfProduceBuilder{idx: l.Index, store: st, reader: l.documents, locations: l.locations}
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).
+				Named()
+			authored := manifest.NamedResource{
+				Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "authored", Name: "instance",
+			}
+			projected := authored
+			projected.Namespace = "projected"
+			targetSource := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "projected",
+				Name:      "projected",
+			}
+			targetRoot := testutil.KustomizationID("projected", "projected")
+			consumer := graphVisit{file: filepath.Join(root, "consumer.yaml"), readable: true}
+			want := make([]manifest.Production, 0, 2)
+			for i, namespace := range []string{"projected", tc.repeatSourceNamespace} {
+				source := targetSource
+				source.Namespace, source.Name = namespace, namespace
+				// Only the expected source can resolve ./entry to the bootstrap entry on this visit.
+				st.SetArtifact(source, input)
+				owner := testutil.KustomizationID("owners", []string{"first", "repeat"}[i])
+				visit := graphVisit{
+					namespace:  projected.Namespace,
+					file:       filepath.Join(root, objectFile),
+					coordinate: objectFile,
+					owner:      owner,
+					source:     manifest.BootstrapSourceID,
+				}
+				declarations, err := b.recordProduced(t.Context(), &visit, nil, l)
+				assert.NoError(t, err)
+				b.joinProductions(t.Context(), declarations, []graphVisit{consumer})
+				st.SetArtifact(source, nil)
+				want = append(want, manifest.Production{
+					Owner:       owner,
+					Declaration: projected,
+					Authored:    authored,
+					Source:      manifest.BootstrapSourceID,
+					File:        objectFile,
+				})
+				assert.Equal(t, l.Index.Records[projected].Authored, authored)
+				assert.Diff(t, l.Index.Records[entry].Productions, want)
+				if tc.patched {
+					assert.Diff(t, l.Index.Records[targetSource].Productions, want)
+					assert.Diff(t, l.Index.Records[targetRoot].Productions, want)
+				}
 			}
 		})
 	}

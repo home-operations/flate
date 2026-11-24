@@ -60,11 +60,11 @@ func testSSHAcquisition(t *testing.T, repo *manifest.GitRepository, secret *mani
 	st := store.New()
 	st.AddObject(repo)
 	if mode == "supplied" || mode == "repository" {
-		origin := manifest.SuppliedDeclaration
+		role := store.SuppliedDeclaration
 		if mode == "repository" {
-			origin = manifest.RepositoryDeclaration
+			role = store.RepositoryDeclaration
 		}
-		st.AddDeclaration(store.Declaration{Obj: secret, Origin: origin})
+		st.AddDeclaration(store.Declaration{Obj: secret, Role: role})
 	}
 	var reads store.ReadSet
 	reads.Init(st, repo.Named(), nil)

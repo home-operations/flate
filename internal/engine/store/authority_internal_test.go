@@ -62,7 +62,7 @@ func TestStore_CollectionAuthority(t *testing.T) {
 				defer sh.mu.RUnlock()
 				return sh.byName[kindID{id.Group, id.Kind}].generation
 			}
-			s.AddDeclaration(Declaration{Obj: versions[0], Origin: manifest.SuppliedDeclaration})
+			s.AddDeclaration(Declaration{Obj: versions[0], Role: SuppliedDeclaration})
 			var before ReadSet
 			before.Init(s, ownerID("before"), nil)
 			defer before.Retire()
@@ -500,7 +500,7 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
 	child := emissionChild("shared", "equal")
-	s.AddDeclaration(Declaration{Obj: child.Obj, Doc: child.Doc, Origin: manifest.SuppliedDeclaration})
+	s.AddDeclaration(Declaration{Obj: child.Obj, Doc: child.Doc, Role: SuppliedDeclaration})
 	s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
 	h1 := headsForTest(s, child.Obj.Named())
 	captureReads := func() *ReadSet {

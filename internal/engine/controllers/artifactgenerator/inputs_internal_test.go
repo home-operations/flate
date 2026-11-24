@@ -1,6 +1,7 @@
 package artifactgenerator
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -41,7 +43,7 @@ func TestEvaluate_ExportedInputs(t *testing.T) {
 			e := evaluation{inputs: map[string]fs.FS{"repo": fstest.MapFS{"values": {Data: []byte(tc.payload)}}}}
 			got, err := e.exportedInputs(
 				t.Context(),
-				tc.selector,
+				artifactsyntax.ParseSelector(tc.selector),
 				fstest.MapFS{"values": {Data: []byte("from: artifact\n")}},
 			)
 			if tc.cause != "" {
@@ -62,7 +64,7 @@ func TestEvaluate_ExportedInputs(t *testing.T) {
 		t.Parallel()
 		repo := inputsReadErrorFS{MapFS: fstest.MapFS{"values.yaml": {Data: []byte("from: repo\n")}}}
 		e := evaluation{inputs: map[string]fs.FS{"repo": repo}}
-		got, err := e.exportedInputs(t.Context(), "@repo/values.yaml", nil)
+		got, err := e.exportedInputs(t.Context(), artifactsyntax.ParseSelector("@repo/values.yaml"), nil)
 		assert.ErrorIf(t, got != nil, "exported inputs = %v, want nil", got)
 		assert.FatalIf(t, !errors.Is(err, io.ErrUnexpectedEOF), "exported inputs error = %v, want unexpected EOF", err)
 		assert.ErrorIf(t, !strings.Contains(err.Error(), `"@repo/values.yaml"`), "exported inputs error = %v", err)
@@ -162,6 +164,86 @@ func testArtifactGeneratorExportedInputs(t *testing.T) {
 	verify(second, two)
 	cleared := st.GetArtifact(first, store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, cleared.Digest, asset.Digest)
+}
+
+func testArtifactGeneratorExportedDocuments(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for _, tc := range []struct{ name, selector, origin, wantOrigin string }{
+		{"declared_source", "@repo/values.yaml", "@artifact", "repo-origin"},
+		{"staged_source", "@artifact/file", "@artifact", "repo-origin"},
+		{"distinct_origin_source", "@artifact/file", "@repo", "config-origin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const values = "nested: [4, 1.25, -0.0, {missing: null, 'yes': true}]\nempty: null\nlarge: 9007199254740993\n"
+			copyInput := &observedFS{FS: fstest.MapFS{"apps/Prod/file": {Data: []byte(values)}}}
+			owner := cachetest.New(t, "", cache.New)
+			fixture := generatorForTest(t, []any{
+				map[string]any{
+					"name": "{App}", "inputsFrom": tc.selector,
+					"revision": "@artifact", "originRevision": tc.origin,
+					"copy": []any{map[string]any{"from": "@artifact/apps/{App}/file", "to": "@artifact/"}},
+				},
+			})
+			spec := fixture.document["spec"].(map[string]any)
+			spec["sources"] = []any{
+				map[string]any{"alias": "artifact", "kind": "GitRepository", "name": "repo"},
+				map[string]any{"alias": "repo", "kind": "GitRepository", "name": "config"},
+			}
+			spec["pathPattern"] = "@artifact/apps/{App}"
+			parsed, err := manifest.ParseDoc(fixture.document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			id := parsed.Object.Named()
+			repo := manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo",
+			}
+			config := repo
+			config.Name = "config"
+			const expected = `{"apiVersion":"source.toolkit.fluxcd.io/v1","kind":"ExternalArtifact",` +
+				`"metadata":{"labels":{"App":"prod","app.kubernetes.io/managed-by":"source-watcher",` +
+				`"source.extensions.fluxcd.io/generator":"authored"},"name":"prod","namespace":"apps"},` +
+				`"spec":{"sourceRef":{"apiVersion":"source.extensions.fluxcd.io/v1beta1","kind":"ArtifactGenerator",` +
+				`"name":"generator","namespace":"apps"}},"status":{"exportedInputs":` +
+				`{"empty":null,"large":9007199254740992,"nested":[4,1.25,-0,{"missing":null,"yes":true}]}}}`
+			var firstOpens int64
+			for round := range 2 {
+				st := store.New()
+				st.AddObject(parsed.Object, parsed.Document)
+				st.SetArtifact(repo, &store.SourceArtifact{
+					FS: copyInput, Content: "copy", Revision: "repo-revision",
+					Metadata: map[string]string{"org.opencontainers.image.revision": "repo-origin"},
+				})
+				st.SetArtifact(config, &store.SourceArtifact{
+					FS: fstest.MapFS{"values.yaml": {Data: []byte(values)}}, Content: "config",
+					Metadata: map[string]string{"org.opencontainers.image.revision": "config-origin"},
+				})
+				c := New(st, task.NewBounded(2), owner)
+				runForTest(t, c, id)
+				status, _ := st.GetStatus(id)
+				assert.FatalIf(t, status.Status != store.StatusReady, "generator = %v", status)
+				emitted := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+				assert.Equal(t, len(emitted.Children), 1)
+				child := &emitted.Children[0]
+				childDoc, err := json.Marshal(child.Doc)
+				assert.NoError(t, err)
+				assert.Equal(t, string(childDoc), expected)
+				rendered, err := child.Obj.(*manifest.ExternalArtifact).RenderDocument()
+				assert.NoError(t, err)
+				renderedBytes, err := json.Marshal(rendered)
+				assert.NoError(t, err)
+				assert.Equal(t, string(renderedBytes), expected)
+				artifact := st.GetArtifact(child.Obj.Named(), store.ArtifactContent).(*store.SourceArtifact)
+				assert.Equal(t, artifact.Revision, "repo-revision")
+				assert.Equal(t, artifact.Metadata["org.opencontainers.image.revision"], tc.wantOrigin)
+				if round == 0 {
+					firstOpens = copyInput.opens.Load()
+					assert.FatalIf(t, firstOpens == 0, "the cache miss did not open the copy source")
+				}
+				assert.Equal(t, copyInput.opens.Load(), firstOpens)
+			}
+		})
+	}
 }
 
 func testArtifactGeneratorLateInputs(t *testing.T) {

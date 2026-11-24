@@ -68,7 +68,7 @@ func TestDiscovery_ComposedBootstrapIncludeAdmission(t *testing.T) {
 						GitRepositoryRef: manifest.LocalObjectReference{Name: middle.Name},
 					})
 				}
-				st.AddDeclaration(store.Declaration{Obj: middle, Origin: manifest.SuppliedDeclaration})
+				st.AddDeclaration(store.Declaration{Obj: middle, Role: store.SuppliedDeclaration})
 				st.SetArtifact(middle.Named(), leaf)
 				include = middle.Name
 			}

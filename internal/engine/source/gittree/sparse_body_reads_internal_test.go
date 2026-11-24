@@ -1,6 +1,7 @@
 package gittree
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/storer"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -28,6 +30,7 @@ func testGitViewSparseBodyReadsCase(t *testing.T, size *struct {
 		)
 	}
 	fixture := testutil.NewSparseGit(t, size.files, size.bytes)
+	assert.NoError(t, fixture.Repo.Storer.SetShallow([]plumbing.Hash{fixture.Base}))
 	reads := &testutil.GitReads{LargeHash: fixture.Large}
 	g := &gitView{
 		commit: fixture.Base,
@@ -67,8 +70,17 @@ func testGitViewSparseBodyReadsCase(t *testing.T, size *struct {
 		reads.Bodies.Load(),
 		reads.Large.Load(),
 	)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = input.SourcePolicy(canceled)
+	assert.Equal(t, err, context.Canceled)
+	options := ViewOptions{Mode: Source, Current: input, Ignore: "sibling/input.yaml\n"}
+	_, _, _, err = options.refreshCurrent(canceled, plumbing.ZeroHash)
+	assert.Equal(t, err, context.Canceled)
+
 	reads.Reset()
-	assert.NoError(t, g.shape(t.Context(), new(ViewOptions{Mode: Source}), input))
+	assert.NoError(t, g.shape(t.Context(), new(ViewOptions{Mode: Source, Ignore: "future.yaml\n"}), input))
+	assert.Equal(t, input.policy.Match("future.yaml", false), true)
 	count := 0
 	assert.NoError(t, fs.WalkDir(input, ".", func(_ string, entry fs.DirEntry, err error) error {
 		if err == nil && !entry.IsDir() {
@@ -99,4 +111,21 @@ func testGitViewSparseBodyReadsCase(t *testing.T, size *struct {
 		reads.Bodies.Load(),
 		reads.Large.Load(),
 	)
+
+	_, err = input.SourcePolicy(canceled)
+	assert.Equal(t, err, context.Canceled)
+	_, matcher, reuse, err := options.refreshCurrent(canceled, plumbing.ZeroHash)
+	assert.NoError(t, err)
+	assert.Equal(t, reuse, false)
+	assert.Equal(t, matcher.Match("sibling/input.yaml", false), true)
+	assert.Equal(t, matcher.Match("future.yaml", false), false)
+	assert.Equal(t, input.policy.Match("sibling/input.yaml", false), false)
+
+	prepared := &FS{view: g, policy: matcher}
+	reads.Reset()
+	assert.NoError(t, g.shape(canceled, &options, prepared))
+	assert.Equal(t, prepared.policy, matcher)
+	_, err = fs.Stat(prepared, "sibling/input.yaml")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	assert.Equal(t, reads.Bodies.Load(), int64(0))
 }

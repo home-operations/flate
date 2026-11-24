@@ -58,3 +58,31 @@ func TestCheckout_AdmittedMembership(t *testing.T) {
 	_, err = fs.Lstat(source, "kept/link")
 	assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
 }
+
+func TestCheckout_RetainsCurrentSourcePolicy(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{
+		".sourceignore": ".sourceignore\nignored\n",
+		"kept":          "visible",
+	})
+	admitted, err := admitLocal(t, root)
+	assert.NoError(t, err)
+	source, _, err := New(
+		t.Context(), nil, plumbing.ZeroHash,
+		ViewOptions{Mode: Source, Current: admitted.FS, Ignore: "also-ignored\n"},
+	)
+	assert.NoError(t, err)
+	checkout, _, err := New(
+		t.Context(), nil, plumbing.ZeroHash,
+		ViewOptions{Mode: Checkout, Current: source, Ignore: "kept\n"},
+	)
+	assert.NoError(t, err)
+	policy, err := checkout.SourcePolicy(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, policy.Match("ignored", false), true)
+	assert.Equal(t, policy.Match("also-ignored", false), true)
+	assert.Equal(t, policy.Match("kept", false), false)
+	got, err := fs.ReadFile(checkout, "kept")
+	assert.NoError(t, err)
+	assert.Equal(t, string(got), "visible")
+}

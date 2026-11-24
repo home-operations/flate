@@ -28,7 +28,7 @@ func TestRootSupport_SuppliedDeclarationRetainsRepositoryAuthority(t *testing.T)
 			Namespace: id.Namespace,
 			Data:      map[string]any{"VALUE": "supplied"},
 		},
-		Origin: manifest.SuppliedDeclaration,
+		Role: store.SuppliedDeclaration,
 	})
 	record := manifest.DiscoveryRecord{
 		Path: filepath.Join(input.LocalPath, "settings.yaml"), Authored: id,

@@ -8,24 +8,27 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
-	"strings"
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const (
 	maxInputsFileSize = 1 << 20
-	artifactAlias     = "artifact"
 	inputsFile        = "inputs"
 	namespaceFile     = "namespace metadata"
 )
 
 var errSourceFileTooLarge = errors.New("file exceeds the maximum size")
 
-func (e *evaluation) exportedInputs(ctx context.Context, from string, output fs.FS) (map[string]any, error) {
-	if from == "" {
+func (e *evaluation) exportedInputs(
+	ctx context.Context,
+	from artifactsyntax.Selector,
+	output fs.FS,
+) (map[string]any, error) {
+	if from.Text == "" {
 		return nil, nil
 	}
 	data, err := e.readSourceFile(ctx, from, output, inputsFile)
@@ -34,24 +37,17 @@ func (e *evaluation) exportedInputs(ctx context.Context, from string, output fs.
 	}
 	var values map[string]any
 	if err := yaml.Unmarshal(data, &values); err != nil {
-		return nil, fmt.Errorf("failed to parse inputs file %q: %w", from, err)
+		return nil, fmt.Errorf("failed to parse inputs file %q: %w", from.Text, err)
 	}
 	return values, nil
 }
 
-func splitFileSelector(value string) (sourceSelection, error) {
-	source, marked := strings.CutPrefix(value, "@")
-	if !marked {
-		return sourceSelection{}, fmt.Errorf("path must start with '@'")
-	}
-	alias, name, ok := strings.Cut(source, "/")
-	if !ok || alias == "" || name == "" {
-		return sourceSelection{}, fmt.Errorf("path must be in the format '@<alias>/<path>'")
-	}
-	return sourceSelection{alias: alias, pattern: name}, nil
-}
-
-func (e *evaluation) readSourceFile(ctx context.Context, from string, output fs.FS, kind string) ([]byte, error) {
+func (e *evaluation) readSourceFile(
+	ctx context.Context,
+	from artifactsyntax.Selector,
+	output fs.FS,
+	kind string,
+) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
@@ -60,22 +56,22 @@ func (e *evaluation) readSourceFile(ctx context.Context, from string, output fs.
 		if kind == inputsFile {
 			return nil, fmt.Errorf("invalid inputsFrom path: %w", err)
 		}
-		return nil, fmt.Errorf("invalid namespace metadata path %q: %w", from, err)
+		return nil, fmt.Errorf("invalid namespace metadata path %q: %w", from.Text, err)
 	}
 	file, err := input.Open(name)
 	if err != nil {
-		return nil, sourceFileReadError(kind, from, err)
+		return nil, sourceFileReadError(kind, from.Text, err)
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxInputsFileSize+1))
 	if err != nil {
-		return nil, sourceFileReadError(kind, from, err)
+		return nil, sourceFileReadError(kind, from.Text, err)
 	}
 	if len(data) > maxInputsFileSize {
 		return nil, fmt.Errorf(
 			"failed to read %s file %q: %w of %d bytes",
 			kind,
-			from,
+			from.Text,
 			errSourceFileTooLarge,
 			maxInputsFileSize,
 		)
@@ -95,14 +91,15 @@ func sourceFileReadError(kind, from string, cause error) error {
 	return err
 }
 
-func (e *evaluation) sourceFile(from string, output fs.FS) (fs.FS, string, error) {
-	selector, err := splitFileSelector(from)
-	if err != nil {
-		return nil, "", err
+func (e *evaluation) sourceFile(from artifactsyntax.Selector, output fs.FS) (fs.FS, string, error) {
+	if _, prepared := e.selectors.lookup(from.Text, fileSelector); !prepared {
+		if err := validateSelector(from, fileSelector); err != nil {
+			return nil, "", err
+		}
 	}
-	alias := selector.alias
+	alias := from.Alias
 	input := output
-	if alias != artifactAlias {
+	if !from.StagedFile() {
 		var found bool
 		input, found = e.inputs[alias]
 		if !found {
@@ -112,7 +109,7 @@ func (e *evaluation) sourceFile(from string, output fs.FS) (fs.FS, string, error
 	if input == nil {
 		return nil, "", fmt.Errorf("no local path found for alias %q", alias)
 	}
-	name := filepath.FromSlash(selector.pattern)
+	name := filepath.FromSlash(from.Path)
 	if !filepath.IsLocal(name) {
 		return nil, "", fmt.Errorf("path %q must stay within the source root", name)
 	}
@@ -124,30 +121,38 @@ type stagedNamespaceMetadata struct {
 	Failure string `json:",omitempty"`
 }
 
-func (e *evaluation) captureInputs(ctx context.Context, path string, staged fs.FS) (string, error) {
-	inputs, err := e.exportedInputs(ctx, path, staged)
-	if err != nil {
-		return "", manifest.NewError(manifest.ErrInput, err, "")
+func (e *evaluation) captureInputs(
+	selector artifactsyntax.Selector,
+) func(context.Context, string, fs.FS) (string, error) {
+	return func(ctx context.Context, _ string, staged fs.FS) (string, error) {
+		inputs, err := e.exportedInputs(ctx, selector, staged)
+		if err != nil {
+			return "", manifest.NewError(manifest.ErrInput, err, "")
+		}
+		encoded, err := json.Marshal(inputs)
+		if err != nil {
+			return "", fmt.Errorf("encode staged inputs: %w", err)
+		}
+		return string(encoded), nil
 	}
-	encoded, err := json.Marshal(inputs)
-	if err != nil {
-		return "", fmt.Errorf("encode staged inputs: %w", err)
-	}
-	return string(encoded), nil
 }
 
-func (e *evaluation) captureNamespaceMetadata(ctx context.Context, path string, staged fs.FS) (string, error) {
-	data, err := e.readSourceFile(ctx, path, staged, namespaceFile)
-	captured := stagedNamespaceMetadata{Data: data}
-	if err != nil {
-		if _, transient := errors.AsType[*namespaceMetadataReadError](err); transient || ctx.Err() != nil {
-			return "", err
+func (e *evaluation) captureNamespaceMetadata(
+	selector artifactsyntax.Selector,
+) func(context.Context, string, fs.FS) (string, error) {
+	return func(ctx context.Context, _ string, staged fs.FS) (string, error) {
+		data, err := e.readSourceFile(ctx, selector, staged, namespaceFile)
+		captured := stagedNamespaceMetadata{Data: data}
+		if err != nil {
+			if _, transient := errors.AsType[*namespaceMetadataReadError](err); transient || ctx.Err() != nil {
+				return "", err
+			}
+			captured.Failure = err.Error()
 		}
-		captured.Failure = err.Error()
+		encoded, err := json.Marshal(captured)
+		if err != nil {
+			return "", fmt.Errorf("encode staged namespace metadata: %w", err)
+		}
+		return string(encoded), nil
 	}
-	encoded, err := json.Marshal(captured)
-	if err != nil {
-		return "", fmt.Errorf("encode staged namespace metadata: %w", err)
-	}
-	return string(encoded), nil
 }

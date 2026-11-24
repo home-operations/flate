@@ -270,7 +270,7 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 				Namespace:  id.Namespace,
 				StringData: map[string]any{"first": "supplied"},
 			}
-			st.AddDeclaration(store.Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+			st.AddDeclaration(store.Declaration{Obj: supplied, Role: store.SuppliedDeclaration})
 			consumer := testutil.KustomizationID("apps", "consumer")
 			var before store.ReadSet
 			before.Init(st, consumer, nil)

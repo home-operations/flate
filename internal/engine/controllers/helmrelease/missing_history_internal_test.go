@@ -432,7 +432,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 	for _, object := range []manifest.BaseManifest{owner, input, producer} {
 		st.AddObject(object)
 	}
-	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: input, Role: store.SuppliedDeclaration})
 	st.SetArtifact(chartSourceObject, &store.SourceArtifact{Content: "before"})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		input.Named(): {

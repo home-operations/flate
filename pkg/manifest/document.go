@@ -1,8 +1,14 @@
 package manifest
 
 import (
+	"bytes"
+	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"maps"
+	"math"
 
 	kjson "k8s.io/apimachinery/pkg/util/json"
 )
@@ -52,12 +58,30 @@ func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 	return doc, nil
 }
 
+//nolint:gochecknoglobals // Keep signed zero without changing Kubernetes number types.
+var exportedInputNumbers = jsonv2.WithUnmarshalers(
+	jsonv2.UnmarshalFromFunc(func(decoder *jsontext.Decoder, value *any) error {
+		if decoder.PeekKind() != '0' {
+			return errors.ErrUnsupported
+		}
+		number, err := decoder.ReadValue()
+		if err != nil {
+			return err //nolint:wrapcheck // RenderDocument wraps the decoder error with the field operation.
+		}
+		if bytes.Equal(number, []byte("-0")) {
+			*value = math.Copysign(0, -1)
+			return nil
+		}
+		return kjson.Unmarshal(number, value)
+	}),
+)
+
 func (e *ExternalArtifact) renderExportedInputs() (map[string]any, error) {
 	inputs := make(map[string]any, len(e.ExportedInputs))
 	for key, input := range e.ExportedInputs {
 		var value any
 		if input != nil {
-			if err := kjson.Unmarshal(input.Raw, &value); err != nil {
+			if err := jsonv2.Unmarshal(input.Raw, &value, json.DefaultOptionsV1(), exportedInputNumbers); err != nil {
 				return nil, fmt.Errorf("decode exported inputs: %w", err)
 			}
 		}

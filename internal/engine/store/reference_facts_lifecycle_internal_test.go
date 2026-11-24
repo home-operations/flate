@@ -41,7 +41,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 				supplied = new(*provisional)
 				supplied.URL = "https://fixture.invalid/supplied"
 			}
-			s.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+			s.AddDeclaration(Declaration{Obj: supplied, Role: SuppliedDeclaration})
 			assert.Equal(t, s.GetDeclaration(id), manifest.BaseManifest(supplied))
 			assert.Equal(t, s.Policy(id).Supplied(), true)
 			assert.Equal(t, s.Policy(id).RootCandidate(), true)
@@ -209,11 +209,11 @@ func testStoreReferenceFactsWarningOnlyReplacement(t *testing.T, mode string) {
 			defer admission.Retire()
 			admission.Admit(Child{Obj: data, Warnings: warnings}, manifest.BootstrapSourceID, manifest.NamedResource{})
 		default:
-			origin := manifest.RepositoryDeclaration
+			role := RepositoryDeclaration
 			if mode == "supplied" {
-				origin = manifest.SuppliedDeclaration
+				role = SuppliedDeclaration
 			}
-			st.AddDeclaration(Declaration{Obj: data, Origin: origin, Warnings: warnings})
+			st.AddDeclaration(Declaration{Obj: data, Role: role, Warnings: warnings})
 		}
 	}
 	var previous *ReadSet

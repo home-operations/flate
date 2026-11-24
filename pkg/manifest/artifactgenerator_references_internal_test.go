@@ -13,8 +13,8 @@ import (
 func TestReferences_ArtifactCopiedInputs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, from, pattern string
-		want                []string
+		name, from, pattern, alias, inputs string
+		want                               []string
 	}{
 		{name: "literal file", from: "@repo/payload/one/cm.yaml", want: []string{"payload/one/cm.yaml"}},
 		{name: "literal directory", from: "@repo/payload/one", want: []string{"payload/one"}},
@@ -34,17 +34,27 @@ func TestReferences_ArtifactCopiedInputs(t *testing.T) {
 		{name: "destination alias", from: "@artifact/payload/**"},
 		{name: "missing alias", from: "payload/**"},
 		{name: "bare alias", from: "@repo"},
+		{name: "empty file path", inputs: "@repo/", want: []string{"."}},
+		{
+			name: "declared artifact alias", alias: "artifact", from: "@artifact/payload/**",
+			pattern: "@artifact/apps/{app}", inputs: "@artifact/staged.yaml", want: []string{"apps", "payload"},
+		},
 		{name: "revision only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			alias := tc.alias
+			if alias == "" {
+				alias = "repo"
+			}
 			raw := &RawObject{
 				APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Namespace: "apps",
 				Spec: map[string]any{
-					"sources":     []any{map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "input"}},
+					"sources":     []any{map[string]any{"alias": alias, "kind": KindGitRepository, "name": "input"}},
 					"pathPattern": tc.pattern,
 					"artifacts": []any{map[string]any{
-						"name": "bundle", "revision": "@repo", "originRevision": "@repo",
+						"name": "bundle", "revision": "@" + alias, "originRevision": "@" + alias,
+						"inputsFrom": tc.inputs,
 						"copy": []any{
 							map[string]any{
 								"from":    tc.from,

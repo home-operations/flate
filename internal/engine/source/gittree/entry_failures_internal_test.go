@@ -57,6 +57,10 @@ func testNewEntryPolicyErrorClassification(t *testing.T) {
 		)
 		assert.Equal(t, errors.Is(err, want), true)
 		assert.Equal(t, strings.HasPrefix(err.Error(), "sourceignore load: "), errors.Is(want, fs.ErrPermission))
+
+		current := &FS{view: &directView{admissionErrorFS{err: want}}, snapshot: &localPolicy{}}
+		_, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: current})
+		assert.Equal(t, errors.Is(err, want), true)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

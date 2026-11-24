@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
@@ -672,8 +673,8 @@ func testArtifactMatchBudgetCase(t *testing.T, testCaseInput *struct {
 	t.Helper()
 
 	captures := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
-	tokens, _, ok := artifactTokens(testCaseInput.template, captures, false)
-	assert.FatalIf(t, !ok, "%s", "invalid template")
+	tokens, _, err := artifactsyntax.Tokens(testCaseInput.template, captures, nil, false)
+	assert.FatalIf(t, err != nil, "%v", err)
 	bound := make([]string, len(captures))
 	budget := testCaseInput.budget
 	if got := artifactMatch(tokens, testCaseInput.candidate, bound, &budget); got != testCaseInput.want {

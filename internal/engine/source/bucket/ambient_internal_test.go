@@ -534,7 +534,7 @@ func testFetcherMachineContinuationCase1Part1(access, tier **string, st **store.
 					Namespace:  "apps",
 					StringData: map[string]any{"accesskey": "supply", "secretkey": "supply-secret"},
 				},
-				Origin: manifest.SuppliedDeclaration,
+				Role: store.SuppliedDeclaration,
 			},
 		}
 		for i := range supplied {

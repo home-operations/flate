@@ -18,7 +18,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	t.Parallel()
 	root := writeNamedScopeFixture(t)
 	flags := commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}
-	runs, runErr := renderTreesForTest(t.Context(), t, inputTrees(&flags), buildOrchCfg(&flags))
+	runs, runErr := renderTreesForTest(t.Context(), t, flags.bindInputTrees(inputTrees(false)), buildOrchCfg(&flags))
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", runErr)
 	assert.NoError(t, runErr)
 	run := runs[0]

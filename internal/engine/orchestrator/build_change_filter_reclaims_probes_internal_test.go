@@ -28,10 +28,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"hit", "miss", "error", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testBuildChangeFilterReclaimsProbesCase(t, &mode)
 		},
 		)
@@ -44,8 +45,7 @@ func (f failedProbeFS) Open(name string) (fs.File, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger.
 func TestRender_ChangedPathUsesStaticReaders(t *testing.T) {
 	var logs historyLogBuffer
 	previous := slog.Default()
@@ -132,8 +132,7 @@ spec:
 	}
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger.
 func TestHistory_RemovedPathSourceQualification(t *testing.T) {
 	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	var logs historyLogBuffer
@@ -325,8 +324,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
+	t.Parallel()
 	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root, cacheDir := t.TempDir(), t.TempDir()
 	testutil.WriteFile(

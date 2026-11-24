@@ -23,8 +23,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator helper changes the process-global egress guard.
 func TestRenderTrees_BootstrapDeclaredSelfSource(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml, consumer.yaml]\n")
 	testutil.WriteFile(t, root, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
@@ -82,8 +82,8 @@ spec:
 	}})
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_ChangedOnlyAndDiff_BootstrapPinnedIgnore(t *testing.T) {
+	t.Parallel()
 	roots := [2]string{t.TempDir(), t.TempDir()}
 	trees := make([]Tree, len(roots))
 	for side, root := range roots {
@@ -176,8 +176,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_BootstrapAliasEntryFailure(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(
 		t,
@@ -272,8 +272,8 @@ func TestRenderTrees_BootstrapAliasEntryFailure(t *testing.T) {
 	assert.Equal(t, independentStatus.Status, store.StatusReady)
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_BootstrapInferredRemote(t *testing.T) {
+	t.Parallel()
 	root, remote := t.TempDir(), t.TempDir()
 	remoteURL := "https://fixture.invalid/theshire.git"
 	for _, path := range []string{root, remote} {
@@ -343,8 +343,8 @@ func TestRenderTrees_BootstrapInferredRemote(t *testing.T) {
 	assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any("dirty"))
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_BootstrapDeclaredSourceChartAuthority(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, ref, version string
 		inputAlias         bool
@@ -354,6 +354,7 @@ func TestRenderTrees_BootstrapDeclaredSourceChartAuthority(t *testing.T) {
 		{name: "tag before semver", ref: "{tag: production, semver: '>=6.0.0'}", version: "5.3.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			const remoteURL = "https://fixture.invalid/theshire.git"
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml, consumer.yaml]\n")
@@ -435,8 +436,8 @@ func TestRenderTrees_BootstrapDeclaredSourceChartAuthority(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_BootstrapSyncChartAuthority(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		ref, version string
 		inputAlias   bool
@@ -445,6 +446,7 @@ func TestRenderTrees_BootstrapSyncChartAuthority(t *testing.T) {
 		{ref: "refs/heads/main", version: "5.2.1", inputAlias: true},
 	} {
 		t.Run(tc.ref, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/config/kustomization.yaml", "resources: [sync.yaml, consumer.yaml]\n")
 			testutil.WriteFile(t, root, "flux/config/sync.yaml", `apiVersion: fluxcd.controlplane.io/v1
@@ -529,8 +531,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestRenderTrees_BootstrapAliasesExcludeUnrelatedGit(t *testing.T) {
+	t.Parallel()
 	root, remote := t.TempDir(), t.TempDir()
 	const remoteURL = "https://github.com/alex1989hu/kubelet-serving-cert-approver"
 	options := &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}}

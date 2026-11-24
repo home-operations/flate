@@ -55,8 +55,8 @@ func (f completionCancellationFacts) OccurrenceObject(
 	return child, err
 }
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestFinishInitialAdmission_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "apps",
 		"  path: ./work\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: vars}]}\n"))

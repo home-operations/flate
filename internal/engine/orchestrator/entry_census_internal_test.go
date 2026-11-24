@@ -10,20 +10,22 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_EntryQualificationUsesCensus(t *testing.T) {
+	t.Parallel()
 	for _, buildOnly := range []bool{false, true} {
 		name := "file-indexed"
 		if buildOnly {
 			name = "build-only"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			for _, changed := range []bool{false, true} {
 				mode := "named"
 				if changed {
 					mode = "changed"
 				}
 				t.Run(mode, func(t *testing.T) {
+					t.Parallel()
 					testEntryQualificationUsesCensus(t, buildOnly, changed)
 				})
 			}

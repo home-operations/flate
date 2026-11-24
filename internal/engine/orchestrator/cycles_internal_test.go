@@ -235,9 +235,8 @@ func TestFailDependsOnCycles_EmittedAfterCapture(t *testing.T) {
 // store. End-to-end coverage of the listener wiring sits in the
 // e2e suite — but pinning the load-bearing behavior here keeps the
 // listener honest if it ever gets refactored.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/parent.yaml", ksYAML("parent", "parent", ""))
 	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [trigger.yaml]\n")

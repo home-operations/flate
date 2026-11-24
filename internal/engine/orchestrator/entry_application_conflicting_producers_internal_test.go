@@ -17,8 +17,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EntryApplicationConflictingProducers(t *testing.T) {
+	t.Parallel()
 	run := func() *Result {
 		t.Helper()
 		root := t.TempDir()

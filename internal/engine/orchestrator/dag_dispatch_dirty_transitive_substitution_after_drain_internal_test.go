@@ -20,8 +20,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [consumer.yaml, bridge.yaml, pin.yaml]\n")
 	testutil.WriteFile(t, root, "consumer.yaml", ksYAML("consumer", "consumer", "")+`  postBuild:

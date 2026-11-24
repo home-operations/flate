@@ -178,21 +178,27 @@ func (r r4Tasks) Go(ctx context.Context, name string, fn func(context.Context)) 
 
 func (r r4Tasks) BlockTillDone() { r.tasks.BlockTillDone() }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalRunningReady(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		t.Run(kind, func(t *testing.T) { ; testR4Running(t, kind, "data", false) })
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			testR4Running(t, kind, "data", false)
+		})
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalExhaustedSuccessor(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		for _, result := range []string{"failed", "empty", "before/failed", "before/empty"} {
 			for _, required := range []bool{false, true} {
 				t.Run(
 					fmt.Sprintf("%s/%s/required=%t", kind, result, required),
-					func(t *testing.T) { ; testR4Running(t, kind, result, required) },
+					func(t *testing.T) {
+						t.Parallel()
+						testR4Running(t, kind, result, required)
+					},
 				)
 			}
 		}
@@ -268,10 +274,11 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	assert.Equal(t, f.o.tasks.Failures(), int64(0))
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalBindingArrival(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := newR4Fixture(t, kind, "data", false)
 			f.o.configureControllers()
 			var sched *schedule.Scheduler
@@ -305,10 +312,11 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := newR4Fixture(t, kind, "data", false)
 			f.o.configureControllers()
 			release, supplied := make(chan struct{}), make(chan struct{})
@@ -364,10 +372,11 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalBindingSetChange(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := newR4Fixture(t, kind, "data", false)
 			f.o.configureControllers()
 			var changed atomic.Bool
@@ -427,10 +436,11 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalForceCut(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := newR4Fixture(t, kind, "data", false)
 			supplier, _ := f.o.store.Get[*manifest.Kustomization](f.supplier)
 			supplier = supplier.Clone()
@@ -458,10 +468,11 @@ func TestResolve_OptionalForceCut(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_OptionalDeterminism(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			var previous []byte
 			var warnings []manifest.Warning
 			for run := range 2 {
@@ -487,11 +498,12 @@ func TestResolve_OptionalDeterminism(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolve_ResourceSetInput(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		for _, changed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/changed=%t", kind, changed), func(t *testing.T) {
+				t.Parallel()
 				testResolveResourceSetInputCase(
 					t,
 					testResolveResourceSetInputCaseInputs{kind: &kind, changed: &changed},

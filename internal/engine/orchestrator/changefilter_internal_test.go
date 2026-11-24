@@ -32,8 +32,8 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestIntegration_DiffWidensToRepoRootForSiblingCheckouts(t *testing.T) {
+	t.Parallel()
 	origRoot := t.TempDir()
 	currRoot := t.TempDir()
 	for _, root := range []string{origRoot, currRoot} {

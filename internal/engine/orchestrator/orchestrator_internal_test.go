@@ -36,8 +36,7 @@ func (e *countedDetailError) Error() string {
 	return "upstream diagnostic"
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger and standard log output.
 func TestOrchestrator_DebugSelection(t *testing.T) {
 	t.Run("Discover_FailureDetailsEvaluation", func(t *testing.T) {
 		for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
@@ -319,8 +318,8 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	assert.ErrorIf(t, len(orphans) != 0, "expected no orphans when the covering parent failed, got %+v", orphans)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
+	t.Parallel()
 	owner, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
@@ -362,8 +361,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test changes process-wide environment variables.
 func TestOrchestrator_SimpleCluster(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(
@@ -422,8 +420,8 @@ data: {k: v}
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "peers/kustomization.yaml", "resources: [../flux/repo.yaml]\n")
 	testutil.WriteFile(t, dir, "flux/repo.yaml", testutil.KustomizationYAML("config-a", "flux-system", `  path: ./flux
@@ -577,9 +575,8 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 // against itself ("ConfigMap/flux-system/cluster-settings: dependency not
 // found"). The graph-aware self-production index must drop the self-edge so
 // cluster-apps renders and emits the CM.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml]\n")
 	testutil.WriteFile(
@@ -641,9 +638,8 @@ func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 // graph-aware self-edge drop must not turn a genuinely-absent CM into a
 // silent pass. Same shape as above but the group base pulls in no
 // cluster-settings, so nothing produces ConfigMap/flux-system/cluster-settings.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(
 		t,

@@ -332,8 +332,8 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest,tparallel // The complete fixture sets the process-wide egress policy.
 func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, kind                     string
 		absentDeclaration, stale, want bool
@@ -415,6 +415,7 @@ func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
 		})
 	}
 	t.Run("final alias warnings", func(t *testing.T) {
+		t.Parallel()
 		testOrchestratorExistenceFinalAliasWarnings(t)
 	})
 }
@@ -485,8 +486,8 @@ func testOrchestratorExistenceFinalAliasWarnings(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // The orchestrator fixture changes the process-wide egress policy.
 func TestRender_BootstrapAliasConsumerOrder(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		order string
 		valid bool
@@ -498,6 +499,7 @@ func TestRender_BootstrapAliasConsumerOrder(t *testing.T) {
 		{order: "manifests first", valid: true},
 	} {
 		t.Run(fmt.Sprintf("%s/valid=%t", tc.order, tc.valid), func(t *testing.T) {
+			t.Parallel()
 			root := bootstrapAliasFixture(t, tc.valid)
 			first := renderBootstrapAliasOrder(t, root, tc.order, tc.valid)
 			defer first.Close()

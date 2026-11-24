@@ -22,10 +22,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstancePatchChain(t *testing.T) {
+	t.Parallel()
 	for _, placement := range []string{"authored", "emitted"} {
 		t.Run(placement, func(t *testing.T) {
+			t.Parallel()
 			o, result := renderPlexSyncFixture(t, plexSyncFixture{authored: placement == "authored", patched: true})
 			categories := make([]string, 0, len(result.Warnings))
 			for _, warning := range result.Warnings {
@@ -61,10 +62,11 @@ func TestRender_FluxInstancePatchChain(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_GeneratedSyncDocumentsVisible(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"patched", "unpatched"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			_, result := renderPlexSyncFixture(t, plexSyncFixture{patched: mode == "patched"})
 			visible := map[string]int{}
 			for _, batch := range result.Manifests {
@@ -80,11 +82,12 @@ func TestRender_GeneratedSyncDocumentsVisible(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedPatchChain(t *testing.T) {
+	t.Parallel()
 	plex := testutil.HelmReleaseID("media", "plex")
 	for _, id := range []manifest.NamedResource{{}, testutil.KustomizationID("media", "plex"), plex} {
 		t.Run(cmp.Or(id.Kind, "full"), func(t *testing.T) {
+			t.Parallel()
 			request := selection.Request{}
 			if id.Name != "" {
 				request.Roots = []manifest.NamedResource{id}
@@ -104,10 +107,11 @@ func TestRender_FluxInstanceNamedPatchChain(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedAcrossNamespaces(t *testing.T) {
+	t.Parallel()
 	for _, overlay := range []string{"namespaces", "disjoint", "overlap", "shared"} {
 		t.Run(overlay, func(t *testing.T) {
+			t.Parallel()
 			assertPlexNamespaceSelection(t, overlay)
 		})
 	}
@@ -189,8 +193,8 @@ func assertPlexNamespaceRender(t *testing.T, full, named *Rendered, overlay stri
 	})
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedQualificationStopsAtWinner(t *testing.T) {
+	t.Parallel()
 	plex := testutil.HelmReleaseID("media", "plex")
 	o, result := renderPlexSyncFixture(t, plexSyncFixture{
 		patched: true, request: selection.Request{Roots: []manifest.NamedResource{plex}}, overlay: "conditional",
@@ -207,8 +211,8 @@ func TestRender_FluxInstanceNamedQualificationStopsAtWinner(t *testing.T) {
 	assertPlexSyncWinner(t, o)
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedDiffMatchesFull(t *testing.T) {
+	t.Parallel()
 	plex := testutil.HelmReleaseID("media", "plex")
 	var pair [2]Tree
 	var full [2][]map[string]any
@@ -253,8 +257,8 @@ func TestRender_FluxInstanceNamedDiffMatchesFull(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedDisjointRootWithdrawal(t *testing.T) {
+	t.Parallel()
 	var pair [2]Tree
 	var full [2]Rendered
 	for side := range pair {
@@ -330,8 +334,8 @@ func assertDisjointPlexComparisonSide(t *testing.T, run, full *Rendered, side ma
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceNamedWithdrawalMatchesFull(t *testing.T) {
+	t.Parallel()
 	plex := testutil.HelmReleaseID("media", "plex")
 	trees, full := plexWithdrawalTrees(t)
 	for _, order := range []struct {
@@ -339,8 +343,10 @@ func TestRender_FluxInstanceNamedWithdrawalMatchesFull(t *testing.T) {
 		sides [2]int
 	}{{"withdraw", [2]int{0, 1}}, {"restore", [2]int{1, 0}}} {
 		t.Run(order.name, func(t *testing.T) {
+			t.Parallel()
 			for _, cache := range []string{"cold", "receipt"} {
 				t.Run(cache, func(t *testing.T) {
+					t.Parallel()
 					cfg := Config{
 						CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true,
 						Selection: selection.Request{Roots: []manifest.NamedResource{plex}},
@@ -368,8 +374,8 @@ func TestRender_FluxInstanceNamedWithdrawalMatchesFull(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
 func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
+	t.Parallel()
 	registryURL := fluxInstanceChartRegistry(t)
 	plex := testutil.HelmReleaseID("default", "plex")
 	var trees [4]Tree
@@ -399,6 +405,7 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 		{"restore", [2]int{1, 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			pair := [2]Tree{trees[tc.sides[0]], trees[tc.sides[1]]}
 			for i := range pair {
 				pair[i].ID.Side = manifest.TreeSide(i)
@@ -420,6 +427,7 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 	}
 	for i, name := range []string{"disjoint", "resolved-disjoint"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			side := i + 2
 			runs, err := renderTreesForTest(t.Context(), t, trees[side:side+1], Config{
 				Concurrency: 2, RecordWork: true,
@@ -431,6 +439,7 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 		})
 	}
 	t.Run("changed interval under unpatched root", func(t *testing.T) {
+		t.Parallel()
 		assertOCIUnpatchedInterval(t, registryURL)
 	})
 }
@@ -530,22 +539,6 @@ func ociPlexTree(t *testing.T, registryURL, mode string) Tree {
 		ID: manifest.TreeID{Cluster: "."}, RepoRoot: root, Path: root, Input: testDirectoryInput(t, root),
 		SelfURLs: []string{"https://example.invalid/fixture"},
 	}
-}
-
-func assertOCIPlexAttempts(t *testing.T, result *Result, covered, inspectParent bool) {
-	t.Helper()
-	want := map[manifest.NamedResource]uint64{
-		testutil.KustomizationID("default", "plex"): 1,
-		testutil.HelmReleaseID("default", "plex"):   1,
-	}
-	if covered || inspectParent {
-		want[testutil.KustomizationID("flux-system", "flux-instance")] = 1
-	}
-	if covered {
-		want[testutil.KustomizationID("flux-system", "flux-system")] = 1
-		want[testutil.HelmReleaseID("flux-system", "flux-instance")] = 1
-	}
-	assert.Diff(t, plexApplicationAttempts(result.Work), want)
 }
 
 func plexWithdrawalTrees(t *testing.T) ([2]Tree, [2]Rendered) {

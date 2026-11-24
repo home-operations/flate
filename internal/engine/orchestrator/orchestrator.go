@@ -63,18 +63,8 @@ type Config struct {
 	// StrictSubstitutions fails undefined postBuild variables without defaults.
 	StrictSubstitutions bool
 
-	// RestrictEgress is the untrusted-render switch. It (1) enables the SSRF
-	// egress guard for ALL source fetches (kustomize remote resources/bases +
-	// Git/OCI/Helm/Bucket sources) — outbound dials to loopback/RFC1918/link-
-	// local/cloud-metadata addresses are refused — and (2) rejects GitRepository
-	// URLs whose transport is not https/ssh (file://, git://, http://, bare
-	// paths), so a fork-PR file:// source can't disclose an arbitrary in-pod
-	// repo (#743). Off by default — flate normally renders TRUSTED repos that
-	// legitimately reach private/LAN hosts and use local file:// self-sources;
-	// a consumer rendering UNTRUSTED input (e.g. konflate fork mode) sets this.
-	// The egress half is process-level (see internal/engine/source/ssrfguard): go-git
-	// installs its HTTPS transport process-wide, so a per-render git egress
-	// policy is impossible.
+	// RestrictEgress rejects GitRepository URLs that use transports other than
+	// HTTPS or SSH. The CLI and SDK set the process-wide address guard.
 	RestrictEgress bool
 
 	// RegistryConfig is the docker config.json used for OCI auth.

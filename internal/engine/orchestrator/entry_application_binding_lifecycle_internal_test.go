@@ -26,8 +26,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestRender_EntryApplicationBindingLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newBindingLifecycleFixture(t)
 	assert.NoError(t, f.orchestrator.bootstrap(t.Context()))
 	assert.Equal(t, f.orchestrator.entryBinding.Producer, testutil.KustomizationID("apps", "z"))
@@ -65,10 +65,11 @@ func TestRender_EntryApplicationBindingLifecycle(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestRender_NamedEntryApplicationWithdrawal(t *testing.T) {
+	t.Parallel()
 	for _, namespace := range []string{"explicit", "omitted"} {
 		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(
 				t,
@@ -183,8 +184,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // Orchestrator setup changes process-global source policy.
 func TestAcceptEntry_UsesSupportOwner(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		retain bool
@@ -193,6 +194,7 @@ func TestAcceptEntry_UsesSupportOwner(t *testing.T) {
 		{"only the receipt owner descends from previous entry", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			o := newBindingLifecycleFixture(t).orchestrator
 			assert.NoError(t, o.bootstrap(t.Context()))
 			producer := o.entryBinding.Producer

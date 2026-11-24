@@ -388,7 +388,8 @@ func newSelectedSelfFixture(t *testing.T, namedBranch bool) selectedSelfFixture 
 		Name:      ".",
 	}
 	admissions := map[manifest.NamedResource]uint64{source: 1, manifest.BootstrapSourceID: 1, entry: 1}
-	want := make([]string, 0, 147)
+	const applications = 3
+	want := make([]string, 0, applications+2)
 	want = append(
 		want,
 		source.String(),
@@ -409,7 +410,7 @@ func newSelectedSelfFixture(t *testing.T, namedBranch bool) selectedSelfFixture 
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n"+
 			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {"+refSpec+"}}\n",
 	)
-	for i := range 145 {
+	for i := range applications {
 		name := fmt.Sprintf("app-%03d", i)
 		id := testutil.KustomizationID("flux-system", name)
 		want = append(want, id.String())
@@ -528,9 +529,9 @@ func (f *selectedSelfFixture) assertPreparation(
 		Phase:  manifest.WorkPreparation,
 	}
 	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
-	files, rootEntries := uint64(1180), uint64(1915)
+	files, rootEntries := uint64(44), uint64(69)
 	if side == 1 {
-		files, rootEntries = 592, 1327
+		files, rootEntries = 24, 49
 	}
 	assertWitnessPreparations(
 		t,
@@ -541,7 +542,7 @@ func (f *selectedSelfFixture) assertPreparation(
 				Attempts:       3,
 				Completed:      3,
 				FileEntries:    rootEntries,
-				ReaderEdges:    438,
+				ReaderEdges:    12,
 				OwnerPrepares:  3,
 				RawKeyPrepares: 0,
 			},

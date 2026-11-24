@@ -74,8 +74,8 @@ spec:
 	return namespaceFixture{tree: Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, artifact: artifact}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EmittedNamespaceChildren(t *testing.T) {
+	t.Parallel()
 	namespaceChildrenFixtureResult1 := namespaceChildrenFixture(t, 2)
 	tree, artifact := namespaceChildrenFixtureResult1.tree, namespaceChildrenFixtureResult1.artifact
 	roots := []manifest.NamedResource{
@@ -160,8 +160,8 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_UnindexedSourceMaterializer(t *testing.T) {
+	t.Parallel()
 	root, artifact := t.TempDir(), t.TempDir()
 	testutil.WriteFile(
 		t,
@@ -266,8 +266,8 @@ spec:
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_OpaqueSelectionDemand(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/set.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -334,6 +334,7 @@ spec:
 			oracle = documents
 		} else {
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				testRenderOpaqueSelectionDemandCase2(
 					t,
 					testRenderOpaqueSelectionDemandCase2Inputs{oracle: &oracle, documents: &documents},

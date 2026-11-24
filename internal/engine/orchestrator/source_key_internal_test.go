@@ -40,8 +40,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
+	t.Parallel()
 	const mediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 	layer := testutil.TarGz(t, map[string]string{
 		"app-template/Chart.yaml":        "apiVersion: v2\nname: app-template\nversion: 4.4.0\n",
@@ -266,11 +266,12 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 	t.Logf("blocked control attempts=%d requests=%d error=%v", attempts.Load(), tailCaseInput.requests.Load(), err)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAGDispatch_CoveredArrival(t *testing.T) {
+	t.Parallel()
 	for _, order := range []string{"before parking", "after parking", "excluded then refire"} {
 		for _, admission := range []string{"seed", "event"} {
 			t.Run(order+"/"+admission, func(t *testing.T) {
+				t.Parallel()
 				testDAGDispatchCoveredArrivalCase(
 					t,
 					testDAGDispatchCoveredArrivalCaseInputs{order: &order, admission: &admission},

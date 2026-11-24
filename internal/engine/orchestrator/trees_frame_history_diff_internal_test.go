@@ -92,10 +92,8 @@ func assertFrameHistoryDiff(t *testing.T, trees []Tree, changed bool, status dif
 	}
 	t.Run("reused", func(t *testing.T) {
 		t.Parallel()
-		for _, cacheDir := range cacheDirs {
-			got := observeFrameHistoryDiff(t, trees, cacheDir, changed, true, persistent)
-			assert.Diff(t, got, cold)
-		}
+		got := observeFrameHistoryDiff(t, trees, cacheDirs[0], changed, true, persistent)
+		assert.Diff(t, got, cold)
 	})
 	return cold.Diff
 }

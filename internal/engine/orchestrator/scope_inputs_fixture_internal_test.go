@@ -22,8 +22,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{
 		"chart-input-template-committed",
 		"chart-input-template-directories",
@@ -50,6 +50,7 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 		"cross-source-optional-removal",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			fixture := testfixture.Materialize(t, "scope-inputs-"+name, name)
 			cache := cachetest.New(t, "", sourcecache.New)
 			paths := [2]string{fixture.Resolve(t, "@@baseline@@/flux", ""), filepath.Join(fixture.Repo, "flux")}
@@ -276,8 +277,8 @@ func testScopeOptionalProjection(t *testing.T, batches []manifest.DocumentBatch,
 	assert.Equal(t, input, present)
 }
 
-//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
 func TestRenderTrees_InTreeCacheCorpus(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"implicit", "self"} {
 		for _, state := range []string{"unchanged", "changed", "suspended-current", "suspended-orig"} {
 			layouts := []string{"external"}
@@ -287,6 +288,7 @@ func TestRenderTrees_InTreeCacheCorpus(t *testing.T) {
 			for _, layout := range layouts {
 				name := "cache-" + source + "-" + state + "-" + layout
 				t.Run(name, func(t *testing.T) {
+					t.Parallel()
 					testScopeInputCacheLifecycle(t, name, layout)
 				})
 			}

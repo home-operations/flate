@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The stage witness replaces the process-wide logger.
 func TestRenderTrees_StagePrecision(t *testing.T) {
 	for _, field := range []string{"timeout", "interval", "wait", "prune", "path"} {
 		t.Run(field, func(t *testing.T) {
@@ -26,7 +26,7 @@ func TestRenderTrees_StagePrecision(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The stage witness replaces the process-wide logger.
 func TestRenderTrees_HelmStagePrecision(t *testing.T) {
 	for _, shape := range []struct{ name, path string }{
 		{"home-ops", "kubernetes/apps/actions-runner-controller"},
@@ -45,7 +45,7 @@ func TestRenderTrees_HelmStagePrecision(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The stage witness replaces the process-wide logger.
 func TestRenderTrees_EffectiveGlobalVariable(t *testing.T) {
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	trees := make([]Tree, 2)
@@ -199,7 +199,7 @@ metadata: {name: payload, namespace: apps, annotations: {value: "\u0024{CHANGED}
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The stage witness replaces the process-wide logger.
 func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 	for _, tc := range generatedVariableCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,7 +265,7 @@ func TestRenderTrees_EffectiveGeneratedVariable(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The stage witness replaces the process-wide logger.
 func TestRenderTrees_ChangedDeclarationPreparation(t *testing.T) {
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	trees := make([]Tree, 2)

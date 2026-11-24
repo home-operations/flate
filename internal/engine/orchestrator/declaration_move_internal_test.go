@@ -16,8 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger.
 func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 	registryConfig := filepath.Join(t.TempDir(), "config.json")
 	registry := testutil.NewChartRegistry(t, []map[string]string{inlineChartFiles(t)}, false)

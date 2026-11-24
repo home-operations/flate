@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/source/helmchart"
 	"github.com/home-operations/flate/internal/engine/source/oci"
-	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -60,7 +59,7 @@ func RenderTrees(
 	trees []Tree,
 	cfg Config, //nolint:gocritic // Invocation setup owns its configuration snapshot.
 ) (*Invocation, error) {
-	if err := validateTrees(trees); err != nil {
+	if err := ValidateTrees(trees); err != nil {
 		return nil, err
 	}
 	r, err := NewInvocation(ctx, cfg)
@@ -94,7 +93,6 @@ func NewInvocation(
 	ctx context.Context,
 	cfg Config, //nolint:gocritic // Invocation setup owns its configuration snapshot.
 ) (*Invocation, error) {
-	ssrfguard.Restrict(cfg.RestrictEgress)
 	if err := snapshotSubstitutions(&cfg); err != nil {
 		return nil, err
 	}
@@ -155,7 +153,7 @@ func (r *Invocation) Render(ctx context.Context, trees []Tree) (err error) {
 		r.Results = slices.Clone(r.results)
 		r.err = err
 	}()
-	if validationErr := validateTrees(trees); validationErr != nil {
+	if validationErr := ValidateTrees(trees); validationErr != nil {
 		return validationErr
 	}
 	trees, err = r.prepareTrees(ctx, trees, &inputs)
@@ -220,7 +218,8 @@ func (r *Invocation) Close() error {
 	return r.closeErr
 }
 
-func validateTrees(trees []Tree) error {
+// ValidateTrees rejects identity collisions before callers set process-wide policy.
+func ValidateTrees(trees []Tree) error {
 	seen := make(map[manifest.TreeID]bool, len(trees))
 	for _, tree := range trees {
 		if localErr := tree.ID.Validate(); localErr != nil {

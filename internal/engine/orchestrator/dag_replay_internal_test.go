@@ -21,8 +21,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_ParallelRenderedReplayConverges(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux/source.yaml, flux/ks.yaml]\n")
 	hr := `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -178,9 +178,8 @@ func ksYAML(name, path, dependsOn string) string {
 // another KS's render of a REMOTE resources: URL. The dag scheduler must
 // discover the render-emitted dependency and resolve the consumer Ready —
 // exactly the case a static dangling-dep oracle could not see.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	produced := ksYAML("produced", "produced", "") + "  dependsOn: [{name: ready, namespace: '${TEAM}'}]\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -245,6 +244,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	assert.Equal(t, child.DependsOn[0].Namespace, "shared")
 
 	t.Run("escaped namespace", func(t *testing.T) {
+		t.Parallel()
 		escapedRoot := t.TempDir()
 		testutil.CopyTree(t, dir, escapedRoot)
 		escapedBody := strings.Replace(produced, "${TEAM}", "$${TEAM}", 1)
@@ -273,9 +273,8 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 // fixpoint terminator: a chain leaf→(absent) fails "dependency not found" and
 // its consumer cascades with the leaf's terminal message — without riding any
 // timeout. The bounded context proves termination is structural, not timed.
-//
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// leaf dependsOn a Kustomization that is never defined or emitted; mid
 	// dependsOn leaf.

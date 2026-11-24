@@ -29,8 +29,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest,tparallel // The parent checks the fixture after the history cases.
 func TestHistory_ProspectiveReader(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/producer.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -157,8 +158,7 @@ func (b *historyLogBuffer) Bytes() []byte {
 	return bytes.Clone(b.buffer.Bytes())
 }
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The test replaces the process-wide logger.
 func TestBootstrap_AcceptedOrphanHelmChildRoot(t *testing.T) {
 	var logs historyLogBuffer
 	previous := slog.Default()
@@ -200,8 +200,8 @@ func cancelHistoryProbe(
 	return historyProbeContext{ctx, preparation, atomic.LoadUint64(&preparation.Counts.Completed), cancel}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
+	t.Parallel()
 	persistent := sourcecache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
@@ -255,10 +255,11 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBuildChangeFilter_PreviousRenderNarrowing(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"literal", "substitute_from", "helm_values_from"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testBuildChangeFilterPreviousRenderNarrowingCase(
 				t,
 				&mode,

@@ -83,8 +83,8 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "settings", "${VALUE}")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml, settings.yaml]\n")

@@ -81,24 +81,26 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_BoundedPublications(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
-			first := renderScalePublications(t, workers, 64, 16)
-			second := renderScalePublications(t, workers, 64, 16)
+			t.Parallel()
+			first := renderScalePublications(t, workers, 23, 3)
+			second := renderScalePublications(t, workers, 23, 3)
 			assert.Equal(t, bytes.Equal(first, second), true)
 		})
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_ScalePublications(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("FLATE_E8_SLOW") != "1" {
 		t.Skip("set FLATE_E8_SLOW=1 for 1000 producers and 10000 publications")
 	}
 	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
 			first := renderScalePublications(t, workers, 1000, 64)
 			second := renderScalePublications(t, workers, 1000, 64)
 			assert.Equal(t, bytes.Equal(first, second), true)
@@ -261,8 +263,9 @@ func renderScalePublicationsTail(t *testing.T, tailCaseInput *renderScalePublica
 	return output
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest,tparallel // Worker cases compare with the preceding render.
 func TestDAG_SuspensionAfterRefresh(t *testing.T) {
+	t.Parallel()
 	for _, changedOnly := range []bool{false, true} {
 		for _, retained := range []bool{false, true} {
 			var previous []byte

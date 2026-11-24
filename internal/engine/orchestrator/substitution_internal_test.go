@@ -94,8 +94,8 @@ func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) str
 	return value
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
+	t.Parallel()
 	const cipher = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
 	source := suppliedSubstitution("external")
 	cm := source.Obj.(*manifest.ConfigMap)
@@ -300,8 +300,8 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	source := suppliedSubstitution("external")
@@ -341,18 +341,19 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_SubstitutionCollisions(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"stored", "indexed file", "known Kustomization producer", "known Secret producer", "known Secret producer without declared keys"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			testBootstrapSubstitutionCollisionsCase(t, &kind)
 		},
 		)
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
+	t.Parallel()
 	sources := []store.Declaration{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, Path: t.TempDir()})
 	for _, source := range sources {
@@ -370,8 +371,9 @@ func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest,tparallel // Producer orders compare with the first render.
 func TestRender_SubstitutionLateProducer(t *testing.T) {
+	t.Parallel()
 	var canonical []byte
 	for _, producerFirst := range []bool{true, false} {
 		t.Run(fmt.Sprintf("producer_first_%v", producerFirst), func(t *testing.T) {
@@ -384,8 +386,8 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionLateConsumer(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	testutil.WriteFile(t, root, "flux.yaml", "null\n")

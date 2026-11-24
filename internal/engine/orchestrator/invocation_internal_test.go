@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/source"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	sourcegit "github.com/home-operations/flate/internal/engine/source/git"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -19,7 +20,9 @@ import (
 
 func TestInvocation_LazySelectionLifetime(t *testing.T) {
 	t.Parallel()
-	for _, stage := range []string{"completed", "resource_failure", "preparation_failure", "discovery_failure", "canceled"} {
+	for _, stage := range []string{
+		"completed", "resource_failure", "preparation_failure", "discovery_failure", "invalid_identity", "canceled",
+	} {
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
 			testInvocationLazySelectionLifetime(t, stage)
@@ -60,12 +63,14 @@ func testInvocationLazySelectionLifetime(t *testing.T, stage string) {
 		Content:   identity,
 	}
 	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: artifact, Path: root}
-	if stage == "preparation_failure" {
+	switch stage {
+	case "preparation_failure":
 		tree.Input = nil
 		tree.Path = ""
-	}
-	if stage == "discovery_failure" {
+	case "discovery_failure":
 		tree.Path = filepath.Join(root, "absent")
+	case "invalid_identity":
+		tree.ID.Side = manifest.TreeHead + 1
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -78,8 +83,11 @@ func testInvocationLazySelectionLifetime(t *testing.T, stage string) {
 	} else {
 		assert.FatalIf(t, err == nil, "missing %s error", stage)
 	}
-	if stage == "canceled" {
+	switch stage {
+	case "canceled":
 		assert.Equal(t, errors.Is(err, context.Canceled), true)
+	case "invalid_identity":
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	}
 	assert.Equal(t, errors.Is(invocation.err, err), true)
 	data, readErr := fs.ReadFile(input, "lazy.txt")
@@ -111,7 +119,7 @@ func testInvocationLazySelectionLifetime(t *testing.T, stage string) {
 
 func TestInvocation_ValidationAndPartialAllocation(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"identity", "supply", "cache"} {
+	for _, name := range []string{"identity", "supply", "transport", "cache"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			trees := []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}
@@ -121,15 +129,21 @@ func TestInvocation_ValidationAndPartialAllocation(t *testing.T) {
 				trees = append(trees, trees[0])
 			case "supply":
 				cfg.Supply = []store.Declaration{{Doc: map[string]any{"kind": "ConfigMap"}}}
+			case "transport":
+				cfg.GitTransports = sourcegit.Transports{"": nil}
 			case "cache":
 				cfg.CacheDir = filepath.Join(t.TempDir(), "file")
 				testutil.WriteFileAt(t, cfg.CacheDir, "not a directory")
 			}
 			invocation, err := RenderTrees(t.Context(), trees, cfg)
 			assert.FatalIf(t, err == nil, "missing %s error", name)
-			if name == "cache" {
+			if name == "transport" {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			}
+			if name == "cache" || name == "transport" {
 				assert.FatalIf(t, invocation == nil || invocation.Config.Network == nil,
-					"allocated network lost on cache initialization failure: %v", err)
+					"allocated network lost on %s initialization failure: %v", name, err)
+				assert.Equal(t, errors.Is(invocation.err, err), true)
 				assert.NoError(t, invocation.Close())
 				assert.NoError(t, invocation.Close())
 			} else {
@@ -150,9 +164,11 @@ func TestInvocation_InjectedResources(t *testing.T) {
 			t.Cleanup(func() { assert.NoError(t, cache.Close()) })
 			network := new(source.Network)
 			t.Cleanup(network.Close)
-			invocation, err := RenderTrees(t.Context(), []Tree{{
+			trees := []Tree{{
 				ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir(),
-			}}, Config{Concurrency: 2, Cache: cache, Network: network})
+			}}
+			cfg := Config{Concurrency: 2, Cache: cache, Network: network}
+			invocation, err := RenderTrees(t.Context(), trees, cfg)
 			assert.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
 			assert.Equal(t, invocation.releaseCache == nil, true)

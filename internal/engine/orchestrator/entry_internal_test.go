@@ -23,8 +23,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // This test changes process-global state.
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // The qualification witnesses replace the process-wide logger.
 func TestRender_EntryDeclarationQualifiesOpaqueApplier(t *testing.T) {
 	t.Run("settled_candidates", testRenderChangedLiteralEntryDrainsSettledCandidates)
 	t.Run("supplied applications", testSuppliedApplications)

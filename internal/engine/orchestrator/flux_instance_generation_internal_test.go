@@ -15,8 +15,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The orchestrator fixture changes process-wide source policy.
+//nolint:paralleltest,tparallel // Each step mutates the same orchestrator in order.
 func TestRender_FluxInstanceGenerationWithdrawal(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	const url = "https://example.test/sync"
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [parent.yaml]\n")

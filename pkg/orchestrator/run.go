@@ -7,6 +7,7 @@ import (
 	engine "github.com/home-operations/flate/internal/engine/orchestrator"
 	"github.com/home-operations/flate/internal/engine/selection"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/ssrfguard"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -20,6 +21,9 @@ func RenderTrees(
 	inputs := make([]engine.Tree, len(trees))
 	for i, tree := range trees {
 		inputs[i] = engine.Tree{ID: tree.ID, RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs}
+	}
+	if err := engine.ValidateTrees(inputs); err != nil {
+		return nil, err
 	}
 	supply := make([]store.Declaration, len(cfg.Supply))
 	for i, doc := range cfg.Supply {
@@ -49,6 +53,7 @@ func RenderTrees(
 			listener(tree, subject, statusInfo(info))
 		}
 	}
+	ssrfguard.Restrict(cfg.RestrictEgress)
 	invocation, err := engine.RenderTrees(ctx, inputs, internal)
 	if invocation == nil {
 		return nil, err

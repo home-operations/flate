@@ -13,9 +13,8 @@ import (
 
 // Prediction must precede the leaf's first render so children receive the
 // overlay's target namespace even without a structural parent.
-//
-//nolint:paralleltest // RenderTrees changes the process-global egress guard.
 func TestOrchestrator_TransformerTargetNamespace(t *testing.T) {
+	t.Parallel()
 	assert.Diff(t, hrIDs(&Orchestrator{store: store.New()}), []string(nil))
 	dir := t.TempDir()
 
@@ -163,6 +162,7 @@ spec:
 	}
 
 	t.Run("changed_only_second_source", func(t *testing.T) {
+		t.Parallel()
 		testOrchestratorTransformerTargetNamespaceChangedOnlySecondSource2(
 			t,
 			testOrchestratorTransformerTargetNamespaceChangedOnlySecondSource2Inputs{dir: &dir, path: &path},

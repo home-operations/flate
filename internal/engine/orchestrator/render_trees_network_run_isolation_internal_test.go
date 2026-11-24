@@ -30,7 +30,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
+//nolint:paralleltest // StubDNS changes the process-wide resolver and proxy environment.
 func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		t.Run(strconv.Itoa(workers), func(t *testing.T) {
@@ -40,7 +40,9 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 	}
 	t.Run(
 		"remote-generators",
-		func(t *testing.T) { ; testRenderTreesNetworkRunIsolationRemoteGenerators(t) },
+		func(t *testing.T) {
+			testRenderTreesNetworkRunIsolationRemoteGenerators(t)
+		},
 	)
 }
 
@@ -133,11 +135,12 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 	assert.Equal(t, len(earlier[0].Manifests) > 0, true)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		for _, backing := range []string{"memory", "disk"} {
 			t.Run(fmt.Sprintf("%d/%s", workers, backing), func(t *testing.T) {
+				t.Parallel()
 				testOrchestratorRunJoinsRemoteWorkersCase(
 					t,
 					testOrchestratorRunJoinsRemoteWorkersCaseInputs{workers: &workers, backing: &backing},
@@ -237,10 +240,11 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_SourceValuesReadersRenderEmitter(t *testing.T) {
+	t.Parallel()
 	for _, form := range []string{"inline", "chartRef"} {
 		t.Run(form, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
 			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("demo", "flux-system",

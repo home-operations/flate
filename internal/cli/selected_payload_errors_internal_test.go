@@ -97,11 +97,10 @@ type lifetimeWriter func([]byte) (int, error)
 
 func (w lifetimeWriter) Write(data []byte) (int, error) { return w(data) }
 
+//nolint:paralleltest // runSelected sets the process-wide egress policy.
 func TestRunSelected_FinalConsumerLifetime(t *testing.T) {
-	t.Parallel()
 	for _, stage := range []string{"completed", "payload_error", "report_error", "baseline_error", "close_error"} {
 		t.Run(stage, func(t *testing.T) {
-			t.Parallel()
 			testRunSelectedFinalConsumerLifetime(t, stage)
 		})
 	}

@@ -31,40 +31,35 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"direct", "deferred_required", "deferred_optional", "cycle"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testRenderEntryOwnerDependsOnSiblingCase(t, &mode)
 		},
 		)
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_EntryReceiptDependencySubstitutions(t *testing.T) {
+	t.Parallel()
 	for _, declaration := range []string{"authored", "patched", "independent"} {
 		t.Run(declaration, func(t *testing.T) {
-			testBootstrapEntryReceiptDependencySubstitutionsCase(
-				t,
-				&declaration,
-			)
-		},
-		)
+			t.Parallel()
+			testBootstrapEntryReceiptDependencySubstitutionsCase(t, &declaration)
+		})
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
+	t.Parallel()
 	t.Run("partial_application_history", testBuildChangeFilterPartialApplicationHistory)
 	for _, mode := range []string{"authored", "literal", "empty"} {
 		t.Run(mode, func(t *testing.T) {
-			testBootstrapEntryHistoryMatchesEmissionCase(
-				t,
-				&mode,
-			)
-		},
-		)
+			t.Parallel()
+			testBootstrapEntryHistoryMatchesEmissionCase(t, &mode)
+		})
 	}
 }
 
@@ -92,8 +87,8 @@ func (f *entryBuildFS) Open(name string) (fs.File, error) {
 	return f.FS.Open(name)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
+	t.Parallel()
 	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root := t.TempDir()
 	cacheDir := t.TempDir()
@@ -150,8 +145,8 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestCompleteBootstrap_Cancellation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
 	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 2})
@@ -737,8 +732,9 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 }
 
 func testBuildChangeFilterPartialApplicationHistory(t *testing.T) {
-	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	t.Helper()
+	t.Parallel()
+	t.Logf("render persistence reason=%q backing=disk", sourcecache.RenderPersistenceDisabledReason())
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/factory.yaml", testutil.KustomizationYAML("factory", "apps", `  path: ./producers
   postBuild: {substituteFrom: [{kind: ConfigMap, name: supplied}]}

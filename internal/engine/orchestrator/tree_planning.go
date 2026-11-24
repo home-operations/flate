@@ -51,7 +51,7 @@ func (r *Invocation) prepareTrees(
 	if err != nil {
 		return trees, err
 	}
-	if err := validateTrees(expanded); err != nil {
+	if err := ValidateTrees(expanded); err != nil {
 		return trees, manifest.NewError(
 			manifest.ErrInput,
 			err,

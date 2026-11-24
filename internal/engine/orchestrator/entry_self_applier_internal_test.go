@@ -18,33 +18,32 @@ import (
 
 func testEntrySelfApplier(t *testing.T) {
 	t.Helper()
+	var expected [2]*Result
+	for side, oracle := range entrySelfApplierTrees(t) {
+		oracle.BaseInput, oracle.ExternalChanges = nil, nil
+		full, err := renderTreesForTest(t.Context(), t, []Tree{oracle}, Config{
+			CacheDir: t.TempDir(), Concurrency: 2,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, len(full), 1)
+		expected[side] = full[0].Result
+	}
 	var previous [2][]byte
 	for run := range 2 {
-		for side := range 2 {
-			trees := entrySelfApplierTrees(t)
-			selected, err := renderTreesForTest(t.Context(), t, []Tree{trees[side]}, Config{
+		trees := entrySelfApplierTrees(t)
+		for side, tree := range trees {
+			selected, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{
 				CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true,
 				Selection: selection.Request{Changed: true},
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected), 1)
-			oracleTrees := entrySelfApplierTrees(t)
-			oracle := oracleTrees[side]
-			oracle.BaseInput, oracle.ExternalChanges = nil, nil
-			full, err := renderTreesForTest(
-				t.Context(),
-				t,
-				[]Tree{oracle},
-				Config{CacheDir: t.TempDir(), Concurrency: 2},
-			)
-			assert.NoError(t, err)
-			assert.Equal(t, len(full), 1)
 			result := selected[0].Result
-			assert.Diff(t, result.Failed, full[0].Result.Failed)
-			assert.Diff(t, result.Blocked, full[0].Result.Blocked)
+			assert.Diff(t, result.Failed, expected[side].Failed)
+			assert.Diff(t, result.Blocked, expected[side].Blocked)
 			actual, err := json.Marshal(result.Manifests)
 			assert.NoError(t, err)
-			want, err := json.Marshal(full[0].Result.Manifests)
+			want, err := json.Marshal(expected[side].Manifests)
 			assert.NoError(t, err)
 			assert.Equal(t, string(actual), string(want))
 			if run == 0 {
@@ -53,7 +52,7 @@ func testEntrySelfApplier(t *testing.T) {
 				assert.Equal(t, string(actual), string(previous[side]))
 			}
 			assertEntrySelfApplierOutput(t, result, side)
-			assertEntrySelfApplierWork(t, result, trees[side].ID)
+			assertEntrySelfApplierWork(t, result, tree.ID)
 		}
 	}
 }

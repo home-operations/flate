@@ -72,10 +72,11 @@ func (s *sourceRevalidationHTTP) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	http.ServeContent(w, r, r.URL.Path, time.Unix(0, 0), bytes.NewReader(body))
 }
 
-//nolint:paralleltest // RenderTrees changes the process-wide egress policy.
 func TestRenderTrees_SourceRevalidation(t *testing.T) {
+	t.Parallel()
 	for _, protocol := range []string{"bucket", "helm"} {
 		t.Run(protocol, func(t *testing.T) {
+			t.Parallel()
 			testSourceRevalidation(t, protocol)
 		})
 	}
@@ -180,11 +181,12 @@ func sourceRevalidationTree(t *testing.T, protocol, url string) (Tree, []manifes
 	return Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}, Path: root, RepoRoot: root}, parents
 }
 
-//nolint:paralleltest // RenderTrees changes the process-wide egress policy.
 func TestRenderTrees_SourceRevalidation_ChangedOnly(t *testing.T) {
+	t.Parallel()
 	snapshots := sourceRevalidationSnapshots(t)
 	for _, direction := range []string{"addition", "removal"} {
 		t.Run(direction, func(t *testing.T) {
+			t.Parallel()
 			testSourceRevalidationChangedOnly(t, snapshots, direction)
 		})
 	}

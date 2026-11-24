@@ -128,8 +128,8 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml]\n")
 	testutil.WriteFile(
@@ -378,8 +378,8 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(
 		t,

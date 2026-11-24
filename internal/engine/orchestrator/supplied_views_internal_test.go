@@ -19,11 +19,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_SuppliedViews(t *testing.T) {
+	t.Parallel()
 	for _, headOnly := range []bool{false, true} {
 		for _, scenario := range []string{"differing_options", "filtered_addition", "filtered_deletion", "explicit_changes", "explicit_empty"} {
 			t.Run(fmt.Sprintf("%s/head_only_%t", scenario, headOnly), func(t *testing.T) {
+				t.Parallel()
 				testRenderTreesSuppliedViewsCase(
 					t,
 					testRenderTreesSuppliedViewsCaseInputs{headOnly: &headOnly, scenario: &scenario},
@@ -32,7 +33,10 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 			)
 		}
 	}
-	t.Run("same_input_override", func(t *testing.T) { ; testRenderTreesSuppliedViewsSameInputOverride(t) })
+	t.Run("same_input_override", func(t *testing.T) {
+		t.Parallel()
+		testRenderTreesSuppliedViewsSameInputOverride(t)
+	})
 }
 
 type testRenderTreesSuppliedViewsCaseInputs struct {

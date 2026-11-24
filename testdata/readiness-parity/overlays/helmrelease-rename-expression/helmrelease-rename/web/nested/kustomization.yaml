@@ -1,0 +1,6 @@
+namespace: web
+resources: [web.yaml]
+configurations: [kustomizeconfig.yaml]
+configMapGenerator:
+  - name: values
+    literals: [hello=world]

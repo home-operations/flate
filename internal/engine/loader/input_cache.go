@@ -443,19 +443,18 @@ func (l *Loader) restoreFrameFiles(state *inputCache, frame *inputFrame) error {
 		if !fs.ValidPath(file.Name) || file.Name == "." || file.Digest == "" {
 			return manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid file coordinate")
 		}
-		if file.Digest != state.digests[file.Name] {
-			continue
-		}
 		mode, present := state.types[file.Name]
-		if !present || !mode.IsRegular() {
+		if !present || !mode.IsRegular() || file.Digest != state.digests[file.Name] {
 			continue
 		}
 		absolute := filepath.Join(state.input.LocalPath, filepath.FromSlash(file.Name))
-		if new(l.documents).mountedRoot(absolute) != state.input.LocalPath {
+		builder := file.Builder != ""
+		sameBuilder := !builder || frame.matchesBuilderFiles(file.Name, state.types)
+		if !sameBuilder || new(l.documents).mountedRoot(absolute) != state.input.LocalPath {
 			continue
 		}
-		if file.Builder != "" {
-			if err := l.restoreCachedBuilder(state.input.LocalPath, state, file, absolute); err != nil {
+		if builder {
+			if err := l.restoreCachedBuilder(state.input.LocalPath, file, absolute); err != nil {
 				return err
 			}
 		} else {
@@ -468,7 +467,7 @@ func (l *Loader) restoreFrameFiles(state *inputCache, frame *inputFrame) error {
 			}
 			l.documents.cache[absolute] = doc
 		}
-		state.files[inputCoordinate{name: file.Name, builder: file.Builder != ""}] = inputEvidence{
+		state.files[inputCoordinate{name: file.Name, builder: builder}] = inputEvidence{
 			digest:     file.Digest,
 			coverage:   file.Coverage,
 			projection: file.projectionPayload(),
@@ -556,23 +555,26 @@ func (l *Loader) cacheSourceInputs(state *inputCache) (*inputFrame, error) {
 		Digests: map[string]string{},
 		Types:   map[string]fs.FileMode{},
 	}
+	for i := range files {
+		file := &files[i]
+		if file.Builder == "" {
+			continue
+		}
+		dir := path.Dir(file.Name)
+		for _, name := range manifest.KustomizeBuilderFilenames {
+			candidate := path.Join(dir, name)
+			if mode, present := state.types[candidate]; present {
+				frame.Types[candidate] = mode
+			}
+		}
+	}
 	frame.captureEvidence(state)
 	return frame, nil
 }
 
-func (l *Loader) restoreCachedBuilder(root string, state *inputCache, file *cachedInput, absolute string) error {
+func (l *Loader) restoreCachedBuilder(root string, file *cachedInput, absolute string) error {
 	if file.Builder != filepath.Base(file.Name) || file.Body == nil {
 		return manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid builder")
-	}
-	dir := filepath.Dir(file.Name)
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		candidate := filepath.ToSlash(filepath.Join(dir, name))
-		if _, present := state.types[candidate]; present {
-			if candidate != file.Name {
-				return nil
-			}
-			break
-		}
 	}
 	key := filepath.Dir(absolute)
 	doc := l.documents.cache[key]

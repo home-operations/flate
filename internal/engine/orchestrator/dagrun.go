@@ -1,19 +1,18 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 
-	"github.com/home-operations/flate/internal/engine/selection"
-
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/discovery"
 	"github.com/home-operations/flate/internal/engine/schedule"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
-	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -167,23 +166,19 @@ func (o *Orchestrator) seedPrivateOperands(inputs []manifest.NamedResource) []ma
 }
 
 func (o *Orchestrator) runDAG(ctx context.Context) error {
-	return o.dispatchDAG(ctx, nil)
+	done, err := o.beginDAG(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	return o.finishRun(ctx, o.scheduler.Drain(ctx))
 }
 
-func (o *Orchestrator) dispatchDAG(ctx context.Context, prior *selection.Decision) error {
+func (o *Orchestrator) beginDAG(ctx context.Context) (func(), error) {
 	o.sweepProbes(false)
 	dispatcher := dagDispatcher{o}
-	var sched *schedule.Scheduler
-	var phase *task.Service
-	if o.selection.EntryComparisonPending() {
-		// HTTP acquisitions MUST survive until paired admission finishes.
-		phase = o.tasks.Fork()
-		sched = schedule.New(phase, dispatcher)
-	} else {
-		sched = schedule.New(dispatcher, dispatcher)
-	}
+	sched := schedule.New(dispatcher, dispatcher)
 	o.scheduler = sched
-	defer func() { o.scheduler = nil }()
 
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
@@ -192,39 +187,32 @@ func (o *Orchestrator) dispatchDAG(ctx context.Context, prior *selection.Decisio
 	o.agc.StartLifecycle()
 
 	unsubscribe := o.watchDAG(sched)
-	defer unsubscribe()
 
 	seeds, err := o.seedNodes()
+	if err == nil && o.session != nil {
+		err = reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks)
+	}
 	if err != nil {
-		return err
-	}
-	if prior != nil {
-		seeds = slices.DeleteFunc(seeds, func(id manifest.NamedResource) bool {
-			status, _ := o.store.GetStatus(id)
-			return prior.Reconcile(id) && status.Outcome() != store.OutcomePending
-		})
-	}
-	if o.session != nil {
-		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
-			return phaseErr
-		}
+		closeErr := sched.Close(ctx)
+		unsubscribe()
+		o.scheduler = nil
+		return nil, errors.Join(err, closeErr)
 	}
 	sched.Seed(seeds)
-	err = sched.Run(ctx)
-	if phase != nil {
-		if failures := phase.Failures(); failures != 0 {
-			err = errors.Join(
-				err, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", failures),
-			)
-		}
-		return err
-	}
-	return o.finishDAG(err)
+	return func() {
+		unsubscribe()
+		o.scheduler = nil
+	}, nil
 }
 
-func (o *Orchestrator) finishDAG(err error) error {
+func (o *Orchestrator) finishRun(ctx context.Context, err error) error {
+	return errors.Join(o.finishDAG(ctx, err), o.finalize())
+}
+
+func (o *Orchestrator) finishDAG(ctx context.Context, err error) error {
+	closeErr := o.scheduler.Close(ctx)
 	o.freezeWork()
-	return errors.Join(err, o.entryFailure, o.finalize())
+	return errors.Join(cmp.Or(err, closeErr), o.entryFailure)
 }
 
 func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
@@ -277,7 +265,7 @@ func (o *Orchestrator) visitNodes(
 		o.selection.Include(id)
 		policy := o.store.Policy(id)
 		eligible := o.schedulable(obj)
-		if (o.selection != nil) && eligible && !o.includeNode(id) {
+		if (o.selection != nil) && eligible && !o.selection.Snapshot().Assess(id) {
 			return nil
 		}
 		runnable := eligible && (policy.Root || dependency)

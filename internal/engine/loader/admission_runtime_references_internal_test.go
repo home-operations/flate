@@ -63,12 +63,12 @@ func TestFilter_ContentDependencies(t *testing.T) {
 	}
 }
 
-func TestFilter_DependsOnNotFollowed(t *testing.T) {
+func TestFilter_DependsOnAssessed(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"present", "file_indexed", "bare_file_indexed", "generated", "absent", "selected"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			testFilterDependsOnNotFollowedCase(t, &mode)
+			testFilterDependsOnAssessedCase(t, &mode)
 		},
 		)
 	}
@@ -123,7 +123,7 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 	}
 }
 
-func testFilterDependsOnNotFollowedCase(t *testing.T, testCaseInput *string,
+func testFilterDependsOnAssessedCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
 
@@ -162,19 +162,15 @@ func testFilterDependsOnNotFollowedCase(t *testing.T, testCaseInput *string,
 		admissionConfig{changes: detectChanges(t, changes, changes), index: index, inventory: st, root: "/repo"},
 	)
 	assert.Equal(t, f.role(a.Named()), primary)
+	selected := *testCaseInput == "selected"
 	want := absent
-	switch *testCaseInput {
-	case "generated", "absent":
-		want = kept
-	case "selected":
+	if selected {
 		want = primary
 	}
 	assert.Equal(t, f.role(b.Named()), want)
-	assert.Equal(
-		t,
-		f.Reconcile(producer),
-		(*testCaseInput) == "generated" || (*testCaseInput) == "selected",
-	)
+	assert.Equal(t, f.Reconcile(producer), selected)
+	f.settle()
+	assert.Equal(t, f.loader.Options.Session.Snapshot().ReadinessDemand(b.Named()), true)
 }
 
 func testAddEmittedStampedHelmReleasePullsChartSourceCase(

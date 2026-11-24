@@ -1,0 +1,23 @@
+
+(root level)
+- one document removed:
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: database
+    namespace: web
+    labels:
+      helm.toolkit.fluxcd.io/name: database
+      helm.toolkit.fluxcd.io/namespace: web
+
+(root level)
++ one document added:
+  apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: db
+    namespace: web
+    labels:
+      helm.toolkit.fluxcd.io/name: db
+      helm.toolkit.fluxcd.io/namespace: web
+

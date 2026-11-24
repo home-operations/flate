@@ -464,7 +464,7 @@ func TestStore_ReadmissionExhaustionIsAtomic(t *testing.T) {
 	obj := &manifest.Kustomization{Name: "readmitted", Namespace: "apps"}
 	id := obj.Named()
 	s.AddObject(obj)
-	s.SetIncluded(id, false, false)
+	s.SetIncluded(id, false, false, false)
 	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: ReasonUnchanged})
 	sh := s.shardFor(id)
 	sh.mu.Lock()
@@ -480,7 +480,7 @@ func TestStore_ReadmissionExhaustionIsAtomic(t *testing.T) {
 		defer func() {
 			assert.ErrorIf(t, recover() == nil, "%s", "readmission did not reject exhausted condition authority")
 		}()
-		s.SetIncluded(id, true, true)
+		s.SetIncluded(id, true, true, false)
 	}()
 	assert.Equal(t, headsForTest(s, id), before)
 	assert.Equal(t, reads.Valid(), true)

@@ -22,12 +22,14 @@ type OccurrenceFacts struct {
 	Authored        manifest.NamedResource
 	Object          manifest.BaseManifest
 	Catalog         manifest.BaseManifest
+	Parsed          manifest.BaseManifest
 	Source          manifest.NamedResource
 	Path            string
 	HasPath         bool
 	Namespaced      bool
 	Uncertain       bool
 	RequiresBuild   bool
+	OrderingKnown   bool
 	Retained        bool
 	Structural      *manifest.Kustomization
 	NeedsCandidates bool

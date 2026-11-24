@@ -405,27 +405,26 @@ func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
 	}
 }
 
-func TestCollectDeps_OrderingFilter(t *testing.T) {
+func TestCollectDeps_OrderingParity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name                      string
 		active, selected, indexed bool
 		present                   bool
 		status                    store.Status
-		retain                    bool
 		noData                    bool
 	}{
-		{name: "unfiltered missing", retain: true},
-		{name: "no data", retain: true, noData: true},
-		{name: "known file excluded", active: true, indexed: true},
-		{name: "render generated excluded", active: true, present: true},
-		{name: "unknown retained", active: true, retain: true},
-		{name: "selected ready", active: true, selected: true, present: true, status: store.StatusReady, retain: true},
-		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed, retain: true},
+		{name: "unfiltered missing"},
+		{name: "no data", noData: true},
+		{name: "known indexed target", active: true, indexed: true},
+		{name: "generated target", active: true, present: true},
+		{name: "unknown retained", active: true},
+		{name: "selected ready", active: true, selected: true, present: true, status: store.StatusReady},
+		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testCollectDepsOrderingFilterCase(t, &tc)
+			testCollectDepsOrderingParityCase(t, &tc)
 		},
 		)
 	}
@@ -669,7 +668,7 @@ func testCollectDepsDeclarationAvailabilityUsesCommonGateCase(
 	)
 }
 
-func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
+func testCollectDepsOrderingParityCase(t *testing.T, testCaseInput *struct {
 	name string
 
 	active   bool
@@ -677,7 +676,6 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 	indexed  bool
 	present  bool
 	status   store.Status
-	retain   bool
 	noData   bool
 },
 ) {
@@ -768,23 +766,16 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 	)
 	decision := filter.Snapshot()
 	deps := gateExecution(c, consumer.Named()).authoredDependenciesForTest(consumer)
-	var want []manifest.DependencyRef
-	if testCaseInput.retain {
-		want = append(
-			want,
-			manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")},
-			manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: new("true")},
-		)
-	}
-	want = append(
-		want,
-		manifest.DependencyRef{
+	want := []manifest.DependencyRef{
+		{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false"), RequiresDeclaration: true},
+		{NamedResource: target.Named(), ReadyExpr: new("true"), RequiresDeclaration: true},
+		{
 			Group:     manifest.SourceDomain,
 			Kind:      manifest.KindGitRepository,
 			Namespace: "apps",
 			Name:      "source",
 		},
-	)
+	}
 	assert.Diff(t, deps, want)
 
 	assert.ErrorIf(

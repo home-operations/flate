@@ -255,6 +255,10 @@ func (w *traversal) walkDirectory(
 		w.err = err
 		return false
 	}
+	if w.scopeVisits != nil && visit.role == kustomizeinput.Resource &&
+		(err != nil || w.documents.cache[abs].file != "") {
+		w.unknownRecipes++
+	}
 	chart := w.policy == traversalAdmission && hasChartMetadata(inputFile.fs, inputFile.name, entries)
 	for _, entry := range entries {
 		w.work.Add(&manifest.WorkCounts{FileEntries: 1})
@@ -328,6 +332,9 @@ func (w *traversal) opaqueConfiguration(
 ) bool {
 	visit.readable = cached.pathState != pathMissing && !visit.deferDecode
 	if visit.role != kustomizeinput.Configuration {
+		if w.scopeVisits != nil && (cached.pathState == pathMissing || cached.pathState == pathUnavailable) {
+			w.unknownRecipes++
+		}
 		return yield(*visit)
 	}
 	if cached.plugins == nil {
@@ -379,7 +386,8 @@ func (w *traversal) publishScope(
 		visit.requiresBuild = visit.requiresBuild || input.recipe&recipeResourceOnly == 0
 	} else {
 		// Authored scope must retain projected declarations and reader edges before construction.
-		visit.requiresBuild = visit.requiresBuild || input.recipe&(recipeOpaquePluginInputs|recipeTransformers) != 0
+		visit.requiresBuild = visit.requiresBuild ||
+			input.recipe&(recipeOpaquePluginInputs|recipeConfigurations|recipeTransformers) != 0
 	}
 	if !w.qualify && visit.namespace == "" {
 		visit.namespace = new(w.documents).transformerInjectedNamespace(visit.root, visit.dir, w.scopeInputs).ns
@@ -390,7 +398,7 @@ func (w *traversal) publishScope(
 		return false
 	}
 	input.body = w.documents.cache[input.abs].body
-	if visit.role == kustomizeinput.Configuration && input.recipe&recipeOpaquePluginInputs != 0 {
+	if visit.role == kustomizeinput.Configuration && input.recipe&(recipeOpaquePluginInputs|recipeConfigurations) != 0 {
 		if !w.uncertain(new(*visit), "configuration transformations may rewrite plugin file operands", yield) {
 			return false
 		}

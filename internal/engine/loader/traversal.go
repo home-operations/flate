@@ -24,25 +24,26 @@ const (
 )
 
 type traversal struct {
-	work         *manifest.WorkRecord
-	files        *[]fileAdmission
-	documents    documentReader
-	policy       traversalPolicy
-	visited      map[graphContext]struct{}
-	visitBuf     [8]graphContext
-	visitCount   int
-	directories  map[string]struct{}
-	depth        int
-	loader       *Loader
-	ignore       *ignoreSet
-	build        bool
-	ignoreCache  map[ignoreKey]bool
-	scopeVisits  *[]graphVisit
-	scopeInputs  *[]walkInput
-	scopeSkipped int
-	count        int
-	err          error
-	canceled     bool
+	work           *manifest.WorkRecord
+	files          *[]fileAdmission
+	documents      documentReader
+	policy         traversalPolicy
+	visited        map[graphContext]struct{}
+	visitBuf       [8]graphContext
+	visitCount     int
+	directories    map[string]struct{}
+	depth          int
+	loader         *Loader
+	ignore         *ignoreSet
+	build          bool
+	ignoreCache    map[ignoreKey]bool
+	scopeVisits    *[]graphVisit
+	scopeInputs    *[]walkInput
+	scopeSkipped   int
+	unknownRecipes int
+	count          int
+	err            error
+	canceled       bool
 
 	qualificationEntry string
 	qualify            bool
@@ -182,7 +183,7 @@ func (w *traversal) reference(
 		}
 	}
 	count := w.count
-	start, inputStart, skipped := 0, 0, w.scopeSkipped
+	start, inputStart, skipped, unknown := 0, 0, w.scopeSkipped, w.unknownRecipes
 	if w.scopeVisits != nil {
 		start = len(*w.scopeVisits)
 		if w.scopeInputs != nil {
@@ -198,7 +199,9 @@ func (w *traversal) reference(
 			sourceRoot:   w.loader.SourceRoot, prefix: child.prefix, localBase: child.localBase,
 		}
 		facts := w.loader.sourceFacts(child.root)
-		walk := physicalWalk{visits: (*w.scopeVisits)[start:]}
+		walk := physicalWalk{
+			visits: (*w.scopeVisits)[start:], unknownRecipe: w.unknownRecipes != unknown,
+		}
 		if w.scopeInputs != nil {
 			walk.inputs = (*w.scopeInputs)[inputStart:]
 		}

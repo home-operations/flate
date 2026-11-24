@@ -131,6 +131,9 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 	case "blocked":
 		wantStatus = store.StatusFailed
 	}
+	if *testCaseInput == "vanished" {
+		execution.Settle(t.Context(), manifest.DrainCascade)
+	}
 	info, _ := st.GetStatus(id)
 	assert.FatalIf(
 		t,

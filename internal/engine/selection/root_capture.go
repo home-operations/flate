@@ -172,9 +172,12 @@ func captureRootOwners(facts *RootEvidence, objects rootReader, index *manifest.
 }
 
 func rootOwnerCandidates(objects rootReader, index *manifest.DiscoveryIndex, root string) []RootCoveringOwner {
-	cache, cached := objects.(rootOwnerReader)
-	if cached && *cache.RootOwners() != nil {
-		return *cache.RootOwners()
+	var cache *[]RootCoveringOwner
+	if reader, cached := objects.(rootOwnerReader); cached {
+		cache = reader.RootOwners()
+		if *cache != nil {
+			return *cache
+		}
 	}
 	owners := []RootCoveringOwner{}
 	for info := range manifest.Kinds() {
@@ -185,16 +188,42 @@ func rootOwnerCandidates(objects rootReader, index *manifest.DiscoveryIndex, roo
 			owners = append(owners, rootOwnerFact(object, objects))
 		}
 	}
-	captureOwnerClaims(owners, index, root)
-	if cached {
-		*cache.RootOwners() = owners
+	captureOwnerClaims(owners, index, root, nil)
+	if cache != nil {
+		*cache = owners
 	}
 	return owners
 }
 
-func captureOwnerClaims(owners []RootCoveringOwner, index *manifest.DiscoveryIndex, root string) {
+// Claim keys MUST stay within the current prerequisite snapshot.
+type ownerClaimKey struct {
+	object                manifest.BaseManifest
+	identity, source      manifest.NamedResource
+	input                 *store.SourceArtifact
+	root, path, indexRoot string
+}
+
+type ownerClaimCache map[ownerClaimKey]*manifest.DiscoveryIndex
+
+func (o *RootCoveringOwner) claimKey(root string) ownerClaimKey {
+	return ownerClaimKey{
+		object: o.Object, identity: o.Identity, source: o.Source,
+		input: o.Input, root: o.Root, path: o.Path, indexRoot: root,
+	}
+}
+
+func captureOwnerClaims(
+	owners []RootCoveringOwner,
+	index *manifest.DiscoveryIndex,
+	root string,
+	cache *ownerClaimCache,
+) {
 	var storage [16]manifest.ClaimInput
 	inputs := storage[:0]
+	var single *RootCoveringOwner
+	if len(owners) == 1 {
+		single = &owners[0]
+	}
 	for i := range owners {
 		owner := &owners[i]
 		if owner.Input == nil || owner.Path == "" {
@@ -205,13 +234,28 @@ func captureOwnerClaims(owners []RootCoveringOwner, index *manifest.DiscoveryInd
 			continue
 		}
 		pinned := owner.Input.Provider == store.ProviderCommit
+		single = owner
 		inputs = append(inputs, manifest.ClaimInput{
 			Declaration: owner.Object,
 			Base:        filepath.ToSlash(base), Root: owner.Root, IndexRoot: root,
 			Components: index.Components[filepath.Join(owner.Input.LocalPath, base)], Pinned: pinned,
 		})
 	}
-	claims := index.CaptureClaims(inputs)
+	var claims *manifest.DiscoveryIndex
+	// Only a single eligible owner can share its targeted index with the full peer capture.
+	if cache != nil && len(inputs) <= 1 && single != nil {
+		key := single.claimKey(root)
+		claims = (*cache)[key]
+		if claims == nil {
+			claims = index.CaptureClaims(inputs)
+			if *cache == nil {
+				*cache = make(ownerClaimCache)
+			}
+			(*cache)[key] = claims
+		}
+	} else {
+		claims = index.CaptureClaims(inputs)
+	}
 	for i := range owners {
 		owners[i].claims = claims
 		owners[i].claimRoot = root

@@ -1,0 +1,2 @@
+flate error: compare base ordering outputs: reconcile completed with 1 failure(s):
+  Kustomization.kustomize.toolkit.fluxcd.io/flux-system/database (flux/database.yaml): kustomize build ./database: remove operation does not apply: doc is missing path: "/metadata/noSuchParent/name": missing value

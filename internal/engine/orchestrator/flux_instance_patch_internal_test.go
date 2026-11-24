@@ -398,11 +398,12 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 	assert.Diff(t, full[3], full[1])
 
 	for _, tc := range []struct {
-		name  string
-		sides [2]int
+		name           string
+		sides          [2]int
+		parentAttempts [2]uint64
 	}{
-		{"withdraw", [2]int{0, 1}},
-		{"restore", [2]int{1, 0}},
+		{"withdraw", [2]int{0, 1}, [2]uint64{2, 1}},
+		{"restore", [2]int{1, 0}, [2]uint64{0, 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -421,7 +422,7 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 				run := &runs[i]
 				side := tc.sides[i]
 				assert.Diff(t, outputByParent(run.Result.Manifests)[plex], full[side])
-				assertOCIPlexAttempts(t, run.Result, side == 0, false)
+				assertOCIPlexAttempts(t, run.Result, side == 0, tc.parentAttempts[i])
 			}
 		})
 	}
@@ -435,7 +436,7 @@ func TestRender_FluxInstanceOCINamedDiffMatchesFull(t *testing.T) {
 			})
 			assert.NoError(t, err)
 			assert.Diff(t, outputByParent(runs[0].Result.Manifests)[plex], full[side])
-			assertOCIPlexAttempts(t, runs[0].Result, false, true)
+			assertOCIPlexAttempts(t, runs[0].Result, false, 1)
 		})
 	}
 	t.Run("changed interval under unpatched root", func(t *testing.T) {

@@ -1,0 +1,4 @@
+namespace: web
+resources: [web.yaml]
+configurations: [kustomizeconfig.yaml]
+namePrefix: x-

@@ -2,6 +2,7 @@ package selection
 
 import (
 	"iter"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -70,7 +71,54 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 	}
 }
 
-func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file string) bool {
+func (c *admissionClosure) seedChangedReaders(file string) {
+	index := c.facts.SelectionIndex()
+	direct := index.Readers[file]
+	for i := range direct {
+		c.seedChangedReader(&direct[i], file, true)
+	}
+	for reader := range index.ReadersOfFile(path.Dir(file)) {
+		if !reader.Exact {
+			c.seedChangedReader(&reader, file, false)
+		}
+	}
+}
+
+func (c *admissionClosure) demandMaterialization(id manifest.NamedResource) {
+	status, _ := c.objects.GetStatus(id)
+	output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	if output != nil && output.Complete && output.OutputReads.Valid() {
+		return
+	}
+	if status.Outcome() == store.OutcomePending || output != nil && !output.Reads.Valid() {
+		c.add(id, admissionRole{needed: true, ordinary: true})
+		c.acquire(Demand{Identity: id, Materialize: true})
+	}
+}
+
+func (c *admissionClosure) seedChangedReader(reader *manifest.FileReader, file string, exactFile bool) {
+	c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
+	if !c.changedClaim(reader, file, exactFile) {
+		return
+	}
+	id := reader.Reader
+	if !reader.Materialize {
+		state := c.states[id]
+		state.seed = true
+		c.states[id] = state
+		return
+	}
+	if c.replace[id] {
+		return
+	}
+	c.add(id, admissionRole{needed: true, ordinary: true})
+	if c.proposal.Request.construction && !id.KindInfo().Render &&
+		!c.facts.SelectionIndex().Records[id].StaticOutput {
+		c.demandMaterialization(id)
+	}
+}
+
+func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file string, indexed bool) bool {
 	reader := *readerValue
 
 	evidence := c.boundSource(reader.Source)
@@ -97,7 +145,8 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 		object := c.object(reader.Reader)
 		matched := false
 		for ref := range c.references(reader.Reader, object) {
-			if ref.NamedResource != reader.Declaration || !c.reverse(reader.Reader, object, new(ref)) {
+			if ref.Ordering || ref.NamedResource != reader.Declaration ||
+				!c.reverse(reader.Reader, object, &ref) {
 				continue
 			}
 			matched = true
@@ -114,6 +163,7 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 			delta:          &delta,
 			input:          &input,
 			contentChanged: &contentChanged,
+			indexed:        indexed,
 		},
 	)
 }
@@ -182,23 +232,23 @@ func (c *admissionClosure) reverse(
 ) bool {
 	target := refValue.NamedResource
 	if object != nil {
-		if refValue.AffectedInput() {
+		if refValue.AffectedInput() || refValue.Ordering && !refValue.Optional {
 			return true
 		}
 		matched := false
 		c.references(id, object)(func(input manifest.Reference) bool {
-			matched = input.AffectedInput() && input.NamedResource == target
+			matched = (input.AffectedInput() || input.Ordering && !input.Optional) && input.NamedResource == target
 			return !matched
 		})
 		return matched
 	}
 	occurrence, ok := c.catalogOccurrence(id)
 	if !ok {
-		return refValue.ContentInput()
+		return refValue.ContentInput() || refValue.Ordering && !refValue.Optional
 	}
 	for i := range occurrence.Refs {
 		original := &occurrence.Refs[i]
-		if !slices.Contains(occurrence.Reverse, original.NamedResource) {
+		if (!original.Ordering || original.Optional) && !slices.Contains(occurrence.Reverse, original.NamedResource) {
 			continue
 		}
 		input := original.NamedResource
@@ -218,11 +268,15 @@ type completeChangedClaimState struct {
 	delta          **change.Set
 	input          **store.SourceArtifact
 	contentChanged *func(reader manifest.FileReader) bool
+	indexed        bool
 }
 
 func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState) bool {
 	if !(*scope.contentChanged)((*scope.reader)) {
 		return false
+	}
+	if scope.indexed {
+		return true
 	}
 	readers := c.facts.SelectionIndex().Readers[*scope.file]
 	for i := range readers {
@@ -310,7 +364,7 @@ func (c *admissionClosure) comparisonInputChanged(
 func (c *admissionClosure) fileOwnersUnchanged(indexed string, source manifest.NamedResource) bool {
 	owners := c.facts.SelectionIndex().OwnersOfFile(indexed).Owners
 	return len(owners) != 0 && !slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
-		return c.changedClaim(new(manifest.FileReader{Reader: owner, Source: source}), indexed)
+		return c.changedClaim(new(manifest.FileReader{Reader: owner, Source: source}), indexed, false)
 	})
 }
 

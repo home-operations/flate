@@ -1,0 +1,9 @@
+
+  ✗  current snapshot: Kustomization  flux-system/gate  not found
+         current snapshot: required by flux-system/app
+
+  ⚠ warnings (1)
+    [IncompleteInputCoverage] current snapshot: Kustomization flux-system/infra: changed-only input coverage is incomplete; render the full tree to inspect all inputs
+      GitRepository.source.toolkit.fluxcd.io/flux-system/flux-system:moved/plugin/kustomization.yaml: configuration transformations may rewrite plugin file operands
+
+  ✗ 1 failed · 1 blocked

@@ -1,0 +1,5 @@
+
+  ✗  current snapshot: HelmRelease  web/db  not found
+         current snapshot: required by web/web2
+
+  ✗ 1 failed · 1 blocked

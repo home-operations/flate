@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"weak"
@@ -265,11 +266,11 @@ func TestExecution_ExcludedOutputValidity(t *testing.T) {
 	prior.Init(st, obj.Named(), nil)
 	prior.GetObject(obj.Named())
 	st.SetArtifact(obj.Named(), &store.SourceArtifact{Reads: &prior})
-	st.SetIncluded(obj.Named(), false, false)
+	st.SetIncluded(obj.Named(), false, false, false)
 	e := &base.Execution{Controller: base.New(st, nil)}
 	e.Reads.Init(st, obj.Named(), nil)
 	assert.FatalIf(t, !e.Valid(), "%v", "excluded assessment validated unconsumed output provenance")
-	st.SetIncluded(obj.Named(), true, true)
+	st.SetIncluded(obj.Named(), true, true, false)
 	assert.FatalIf(t, e.Valid(), "%v", "readmission retained the excluded assessment")
 	next := &base.Execution{Controller: e.Controller}
 	next.Reads.Init(st, obj.Named(), nil)
@@ -598,7 +599,7 @@ func testExecutionDispatchCase3(t *testing.T, testCaseInput *bool,
 		first = controllertest.NewExecution(c, predicted.Named())
 		first.Dispatch(ctx, manifest.DrainNone, first, reconcile)
 		if bodies.Load() != 0 || first.Outcome() != schedule.Blocked || !first.Valid() ||
-			len(first.Blocked) != 1 || first.Blocked[0] != parent.Named() {
+			!slices.Equal(first.Blocked, []manifest.NamedResource{predicted.Named(), parent.Named()}) {
 			t.Errorf(
 				"covered prediction: bodies=%d outcome=%v blocked=%v valid=%t",
 				bodies.Load(),

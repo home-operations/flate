@@ -58,6 +58,7 @@ type document struct {
 	edgesKnown       bool
 	pathState        pathState
 	recipe           recipeClass
+	orderingConfig   orderingConfiguration
 	searched         bool
 }
 
@@ -440,6 +441,9 @@ const (
 	recipeResourceOnly recipeClass = 1 << iota
 	recipeOpaquePluginInputs
 	recipeTransformers
+	recipeDataGeneratorsOnly
+	recipeConfigurations
+	recipeGenerators
 )
 
 const (
@@ -448,52 +452,70 @@ const (
 )
 
 func (r *documentReader) classifyRecipe(dir string, data []byte, k *types.Kustomization) recipeClass {
-	var class recipeClass
-	if r.resourceFieldsOnly(dir, data, k) {
-		class |= recipeResourceOnly
-	}
+	class := r.classifyRecipeFields(dir, data, k)
 	if len(k.Transformers) != 0 {
 		class |= recipeTransformers
 	}
-	if len(k.Patches)+len(k.PatchesJson6902)+len(k.PatchesStrategicMerge)+len(k.Replacements)+
-		len(k.Configurations)+len(k.Crds)+len(k.Vars)+len(k.Images)+len(k.ImageTags)+len(k.Replicas) != 0 {
-		return class | recipeOpaquePluginInputs
+	if len(k.Configurations) != 0 {
+		class |= recipeConfigurations
 	}
-	for _, label := range k.Labels {
-		for _, spec := range label.FieldSpecs {
-			if !strings.HasPrefix(spec.Path, "metadata/") {
-				return class | recipeOpaquePluginInputs
-			}
-		}
+	if len(k.Generators) != 0 {
+		class |= recipeGenerators
+	}
+	if opaquePluginInputs(k) {
+		class |= recipeOpaquePluginInputs
 	}
 	return class
 }
 
-func (r *documentReader) resourceFieldsOnly(dir string, data []byte, k *types.Kustomization) bool {
+func opaquePluginInputs(k *types.Kustomization) bool {
+	if len(k.Patches)+len(k.PatchesJson6902)+len(k.PatchesStrategicMerge)+len(k.Replacements)+
+		len(k.Crds)+len(k.Vars)+len(k.Images)+len(k.ImageTags)+len(k.Replicas) != 0 {
+		return true
+	}
+	for _, label := range k.Labels {
+		for _, spec := range label.FieldSpecs {
+			if !strings.HasPrefix(spec.Path, "metadata/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *documentReader) classifyRecipeFields(dir string, data []byte, k *types.Kustomization) recipeClass {
 	if k.Kind != "" && k.Kind != types.KustomizationKind ||
 		k.APIVersion != "" && k.APIVersion != types.KustomizationVersion {
-		return false
+		return 0
 	}
 	var fields map[string]any
 	if err := yaml.UnmarshalStrict(data, &fields); err != nil {
-		return false
+		return 0
 	}
+	class := recipeResourceOnly | recipeDataGeneratorsOnly
 	for field := range fields {
 		switch field {
-		case apiVersionKey, kindKey, "resources":
+		case apiVersionKey, kindKey:
+		case "resources":
+			class &^= recipeDataGeneratorsOnly
+		case "configMapGenerator", "secretGenerator", "generatorOptions":
+			class &^= recipeResourceOnly
 		default:
-			return false
+			return 0
 		}
+	}
+	if class&recipeResourceOnly == 0 {
+		return class
 	}
 	root := r.mountedRoot(dir)
 	relative, _ := filepath.Rel(root, dir)
 	for _, ref := range k.Resources {
 		local, ok := kustomizeinput.Local(root, relative, ref)
 		if !ok || r.mountedRoot(filepath.Join(root, local)) != root {
-			return false
+			return 0
 		}
 	}
-	return true
+	return recipeResourceOnly
 }
 
 func normalizeKustomization(k *types.Kustomization) {

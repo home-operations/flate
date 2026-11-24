@@ -279,8 +279,11 @@ func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {
 	assert.Diff(
 		t,
 		f.roles(),
-		map[manifest.NamedResource]role{emitter: primary, incoming.Named(): primary, target: kept, producer: kept},
+		map[manifest.NamedResource]role{emitter: primary, incoming.Named(): primary},
 	)
+	decision := f.loader.Options.Session.Snapshot()
+	assert.Equal(t, decision.ReadinessDemand(target), true)
+	assert.Equal(t, decision.ReadinessDemand(oldTarget), false)
 	assert.Equal(t, st.GetObject(incoming.Named()), manifest.BaseManifest(stale))
 	assert.Equal(t, reads.Valid(), true)
 }

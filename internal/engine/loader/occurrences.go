@@ -38,6 +38,7 @@ type authoredOccurrence struct {
 	object        manifest.BaseManifest
 	facts         *occurrenceFacts
 	requiresBuild bool
+	orderingKnown bool
 }
 
 type producerFact struct {
@@ -52,7 +53,7 @@ type occurrenceFacts struct {
 	source                          manifest.NamedResource
 	path                            string
 	hasPath, namespaced, uncertain  bool
-	retained                        bool
+	retained, completeCatalog       bool
 	collection                      bool
 	structural                      *manifest.Kustomization
 	catalog                         manifest.BaseManifest
@@ -128,6 +129,7 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	generated, _ := manifest.GeneratedTargets(obj)
 	facts.targets = append(facts.targets, generated...)
 	facts.catalog = manifest.CatalogObject(obj, obj.Named())
+	facts.completeCatalog = facts.catalog == obj
 	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
 	if manifest.KindOf(obj).Parent {
 		policy := obj.EmissionPolicy()
@@ -596,6 +598,15 @@ func (o authoredOccurrence) references() iter.Seq[manifest.Reference] {
 			}
 		}
 	}
+}
+
+// IndexedDeclarationFile supplies file evidence only when discovery knows the effective identity.
+func (l *Loader) IndexedDeclarationFile(id manifest.NamedResource) string {
+	occurrence, known := l.occurrence(id)
+	if !known || occurrence.facts != nil && occurrence.facts.uncertain {
+		return ""
+	}
+	return occurrence.Declaration.File
 }
 
 func (l *Loader) occurrence(id manifest.NamedResource) (authoredOccurrence, bool) {

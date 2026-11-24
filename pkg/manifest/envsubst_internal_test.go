@@ -17,6 +17,7 @@ func TestHasEnvsubstReference(t *testing.T) {
 		{"reference with :? error message", "${REQUIRED:?must be set}", true},
 		{"literal", "biohazard", false},
 		{"reference with default", "${VAR:=default}", true},
+		{"reference with replacement", "${NAME/PLACE/db}", true},
 		{"no envsubst at all", "redis-server", false},
 		{"plain dollar (no brace)", "$HOME", false},
 		{"empty", "", false},

@@ -1,0 +1,8 @@
+namespace: web
+resources: [child]
+patches:
+  - target: {kind: HelmRelease, name: web}
+    patch: |-
+      - op: add
+        path: /spec/dependsOn
+        value: [{name: db}]

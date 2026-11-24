@@ -1,0 +1,7 @@
+resources: [config.yaml]
+patches:
+  - target: {kind: ConfigMap, name: outside}
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: outside, labels: {patched: "true"}}

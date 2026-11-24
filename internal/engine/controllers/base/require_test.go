@@ -475,7 +475,7 @@ func TestDispatch_ExactMaterializers(t *testing.T) {
 				blocked, isBlocked := run.Blocked, run.Outcome() == schedule.Blocked
 				assert.FatalIf(
 					t,
-					!isBlocked || !slices.Equal(blocked, []manifest.NamedResource{owner.Named()}),
+					!isBlocked || !slices.Equal(blocked, []manifest.NamedResource{id, owner.Named()}),
 					"blocked=%v error=%v, want exact pending owner once",
 					blocked,
 					info,

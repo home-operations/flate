@@ -230,6 +230,46 @@ func TestReferences_IncomingRetiresProjectedInputs(t *testing.T) {
 	assert.Equal(t, reverse(&closure, replacement, repository), false)
 }
 
+func TestReferences_ReverseTargetSharesEvidence(t *testing.T) {
+	t.Parallel()
+	object := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
+	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
+	unrelated := target
+	unrelated.Name = "unrelated"
+	refs := []manifest.Reference{
+		{NamedResource: target, Use: "metadata", Position: 1},
+		{NamedResource: target, Content: true, Position: 2},
+		{NamedResource: unrelated, Use: "metadata", Position: 3},
+	}
+	facts := &solverFacts{
+		occurrences: map[manifest.NamedResource]OccurrenceFacts{
+			object.Named(): {Identity: object.Named(), Object: object, CatalogKnown: true, Refs: refs},
+		},
+	}
+	closure := solverClosure(t, store.New(), facts)
+	counted := &countedReverseFacts{solverFacts: facts}
+	closure.facts = counted
+	var observed []int
+	for ref := range closure.references(object.Named(), object) {
+		if closure.reverse(object.Named(), object, &ref) {
+			observed = append(observed, ref.Position)
+		}
+	}
+	assert.Diff(t, observed, []int{1, 2})
+	assert.Equal(t, counted.lookups, 3)
+}
+
+type countedReverseFacts struct {
+	*solverFacts
+
+	lookups int
+}
+
+func (f *countedReverseFacts) Occurrence(id manifest.NamedResource) (OccurrenceFacts, bool) {
+	f.lookups++
+	return f.solverFacts.Occurrence(id)
+}
+
 func TestReferences_EarlyStop(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"current", "projected", "indexed", "historical"} {

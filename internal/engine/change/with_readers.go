@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -40,11 +41,14 @@ func (s *Set) withReaders(
 	r := readerScope{changes: s, bindings: bindings, evidence: evidence, indexes: indexes, work: work}
 	r.initialize()
 	r.resetDeclaredKnown()
-	if r.completeSources() {
-		r.compareDeclarations()
-	}
 	out := *s
 	r.out = &out
+	if r.completeSources() {
+		for side := range out.removedDeclarations {
+			out.removedDeclarations[side] = maps.Clone(out.removedDeclarations[side])
+		}
+		r.compareDeclarations()
+	}
 	r.out.inputs = nil
 	r.collectVisibility()
 	r.routeReaders()
@@ -207,6 +211,21 @@ func (r *readerScope) compareDeclared(side int, id manifest.NamedResource, recor
 
 	comparison.declaredKnown = true
 	r.bindings.declarations[key] = comparison
+	r.recordDeclarationPresence(id, &comparison)
+}
+
+func (r *readerScope) recordDeclarationPresence(id manifest.NamedResource, comparison *declarationComparison) {
+	for side, fingerprint := range comparison.declared {
+		removed := &r.out.removedDeclarations[side]
+		if fingerprint != "" {
+			delete(*removed, id)
+			continue
+		}
+		if *removed == nil {
+			*removed = make(map[manifest.NamedResource]bool)
+		}
+		(*removed)[id] = true
+	}
 }
 
 func (r *readerScope) declaredContent(side int, id, authored manifest.NamedResource, file string) string {
@@ -744,4 +763,50 @@ func (s *Set) DeclarationChanged(
 		return Comparison{}
 	}
 	return Comparison{Changed: current != fact.declared[side], Known: true}
+}
+
+// RemovedDeclarations yields paired observations that can belong to a removal or rename.
+func (s *Set) RemovedDeclarations(
+	side manifest.TreeSide, source manifest.NamedResource, input *store.SourceArtifact, paired bool,
+) iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		if s == nil || side > manifest.TreeHead {
+			return
+		}
+		delta, _, _ := s.ForSource(source)
+		var authored, effective [2]map[manifest.NamedResource]bool
+		if paired && delta != nil {
+			authored = delta.removedDeclarations
+		}
+		current := s.effectiveRemovals[source]
+		if current.matchesInput(side, input) {
+			effective = current.removed
+		}
+		for target := range authored[side] {
+			if removalEligible(side, target, authored, effective) && !yield(target) {
+				return
+			}
+		}
+		for target := range effective[side] {
+			if !authored[side][target] && removalEligible(side, target, authored, effective) && !yield(target) {
+				return
+			}
+		}
+	}
+}
+
+func removalEligible(
+	side manifest.TreeSide, id manifest.NamedResource, authored, effective [2]map[manifest.NamedResource]bool,
+) bool {
+	if side != manifest.TreeBase {
+		return true
+	}
+	for _, removed := range []map[manifest.NamedResource]bool{authored[manifest.TreeHead], effective[manifest.TreeHead]} {
+		for target := range removed {
+			if target.Group == id.Group && target.Kind == id.Kind {
+				return true
+			}
+		}
+	}
+	return false
 }

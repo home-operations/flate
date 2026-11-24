@@ -80,10 +80,9 @@ func (o *Orchestrator) prepareInvocation(ctx context.Context) error {
 	o.loader.Options.Changes = o.cfg.ExternalChanges
 	o.loader.Options.ConfiguredInput = o.cfg.Input
 	options := selection.AdmissionOptions{
-		Request: selection.PrepareRequest{Invocation: true}, Previous: o.preparation, Stage: selection.Construction,
-	}
-	if options.Previous == nil {
-		options.Request.Preparation = &o.admissionPreparation
+		Request:  selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
+		Previous: o.preparation,
+		Stage:    selection.Construction,
 	}
 	result, accepted, err := o.prepareAdmission(ctx, options)
 	if err != nil || !accepted {

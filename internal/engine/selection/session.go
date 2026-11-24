@@ -4,6 +4,7 @@ import (
 	"context"
 	"hash/maphash"
 	"iter"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -24,6 +25,8 @@ type Session struct {
 	readKustomizeInputs     func(context.Context, manifest.NamedResource, manifest.BaseManifest, *SourceFacts) ([2]SourceReadPaths, bool)
 	entryComparisonPending  bool
 	entryComparisonComplete bool
+	orderingComparison      []manifest.NamedResource
+	comparisonOnly          bool
 }
 
 // DeferEntryComparison MUST precede dispatch of both trees.
@@ -40,7 +43,13 @@ func (s *Session) ResolveEntryComparison(compared bool) {
 // New MUST retain an admission session for every request.
 func New(st *store.Store, facts census, request Request) (*Session, error) {
 	s := &Session{store: st, facts: facts, request: request}
-	s.decision.Store(&Decision{seed: maphash.MakeSeed(), unrestricted: !request.Changed && request.AllRoots()})
+	s.decision.Store(
+		&Decision{
+			seed:         maphash.MakeSeed(),
+			unrestricted: !request.Changed && request.AllRoots(),
+			changedOnly:  request.Changed,
+		},
+	)
 	return s, nil
 }
 
@@ -73,14 +82,19 @@ func (s *Session) DiscardConstruction() {
 	current := s.decision.Load()
 	if !current.execution {
 		s.decision.Store(
-			&Decision{seed: current.seed, revision: current.revision + 1, unrestricted: current.unrestricted},
+			&Decision{
+				seed:         current.seed,
+				revision:     current.revision + 1,
+				unrestricted: current.unrestricted,
+				changedOnly:  current.changedOnly,
+			},
 		)
 	}
 	s.mu.Unlock()
 }
 
 // Include MUST precede an execution's capture of a newly arrived identity.
-func (s *Session) Include(id manifest.NamedResource) {
+func (s *Session) Include(id manifest.NamedResource, incoming ...manifest.BaseManifest) {
 	if s == nil {
 		return
 	}
@@ -88,11 +102,20 @@ func (s *Session) Include(id manifest.NamedResource) {
 	if decision.unrestricted {
 		return
 	}
-	s.store.SetIncluded(
-		id,
-		decision.execution && decision.Reconcile(id),
-		decision.execution && decision.OrdinaryDemand(id),
-	)
+	for {
+		s.store.SetIncluded(
+			id,
+			decision.execution && decision.Assess(id),
+			decision.execution && decision.OrdinaryDemand(id),
+			decision.execution && decision.ReadinessDemand(id) && !decision.EvaluationOnly(id),
+			incoming...,
+		)
+		current := s.Snapshot()
+		if current == decision {
+			break
+		}
+		decision = current
+	}
 }
 
 func (d *Decision) version() uint64 {
@@ -108,6 +131,8 @@ type Admission struct {
 	Selected     []manifest.NamedResource
 	Dirty        []manifest.NamedResource
 	Ordinary     []manifest.NamedResource
+	Readiness    []manifest.NamedResource
+	Fatal        []manifest.NamedResource
 	Objects      []store.Child
 	Blocked      []string
 	Revision     uint64
@@ -129,7 +154,10 @@ type Admission struct {
 	producers    []producerObligation
 	lookups      []manifest.NamedResource
 
-	producerOwner *producerObligation
+	producerOwner        *producerObligation
+	ordering             map[manifest.NamedResource][]store.OrderingEdge
+	orderingDeclarations map[manifest.NamedResource]orderingDeclaration
+	occurrences          map[manifest.NamedResource]*occurrencePreparation
 }
 
 // InputAdmission MUST expose only the effect that selection needs.
@@ -163,13 +191,16 @@ type PrepareRequest struct {
 	// Missing MUST retain one immutable policy pointer across proposal retries.
 	Missing missingPolicy
 	// Generation MUST remain immutable until its preparation retires.
-	Generation []store.Child
-	Owner      manifest.NamedResource
-	Reads      *store.ReadSet
-	Invocation bool
+	Generation         []store.Child
+	Owner              manifest.NamedResource
+	Reads              *store.ReadSet
+	Invocation         bool
+	CompleteGeneration bool
 	// AwaitEmission binds child activation to the pending store publication.
 	AwaitEmission bool
-	History       map[manifest.NamedResource]struct {
+	// OrderingCandidates asks for changed producer identities without publishing demand.
+	OrderingCandidates []manifest.NamedResource
+	History            map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
@@ -185,6 +216,7 @@ type Preparation struct {
 	decision    *Decision
 	invocation  bool
 	acquired    map[acquisitionKey]Acquisition
+	occurrences map[manifest.NamedResource]*occurrencePreparation
 	matched     map[*store.ReadSet]bool
 	publication uint64
 
@@ -224,7 +256,7 @@ func (a *Admission) Retire() {
 	if preparation.closure.proposal == a {
 		preparation.closure.objects, preparation.closure.proposal = nil, nil
 	}
-	a.reads, a.preparation, a.sources, a.Objects, a.demands = nil, nil, nil, nil, nil
+	a.reads, a.preparation, a.sources, a.Objects, a.demands, a.occurrences = nil, nil, nil, nil, nil, nil
 	a.Request = PrepareRequest{}
 	if local {
 		preparation.Retire()
@@ -277,21 +309,27 @@ type Acquisition struct {
 }
 
 type acquisitionKey struct {
-	identity, source        manifest.NamedResource
-	occurrence, application OccurrenceID
-	root                    string
-	history, materialize    bool
-	witness                 manifest.BaseManifest
-	declarationWitness      any
-	artifact                *store.SourceArtifact
+	declarationIdentity
+
+	identity, source     manifest.NamedResource
+	application          OccurrenceID
+	root                 string
+	history, materialize bool
+	witness              manifest.BaseManifest
 }
 
 func (d *Demand) key() acquisitionKey {
 	return acquisitionKey{
-		identity: d.Identity, source: d.Source, occurrence: d.Occurrence.Declaration, application: d.Application,
-		root: d.Root, history: d.History, materialize: d.Materialize, witness: d.Witness, artifact: d.Artifact,
-		declarationWitness: d.Occurrence.Witness,
+		declarationIdentity: occurrenceIdentity(&d.Occurrence, d.Artifact),
+		identity:            d.Identity, source: d.Source, application: d.Application,
+		root: d.Root, history: d.History, materialize: d.Materialize, witness: d.Witness,
 	}
+}
+
+// Occurrence consumers MUST capture source admission before borrowing the parsed document.
+func (a *Acquisition) fixedOccurrence() bool {
+	return a.Available && a.Child.Obj != nil && a.Demand.Artifact != nil &&
+		a.Demand.Occurrence.Identity != (manifest.NamedResource{})
 }
 
 func (p *Preparation) acceptAcquired(acquired []Acquisition) {
@@ -301,7 +339,9 @@ func (p *Preparation) acceptAcquired(acquired []Acquisition) {
 		if result.Reads == nil {
 			result.Reads = result.Demand.Reads
 		}
-		if !result.Reads.Valid() || !result.Demand.Reads.Valid() {
+		if result.fixedOccurrence() {
+			result.Reads, result.Demand.Reads = nil, nil
+		} else if !result.Reads.Valid() || !result.Demand.Reads.Valid() {
 			continue
 		}
 		if p.acquired == nil {
@@ -314,8 +354,8 @@ func (p *Preparation) acceptAcquired(acquired []Acquisition) {
 func (p *Preparation) acquisition(demand *Demand, reads *store.ReadSet) (Acquisition, bool) {
 	key := demand.key()
 	result, known := p.acquired[key]
-	if !known {
-		return Acquisition{}, false
+	if !known || result.fixedOccurrence() {
+		return result, known
 	}
 	// Physical root resolution depends only on the exact source generation in the key.
 	if !demand.History || demand.Root == "" {
@@ -357,6 +397,13 @@ func (s *Session) publish(proposal *Admission, current, next *Decision) bool {
 
 func (a *Admission) accept(stage CommitStage, decision *Decision) {
 	a.Revision = decision.version()
+	if len(a.occurrences) != 0 {
+		if a.preparation.occurrences == nil {
+			a.preparation.occurrences = a.occurrences
+		} else {
+			maps.Copy(a.preparation.occurrences, a.occurrences)
+		}
+	}
 	if stage == Execution {
 		a.preparation.completed = a
 		a.preparation.changes = a.Request.Changes

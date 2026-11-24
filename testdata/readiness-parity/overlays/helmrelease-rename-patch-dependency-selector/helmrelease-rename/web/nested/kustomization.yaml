@@ -1,0 +1,13 @@
+namespace: web
+resources: [web.yaml]
+patches:
+  - target: {kind: HelmRelease, name: web}
+    patch: |-
+      - op: add
+        path: /metadata/labels
+        value: {stage: test}
+  - target: {kind: HelmRelease, name: web, labelSelector: "stage=test"}
+    patch: |-
+      - op: add
+        path: /spec/dependsOn
+        value: [{name: db}]

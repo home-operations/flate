@@ -1,0 +1,2 @@
+resources: [gate.yaml]
+transformers: [plugin]

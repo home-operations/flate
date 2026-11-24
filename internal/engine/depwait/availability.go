@@ -188,7 +188,7 @@ func (w *Waiter) settleAbsent(
 		return cl.Err
 	}
 	if cl.Kind == schedule.Terminal {
-		cl = w.classifyAbsent(&dep.DependencyRef, level)
+		cl, _ = w.classifyAbsent(&dep.DependencyRef, level, nil)
 	}
 	if cl.Kind == schedule.Blocked {
 		request.Settlement.Pending = append(request.Settlement.Pending, dep.NamedResource)

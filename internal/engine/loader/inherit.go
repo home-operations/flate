@@ -263,8 +263,9 @@ func (l *Loader) projectAuthoredOccurrence(
 	}
 	projected := l.projectAuthoredVisits(record, &structured, input.version, publish)
 	if !projected {
+		production := authoredProduction(record)
 		for _, namespace := range l.recordNamespaces(record, forced) {
-			publish(l.inAuthoredNamespace(&structured, namespace), manifest.Production{})
+			publish(l.inAuthoredNamespace(&structured, namespace), production)
 		}
 	}
 	return true

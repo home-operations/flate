@@ -6,9 +6,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/engine/controllers/base"
+	sourcectrl "github.com/home-operations/flate/internal/engine/controllers/source"
 	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -178,4 +182,106 @@ func assertDAGWithdrawalWake(t *testing.T, woken <-chan struct{}) {
 	default:
 		t.Fatal("withdrawal did not wake the captured consumer")
 	}
+}
+
+func TestDAGDispatch_ChartSourceRepublication(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		st := store.New()
+		tasks := task.NewBounded(2)
+		producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+		previous := &manifest.Kustomization{Name: "previous", Namespace: "apps"}
+		source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
+		source.URL = "oci://example.test/original"
+		replacement := *source
+		replacement.URL = "oci://example.test/replacement"
+		consumer := &manifest.HelmRelease{
+			Name: "consumer", Namespace: source.Namespace,
+			ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
+		}
+		owner, chart, release := producer.Named(), source.Named(), consumer.Named()
+		st.AddObject(producer)
+		st.AddObject(previous)
+		st.AddObject(consumer)
+		st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			chart: {Productions: []manifest.Production{{Owner: owner}}},
+		}})
+		st.AddObject(source)
+		st.RecordEmitted(previous.Named(), &store.Emission{Children: []store.Child{{Obj: source}}, Complete: true}, nil)
+		assert.Equal(t, st.GetDeclaration(chart), manifest.BaseManifest(source))
+		st.UpdateStatus(chart, store.StatusInfo{Status: store.StatusReady})
+		artifact := &store.SourceArtifact{FS: fstest.MapFS{}}
+		st.SetArtifact(chart, artifact)
+		st.UpdateStatus(owner, store.StatusInfo{Status: store.StatusPending})
+		st.RecordEmitted(previous.Named(), &store.Emission{Complete: true}, nil)
+
+		controller := base.New(st, tasks)
+		publish := make(chan struct{})
+		var blocked []manifest.NamedResource
+		var observed manifest.BaseManifest
+		var successfulLevel manifest.DrainLevel
+		var dispatches int
+		dispatch := fixtureDispatcher{
+			store: st,
+			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+				execution := controllertest.NewExecution(controller, id)
+				switch id {
+				case owner:
+					<-publish
+					execution.Dispatch(
+						ctx,
+						level,
+						execution,
+						func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+							next := store.Emission{Children: []store.Child{{Obj: &replacement}}, Complete: true}
+							defer next.Finish()
+							return execution.Emit(ctx, owner, &next, nil)
+						},
+					)
+				case release:
+					dispatches++
+					execution.Dispatch(
+						ctx,
+						level,
+						execution,
+						func(execution *base.Execution, ctx context.Context, obj *manifest.HelmRelease, level manifest.DrainLevel) error {
+							if _, err := execution.RequireRefresh(ctx, obj, manifest.GateArtifacts, level); err != nil {
+								return err
+							}
+							observed, successfulLevel = execution.Reads.GetDeclaration(chart), level
+							return nil
+						},
+					)
+					if dispatches == 1 {
+						blocked = execution.Blocked
+					}
+				}
+				return schedule.Result{Assessment: execution}
+			},
+		}
+
+		scheduler := schedule.New(tasks, dispatch)
+		o := &Orchestrator{store: st, src: &sourcectrl.Controller{}}
+		defer o.watchDAG(scheduler)()
+		scheduler.Seed([]schedule.NodeID{owner, release})
+		done := make(chan error, 1)
+		go func() { done <- scheduler.Run(t.Context()) }()
+		synctest.Wait()
+		assert.Equal(t, st.GetDeclaration(chart), nil)
+		status, _ := st.GetStatus(chart)
+		assert.Equal(t, status.Status, store.StatusReady)
+		assert.Equal(t, st.GetArtifact(chart, store.ArtifactContent), store.Artifact(artifact))
+		assert.Equal(t, dispatches, 1)
+		assert.Equal(t, observed, nil)
+		assert.Diff(t, blocked, []manifest.NamedResource{owner, chart})
+
+		close(publish)
+		assert.NoError(t, <-done)
+		assert.Equal(t, tasks.Failures(), 0)
+		assert.Equal(t, dispatches, 2)
+		assert.Equal(t, successfulLevel, manifest.DrainNone)
+		assert.Equal(t, observed, manifest.BaseManifest(&replacement))
+		status, _ = st.GetStatus(release)
+		assert.Equal(t, status.Outcome(), store.OutcomePassed)
+	})
 }

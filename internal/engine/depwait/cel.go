@@ -61,8 +61,9 @@ func (w *Waiter) evaluateReadyExpr(
 		return false, &celCompileError{err}
 	}
 	var dependency, self func() any
-	parent, st := w.Parent, w.Store
-	if parent == dep {
+	parent, parentObject, st := w.Parent, w.orderingParent, w.Store
+	switch {
+	case parent == dep:
 		var projected any
 		dependency = func() any {
 			if projected == nil {
@@ -71,16 +72,25 @@ func (w *Waiter) evaluateReadyExpr(
 			return projected
 		}
 		self = dependency
-	} else {
-		dependency = func() any { return projectObject(dep, obj, conds) }
-		if compiled.selfStatus {
-			self = func() any {
-				obj, info := st.Snapshot(parent, true)
-				return projectObject(parent, obj, info.Conditions)
+	case compiled.selfStatus:
+		self = func() any {
+			selfObject, info := st.Snapshot(parent, true)
+			if parentObject != nil {
+				selfObject = parentObject
 			}
-		} else {
-			self = func() any { return projectObject(parent, st.GetObject(parent), nil) }
+			return projectObject(parent, selfObject, info.Conditions)
 		}
+	default:
+		self = func() any {
+			selfObject := parentObject
+			if selfObject == nil {
+				selfObject = st.GetObject(parent)
+			}
+			return projectObject(parent, selfObject, nil)
+		}
+	}
+	if dependency == nil {
+		dependency = func() any { return projectObject(dep, obj, conds) }
 	}
 	val, _, err := compiled.prog.Eval(map[string]any{selfVariable: self, "dep": dependency})
 	if err != nil {

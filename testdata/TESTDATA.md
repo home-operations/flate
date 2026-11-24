@@ -1505,7 +1505,7 @@ Named symlink operations supply their synthetic paths to the catalog without req
 
 `scope-malformed/suspended-owner`: suspended owner
 
-`scope-malformed/changed-unselected-owner`: changed unselected owner
+`scope-malformed/changed-unselected-owner` renders the two selected readers and skips the unchanged ordering prerequisite with a malformed child.
 
 `scope-malformed/generated-owner`: generated owner
 
@@ -1627,6 +1627,70 @@ Named symlink operations supply their synthetic paths to the catalog without req
 
 `scope-inputs-ignored-required-named-reverse/ignored-required-named-reverse`: ignored required named reverse.
 
+
+### readiness-parity
+
+These cases run through `cli.Run` with two tasks and disabled caches. Each
+case repeats from the same repository state and compares complete results.
+
+- `readiness-parity/source-republication` changes the values of a HelmRelease and the interval
+  of its producer. The fixture transport serves a fixed OCI chart for both
+  snapshots. The full build and each changed-only command include the Deployment.
+- `readiness-parity/kustomization-rename` renames the target of an authored `dependsOn` edge.
+  The full build, changed-only diff, and named diff report the old name.
+- `readiness-parity/helmrelease-rename` puts the target and reader in separate Kustomizations.
+  A nested Kustomization sets the reader namespace. Both diff directions report the missing HelmRelease.
+- `readiness-parity/helmrelease-rename-replacement` copies the dependency name from a ConfigMap.
+- `readiness-parity/helmrelease-rename-component` applies the same replacement in a component.
+- `readiness-parity/helmrelease-rename-suspended` renames the target of an unchanged suspended HelmRelease.
+  The full build and changed-only diff succeed with empty stderr.
+- `readiness-parity/helmrelease-rename-prefix` prefixes the reader name.
+- `readiness-parity/helmrelease-rename-prefix-configured` prefixes the name and keeps a custom name reference.
+- `readiness-parity/helmrelease-rename-patch` patches the reader labels.
+- `readiness-parity/helmrelease-rename-patch-configured` patches the labels and keeps a custom name reference.
+- `readiness-parity/helmrelease-rename-patch-dependency` adds the ordering dependency in an unchanged patch.
+- `readiness-parity/helmrelease-rename-patch-dependency-rename` adds the dependency and renames the reader.
+- `readiness-parity/helmrelease-rename-patch-dependency-descendant` adds the dependency to a reader in a child directory.
+- `readiness-parity/helmrelease-rename-patch-dependency-selector` matches a label that an earlier patch adds.
+- `readiness-parity/helmrelease-rename-patch-dependency-strategic` deletes one dependency with a strategic merge patch.
+  The other reader still reports the missing target in both diff directions.
+- `readiness-parity/helmrelease-rename-patch-reader-kind` changes a ConfigMap into a reader with a JSON patch.
+- `readiness-parity/helmrelease-rename-patch-target` renames the effective target with a patch and leaves its resource file in place.
+- `readiness-parity/helmrelease-rename-substitute-inline` renames the target through an inline Flux value.
+- `readiness-parity/helmrelease-rename-substitute-replacement` uses Flux string replacement to rename the target.
+- `readiness-parity/helmrelease-rename-substitute-from` changes only the referenced ConfigMap outside the target package.
+  All three substitution cases keep the reader patch and report missing `web/db` in all three modes.
+- `readiness-parity/helmrelease-rename-patch-target-and-producer` also renames the target's producer and keeps its package path.
+- `readiness-parity/helmrelease-required-base-failure` reports a base patch failure and keeps the head output.
+- `readiness-parity/helmrelease-rename-flux-patch` adds the edge through Flux `spec.patches`.
+- `readiness-parity/kustomization-rename-patch-reader` adds an ordering edge to a Kustomization through a patch.
+- `readiness-parity/helmrelease-rename-patched-configmap` keeps the patched package limited to ConfigMaps.
+- `readiness-parity/helmrelease-rename-expression` reads generated ConfigMap names from two separate producers.
+- `readiness-parity/transitive-failure` changes the annotation of a shared PVC template.
+  Both PVCs remain blocked by the same missing prerequisite.
+  The named build reports that prerequisite through the intermediate declaration.
+
+The ordering matrix changes a dependency target while its reader stays the same.
+The full build, diff, and changed-only build report the missing target and its blocked reader.
+The diff names the snapshot that owns the failure.
+
+| Input | Case |
+| --- | --- |
+| Flux `spec.namePrefix` | `readiness-parity/ordering-name-prefix` |
+| Flux `spec.nameSuffix` | `readiness-parity/ordering-name-suffix` |
+| Flux `spec.targetNamespace` | `readiness-parity/ordering-target-namespace` |
+| Flux `spec.patches` | `readiness-parity/ordering-flux-patch` |
+| Flux `spec.components`, sibling path | `readiness-parity/ordering-relative-component` |
+| Flux `spec.components`, nested component | `readiness-parity/ordering-nested-component` |
+| Kustomize `replacements` | `readiness-parity/ordering-replacement` |
+| Flux `spec.postBuild.substitute` | `helmrelease-rename-substitute-inline` |
+| Flux `spec.postBuild.substituteFrom` | `helmrelease-rename-substitute-from` |
+| Flux `spec.path` through `..` | `readiness-parity/ordering-parent-path` |
+
+The relative component and package fixtures use a local transformer with a patched configuration.
+The loader keeps the unresolved root because it cannot list every input from that configuration.
+The `readiness-parity/ordering-relative-unrelated` and `readiness-parity/ordering-parent-unrelated` cases edit the reader outside the producer's roots.
+They require a successful diff and changed-only build with complete output.
 
 ### scope-selection
 

@@ -1,0 +1,8 @@
+namespace: web
+resources: [web.yaml]
+patches:
+  - target: {kind: ConfigMap, name: web}
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: web, labels: {patched: "true"}}

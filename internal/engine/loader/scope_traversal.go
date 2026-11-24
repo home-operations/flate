@@ -15,20 +15,26 @@ import (
 )
 
 type scopeTraversal struct {
-	visits     []graphVisit
-	reached    selection.RootEligibility
-	controlled bool
+	visits        []graphVisit
+	reached       selection.RootEligibility
+	controlled    bool
+	unknownRecipe bool
 }
 
 type scopeContribution struct {
 	owner, source  manifest.NamedResource
 	visits         []graphVisit
 	context        graphContext
+	recipe         scopeRecipe
 	unshared       bool
 	active         bool
 	applies        bool
 	membershipOnly bool
 	input          int
+}
+
+func (s *scopeContribution) appliesToResources() bool {
+	return s.active && s.applies && !s.membershipOnly
 }
 
 func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
@@ -53,7 +59,7 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 		}
 	}
 	if known {
-		walk.visits = physical.visits
+		walk.visits, walk.unknownRecipe = physical.visits, physical.unknownRecipe
 		l.scopes.walks[root.graphContext] = walk
 		return walk.visits
 	}
@@ -81,8 +87,8 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	physicalRoot := root
 	physicalRoot.owner, physicalRoot.source, physicalRoot.input, physicalRoot.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
 	w.walk(context.TODO(), physicalRoot, collect)
-	walk.visits = visits
-	source.walks.values[key] = physicalWalk{visits: visits, inputs: inputs}
+	walk.visits, walk.unknownRecipe = visits, w.unknownRecipes != 0
+	source.walks.values[key] = physicalWalk{visits: visits, inputs: inputs, unknownRecipe: walk.unknownRecipe}
 	l.scopes.walks[root.graphContext] = walk
 
 	return walk.visits
@@ -99,17 +105,21 @@ func (l *Loader) visitScope(rootArg *graphVisit, membershipOnly bool) {
 		ks, _ = l.IndexedObject(root.owner, record).Obj.(*manifest.Kustomization)
 	}
 	unshared := !membershipOnly && ks != nil && len(ks.Components) != 0
+	var unknownComponent bool
 	if unshared {
-		visits = l.scopeComponents(&root, visits, ks)
+		visits, unknownComponent = l.scopeComponents(&root, visits, ks)
 	}
 	l.recordScopeVisits(&root, visits, membershipOnly, unshared)
+	if unknownComponent {
+		l.scopes.contributions[len(l.scopes.contributions)-1].recipe |= scopeUnknownRecipe
+	}
 }
 
 func (l *Loader) scopeComponents(
 	root *graphVisit,
 	visits []graphVisit,
 	ks *manifest.Kustomization,
-) []graphVisit {
+) ([]graphVisit, bool) {
 	namespace := root.namespace
 	for i := range visits {
 		visit := &visits[i]
@@ -119,6 +129,7 @@ func (l *Loader) scopeComponents(
 		}
 	}
 	combined := slices.Clone(visits)
+	unknown := false
 	for _, component := range ks.Components {
 		if !fluxkustomize.IsLocalRelativePath(component) {
 			continue
@@ -135,8 +146,9 @@ func (l *Loader) scopeComponents(
 		child.namespace = namespace
 		child.edge, child.throughComponent = kustomizeinput.Component, true
 		combined = append(combined, l.scopeWalk(new(child))...)
+		unknown = unknown || l.scopes.walks[child.graphContext].unknownRecipe
 	}
-	return combined
+	return combined, unknown
 }
 
 func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, membershipOnly, unshared bool) {
@@ -153,10 +165,15 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 		},
 	)
 	contribution := len(l.scopes.contributions) - 1
+	scope := &l.scopes.contributions[contribution]
+	if l.scopes.walks[root.graphContext].unknownRecipe {
+		scope.recipe |= scopeUnknownRecipe
+	}
 	applies := root.owner != (manifest.NamedResource{}) ||
 		l.entry == entryKustomize && filepath.Join(root.root, root.dir) == l.entryPath
 	for i := range visits {
 		v := &visits[i]
+		scope.recipe |= l.visitRecipe(v)
 		ref := scopeVisit{contribution: contribution, visit: i}
 		l.scopes.visits[v.file] = append(l.scopes.visits[v.file], ref)
 		if v.localFile != "" && v.localFile != v.file {
@@ -182,7 +199,7 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 			applies = applies || manifest.KindOf(object).Runnable || application
 		}
 	}
-	l.scopes.contributions[contribution].applies = applies
+	scope.applies = applies
 }
 
 func (l *Loader) scopeWork(root *graphVisit) *manifest.WorkRecord {

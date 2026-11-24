@@ -26,6 +26,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
+	"github.com/home-operations/flate/internal/testutil/testfixture"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -250,6 +251,49 @@ func TestRun_PairedSelectionMatchesHeadOnly(t *testing.T) {
 			assert.Diff(t, batch.Documents, batches[i].Documents)
 		}
 	}
+}
+
+//nolint:paralleltest // RenderTrees sets the process-wide egress policy.
+func TestRun_HeadSelectionKeepsRequiredBaseFailure(t *testing.T) {
+	fixture := testfixture.Materialize(t, "readiness-parity", "helmrelease-required-base-failure")
+	baseRoot := filepath.Join(fixture.Repo, "..", "helmrelease-rename")
+	headRoot := t.TempDir()
+	testutil.CopyTree(t, baseRoot, headRoot)
+
+	repo, err := git.PlainOpen(baseRoot)
+	assert.NoError(t, err)
+	baseCommit, err := repo.ResolveRevision("HEAD~1")
+	assert.NoError(t, err)
+	worktree, err := repo.Worktree()
+	assert.NoError(t, err)
+	assert.NoError(t, worktree.Checkout(&git.CheckoutOptions{Hash: *baseCommit}))
+
+	base := manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}
+	head := manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
+	run, err := RenderTrees(t.Context(), []Tree{
+		{ID: base, RepoRoot: baseRoot, Path: filepath.Join(baseRoot, "flux")},
+		{ID: head, RepoRoot: headRoot, Path: filepath.Join(headRoot, "flux")},
+	}, Config{Concurrency: 2, CacheDir: t.TempDir(), HeadOnly: true})
+	assert.FatalIf(t, run == nil, "lost the invocation: %v", err)
+	t.Cleanup(func() { assert.NoError(t, run.Close()) })
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+
+	selected, projection := run.Select(
+		[]manifest.TreeID{head},
+		[]manifest.NamedResource{testutil.HelmReleaseID("web", "db")},
+		nil,
+	)
+	for _, err := range []error{projection.Selected, projection.Remaining} {
+		assert.FatalIf(t, err == nil, "head selection lost the required base failure")
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		assert.Equal(t, strings.Contains(err.Error(), "flux-system/database"), true)
+		assert.Equal(t, strings.Contains(err.Error(), "/metadata/noSuchParent/name"), true)
+	}
+	assert.FatalIf(t, len(selected) != 1, "head selection returned %d results", len(selected))
+	db := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "web", Name: "db"}
+	assert.Equal(t, slices.ContainsFunc(selected[0].Manifests, func(batch manifest.DocumentBatch) bool {
+		return slices.Contains(batch.Identities, db)
+	}), true)
 }
 
 //nolint:paralleltest // RenderTrees sets the process-wide egress policy.

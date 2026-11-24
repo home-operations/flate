@@ -373,7 +373,7 @@
     },
     {
       "name": "changed-unselected-owner",
-      "description": "changed unselected owner",
+      "description": "A shared edit renders the selected readers. Their unchanged ordering prerequisite contains unread malformed YAML.",
       "setup": [
         {
           "overlay": "changed-unselected-owner"
@@ -1329,6 +1329,22 @@
         "unowned-ad-hoc"
       ],
       "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/monitoring/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "The unchanged prerequisite contains a malformed package.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/monitoring/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "The unchanged prerequisite contains a malformed package.",
+      "package": "excluded"
     }
   ]
 }

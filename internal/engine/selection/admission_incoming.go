@@ -10,8 +10,75 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (c *admissionClosure) captureIncoming() {
+	var guard *store.ReadSet
+	if c.proposal != nil {
+		guard = c.proposal.Request.Reads
+	}
+	if len(c.generation) != 0 && c.states == nil {
+		c.states = map[manifest.NamedResource]admissionState{}
+	}
+	for i := range c.generation {
+		child := &c.generation[i]
+		if child.Obj == nil {
+			continue
+		}
+		id := child.Obj.Named()
+		state := c.states[id]
+		state.incoming, state.incomingProductions = i+1, c.incomingProductions(child, c.owner, guard)
+		c.states[id] = state
+		if guard == nil {
+			continue
+		}
+		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+			if ref.Selector != nil {
+				guard.ListObjects(ref.Group, ref.Kind)
+			}
+		}
+	}
+}
+
+func (c *admissionClosure) incomingProductions(
+	child *store.Child,
+	owner manifest.NamedResource,
+	guard *store.ReadSet,
+) []manifest.Production {
+	id := child.Obj.Named()
+	productions := child.Productions
+	if len(productions) == 0 && owner == (manifest.NamedResource{}) {
+		if guard != nil {
+			productions = guard.Promotions(id, nil)
+		} else {
+			productions = c.objects.Productions(id, nil)
+		}
+	}
+	if owner != (manifest.NamedResource{}) && owner != id {
+		productions = append(slices.Clone(productions), manifest.Production{Owner: owner})
+	}
+	return productions
+}
+
+func (c *admissionClosure) incoming(id manifest.NamedResource) store.Child {
+	state := c.states[id]
+	index := state.incoming - 1
+	if index >= 0 && index < len(c.generation) {
+		child := c.generation[index]
+		if child.Obj != nil && child.Obj.Named() == id {
+			child.Productions = state.incomingProductions
+			return child
+		}
+	}
+	return store.Child{}
+}
+
 func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 	role := c.role(id)
+	if c.session.comparisonOnly {
+		if role.needed || role.readiness {
+			c.add(id, role)
+		}
+		return nil
+	}
 	outside := c.outsideEntry(c.owner, id)
 	if outside && c.proposal.Request.AwaitEmission && c.session.request.Matches(id) &&
 		!c.scopes.scopes.Scope(c.owner).Current() {
@@ -83,8 +150,9 @@ func (c *admissionClosure) reverseInputRole(
 	role admissionRole,
 	eligible bool,
 ) admissionRole {
-	for ref := range c.references(id, c.incoming(id).Obj) {
-		if !c.reverse(id, c.incoming(id).Obj, new(ref)) {
+	object := c.object(id)
+	for ref := range c.references(id, object) {
+		if !c.reverse(id, object, &ref) {
 			continue
 		}
 		inputs, known, err := c.matchingInputs(new(ref), true)
@@ -92,19 +160,30 @@ func (c *admissionClosure) reverseInputRole(
 			continue
 		}
 		for _, input := range inputs {
-			if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
-				continue
-			}
-			if !c.reverseChanged(id, c.incoming(id).Obj, new(ref)) {
-				continue
-			}
-			role.needed = true
-			if eligible {
-				role.selected, role.dirty = true, true
+			if c.reverseInputChanged(id, input, new(ref)) {
+				role.needed = true
+				if eligible {
+					role.selected, role.dirty = true, true
+				}
 			}
 		}
 	}
 	return role
+}
+
+func (c *admissionClosure) reverseInputChanged(id, input manifest.NamedResource, ref *manifest.Reference) bool {
+	if ref.Ordering {
+		state := c.states[input]
+		if c.role(input).dirty || state.changed || state.readinessAffected ||
+			c.orderingDeclarationChanged(input) {
+			c.reachReadinessReader(id)
+		}
+		return false
+	}
+	if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
+		return false
+	}
+	return c.reverseChanged(id, c.object(id), ref)
 }
 
 func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionRole) admissionRole {
@@ -125,9 +204,10 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
 	for target, record := range c.coveredDeclarations(source, path) {
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
-		needed := c.role(target).needed
+		targetRole := c.role(target)
+		needed := targetRole.needed && (!targetRole.readiness || targetRole.ordinary || !c.session.request.Changed)
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
-			!c.coversDeclaration(new(rootOwnerFact(c.incoming(id).Obj, c.rootReader())), target) {
+			!c.coversDeclaration(new(rootOwnerFact(c.incoming(id).Obj, c.rootReader())), target, targetedClaimScope) {
 			continue
 		}
 		evidence := c.declarationEvidence(target)
@@ -148,15 +228,12 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	return role
 }
 
-func (c *admissionClosure) selectInputReaders(id manifest.NamedResource) error {
+func (c *admissionClosure) selectInputReaders(id manifest.NamedResource, orderingOnly bool) error {
 	key := id
 	key.Name = ""
 	for _, readers := range [][]manifest.NamedResource{c.context.InputReaders[id], c.context.InputReaders[key]} {
 		for _, reader := range readers {
-			if !c.session.request.Matches(reader) {
-				continue
-			}
-			if err := c.selectInputReader(id, reader); err != nil {
+			if err := c.selectInputReader(id, reader, orderingOnly); err != nil {
 				return err
 			}
 		}
@@ -182,25 +259,31 @@ func (c *admissionClosure) completeSelectIncoming(scope *completeSelectIncomingS
 		(*scope.affected) = c.affected((*scope.id), c.incoming(*scope.id).Obj)
 	}
 	if scope.role.dirty || (*scope.affected) {
-		if err := c.selectInputReaders((*scope.id)); err != nil {
+		if err := c.selectInputReaders((*scope.id), false); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) error {
+func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource, orderingOnly bool) error {
 	object := c.object(reader)
 	for ref := range c.references(reader, object) {
-		if !c.reverse(reader, object, new(ref)) || ref.Group != id.Group || ref.Kind != id.Kind ||
-			ref.Namespace != id.Namespace {
+		if orderingOnly && !ref.Ordering {
 			continue
 		}
-		inputs, known, err := c.matchingInputs(new(ref), true)
+		matches, err := c.matchesReaderInput(id, reader, object, &ref)
 		if err != nil {
 			return err
 		}
-		if !known || !slices.Contains(inputs, id) {
+		if !matches {
+			continue
+		}
+		if ref.Ordering {
+			c.reachReadinessReader(reader)
+			continue
+		}
+		if !c.session.request.Matches(reader) || !c.role(id).dirty && !c.affected(id, c.object(id)) {
 			continue
 		}
 		if !c.reverseChanged(reader, object, new(ref)) {
@@ -209,6 +292,35 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 		c.add(reader, admissionRole{needed: true, selected: true, dirty: true})
 	}
 	return nil
+}
+
+func (c *admissionClosure) matchesReaderInput(
+	id, reader manifest.NamedResource, object manifest.BaseManifest, ref *manifest.Reference,
+) (bool, error) {
+	if ref.Group != id.Group || ref.Kind != id.Kind || ref.Namespace != id.Namespace {
+		return false, nil
+	}
+	if !c.reverse(reader, object, ref) {
+		return false, nil
+	}
+	inputs, known, err := c.matchingInputs(ref, true)
+	return known && slices.Contains(inputs, id), err
+}
+
+func (c *admissionClosure) reachReadinessReader(id manifest.NamedResource) {
+	state := c.states[id]
+	if state.readinessAffected || !c.session.request.Changed || c.collecting && state.changed {
+		return
+	}
+	state.readinessAffected, state.walkedOnce = true, false
+	c.states[id] = state
+	queued := len(c.queue)
+	if !c.collecting && c.session.request.Matches(id) && !id.ReportHidden() {
+		c.add(id, admissionRole{readiness: true, fatal: true})
+	}
+	if len(c.queue) == queued {
+		c.queue = append(c.queue, id)
+	}
 }
 
 func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) bool {

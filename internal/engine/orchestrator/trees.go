@@ -415,11 +415,7 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 			current.cfg.work.Scope(),
 		)
 		if err != nil {
-			for _, side := range []int{i, j} {
-				o := r.results[side].Orchestrator
-				r.recordFailure(side, err)
-				o.stop()
-			}
+			r.stopDeclarationFailures(i, j, found, err)
 			return nil
 		}
 		changes = qualified
@@ -443,6 +439,11 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 		other.cfg.ExternalChanges = resolved
 		current.bindKustomizeInputs(ctx, other, resolved)
 		current.session.CompareEntryApplications(other.session, resolved, !r.Config.HeadOnly)
+	}
+	if current.cfg.ID.Side == manifest.TreeBase {
+		if err := r.prepareOrderingComparison(ctx, current, other); err != nil {
+			r.stopDeclarationFailures(i, j, found, err)
+		}
 	}
 	return ctx.Err()
 }
@@ -542,7 +543,11 @@ func (r *Invocation) qualifyDeclarations(ctx context.Context) error {
 		if other != nil && j < i {
 			continue
 		}
-		if err := o.qualifyDeclarationPair(ctx, other); err != nil {
+		err := o.qualifyDeclarationPair(ctx, other)
+		if err == nil && o.cfg.ID.Side == manifest.TreeBase {
+			err = r.prepareOrderingComparison(ctx, o, other)
+		}
+		if err != nil {
 			r.stopDeclarationFailures(i, j, found, err)
 			if err := ctx.Err(); err != nil {
 				return err
@@ -681,48 +686,34 @@ func (r *Invocation) installAdmission(ctx context.Context) {
 }
 
 func (r *Invocation) renderTrees(ctx context.Context) {
-	paired := r.renderEntryPairs(ctx)
+	paired := r.renderPairs(ctx)
 	for i := range r.results {
-		o := r.results[i].Orchestrator
-		if o == nil {
+		if paired[i] || r.results[i].Orchestrator == nil {
 			continue
 		}
-		if r.Config.HeadOnly && r.results[i].ID.Side == manifest.TreeBase {
-			r.results[i].Result = &Result{Work: o.freezeWork()}
-			o.stop()
-			r.results[i].Orchestrator = nil
+		if r.workOnlyBase(i) {
+			r.collectTree(ctx, i, nil)
 			continue
 		}
-		if paired[i] {
-			continue
-		}
-		r.wg.Go(func() {
-			defer o.stop()
-			if o.selection.Snapshot().Output(manifest.NamedResource{}) {
-				failure := o.completeBootstrap(ctx)
-				if failure == nil {
-					failure = o.prepareInvocation(ctx)
-				}
-				if failure != nil {
-					r.results[i].Orchestrator = nil
-					r.results[i].Result = o.failureResult()
-					r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
-					return
-				}
-			}
-			r.collectTree(ctx, i, o.run(ctx))
-		})
+		r.wg.Go(func() { r.renderTree(ctx, i) })
 	}
 	r.wg.Wait()
 }
 
-func (r *Invocation) collectTree(ctx context.Context, i int, runErr error) {
-	rendered := &r.results[i]
-	result, failure := rendered.collectResult(ctx, runErr)
-	rendered.Result = result
-	if failure != nil {
-		rendered.Err = &treeError{id: rendered.ID, err: failure, attributed: len(r.results) > 1}
+func (r *Invocation) renderTree(ctx context.Context, i int) {
+	o := r.results[i].Orchestrator
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
+		failure := o.completeBootstrap(ctx)
+		if failure == nil {
+			failure = o.prepareInvocation(ctx)
+		}
+		if failure != nil {
+			r.recordFailure(i, failure)
+			o.stop()
+			return
+		}
 	}
+	r.collectTree(ctx, i, o.run(ctx))
 }
 
 func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.SourceArtifact]*change.Set) error {

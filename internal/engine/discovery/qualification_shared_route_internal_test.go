@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -249,6 +250,63 @@ func TestEntryQualification_NamedOperandsAdvanceInOrder(t *testing.T) {
 	assert.NoError(t, walk.advanceOperands(t.Context()))
 	assert.Diff(t, q.active, []manifest.NamedResource{first.Named(), later.Named()})
 	assert.Diff(t, q.candidates, []manifest.NamedResource{first.Named()})
+}
+
+func TestEntryQualification_OpaqueOrderingOperand(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                               string
+		changed, ordinary, projected, want bool
+	}{
+		{name: "changed evaluation only", changed: true},
+		{name: "changed evaluation only with projection", changed: true, projected: true, want: true},
+		{name: "changed ordinary", changed: true, ordinary: true, want: true},
+		{name: "cold prerequisite", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			l := loader.New(st)
+			t.Cleanup(l.Retire)
+			configureSelection(t, l, selection.Request{Changed: tc.changed})
+			producer := &manifest.HelmRelease{Name: "opaque", Namespace: "apps"}
+			if tc.projected {
+				producer.Values = map[string]any{"sync": map[string]any{
+					"kind": manifest.KindGitRepository, "name": "sync", "url": "https://fixture.invalid/repo",
+					"ref": "refs/heads/main", "path": "./entry",
+				}}
+			}
+			id := producer.Named()
+			st.AddObject(producer)
+			var reads store.ReadSet
+			reads.Init(st, manifest.NamedResource{}, nil)
+			defer reads.Retire()
+			if tc.ordinary {
+				reads.RequireMaterializer(id)
+				_, err := admitSelection(t.Context(), t, l, selection.PrepareRequest{Reads: &reads})
+				assert.NoError(t, err)
+			}
+			reads.RequireOrdering(&store.OrderingEdge{Target: id})
+			_, err := admitSelection(t.Context(), t, l, selection.PrepareRequest{Reads: &reads})
+			assert.NoError(t, err)
+			if tc.projected {
+				decision := l.Options.Session.Snapshot()
+				assert.Equal(t, decision.ReadinessDemand(id), true)
+				assert.Equal(t, decision.EvaluationOnly(id), true)
+			}
+			q := &entryQualification{
+				loader: l, changedOnly: tc.changed,
+				packages: [][]selection.OccurrenceFacts{{{Identity: id, Object: producer}}},
+			}
+			walk := qualificationWalk{
+				q: q, store: st, reads: &reads,
+				admission: &Admission{input: &store.SourceArtifact{LocalPath: t.TempDir()}},
+			}
+			assert.NoError(t, walk.advanceOperands(t.Context()))
+			assert.Equal(t, q.pending, tc.want)
+			assert.Equal(t, slices.Contains(q.active, id), tc.want)
+		})
+	}
 }
 
 func TestQualifySelectedEntry_IgnoresAnotherSource(t *testing.T) {

@@ -142,7 +142,8 @@ func (l *Loader) packageResources(
 	visit := graphVisit{root: input.LocalPath, dir: manifest.NormalizeClaimBase(root), role: kustomizeinput.Resource}
 	resources := l.scopeWalk(&visit)
 	if ks != nil && len(ks.Components) != 0 {
-		return l.scopeComponents(&visit, resources, ks)
+		resources, _ = l.scopeComponents(&visit, resources, ks)
+		return resources
 	}
 	return resources
 }

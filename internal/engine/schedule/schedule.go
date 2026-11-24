@@ -209,9 +209,19 @@ func (s *Scheduler) invalidate(ids []NodeID) {
 	}
 }
 
-// Run drains work, delivers pending heads and settles retained unresolved assessments.
-// Dispatch, assessment and task-service calls MUST run outside mu.
+// Run drains work and closes the execution lifetime.
 func (s *Scheduler) Run(ctx context.Context) error {
+	err := s.Drain(ctx)
+	closeErr := s.Close(ctx)
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+// Drain delivers pending heads and settles unresolved assessments.
+// Dispatch, assessment and task-service calls MUST run outside mu.
+func (s *Scheduler) Drain(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { s.notifyCancellation(ctx) })
@@ -257,20 +267,29 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		slices.SortFunc(parked, func(a, b *node) int { return a.id.Compare(b.id) })
 		s.settleLocked(runCtx, parked, level)
 	}
-	s.stopped = true
 	// Active reconciles can still depend on shared work during a structural stop.
 	for s.inFlight != 0 && ctx.Err() == nil {
 		s.cond.Wait()
 	}
+	err := s.err
 	s.mu.Unlock()
-	cancel()
+	return err
+}
+
+// Close releases assessments after the final drain or an error.
+func (s *Scheduler) Close(ctx context.Context) error {
+	s.mu.Lock()
+	s.stopped = true
+	s.mu.Unlock()
 	s.tasks.BlockTillDone()
 	for _, n := range s.nodes {
 		if n.assessment != nil {
 			n.assessment.Close()
 		}
 	}
-	s.disp.Sweep(runCtx, true)
+	closed, cancel := context.WithCancel(ctx)
+	cancel()
+	s.disp.Sweep(closed, true)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.err = cmp.Or(s.err, ctx.Err())

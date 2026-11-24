@@ -328,7 +328,7 @@ func TestAdmission_DeclarationMountSource(t *testing.T) {
 			defer reads.Retire()
 			c.objects, c.proposal.reads = &reads, &reads
 
-			input, support := c.hydrationSource(id, mounted.LocalPath)
+			input, support := c.hydrationSource(id, facts.occurrences[id].Mounted)
 			assert.Equal(t, input == mounted, true)
 			assert.Equal(t, support, want)
 			assert.Equal(t, reads.Valid(), true)
@@ -413,7 +413,7 @@ func TestAdmission_DeclarationMountLifetime(t *testing.T) {
 				close(replace)
 				<-done
 			}
-			input, support := c.hydrationSource(id, mounted.LocalPath)
+			input, support := c.hydrationSource(id, facts.occurrences[id].Mounted)
 			if tc.absent || tc.stale {
 				assert.Equal(t, input == nil, true)
 				assert.Equal(t, support, manifest.NamedResource{})

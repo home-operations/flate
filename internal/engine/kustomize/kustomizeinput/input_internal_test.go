@@ -180,3 +180,22 @@ func TestKustomization_InputFields(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigurationPreservesOrdering_FieldScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path string
+		preserves  bool
+	}{
+		{name: "values", path: "spec/valuesFrom/name", preserves: true},
+		{name: "ordering", path: "spec/dependsOn[]/name"},
+		{name: "suspension", path: "spec/suspend"},
+		{name: "identity", path: "metadata/namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := []byte("nameReference:\n- kind: ConfigMap\n  fieldSpecs:\n  - path: " + tc.path + "\n")
+			assert.Equal(t, ConfigurationPreservesOrdering(config), tc.preserves)
+		})
+	}
+}

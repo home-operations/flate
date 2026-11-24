@@ -1,0 +1,11 @@
+namespace: web
+resources: [web.yaml]
+patches:
+  - target: {kind: HelmRelease, name: web}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: web2
+      - op: add
+        path: /spec/dependsOn
+        value: [{name: db}]

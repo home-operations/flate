@@ -90,7 +90,7 @@ type Config struct {
 	// unaffected. Sensible default for I/O-bound work is
 	// runtime.NumCPU() * 4.
 	Concurrency int
-	// HeadOnly prepares both sides and reconciles only the head.
+	// HeadOnly returns head output and base comparison work.
 	HeadOnly bool
 
 	// SourceRetry tunes the bounded, classified retry applied to every
@@ -116,6 +116,7 @@ type Orchestrator struct {
 	workFrozen bool
 
 	changeNamespaces     []string
+	orderingPairs        [][2]manifest.NamedResource
 	cfg                  treeConfig
 	store                *store.Store
 	tasks                *task.Service

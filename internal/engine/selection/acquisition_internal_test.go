@@ -1,12 +1,15 @@
 package selection
 
 import (
+	"context"
+	"errors"
 	"iter"
 	"path/filepath"
 	"slices"
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -63,6 +66,75 @@ func TestPreparation_CompletedAbsenceRetainsExactSupport(t *testing.T) {
 	_, found = preparation.acquisition(&demand, &current)
 	assert.Equal(t, found, false)
 	assert.Equal(t, len(preparation.acquired), 0)
+}
+
+func TestPreparation_ReusesOccurrenceAfterUnrelatedPublication(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	unrelated := &manifest.Kustomization{Name: "unrelated", Namespace: "apps"}
+	object := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
+	st.AddObject(unrelated)
+	var before, after store.ReadSet
+	before.Init(st, object.Named(), nil)
+	after.Init(st, object.Named(), nil)
+	t.Cleanup(before.Retire)
+	t.Cleanup(after.Retire)
+	before.GetObject(unrelated.Named())
+	input := &store.SourceArtifact{Content: "same"}
+	demand := Demand{
+		Identity: object.Named(), Source: manifest.BootstrapSourceID, Reads: &before, Artifact: input,
+		Occurrence: OccurrenceFacts{Identity: object.Named(), Authored: object.Named()},
+	}
+	st.DeleteObject(unrelated.Named())
+	assert.Equal(t, before.Valid(), false)
+	var p Preparation
+	p.acceptAcquired([]Acquisition{{Demand: demand, Child: store.Child{Obj: object}, Available: true}})
+
+	demand.Reads = &after
+	result, known := p.acquisition(&demand, &after)
+	assert.Equal(t, known, true)
+	assert.Equal(t, result.Child.Obj, manifest.BaseManifest(object))
+	assert.Equal(t, result.Reads, nil)
+	assert.Equal(t, result.Demand.Reads, nil)
+	demand.Artifact = &store.SourceArtifact{Content: "changed"}
+	_, known = p.acquisition(&demand, &after)
+	assert.Equal(t, known, false)
+	demand.Artifact = input
+	demand.Occurrence.Authored.Namespace = "other"
+	_, known = p.acquisition(&demand, &after)
+	assert.Equal(t, known, false)
+}
+
+func TestAdmission_RecapturesPrerequisitesAfterFixedOccurrence(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	object := &manifest.Kustomization{Name: "dependency", Namespace: "apps", Path: "old"}
+	id := object.Named()
+	st.AddObject(object)
+	var original, current, changed store.ReadSet
+	original.Init(st, id, nil)
+	current.Init(st, id, nil)
+	changed.Init(st, id, nil)
+	t.Cleanup(original.Retire)
+	t.Cleanup(current.Retire)
+	t.Cleanup(changed.Retire)
+	original.GetObject(id)
+
+	c := solverClosure(t, st, &solverFacts{})
+	c.proposal.reads = &current
+	request := PrepareRequest{Acquired: []Acquisition{{
+		Demand: Demand{
+			Occurrence: OccurrenceFacts{Identity: id},
+			Artifact:   &store.SourceArtifact{Content: "original"},
+		},
+		Child: store.Child{Obj: object}, Available: true,
+	}}}
+	assert.Equal(t, c.matchesPreparation(&original, &request, true), true)
+	replacement := object.Clone()
+	replacement.Path = "new"
+	st.AddObject(replacement)
+	c.proposal.reads = &changed
+	assert.Equal(t, c.matchesPreparation(&original, &request, true), false)
 }
 
 func TestPreparation_RetireReleasesCapturedState(t *testing.T) {
@@ -248,6 +320,141 @@ func TestAdmission_EntryReceiptReachesIndexedWorkloadHistory(t *testing.T) {
 			assert.Equal(t, proposal.EntryReceipt != nil, fixture.want)
 		})
 	}
+}
+
+func TestAdmit_OrderingComparisonAcquiresResolvedRoots(t *testing.T) {
+	t.Parallel()
+	const unresolved = "infra/../shared"
+	for _, tc := range []struct {
+		name      string
+		side      manifest.TreeSide
+		resolved  string
+		stale     bool
+		settled   bool
+		cancel    bool
+		affected  bool
+		wantCalls int
+	}{
+		{name: "base component edit", side: manifest.TreeBase, resolved: "shared", affected: true, wantCalls: 1},
+		{name: "head component edit", side: manifest.TreeHead, resolved: "shared", affected: true, wantCalls: 1},
+		{name: "resolved outside edit", resolved: "other", wantCalls: 1},
+		{name: "completed unavailable root", affected: true, wantCalls: 1},
+		{name: "discard stale generation", resolved: "other", stale: true, wantCalls: 2},
+		{name: "discard settled stale generation", resolved: "other", settled: true, affected: true, wantCalls: 2},
+		{name: "canceled lookup", cancel: true, wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := manifest.BootstrapSourceID
+			st := store.New()
+			root := t.TempDir()
+			trees := [2]*store.SourceArtifact{
+				{LocalPath: root, Content: "base", FS: fstest.MapFS{"shared/file.yaml": {Data: []byte("before")}}},
+				{LocalPath: root, Content: "head", FS: fstest.MapFS{"shared/file.yaml": {Data: []byte("after")}}},
+			}
+			input := trees[tc.side]
+			st.SetArtifact(source, input)
+			owner := &manifest.Kustomization{Name: "ordering", Namespace: "apps", Path: "infra"}
+			id := owner.Named()
+			st.AddObject(owner)
+			changes, err := change.Detect(ctx, trees[0], trees[1], change.DetectConfig{})
+			assert.NoError(t, err)
+			facts := orderingRootFacts{solverFacts: &solverFacts{
+				store: st, changes: changes,
+				context: SourceContext{Root: root, Side: tc.side, SideKnown: true},
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {
+						File:         "flux/ordering.yaml",
+						ContentRoots: map[manifest.NamedResource][]string{source: {unresolved}},
+					},
+				}},
+				sources: map[manifest.NamedResource]SourceFacts{source: {Paired: true}},
+			}}
+			replaceInput := func() {
+				replacement := *input
+				replacement.Content = "replacement"
+				input = &replacement
+				st.SetArtifact(source, input)
+			}
+			calls := 0
+			facts.resolve = func(ctx context.Context, reads *store.ReadSet, actual manifest.NamedResource, path string) (string, bool, error) {
+				calls++
+				assert.Equal(t, path, unresolved)
+				assert.Equal(t, actual, source)
+				assert.Equal(t, reads.Valid(), true)
+				assert.Equal(t, reads.GetArtifact(source, store.ArtifactContent) == input, true)
+				switch {
+				case tc.cancel:
+					cancel()
+					return "", false, ctx.Err()
+				case tc.stale && calls == 1:
+					replaceInput()
+					return "shared", true, nil
+				case tc.settled && calls == 2:
+					return "shared", true, nil
+				default:
+					return tc.resolved, tc.resolved != "", nil
+				}
+			}
+			session, err := New(st, &facts, Request{Changed: true})
+			assert.NoError(t, err)
+			before := session.Snapshot()
+			request := PrepareRequest{Changes: changes, OrderingCandidates: []manifest.NamedResource{id}}
+			var preparation *Preparation
+			invalidated := false
+			if tc.settled {
+				request.Preparation = &preparation
+				defer func() { preparation.Retire() }()
+				facts.inspect = func() {
+					c := &preparation.closure
+					if invalidated || calls != 1 || c.evaluationContext != nil || !c.states[id].affectedKnown {
+						return
+					}
+					assert.Equal(t, len(c.proposal.demands), 0)
+					assert.Equal(t, c.states[id].changed, false)
+					assert.Equal(t, c.proposal.reads.Valid(), true)
+					replaceInput()
+					assert.Equal(t, c.proposal.reads.Valid(), false)
+					invalidated = true
+				}
+			}
+			result, accepted, err := session.Admit(ctx, AdmissionOptions{Request: request, Stage: Execution})
+			assert.Equal(t, invalidated, tc.settled)
+			assert.Equal(t, calls, tc.wantCalls)
+			assert.Equal(t, session.Snapshot() == before, true)
+			if tc.cancel {
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+				assert.Equal(t, accepted, false)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, accepted, true)
+			assert.Equal(t, result.OrderingChanged[id], tc.affected)
+		})
+	}
+}
+
+type orderingRootFacts struct {
+	*solverFacts
+
+	resolve func(context.Context, *store.ReadSet, manifest.NamedResource, string) (string, bool, error)
+	inspect func()
+}
+
+func (f *orderingRootFacts) SelectionIndex() *manifest.DiscoveryIndex {
+	if f.inspect != nil {
+		f.inspect()
+	}
+	return f.solverFacts.SelectionIndex()
+}
+
+//nolint:gocritic // The fixture implements the census result signature.
+func (f *orderingRootFacts) ResolveRoot(
+	ctx context.Context, reads *store.ReadSet, source manifest.NamedResource, root string,
+) (string, bool, error) {
+	return f.resolve(ctx, reads, source, root)
 }
 
 func TestPreparation_RootResolutionFollowsSourceGeneration(t *testing.T) {

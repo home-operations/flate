@@ -351,10 +351,15 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 		})
 	}
 	if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-		r.Productions = []manifest.Production{
-			{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
-		}
+		r.Productions = []manifest.Production{authoredProduction(r)}
 	}
+}
+
+func authoredProduction(r *manifest.DiscoveryRecord) manifest.Production {
+	if r.File == "" {
+		return manifest.Production{}
+	}
+	return manifest.Production{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}
 }
 
 func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {

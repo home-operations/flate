@@ -60,10 +60,11 @@ type parsedDocument struct {
 }
 
 type physicalWalk struct {
-	cached   *cachedWalk
-	visits   []graphVisit
-	inputs   []walkInput
-	imported bool
+	cached        *cachedWalk
+	visits        []graphVisit
+	inputs        []walkInput
+	imported      bool
+	unknownRecipe bool
 }
 
 type walkInput struct {
@@ -475,9 +476,8 @@ func (d *document) snapshot() {
 
 func (p *parsedDocument) matchesObservation(doc *document) bool {
 	sameInputs := p.plugins == doc.plugins && p.projection == doc.projection
-	return p.declarations == doc.declarations && p.state == doc.pathState && p.searched == doc.searched &&
-		p.recipe == doc.recipe &&
-		sameInputs
+	sameBuilderObservation := p.state == doc.pathState && p.searched == doc.searched && p.recipe == doc.recipe
+	return p.declarations == doc.declarations && sameBuilderObservation && sameInputs
 }
 
 // Frozen map layers MUST remain immutable while independent roots borrow them.

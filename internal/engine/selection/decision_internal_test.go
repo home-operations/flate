@@ -435,7 +435,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 			var reads store.ReadSet
 			reads.Init(session.store, object.Named(), nil)
 			assert.Equal(t, reads.Admitted(), true)
-			assert.Equal(t, reads.OrdinaryDemand(object.Named()), true)
+			assert.Equal(t, reads.ControllerDemand(object.Named()), true)
 			session.store.Retire(&reads)
 			assert.Equal(t, session.Snapshot().Reconcile(object.Named()), true)
 			assert.Equal(t, session.Snapshot().Output(object.Named()), true)
@@ -554,29 +554,39 @@ func TestSession_DiscardConstructionPreservesExecution(t *testing.T) {
 	}
 }
 
-func TestDecision_OrderingRequiresSelectedOrMissingExternal(t *testing.T) {
+func TestDecision_ReadinessDemand(t *testing.T) {
 	t.Parallel()
-	session := newPublicationSession(t)
 	id := testutil.KustomizationID("apps", "candidate")
-	var universal *Decision
-	for _, tc := range []struct {
-		name                   string
-		present, indexed, want bool
-	}{
-		{"absent-external", false, false, true},
-		{"present-external", true, false, false},
-		{"absent-indexed", false, true, false},
-		{"present-indexed", true, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "named"
+		if changed {
+			name = "changed"
+		}
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, universal.Ordering(id, tc.present, tc.indexed), true)
-			assert.Equal(t, session.Snapshot().Ordering(id, tc.present, tc.indexed), tc.want)
+			session, err := New(
+				store.New(),
+				&publicationFacts{},
+				Request{Changed: changed, Roots: []manifest.NamedResource{id}},
+			)
+			assert.NoError(t, err)
+			decision, included := session.Snapshot().include(&Admission{Readiness: []manifest.NamedResource{id}}, true)
+			var want []manifest.NamedResource
+			if !changed {
+				want = []manifest.NamedResource{id}
+			}
+			assert.Diff(t, included, want)
+			assert.Equal(t, decision.Reconcile(id), !changed)
+			assert.Equal(t, decision.ReadinessDemand(id), true)
+			assert.Equal(t, decision.OrdinaryDemand(id), false)
+			assert.Equal(t, decision.Output(id), false)
+			assert.Equal(t, decision.reportsFailure(id), false)
+
+			next, _ := decision.include(&Admission{Fatal: []manifest.NamedResource{id}}, true)
+			assert.Equal(t, next.reportsFailure(id), true)
+			assert.Equal(t, next.Output(id), false)
 		})
 	}
-	selectedSession := newPublicationSession(t)
-	publishDecision(t, selectedSession, new(Admission{Needed: []manifest.NamedResource{id}}), 0)
-	assert.Equal(t, selectedSession.Snapshot().Ordering(id, true, true), true)
 }
 
 func TestSession_ConstructionPublishesReadySupportWithPendingDemand(t *testing.T) {
@@ -594,4 +604,199 @@ func TestSession_ConstructionPublishesReadySupportWithPendingDemand(t *testing.T
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Reconcile(id), true)
 	assert.Equal(t, session.Snapshot().Output(id), false)
+}
+
+func TestDecision_OrderingDeclarationAuthority(t *testing.T) {
+	t.Parallel()
+	session := newPublicationSession(t)
+	id := testutil.KustomizationID("apps", "prerequisite")
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	indexed := &manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "indexed"}
+	effective := &manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "effective"}
+	input := &store.SourceArtifact{Content: "revision"}
+	evidence := orderingDeclaration{
+		artifact: input,
+		object:   indexed, source: manifest.BootstrapSourceID, owner: owner.Named(),
+	}
+	session.store.AddObject(owner)
+	session.store.SetArtifact(manifest.BootstrapSourceID, input)
+	session.store.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			id: {Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}}},
+		}},
+	)
+	decision, _ := session.Snapshot().include(&Admission{
+		Readiness:            []manifest.NamedResource{id},
+		orderingDeclarations: map[manifest.NamedResource]orderingDeclaration{id: evidence},
+	}, true)
+	reader := testutil.KustomizationID("apps", "reader")
+	var original, moved, replaced, published, withdrawn store.ReadSet
+	original.Init(session.store, reader, nil)
+	defer original.Retire()
+	assert.Equal(t, decision.OrderingDeclaration(&original, id, false), manifest.BaseManifest(indexed))
+	assert.Equal(t, decision.OrderingDeclaration(&original, id, true), nil)
+
+	source := &manifest.GitRepository{Name: "replacement", Namespace: "apps"}
+	session.store.AddObject(source)
+	session.store.SetArtifact(source.Named(), input)
+	evidence.source = source.Named()
+	decision, _ = decision.include(&Admission{
+		orderingDeclarations: map[manifest.NamedResource]orderingDeclaration{id: evidence},
+	}, true)
+	moved.Init(session.store, reader, nil)
+	defer moved.Retire()
+	assert.Equal(t, decision.OrderingDeclaration(&moved, id, false), manifest.BaseManifest(indexed))
+	assert.Equal(t, moved.Valid(), true)
+
+	session.store.SetArtifact(source.Named(), &store.SourceArtifact{Content: "new-revision"})
+	assert.Equal(t, original.Valid(), true)
+	assert.Equal(t, moved.Valid(), false)
+	replaced.Init(session.store, reader, nil)
+	defer replaced.Retire()
+	assert.Equal(t, decision.OrderingDeclaration(&replaced, id, false), nil)
+
+	session.store.RecordEmitted(owner.Named(), &store.Emission{
+		Children: []store.Child{{Obj: effective}}, Complete: true,
+	}, nil)
+	assert.Equal(t, original.Valid(), false)
+	published.Init(session.store, reader, nil)
+	defer published.Retire()
+	assert.Equal(t, decision.OrderingDeclaration(&published, id, false), manifest.BaseManifest(effective))
+	assert.Equal(t, decision.OrderingDeclaration(&published, id, true), manifest.BaseManifest(effective))
+
+	session.store.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
+	assert.Equal(t, published.Valid(), false)
+	withdrawn.Init(session.store, reader, nil)
+	defer withdrawn.Retire()
+	assert.Equal(t, decision.OrderingDeclaration(&withdrawn, id, false), nil)
+}
+
+func TestAdmission_ReusesIndexedOrderingDeclaration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		fresh bool
+	}{
+		{name: "same declaration"},
+		{name: "retained catalog declaration"},
+		{name: "projected catalog declaration"},
+		{name: "source replacement", fresh: true},
+		{name: "moved declaration", fresh: true},
+		{name: "different list item", fresh: true},
+		{name: "different authored identity", fresh: true},
+		{name: "different witness", fresh: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			source := manifest.BootstrapSourceID
+			root := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: root, Content: "old"}
+			id := testutil.KustomizationID("apps", "dependency")
+			object := &manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "full-spec"}
+			coordinate := OccurrenceID{Source: root, File: "dependency.yaml"}
+			occurrence := OccurrenceFacts{Declaration: coordinate, Identity: id, Authored: id, Mounted: input}
+			switch tc.name {
+			case "retained catalog declaration":
+				occurrence.Parsed = object
+			case "projected catalog declaration":
+				occurrence.Authored.Namespace = "authored"
+				occurrence.Parsed = object.WithNamespace(occurrence.Authored.Namespace)
+			case "source replacement":
+				occurrence.Mounted = &store.SourceArtifact{LocalPath: root, Content: "new"}
+			case "moved declaration":
+				occurrence.Declaration.Document++
+			case "different list item":
+				occurrence.Declaration.Item++
+			case "different authored identity":
+				occurrence.Authored.Namespace = "other"
+			case "different witness":
+				occurrence.Witness = object
+			}
+			st.SetArtifact(source, occurrence.Mounted)
+			facts := &solverFacts{store: st, occurrences: map[manifest.NamedResource]OccurrenceFacts{id: occurrence}}
+			c := solverClosure(t, st, facts)
+			c.proposal.preparation = &Preparation{}
+			if occurrence.Parsed == nil {
+				c.decision, _ = c.decision.include(&Admission{
+					orderingDeclarations: map[manifest.NamedResource]orderingDeclaration{
+						id: {
+							declarationIdentity: declarationIdentity{
+								artifact: input, occurrence: coordinate, authored: id,
+							},
+							object: object, source: source,
+						},
+					},
+				}, true)
+			}
+
+			result := c.indexedOrderingDeclaration(t.Context(), manifest.NamedResource{}, &occurrence)
+			if tc.fresh {
+				assert.Equal(t, result.object, nil)
+				assert.Equal(t, len(c.proposal.demands), 1)
+				return
+			}
+			assert.Equal(t, manifest.Equal(result.object, object), true)
+			assert.Equal(t, len(c.proposal.demands), 0)
+		})
+	}
+}
+
+func TestDecision_OrderingExpressionChange(t *testing.T) {
+	t.Parallel()
+	session := newPublicationSession(t)
+	reader := testutil.KustomizationID("apps", "reader")
+	dependency := testutil.KustomizationID("apps", "dependency")
+	old := store.OrderingEdge{Target: dependency, ReadyExpr: "true"}
+	current := store.OrderingEdge{Target: dependency, ReadyExpr: "self.metadata.name == dep.metadata.name"}
+	before, _ := session.Snapshot().include(&Admission{
+		Ordinary:  []manifest.NamedResource{reader},
+		Readiness: []manifest.NamedResource{dependency},
+		ordering:  map[manifest.NamedResource][]store.OrderingEdge{reader: {old}},
+	}, true)
+	var reads store.ReadSet
+	reads.Init(session.store, reader, nil)
+	defer reads.Retire()
+	reads.AssessOrdering()
+	reads.RequireOrdering(&current)
+	assert.Equal(t, before.MatchesOrdering(&reads), false)
+	after, _ := before.include(&Admission{
+		ordering: map[manifest.NamedResource][]store.OrderingEdge{reader: {current}},
+	}, true)
+	assert.Equal(t, after.MatchesOrdering(&reads), true)
+	assert.Equal(t, before.MatchesOrdering(&reads), false)
+	assert.Equal(t, after.version(), before.version()+1)
+	assert.Equal(t, after.OrdinaryDemand(dependency), false)
+}
+
+func TestDecision_OrderingDemandWithdrawal(t *testing.T) {
+	t.Parallel()
+	session := newPublicationSession(t)
+	first := testutil.KustomizationID("apps", "first")
+	second := testutil.KustomizationID("apps", "second")
+	middle := testutil.KustomizationID("infra", "middle")
+	leaf := testutil.KustomizationID("infra", "leaf")
+	decision, _ := session.Snapshot().include(&Admission{
+		Ordinary: []manifest.NamedResource{first, second},
+		Needed:   []manifest.NamedResource{middle, leaf},
+		ordering: map[manifest.NamedResource][]store.OrderingEdge{
+			first: {{Target: middle}}, second: {{Target: middle}}, middle: {{Target: leaf}}, leaf: {{Target: middle}},
+		},
+	}, true)
+	for _, id := range []manifest.NamedResource{middle, leaf} {
+		assert.Equal(t, decision.ReadinessDemand(id), true)
+		assert.Equal(t, decision.Output(id), false)
+	}
+	next, _ := decision.include(&Admission{
+		ordering: map[manifest.NamedResource][]store.OrderingEdge{first: nil},
+	}, true)
+	assert.Equal(t, next.ReadinessDemand(leaf), true)
+	final, retired := next.include(&Admission{
+		ordering: map[manifest.NamedResource][]store.OrderingEdge{second: nil},
+	}, true)
+	assert.Diff(t, retired, []manifest.NamedResource{leaf, middle})
+	for _, id := range retired {
+		assert.Equal(t, final.ReadinessDemand(id), false)
+		assert.Equal(t, next.ReadinessDemand(id), true)
+	}
 }

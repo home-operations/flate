@@ -20,7 +20,7 @@ func (c *admissionClosure) applicationDeclaration(id manifest.NamedResource) ([]
 			if location.Pinned || location.External {
 				break
 			}
-			input := c.occurrenceMount(id, occurrence.Declaration.Source)
+			input := occurrence.Mounted
 			if input != nil && c.context.EntryPath != "" {
 				return chain, occurrence.Declaration
 			}
@@ -92,9 +92,8 @@ func (c *admissionClosure) acquireApplication(
 	id, declaration := chain[0], chain[len(chain)-1]
 	if !route.Bound && route.Winners == nil {
 		source := c.source(declaration)
-		c.acquire(Demand{
-			Identity: id, Application: query, Source: source, Artifact: c.occurrenceMount(declaration, query.Source),
-		})
+		occurrence, _ := c.catalogOccurrence(declaration)
+		c.acquire(Demand{Identity: id, Application: query, Source: source, Artifact: occurrence.Mounted})
 		return true
 	}
 	if route.Changed && c.session.request.Changed {
@@ -160,4 +159,36 @@ func parseApplication(application string) (manifest.BaseManifest, bool) {
 	}
 	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
 	return parsed.Object, err == nil
+}
+
+func (c *admissionClosure) rootMatches(root string) bool {
+	var identities []manifest.NamedResource
+	for i := range c.context.Roots {
+		if facts := &c.context.Roots[i]; facts.Path == root {
+			identities = facts.Identities
+			break
+		}
+	}
+	matches := c.rootRequired(root) || slices.ContainsFunc(
+		identities,
+		func(id manifest.NamedResource) bool { return c.session.request.Matches(id) },
+	)
+	if !matches {
+		delta, _, _ := c.delta(manifest.BootstrapSourceID)
+		for id, input := range c.comparisonInputs(delta, manifest.NamedResource{}) {
+			if c.session.request.Matches(id) &&
+				slices.ContainsFunc(input.Declarations, func(file string) bool {
+					return containsPath(c.context.Root, filepath.Join(c.context.Root, root)) &&
+						containsPath(
+							filepath.Join(c.context.Root, root),
+							filepath.Join(c.context.Root, filepath.FromSlash(file)),
+						)
+				}) {
+				matches = true
+				break
+			}
+		}
+	}
+
+	return matches
 }

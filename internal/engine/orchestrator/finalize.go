@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -122,14 +123,17 @@ func (o *Orchestrator) finalize() error {
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
-	var errs []error
+	return o.reconcileFailures(o.aggregateFailures(failed))
+}
+
+func (o *Orchestrator) reconcileFailures(resourceErr error) error {
 	if n := o.tasks.Failures(); n > 0 {
-		errs = append(errs, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n))
+		return errors.Join(
+			fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n),
+			resourceErr,
+		)
 	}
-	if len(failed) != 0 {
-		errs = append(errs, o.aggregateFailures(failed))
-	}
-	return errors.Join(errs...)
+	return resourceErr
 }
 
 func (o *Orchestrator) warnMissingCRDs() {
@@ -211,6 +215,13 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 }
 
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
+	if len(failed) == 0 {
+		return nil
+	}
+	return &selection.FailuresError{Message: o.failureMessage(failed)}
+}
+
+func (o *Orchestrator) failureMessage(failed map[manifest.NamedResource]store.StatusInfo) string {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range failed {
 		if f := o.fileOf(id); f != "" {
@@ -220,8 +231,7 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
-	return &selection.FailuresError{Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s",
-		len(msgs), strings.Join(msgs, "\n  "))}
+	return fmt.Sprintf("reconcile completed with %d failure(s):\n  %s", len(msgs), strings.Join(msgs, "\n  "))
 }
 
 func (o *Orchestrator) fileOf(id manifest.NamedResource) string {
@@ -243,4 +253,27 @@ func (o *Orchestrator) catalogObject(id manifest.NamedResource) manifest.BaseMan
 	}
 	record, _ := o.index.Lookup(id)
 	return record.Declaration
+}
+
+func (r *Invocation) workOnlyBase(i int) bool {
+	return r.Config.HeadOnly && r.results[i].ID.Side == manifest.TreeBase
+}
+
+func (r *Invocation) collectTree(ctx context.Context, i int, runErr error) {
+	rendered := &r.results[i]
+	if r.workOnlyBase(i) {
+		rendered.stop()
+		rendered.Result = &Result{Work: rendered.freezeWork()}
+		rendered.Orchestrator = nil
+		if runErr != nil {
+			rendered.Err = &treeError{id: rendered.ID, err: runErr, attributed: len(r.results) > 1}
+		}
+		return
+	}
+	defer rendered.stop()
+	result, failure := rendered.collectResult(ctx, runErr)
+	rendered.Result = result
+	if failure != nil {
+		rendered.Err = &treeError{id: rendered.ID, err: failure, attributed: len(r.results) > 1}
+	}
 }

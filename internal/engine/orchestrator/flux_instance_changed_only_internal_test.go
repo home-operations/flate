@@ -277,14 +277,14 @@ func (tc *ociChangedOnlyCase) assertSelection(t *testing.T, runs []Rendered, ful
 	}
 }
 
-func assertOCIPlexAttempts(t *testing.T, result *Result, covered, inspectParent bool) {
+func assertOCIPlexAttempts(t *testing.T, result *Result, covered bool, parentAttempts uint64) {
 	t.Helper()
 	want := map[manifest.NamedResource]uint64{
 		testutil.KustomizationID("default", "plex"): 1,
 		testutil.HelmReleaseID("default", "plex"):   1,
 	}
-	if covered || inspectParent {
-		want[testutil.KustomizationID("flux-system", "flux-instance")] = 1
+	if parentAttempts != 0 {
+		want[testutil.KustomizationID("flux-system", "flux-instance")] = parentAttempts
 	}
 	if covered {
 		want[testutil.KustomizationID("flux-system", "flux-system")] = 1

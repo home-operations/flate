@@ -20,21 +20,21 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 	stage manifest.GateStage,
 	level manifest.DrainLevel,
 ) (T, error) {
-	canonical, _ := e.Reads.Get[T](e.Reads.ID())
+	canonical, _ := e.Reads.GetDeclaration(e.Reads.ID()).(T)
 	if err := e.Checkpoint(); err != nil {
 		return canonical, err
 	}
 	var deps []manifest.DependencyRef
 	if stage != manifest.GateParents {
-		if capacity := effective.ReferenceCapacity().References; capacity != 0 {
-			w := e.dependencyWaiter()
-			deps = w.SelectGates(manifest.References(effective, manifest.ReferenceAll), stage, capacity)
-		}
+		deps = depwait.SelectGates(
+			manifest.References(effective, manifest.ReferenceAll), stage,
+			effective.ReferenceCapacity().References, &e.Reads,
+		)
 	}
 	for _, dep := range deps {
 		e.Reads.Require(dep)
 	}
-	if err := e.requireDeclaration(ctx, level); err != nil {
+	if err := e.assess(ctx, level, depwait.AssessDeclaration); err != nil {
 		return canonical, err
 	}
 	if !e.prepared {
@@ -81,8 +81,7 @@ type dataLookup interface {
 
 func (e *Execution) dependencyWaiter() depwait.Waiter {
 	w := depwait.Waiter{
-		Store: &e.Reads, Parent: e.Reads.ID(), Missing: e.Missing,
-		Decision: e.selection.Snapshot(), Indexed: e.existence,
+		Store: &e.Reads, Parent: e.Reads.ID(), Missing: e.Missing, Decision: e.selection.Snapshot(),
 	}
 	if !e.probe {
 		w.Admission = selection.PrepareRequest{

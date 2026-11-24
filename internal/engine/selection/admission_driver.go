@@ -21,7 +21,7 @@ type AdmissionOptions struct {
 	}
 }
 
-// AdmissionResult owns immutable observations from accepted publication, beyond proposal retirement.
+// AdmissionResult owns immutable observations from a settled proposal, beyond proposal retirement.
 type AdmissionResult struct {
 	Request      PrepareRequest
 	EntryReceipt *manifest.EntryApplication
@@ -35,6 +35,8 @@ type AdmissionResult struct {
 	Blocked      []string
 	Revision     uint64
 	Namespaces   []string
+
+	OrderingChanged map[manifest.NamedResource]bool
 
 	entry         *EntryRoute
 	entryReads    *store.ReadSet
@@ -60,7 +62,8 @@ type admissionDriver struct {
 //nolint:gocritic // One owner MUST retain acquisitions and first-attempt presence through publication retries.
 func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
 	driver := admissionDriver{session: s, options: options, request: options.Request}
-	driver.request.construction = options.Stage == Construction && s.request.Changed
+	comparison := len(driver.request.OrderingCandidates) != 0
+	driver.request.construction = options.Stage == Construction && s.request.Changed && !comparison
 	if options.Stage != Construction {
 		driver.request.LookupSources = nil
 	}
@@ -98,6 +101,10 @@ func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (Admissio
 			continue
 		case !options.Authority.Valid():
 			return AdmissionResult{}, false, nil
+		case comparison && (ctx.Err() != nil || !driver.proposal.reads.Valid() || !s.guardCurrent(driver.proposal)):
+			continue
+		case comparison:
+			return driver.proposal.result(), true, nil
 		}
 		driver.capturePresence()
 		decision, accepted := s.publishAdmission(ctx, driver.proposal, options.Stage)
@@ -114,6 +121,15 @@ func (s *Session) Admit(ctx context.Context, options AdmissionOptions) (Admissio
 func (d *admissionDriver) retire() {
 	if d.publishing != nil {
 		d.publishing.closure.publication = 0
+	}
+	if preparation := *d.request.Preparation; d.options.Previous != nil && preparation != nil &&
+		preparation.closure.session == d.session {
+		// A history refresh MUST release its transient probe witnesses at the driver boundary.
+		for key := range preparation.acquired {
+			if key.history && key.root == "" {
+				delete(preparation.acquired, key)
+			}
+		}
 	}
 	d.session.store.Retire(d.proof)
 	d.proposal.Retire()
@@ -299,7 +315,7 @@ func (s *Session) publishAdmission(ctx context.Context, proposal *Admission, sta
 		if proposal.Request.AwaitEmission {
 			incoming = proposal.preparation.closure.incoming(id).Obj
 		}
-		s.store.SetIncluded(id, true, next.OrdinaryDemand(id), incoming)
+		s.Include(id, incoming)
 	}
 	return next, proposal.admitObjects(ctx, s)
 }
@@ -315,10 +331,25 @@ func (s *Session) admissionProof(authority *store.ReadSet) *store.ReadSet {
 			proof.RequireData(id)
 		}
 	}
+	if authority.OrderingAssessed() {
+		proof.AssessOrdering()
+		for id := range authority.Ordering() {
+			proof.RequireOrdering(&id)
+		}
+	}
 	return proof
 }
 
 func (a *Admission) result() AdmissionResult {
+	if candidates := a.Request.OrderingCandidates; len(candidates) != 0 {
+		changed := make(map[manifest.NamedResource]bool)
+		for _, owner := range candidates {
+			if a.preparation.closure.states[owner].changed {
+				changed[owner] = true
+			}
+		}
+		return AdmissionResult{OrderingChanged: changed}
+	}
 	return AdmissionResult{
 		Request: a.Request, EntryReceipt: a.EntryReceipt, Objects: a.Objects, Demands: a.demands,
 		Needed: a.Needed, Selected: a.Selected, Dirty: a.Dirty, Ordinary: a.Ordinary,

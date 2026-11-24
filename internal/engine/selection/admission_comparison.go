@@ -12,6 +12,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// SetOrderingComparison MUST precede the next construction or execution round.
+func (s *Session) SetOrderingComparison(owners []manifest.NamedResource) {
+	s.orderingComparison, s.comparisonOnly = owners, len(owners) != 0
+}
+
 func (c *admissionClosure) delta(source manifest.NamedResource) (*change.Set, *store.SourceArtifact, bool) {
 	evidence := c.boundSource(source)
 	return evidence.Delta, evidence.Input, evidence.Paired
@@ -136,6 +141,17 @@ func (c *admissionClosure) stableWorkingTreeBinding(source manifest.NamedResourc
 	bootstrap := c.boundSource(manifest.BootstrapSourceID).Snapshots
 	return (base == bootstrap[manifest.TreeBase] || base.Provider == store.ProviderAlias) &&
 		(head == bootstrap[manifest.TreeHead] || head.Provider == store.ProviderAlias)
+}
+
+func (c *admissionClosure) orderingDeclarationChanged(id manifest.NamedResource) bool {
+	if c.declarationChanged(id, c.object(id)).Changed {
+		return true
+	}
+	return c.context.SideKnown && c.proposal.Request.Changes.EffectiveDeclarationChanged(
+		c.context.Side, id, func(source manifest.NamedResource) *store.SourceArtifact {
+			return c.boundSource(source).Input
+		},
+	)
 }
 
 func (c *admissionClosure) declarationChanged(
@@ -537,7 +553,8 @@ func (c *admissionClosure) generatedKustomizeRead(
 		}
 		if obj == nil {
 			record := c.record(id)
-			obj, _ = c.completeHydrate(&completeHydrateState{id: &id, record: &record, obj: &obj})
+			owner := c.declarationProductionOwner(id, record.Parent)
+			obj = c.completeHydrate(c.evaluationContext, id, owner, &record)
 		}
 		key := kustomizeReadKey{id: id, source: source, object: obj}
 		reads, ok := c.kustomizeReads[key]

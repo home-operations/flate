@@ -195,6 +195,7 @@ func evaluateModel(w modelWorld) modelEvaluation {
 type modelSelection struct {
 	affected    modelSet
 	support     modelSet
+	readiness   modelSet
 	unavailable modelSet
 	deleted     modelSet
 	allowed     map[modelID]string
@@ -207,7 +208,7 @@ type modelComparison struct {
 
 func selectModel(w modelWorld, evaluation modelEvaluation, affected, deleted modelSet) modelSelection {
 	selection := modelSelection{
-		affected: make(modelSet), support: make(modelSet),
+		affected: make(modelSet), support: make(modelSet), readiness: make(modelSet),
 		unavailable: make(modelSet), deleted: maps.Clone(deleted), allowed: maps.Clone(w.uncertainty),
 	}
 	for id, state := range evaluation.status {
@@ -216,6 +217,11 @@ func selectModel(w modelWorld, evaluation modelEvaluation, affected, deleted mod
 		}
 		if affected[id] {
 			selection.affected[id] = true
+		}
+	}
+	for id := range modelOrderingReaders(w, affected) {
+		if _, available := evaluation.status[id]; available && !selection.affected[id] {
+			selection.readiness[id] = true
 		}
 	}
 	pending := modelIDs(selection.affected)

@@ -104,10 +104,6 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 			)
 			want := map[manifest.NamedResource]role{
 				consumer.Named(): primary,
-				target:           kept,
-				producer.Named(): kept,
-				declaration:      kept,
-				ancestor:         kept,
 			}
 			if mode == "emitted" {
 				assert.Equal(t, f.Reconcile(consumer.Named()), false)
@@ -116,18 +112,20 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 				defer reads.Close()
 				added := f.AddEmitted(emitter, new(store.Child{Obj: consumer}), &reads)
 				assert.Equal(t, slices.IsSortedFunc(added, manifest.NamedResource.Compare), true)
-				assert.Equal(t, len(added), len(want))
+				assert.Diff(t, added, []manifest.NamedResource{consumer.Named()})
 				assert.Equal(t, reads.Valid(), true)
 				want[emitter] = primary
 			}
 			assert.Diff(t, f.roles(), want)
+			f.settle()
+			assert.Equal(t, f.loader.Options.Session.Snapshot().ReadinessDemand(target), true)
 			assert.Equal(t, f.Reconcile(sibling), false)
 			assert.Equal(t, st.GetObject(target), nil)
 		})
 	}
 }
 
-func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
+func TestAddEmitted_OrderingReachDoesNotSelectOutput(t *testing.T) {
 	t.Parallel()
 	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
 	consumer := &manifest.Kustomization{
@@ -135,20 +133,48 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 		Namespace: "apps",
 		DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
 	}
-	st := store.New()
-	st.AddObject(target)
-	index := &manifest.DiscoveryIndex{
-		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target.Named(): {File: "target.yaml"}},
+	for _, tc := range []struct {
+		name       string
+		lateTarget bool
+	}{
+		{name: "late reader"},
+		{name: "late changed target", lateTarget: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			if !tc.lateTarget {
+				st.AddObject(target)
+			}
+			index := &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target.Named(): {File: "target.yaml"}},
+			}
+			f := newAdmission(t, admissionConfig{
+				changes: detectChanges(t, []string{"target.yaml"}, []string{"target.yaml"}),
+				index:   index, inventory: st, root: "/repo",
+			})
+			owner := testutil.KustomizationID("apps", "unchanged")
+			want := map[manifest.NamedResource]role{target.Named(): primary}
+			if tc.lateTarget {
+				f.settle()
+				st.AddObject(consumer)
+				f.loader.inputReaders = map[manifest.NamedResource][]manifest.NamedResource{
+					target.Named(): {consumer.Named()},
+				}
+				before := f.loader.Options.Session.Snapshot()
+				assert.Equal(t, before.ReadinessDemand(consumer.Named()), false)
+				assert.Equal(t, before.Assess(consumer.Named()), false)
+				f.AddEmitted(owner, new(store.Child{Obj: target}), st)
+				want[owner] = kept
+			} else {
+				f.AddEmitted(owner, new(store.Child{Obj: consumer}), st)
+			}
+			assert.Diff(t, f.roles(), want)
+			decision := f.loader.Options.Session.Snapshot()
+			assert.Equal(t, decision.ReadinessDemand(consumer.Named()), true)
+			assert.Equal(t, decision.Assess(consumer.Named()), true)
+			assert.Equal(t, decision.Reconcile(consumer.Named()), false)
+			assert.Equal(t, decision.Output(consumer.Named()), false)
+		})
 	}
-	f := newAdmission(
-		t,
-		admissionConfig{
-			changes:   detectChanges(t, []string{"target.yaml"}, []string{"target.yaml"}),
-			index:     index,
-			inventory: st,
-			root:      "/repo",
-		},
-	)
-	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), new(store.Child{Obj: consumer}), st)
-	assert.Diff(t, f.roles(), map[manifest.NamedResource]role{target.Named(): primary})
 }

@@ -5,6 +5,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -47,6 +51,21 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			c.objects = reads
 			c.proposal.reads = &captured
 			c.proposal.Request.Changes = changes
+			reader := manifest.NamedResource{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization,
+				Namespace: "apps", Name: "reader",
+			}
+			ref := &manifest.Reference{}
+			ref.Ordering = true
+			assert.Equal(t, c.reverseInputChanged(reader, id, ref), false)
+			assert.Equal(t, c.states[reader].readinessAffected, false)
+			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(0))
+			if changed == "selected.yaml" {
+				c.markChanged(id)
+				assert.Equal(t, c.reverseInputChanged(reader, id, ref), false)
+				assert.Equal(t, c.states[reader].readinessAffected, true)
+				assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(0))
+			}
 			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
 			calls := sourceCaptureCount(&captured)
 			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
@@ -62,6 +81,105 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdmission_ReverseInputForIndexedReader(t *testing.T) {
+	t.Parallel()
+	for _, changedKey := range []string{"selected", "unrelated"} {
+		t.Run(changedKey, func(t *testing.T) {
+			t.Parallel()
+			reader := &manifest.HelmRelease{
+				Name: "reader", Namespace: "apps",
+				ValuesFrom: []helmv2.ValuesReference{{Kind: "ConfigMap", Name: "settings", ValuesKey: "selected"}},
+			}
+			before := &manifest.ConfigMap{
+				Name: "settings", Namespace: reader.Namespace,
+				Data: map[string]any{"selected": "data: before", "unrelated": "data: before"},
+			}
+			after := &manifest.ConfigMap{
+				Name: before.Name, Namespace: before.Namespace,
+				Data: map[string]any{"selected": "data: before", "unrelated": "data: before"},
+			}
+			after.Data[changedKey] = "data: after"
+			input := after.Named()
+			stores := [2]*store.Store{store.New(), store.New()}
+			for side, obj := range [2]*manifest.ConfigMap{before, after} {
+				stores[side].SetArtifact(
+					manifest.BootstrapSourceID,
+					&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: t.TempDir(), FS: fstest.MapFS{}},
+				)
+				stores[side].AddObject(obj)
+			}
+			changes, err := change.Qualify(
+				t.Context(), detectChanges(t, []string{"settings.yaml"}, []string{"settings.yaml"}),
+				change.SourcePair{Stores: stores}, manifest.WorkScope{},
+			)
+			assert.NoError(t, err)
+			id := reader.Named()
+			declaration := store.Child{Obj: reader}
+			prepared := map[manifest.NamedResource]store.Child{id: declaration}
+			changes, err = changes.WithDeclarations(t.Context(), change.DeclarationInputs{
+				Stores: stores, Prepared: [2]map[manifest.NamedResource]store.Child{prepared, prepared},
+			})
+			assert.NoError(t, err)
+			facts := &solverFacts{
+				store: stores[1], changes: changes,
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {Declaration: reader},
+				}},
+				context: SourceContext{SideKnown: true, Side: manifest.TreeHead},
+				sources: map[manifest.NamedResource]SourceFacts{manifest.BootstrapSourceID: {Paired: true}},
+			}
+			closure := solverClosure(t, stores[1], facts)
+			closure.context = facts.context
+			closure.proposal.Request.Changes = changes
+			closure.states[input] = admissionState{role: admissionRole{dirty: true}}
+			assert.Equal(t, stores[1].GetObject(id), nil)
+			assert.Equal(t, closure.reverseInputRole(id, admissionRole{}, true).dirty, changedKey == "selected")
+		})
+	}
+}
+
+func TestAdmission_OrderingKeepsDeclarationStable(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
+	owner := &manifest.Kustomization{
+		Name: "owner", Namespace: target.Namespace,
+		DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
+	}
+	st.AddObject(target)
+	st.AddObject(owner)
+	const path = "edited.yaml"
+	root := t.TempDir()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	changes := detectChanges(t, []string{path}, []string{path})
+	facts := &solverFacts{store: st, changes: changes, context: SourceContext{Root: root}}
+	c := solverClosure(t, st, facts)
+	c.context = facts.context
+	c.proposal.Request.Changes = changes
+	var reads store.ReadSet
+	reads.Init(st, owner.Named(), nil)
+	t.Cleanup(reads.Close)
+	var work manifest.WorkRecorder
+	reads.SetWork(&work)
+	c.objects = &reads
+	c.states[target.Named()] = admissionState{role: admissionRole{dirty: true}}
+	stable := true
+	c.checkDeclarationReferences(owner.Named(), &stable)
+	assert.Equal(t, stable, true)
+	noInputs := &manifest.DiscoveryRecord{}
+	c.checkDeclarationFiles(manifest.BootstrapSourceID, &stable, noInputs, noInputs)
+	assert.Equal(t, stable, true)
+	assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(0))
+	c.checkDeclarationFiles(
+		manifest.BootstrapSourceID,
+		&stable,
+		&manifest.DiscoveryRecord{Inputs: []string{path}},
+		noInputs,
+	)
+	assert.Equal(t, stable, false)
+	assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
 }
 
 func sourceCaptureCount(reads *store.ReadSet) int {
@@ -131,10 +249,13 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 	for _, tc := range []struct {
 		name, file string
 		changed    bool
+		mixed      bool
 	}{
 		{name: "declared subtree", file: "apps/owner/new.yaml", changed: true},
 		{name: "observed external input", file: "shared/input.yaml", changed: true},
 		{name: "unobserved external descendant", file: "shared/nested/unrelated.yaml"},
+		{name: "distinct direct and ancestor readers", file: "shared/nested/unrelated.yaml", mixed: true},
+		{name: "exact ancestor reader is excluded", file: "apps/owner/new.yaml", mixed: true, changed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -161,17 +282,48 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 				Identity: owner.Named(), Authored: owner.Named(), CatalogKnown: true,
 				Source: manifest.BootstrapSourceID, Roots: []string{"apps/owner"},
 			}}
+			direct := (&manifest.Kustomization{Name: "direct", Namespace: "apps"}).Named()
+			exact := (&manifest.Kustomization{Name: "exact", Namespace: "apps"}).Named()
+			if tc.mixed {
+				facts.index.Readers[tc.file] = []manifest.FileReader{{Reader: direct, Source: reader.Source}}
+				facts.index.Records[direct] = manifest.DiscoveryRecord{
+					ContentRoots: map[manifest.NamedResource][]string{reader.Source: {"elsewhere"}},
+				}
+			}
+			if tc.mixed && tc.changed {
+				facts.index.Readers["apps/owner"] = append(facts.index.Readers["apps/owner"], manifest.FileReader{
+					Reader: exact, Source: reader.Source, Exact: true,
+				})
+				facts.index.Records[exact] = manifest.DiscoveryRecord{
+					ContentRoots: map[manifest.NamedResource][]string{reader.Source: {"apps/owner"}},
+				}
+			}
 			c := solverClosure(t, st, facts)
 			counted := &countedAdmissionFacts{census: facts, rootPaths: map[manifest.NamedResource]int{}}
 			c.facts = counted
 			c.context = facts.context
 			c.proposal.Request.Changes = facts.changes
-			assert.Equal(t, c.changedClaim(&reader, tc.file), tc.changed)
+			assert.Equal(t, c.changedClaim(&reader, tc.file, false), tc.changed)
 			expectedRoots := 1
 			if tc.file == "shared/input.yaml" {
 				expectedRoots = 0
 			}
 			assert.Equal(t, counted.rootPaths[owner.Named()], expectedRoots)
+			var reads store.ReadSet
+			reads.Init(st, owner.Named(), nil)
+			t.Cleanup(reads.Close)
+			var work manifest.WorkRecorder
+			reads.SetWork(&work)
+			c.objects = &reads
+			c.seedChangedReaders(tc.file)
+			assert.Equal(t, c.states[owner.Named()].seed, tc.changed)
+			if tc.file == "shared/input.yaml" || tc.mixed && !tc.changed {
+				assert.Equal(t, work.Scope().Admission().Counts.ReaderEdges, uint64(3))
+			}
+			if tc.mixed {
+				assert.Equal(t, c.states[direct].seed, true)
+				assert.Equal(t, c.states[exact].seed, false)
+			}
 		})
 	}
 }

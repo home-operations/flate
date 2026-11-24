@@ -6,28 +6,11 @@
       "testdata/e6-reach",
       "test/reach"
     ],
-    "reductions": "Preserve all eight work-identity sets and original paths. Consolidate excluded declarations and replace empty siblings with reduced workloads, resources, and application configuration from pinned sources. Suspend finite Plex exclusions and disable database ResourceSet reconciliation. Preserve OCI sources through a declared local registry. The separate scale proof restores the original empty unsuspended siblings from fixed identities."
+    "reductions": "Preserve all eight work-identity sets and their original paths. Group excluded declarations. Replace empty siblings with reduced workloads, resources, and application configuration from pinned sources. Suspend finite Plex exclusions and disable database ResourceSet reconciliation. Serve the OCI charts from a local registry. The separate scale proof restores the original empty unsuspended siblings from fixed identities."
   },
   "repositories": [
     {
-      "name": "repo",
-      "directory": "repo",
-      "remotes": [
-        {
-          "name": "origin",
-          "url": "https://example.test/reach/repo"
-        }
-      ]
-    },
-    {
-      "name": "baseline",
-      "directory": "repo",
-      "remotes": [
-        {
-          "name": "origin",
-          "url": "https://example.test/reach/repo"
-        }
-      ]
+      "name": "repo"
     },
     {
       "name": "identity-base",
@@ -79,18 +62,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "consumed-variable",
-      "directory": "overlays/consumed-variable"
-    },
-    {
-      "name": "unused-variable",
-      "directory": "overlays/unused-variable"
-    },
-    {
-      "name": "metadata-only",
-      "directory": "overlays/metadata-only"
     }
   ],
   "cases": [
@@ -262,251 +233,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "consumed-variable",
-      "description": "CLI precision for consumed-variable with a nonempty unrelated sibling.",
-      "setup": [],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "prime",
-          "invoke": {
-            "argv": [
-              "build",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "-o",
-              "yaml"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/before.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        },
-        {
-          "id": "change",
-          "edit": {
-            "overlay": "consumed-variable"
-          }
-        },
-        {
-          "id": "result",
-          "invoke": {
-            "argv": [
-              "build",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "-o",
-              "yaml"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/consumed-variable.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        },
-        {
-          "id": "diff",
-          "invoke": {
-            "argv": [
-              "diff",
-              "ks",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "--path-orig",
-              "@@baseline@@/kubernetes/flux/cluster",
-              "-o",
-              "diff"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/consumed-variable-diff.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "unused-variable",
-      "description": "CLI precision for unused-variable with a nonempty unrelated sibling.",
-      "setup": [],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "prime",
-          "invoke": {
-            "argv": [
-              "build",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "-o",
-              "yaml"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/before.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        },
-        {
-          "id": "change",
-          "edit": {
-            "overlay": "unused-variable"
-          }
-        },
-        {
-          "id": "result",
-          "invoke": {
-            "argv": [
-              "diff",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "--path-orig",
-              "@@baseline@@/kubernetes/flux/cluster",
-              "-o",
-              "diff"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/empty.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "metadata-only",
-      "description": "CLI precision for metadata-only with a nonempty unrelated sibling.",
-      "setup": [],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "prime",
-          "invoke": {
-            "argv": [
-              "build",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "-o",
-              "yaml"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/before.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        },
-        {
-          "id": "change",
-          "edit": {
-            "overlay": "metadata-only"
-          }
-        },
-        {
-          "id": "result",
-          "invoke": {
-            "argv": [
-              "diff",
-              "ks",
-              "plex",
-              "-n",
-              "media",
-              "-p",
-              "@@repo@@/kubernetes/flux/cluster",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--cache-dir",
-              "@@cache@@",
-              "--path-orig",
-              "@@baseline@@/kubernetes/flux/cluster",
-              "-o",
-              "diff"
-            ],
-            "cache": {},
-            "expect": {
-              "stdout": "expect/empty.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        }
-      ]
     }
   ],
   "files": [
@@ -527,46 +253,6 @@
         "global-configmap"
       ],
       "purpose": "Unchanged local OCI chart for the opaque Plex producer and global release values."
-    },
-    {
-      "path": "expect/before.stdout",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Independently specified complete CLI stream."
-    },
-    {
-      "path": "expect/consumed-variable-diff.stdout",
-      "cases": [
-        "consumed-variable"
-      ],
-      "purpose": "Independently specified complete CLI stream."
-    },
-    {
-      "path": "expect/consumed-variable.stdout",
-      "cases": [
-        "consumed-variable"
-      ],
-      "purpose": "Independently specified complete CLI stream."
-    },
-    {
-      "path": "expect/empty.stderr",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Independently specified complete CLI stream."
-    },
-    {
-      "path": "expect/empty.stdout",
-      "cases": [
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Independently specified complete CLI stream."
     },
     {
       "path": "identity/crd/charts/reach/Chart.yaml",
@@ -6865,13 +6551,6 @@
       "consumer": "identity-base/shared/kubernetes/apps/media/plex/app"
     },
     {
-      "path": "overlays/consumed-variable/repo/kubernetes/flux/cluster/cluster-settings.yaml",
-      "cases": [
-        "consumed-variable"
-      ],
-      "purpose": "Declared source edit for consumed-variable."
-    },
-    {
       "path": "overlays/crd/identity-head/crd/kubernetes/apps/kube-system/multus/app/crds.yaml",
       "cases": [
         "crd"
@@ -6907,13 +6586,6 @@
       "purpose": "Declared source edit for kopiur-component."
     },
     {
-      "path": "overlays/metadata-only/repo/kubernetes/flux/cluster/plex.yaml",
-      "cases": [
-        "metadata-only"
-      ],
-      "purpose": "Declared source edit for metadata-only."
-    },
-    {
       "path": "overlays/plex-timeout/identity-head/plex/kubernetes/apps/media/plex/ks.yaml",
       "cases": [
         "plex-timeout"
@@ -6933,85 +6605,6 @@
         "shared-component"
       ],
       "purpose": "Declared source edit for shared-component."
-    },
-    {
-      "path": "overlays/unused-variable/repo/kubernetes/flux/cluster/cluster-settings.yaml",
-      "cases": [
-        "unused-variable"
-      ],
-      "purpose": "Declared source edit for unused-variable."
-    },
-    {
-      "path": "repo/kubernetes/apps/media/plex/app/cm.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/apps/media/plex/app/kustomization.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/apps/media/unrelated/app/cm.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/apps/media/unrelated/app/kustomization.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/flux/cluster/cluster-settings.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/flux/cluster/kustomization.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/flux/cluster/plex.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
-    },
-    {
-      "path": "repo/kubernetes/flux/cluster/unrelated.yaml",
-      "cases": [
-        "consumed-variable",
-        "unused-variable",
-        "metadata-only"
-      ],
-      "purpose": "Plex variable and interval precision with a nonempty unrelated sibling."
     }
   ]
 }

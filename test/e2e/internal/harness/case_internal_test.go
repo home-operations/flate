@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,7 +74,7 @@ func TestTestDuration_Grammar(t *testing.T) {
 	}
 }
 
-// The case changes the process environment, directory, logging and transports.
+//nolint:paralleltest // The case changes the process environment, directory, logging and transports.
 func TestCase_RestoresProcessState(t *testing.T) {
 	t.Setenv("FLATE_PATH", "/inherited")
 	t.Setenv("AWS_ACCESS_KEY_ID", "credential-canary")
@@ -84,29 +83,33 @@ func TestCase_RestoresProcessState(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger, transport := slog.Default(), http.DefaultTransport
-	t.Run("case", func(t *testing.T) {
-		fixture := Open(t, "entry-root", "literal-app")
-		if os.Getenv("FLATE_PATH") != "" || os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			t.Fatal("case inherited flags or credentials")
-		}
-		fixture.fixture.Plan.Directory = "@@repo@@"
-		want := fixture.Want(t)
-		for range 2 {
-			if got := fixture.Run(t); !slices.Equal(got, want) {
-				t.Fatalf("want %#v, got %#v", want, got)
+	for _, tc := range []struct {
+		name string
+		open func(*testing.T, string) *Case
+	}{
+		{"open", func(t *testing.T, name string) *Case {
+			t.Helper()
+			return Open(t, "entry-root", name)
+		}},
+		{"prepare", Prepare(t, "entry-root")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := tc.open(t, "literal-app")
+			assert.Equal(t, os.Getenv("FLATE_PATH"), "")
+			assert.Equal(t, os.Getenv("AWS_ACCESS_KEY_ID"), "")
+			fixture.fixture.Plan.Directory = "@@repo@@"
+			want := fixture.Want(t)
+			for range 2 {
+				assert.Diff(t, fixture.Run(t), want)
+				current, err := os.Getwd()
+				assert.NoError(t, err)
+				assert.Equal(t, current, directory)
+				assert.Equal(t, slog.Default(), logger)
 			}
-			current, err := os.Getwd()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if current != directory || slog.Default() != logger {
-				t.Fatal("invocation leaked directory or logging state")
-			}
-		}
-	})
-	if os.Getenv("FLATE_PATH") != "/inherited" || os.Getenv("AWS_ACCESS_KEY_ID") != "credential-canary" ||
-		http.DefaultTransport != transport {
-		t.Fatal("case leaked environment or transport state")
+		})
+		assert.Equal(t, os.Getenv("FLATE_PATH"), "/inherited")
+		assert.Equal(t, os.Getenv("AWS_ACCESS_KEY_ID"), "credential-canary")
+		assert.Equal(t, http.DefaultTransport, transport)
 	}
 }
 

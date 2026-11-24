@@ -4,7 +4,7 @@ import "testing"
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_SelectedKustomizeClassification(t *testing.T) {
-	for _, name := range []string{
+	testScopeCases(t, "entry-membership", []string{
 		"classification-yaml",
 		"classification-yml",
 		"classification-capitalized",
@@ -12,9 +12,5 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 		"classification-malformed",
 		"classification-multiple",
 		"classification-component",
-	} {
-		t.Run(name, func(t *testing.T) {
-			testScopeCase(t, "entry-membership", name)
-		})
-	}
+	})
 }

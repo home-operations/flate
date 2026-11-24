@@ -246,25 +246,20 @@ func (f *Fixture) applyOverlay(tb testing.TB, name string) {
 	tb.Fatalf("unknown overlay %q", name)
 }
 
-// Load permits Git transport only to a declared repository's origin URL.
-//
-
 type borrowedStorage struct{ storage.Storer }
 
 // Load MUST borrow fixture storage so connection cleanup cannot close it.
 func (f *Fixture) Load(endpoint *url.URL) (storage.Storer, error) {
-	for _, r := range f.schema.Repositories {
-		for _, remote := range r.Remotes {
-			if remote.URL == endpoint.String() {
-				return borrowedStorage{f.repositories[r.Name].Storer}, nil
-			}
-		}
+	if repo, ok := f.remoteRepositories[endpoint.String()]; ok {
+		return borrowedStorage{f.repositories[repo].Storer}, nil
 	}
 	return nil, transport.ErrRepositoryNotFound
 }
 
 func (f *Fixture) seedCacheFailure(tb testing.TB, failure *cacheFailure) {
 	tb.Helper()
+	// The first replay clears preparation caches before applying declared seeds.
+	f.firstReady = false
 	t, ok := tb.(*testing.T)
 	if !ok {
 		tb.Fatal("cache failures require a test")

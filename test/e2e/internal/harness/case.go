@@ -31,17 +31,31 @@ type Case struct {
 // Open isolates process state before any fixture invokes the CLI.
 func Open(t *testing.T, scenario, caseName string) *Case {
 	t.Helper()
-	f := testfixture.Materialize(t, scenario, caseName)
+	return open(t, testfixture.Materialize(t, scenario, caseName))
+}
+
+// Prepare shares immutable scenario input among cases in the enclosing test.
+func Prepare(t *testing.T, scenario string) func(*testing.T, string) *Case {
+	t.Helper()
+	prepared := testfixture.Prepare(t, scenario)
+	return func(t *testing.T, name string) *Case {
+		t.Helper()
+		return open(t, prepared.Materialize(t, name))
+	}
+}
+
+func open(t *testing.T, f *testfixture.Fixture) *Case {
+	t.Helper()
 	isolate(t, f)
 	transport := serve(t, f)
 	return &Case{fixture: f, transport: transport}
 }
 
-// Run restores fixture trees and applies the declared cache policy on every replay.
+// Run starts each replay with the declared fixture and cache state.
 func (c *Case) Run(t *testing.T, flags ...string) []Result {
 	t.Helper()
 	f := c.fixture
-	f.Restore(t)
+	f.StartReplay(t)
 	c.transport.update(t, nil)
 	results := make([]Result, 0, len(f.Plan.Steps))
 	for _, step := range f.Plan.Steps {

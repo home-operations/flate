@@ -9,7 +9,21 @@ import (
 
 func testScopeCase(t *testing.T, scenario, name string) {
 	t.Helper()
-	fixture := harness.Open(t, scenario, name)
+	assertScopeCase(t, harness.Open(t, scenario, name))
+}
+
+func testScopeCases(t *testing.T, scenario string, names []string) {
+	t.Helper()
+	open := harness.Prepare(t, scenario)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			assertScopeCase(t, open(t, name))
+		})
+	}
+}
+
+func assertScopeCase(t *testing.T, fixture *harness.Case) {
+	t.Helper()
 	want := fixture.Want(t)
 	first, second := fixture.Run(t), fixture.Run(t)
 	assertScopeResults(t, want, first)

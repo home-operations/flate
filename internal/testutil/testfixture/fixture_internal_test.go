@@ -122,15 +122,22 @@ func fixtureSource(t *testing.T, repeat string) string {
 
 func TestFixture_SequenceReplay(t *testing.T) {
 	t.Parallel()
-	f := materialize(t, fixtureSource(t, "reset"), "sequence")
+	scenario := prepare(t, fixtureSource(t, "reset"))
+	f := scenario.Materialize(t, "sequence")
+	other := scenario.Materialize(t, "sequence")
+	assert.FatalIf(t, f.prepared == nil || f.prepared != other.prepared, "cases must share one prepared history tree")
 	root, inputs := f.Repo, f.Inputs
 	hashes := f.Resolve(t, "@@commit:base@@ @@commit:head@@", "")
+	f.Edit(t, f.Plan.Steps[0])
 	for range 2 {
-		f.Restore(t)
+		f.StartReplay(t)
 		data, err := os.ReadFile(filepath.Join(f.Repo, "value"))
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "before")
 		f.Edit(t, f.Plan.Steps[0])
+		otherValue, err := os.ReadFile(filepath.Join(other.Repo, "value"))
+		assert.NoError(t, err)
+		assert.Equal(t, string(otherValue), "before")
 		for range 2 {
 			data, err = os.ReadFile(filepath.Join(f.Repo, "value"))
 			assert.NoError(t, err)
@@ -139,6 +146,9 @@ func TestFixture_SequenceReplay(t *testing.T) {
 		assert.Equal(t, f.Repo, root)
 		assert.Equal(t, f.Inputs, inputs)
 		assert.Equal(t, f.Resolve(t, "@@commit:base@@ @@commit:head@@", ""), hashes)
+		after := filepath.Join(f.dir, "overlays", "after", "repo", "value")
+		assert.Equal(t, f.origins[filepath.Join(root, "value")], after)
+		assert.Equal(t, other.origins[filepath.Join(other.Repo, "value")], filepath.Join(f.dir, "repo", "value"))
 		data, err = os.ReadFile(filepath.Join(f.root, "baseline", "value"))
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "independent")
@@ -151,7 +161,11 @@ func TestFixture_SequenceReplay(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, remote.Config().URLs[0], "https://fixture.invalid/repo")
 	}
-	other := materialize(t, f.dir, "sequence")
+	other.Edit(t, other.Plan.Steps[0])
+	other.Restore(t)
+	body, err := os.ReadFile(filepath.Join(other.Repo, "value"))
+	assert.NoError(t, err)
+	assert.Equal(t, string(body), "before")
 	assert.Equal(t, other.Resolve(t, "@@commit:base@@ @@commit:head@@", ""), hashes)
 	assert.Equal(t, f.Resolve(t, "${VAR} {{ .Values.value }}", ""), "${VAR} {{ .Values.value }}")
 }
@@ -176,33 +190,67 @@ func TestFixture_CommitTokens(t *testing.T) {
 				testutil.WriteFile(t, dir, "overlays/after/repo/token", "child: SENTINEL")
 			}
 			s.Tokens = []token{
-				{File: "repo/token", Sentinel: "SENTINEL", Value: "resolved"},
+				{File: "repo/token", Sentinel: "SENTINEL", Value: "@@repo@@"},
 				{File: "baseline/token", Sentinel: "BASELINE", Value: "independent"},
 			}
 			data, err := json.Marshal(s)
 			assert.NoError(t, err)
 			testutil.WriteFile(t, dir, "scenario.json", string(data))
-			f := materialize(t, dir, "sequence")
-			for range 2 {
-				for _, name := range []string{"base", "head", "baseline"} {
-					c := f.namedCommit(name)
-					obj, commitErr := f.repositories[c.Repository].CommitObject(f.commits[name])
-					assert.NoError(t, commitErr)
-					file, fileErr := obj.File("token")
-					assert.NoError(t, fileErr)
-					got, readErr := file.Contents()
-					assert.NoError(t, readErr)
-					want := "parent: resolved"
-					if name == "baseline" {
-						want = "independent"
-					} else if name == "head" && tc.replace {
-						want = "child: resolved"
-					}
-					assert.Equal(t, got, want)
+			scenario := prepare(t, dir)
+			for _, f := range []*Fixture{scenario.Materialize(t, "sequence"), scenario.Materialize(t, "sequence")} {
+				prefix := "parent: "
+				if tc.replace {
+					prefix = "child: "
 				}
-				f.Restore(t)
+				for range 2 {
+					f.StartReplay(t)
+					for _, proof := range []struct{ name, want string }{
+						{"base", "parent: " + f.Repo},
+						{"head", prefix + f.Repo},
+						{"baseline", "independent"},
+					} {
+						c := f.namedCommit(proof.name)
+						obj, commitErr := f.repositories[c.Repository].CommitObject(f.commits[proof.name])
+						assert.NoError(t, commitErr)
+						file, fileErr := obj.File("token")
+						assert.NoError(t, fileErr)
+						got, readErr := file.Contents()
+						assert.NoError(t, readErr)
+						assert.Equal(t, got, proof.want)
+					}
+				}
 			}
 		})
+	}
+}
+
+func TestFixture_CaseLocalRemote(t *testing.T) {
+	t.Parallel()
+	dir := fixtureSource(t, "reset")
+	s, err := load(dir)
+	assert.NoError(t, err)
+	s.Repositories[0].Remotes[0].URL = "file://@@baseline@@"
+	data, err := json.Marshal(s)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, dir, "scenario.json", string(data))
+
+	scenario := prepare(t, dir)
+	cases := []*Fixture{scenario.Materialize(t, "sequence"), scenario.Materialize(t, "sequence")}
+	for i, f := range cases {
+		for range 2 {
+			f.StartReplay(t)
+			want := "file://" + filepath.Join(f.root, "baseline")
+			remote, err := f.repositories["repo"].Remote("origin")
+			assert.NoError(t, err)
+			assert.Diff(t, remote.Config().URLs, []string{want})
+			endpoint, err := transport.ParseURL(want)
+			assert.NoError(t, err)
+			got, err := f.Load(endpoint)
+			assert.NoError(t, err)
+			assert.Equal(t, got.(borrowedStorage).Storer == f.repositories["repo"].Storer, true)
+			_, err = cases[1-i].Load(endpoint)
+			assert.Equal(t, errors.Is(err, transport.ErrRepositoryNotFound), true)
+		}
 	}
 }
 
@@ -212,9 +260,21 @@ func TestFixture_CacheOwnership(t *testing.T) {
 		t.Run(repeat, func(t *testing.T) {
 			t.Parallel()
 			f := materialize(t, fixtureSource(t, repeat), "sequence")
+			shareable := len(f.schema.Commits) > 0 && f.schema.canShareHistory()
+			assert.FatalIf(t, !shareable, "fixture history must be shareable")
+			assert.FatalIf(t, f.prepared != nil, "standalone fixture allocated a prepared history tree")
 			inv := f.Plan.Steps[1].Invoke
-			f.Restore(t)
+			repository := f.repositories["repo"]
 			cache := f.Cache(t, inv)
+			testutil.WriteFile(t, cache, "marker", "preparation")
+			testutil.WriteFile(t, f.Home, "marker", "preparation")
+			f.StartReplay(t)
+			assert.Equal(t, f.repositories["repo"] == repository, true)
+			for _, dir := range []string{cache, f.Home} {
+				_, err := os.Stat(filepath.Join(dir, "marker"))
+				assert.Equal(t, os.IsNotExist(err), true)
+			}
+			assert.Equal(t, f.Cache(t, inv), cache)
 			testutil.WriteFile(t, cache, "marker", "warm")
 			testutil.WriteFile(t, f.Home, "marker", "os cache")
 			isolated := *inv
@@ -227,7 +287,8 @@ func TestFixture_CacheOwnership(t *testing.T) {
 			assert.Equal(t, os.IsNotExist(err), true)
 			_, err = os.Stat(filepath.Join(cache, "marker"))
 			assert.NoError(t, err)
-			f.Restore(t)
+			f.StartReplay(t)
+			assert.Equal(t, f.repositories["repo"] == repository, false)
 			for _, dir := range []string{cache, f.Home} {
 				_, err := os.Stat(filepath.Join(dir, "marker"))
 				assert.Equal(t, os.IsNotExist(err), repeat == "reset")
@@ -238,12 +299,23 @@ func TestFixture_CacheOwnership(t *testing.T) {
 
 func TestFixture_GitFaultsAndFileOperations(t *testing.T) {
 	t.Parallel()
-	f := materialize(t, fixtureSource(t, "reset"), "sequence")
+	scenario := prepare(t, fixtureSource(t, "reset"))
+	f := scenario.Materialize(t, "sequence")
+	other := scenario.Materialize(t, "sequence")
 	f.apply(t, &operation{Rename: &rename{From: "repo/value", To: "repo/renamed"}})
 	f.apply(t, &operation{Chmod: &mode{Path: "repo/renamed", Mode: 0o755}})
 	info, err := os.Stat(filepath.Join(f.Repo, "renamed"))
 	assert.NoError(t, err)
 	assert.Equal(t, info.Mode().Perm(), os.FileMode(0o755))
+	wt, err := f.repositories["repo"].Worktree()
+	assert.NoError(t, err)
+	assert.NoError(t, wt.AddWithOptions(&git.AddOptions{All: true}))
+	otherIndex, err := other.repositories["repo"].Storer.Index()
+	assert.NoError(t, err)
+	_, err = otherIndex.Entry("value")
+	assert.NoError(t, err)
+	_, err = otherIndex.Entry("renamed")
+	assert.Equal(t, err != nil, true)
 	f.apply(t, &operation{Delete: "repo/renamed"})
 	_, err = os.Stat(filepath.Join(f.Repo, "renamed"))
 	assert.Equal(t, os.IsNotExist(err), true)
@@ -264,12 +336,48 @@ func TestFixture_GitFaultsAndFileOperations(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = f.repositories["repo"].BlobObject(entry.Hash)
 	assert.Equal(t, errors.Is(err, plumbing.ErrObjectNotFound), true)
+	_, err = other.repositories["repo"].BlobObject(entry.Hash)
+	assert.NoError(t, err)
+	_, err = other.repositories["repo"].Reference("refs/heads/custom", true)
+	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
+	otherShallow, err := other.repositories["repo"].Storer.Shallow()
+	assert.NoError(t, err)
+	assert.Equal(t, len(otherShallow), 0)
 	f.Restore(t)
+	_, err = f.repositories["repo"].BlobObject(entry.Hash)
+	assert.NoError(t, err)
+	_, err = f.repositories["repo"].Reference("refs/heads/custom", true)
+	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
 	shallow, err = f.repositories["repo"].Storer.Shallow()
 	assert.NoError(t, err)
 	assert.Equal(t, len(shallow), 0)
 	_, err = f.repositories["baseline"].CommitObject(f.commits["head"])
 	assert.Equal(t, err != nil, true)
+
+	t.Run("commit permissions", func(t *testing.T) {
+		t.Parallel()
+		dir := fixtureSource(t, "reset")
+		s, err := load(dir)
+		assert.NoError(t, err)
+		s.Overlays[0].Operations = []operation{{Chmod: &mode{Path: "repo/value", Mode: 0o640}}}
+		s.Cases[0].Setup = nil
+		data, err := json.Marshal(s)
+		assert.NoError(t, err)
+		testutil.WriteFile(t, dir, "scenario.json", string(data))
+		scenario := prepare(t, dir)
+		assert.Equal(t, scenario.prepared == nil, true)
+		f := scenario.Materialize(t, "sequence")
+		other := scenario.Materialize(t, "sequence")
+		for range 2 {
+			f.StartReplay(t)
+			for _, fixture := range []*Fixture{f, other} {
+				info, err := os.Stat(filepath.Join(fixture.Repo, "value"))
+				assert.NoError(t, err)
+				assert.Equal(t, info.Mode().Perm(), os.FileMode(0o640))
+			}
+			f.Edit(t, Step{Edit: &operation{Chmod: &mode{Path: "repo/value", Mode: 0o600}}})
+		}
+	})
 }
 
 func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
@@ -390,10 +498,32 @@ func TestFixture_SymlinkReplay(t *testing.T) {
 			s, err := load(dir)
 			assert.NoError(t, err)
 			s.Overlays[0].Operations = []operation{{Symlink: &symlink{Path: "repo/nested/link", Target: target}}}
+			committed := s.Cases[0]
+			committed.Name = "committed-link"
+			committed.Setup = nil
+			s.Cases = append(s.Cases, committed)
 			data, err := json.Marshal(s)
 			assert.NoError(t, err)
 			testutil.WriteFile(t, dir, "scenario.json", string(data))
-			f := materialize(t, dir, "sequence")
+			scenario := prepare(t, dir)
+			assert.Equal(t, scenario.prepared != nil, true)
+			first := scenario.Materialize(t, committed.Name)
+			second := scenario.Materialize(t, committed.Name)
+			for range 2 {
+				first.StartReplay(t)
+				for _, fixture := range []*Fixture{first, second} {
+					got, err := os.Readlink(filepath.Join(fixture.Repo, "nested", "link"))
+					assert.NoError(t, err)
+					assert.Equal(t, got, target)
+				}
+				first.Edit(t, Step{Edit: &operation{Delete: "repo/nested/link"}})
+				_, err := os.Lstat(filepath.Join(first.Repo, "nested", "link"))
+				assert.Equal(t, os.IsNotExist(err), true)
+				got, err := os.Readlink(filepath.Join(second.Repo, "nested", "link"))
+				assert.NoError(t, err)
+				assert.Equal(t, got, target)
+			}
+			f := scenario.Materialize(t, "sequence")
 			for range 2 {
 				f.Restore(t)
 				_, err := os.Lstat(filepath.Join(f.Repo, "nested", "link"))

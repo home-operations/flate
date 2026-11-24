@@ -168,6 +168,10 @@ type graphVisit struct {
 	membershipOnly     bool
 }
 
+func (v *graphVisit) resourceAt(file string) bool {
+	return v.role == kustomizeinput.Resource && (v.file == file || v.origin != "" && v.origin == file)
+}
+
 func (v *graphVisit) localCoordinate() string {
 	if v.localBase == "" || v.coordinate == v.prefix {
 		return v.localBase

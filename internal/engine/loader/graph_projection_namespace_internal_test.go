@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/internal/engine/selection"
 
@@ -427,6 +428,142 @@ func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
 				}
 				assert.Diff(t, identities, want)
 			}
+		})
+	}
+}
+
+func TestProjectAuthoredVisits_PendingSupplierEligibility(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"checkout supplier", "non-checkout claim", "eager checkout", "composed checkout",
+		"inactive claim", "no pending build",
+		"inactive supplier", "non-bootstrap supplier", "already owned scope",
+		"unregistered root", "origin only", "unowned origin only", "control file",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.SourceRoot = t.TempDir()
+			l.ensureScopes()
+			l.scopes.roots = []string{"entry"}
+			file := filepath.Join(l.SourceRoot, "owner.yaml")
+			mount := filepath.Join(l.SourceRoot, "mount")
+			artifact := &store.SourceArtifact{Provider: store.ProviderAlias, LocalRoot: l.SourceRoot, LocalPath: mount}
+			l.documents.artifacts = map[string]*store.SourceArtifact{mount: artifact}
+			id := testutil.KustomizationID("apps", "owner")
+			source := (&manifest.GitRepository{Name: "fleet", Namespace: "apps"}).Named()
+			claim := graphVisit{
+				root: mount, dir: "claimed", owner: id, source: source, role: kustomizeinput.Resource,
+				file: filepath.Join(mount, "owner.yaml"), origin: file, requiresBuild: true,
+			}
+			native := graphVisit{
+				root: l.SourceRoot, dir: "entry", source: manifest.BootstrapSourceID,
+				file: file, role: kustomizeinput.Resource,
+			}
+			unowned := name == "unowned origin only"
+			switch name {
+			case "non-checkout claim":
+				artifact.Provider = store.ProviderCommit
+			case "eager checkout":
+				l.documents.eager = true
+			case "composed checkout":
+				artifact.Extent = store.ExtentComposed
+			case "no pending build":
+				claim.requiresBuild = false
+			case "non-bootstrap supplier":
+				native.source = source
+			case "already owned scope":
+				native.owner = testutil.KustomizationID("apps", "peer")
+			case "unregistered root":
+				l.scopes.roots = nil
+			case "origin only", "unowned origin only":
+				native.file, native.origin = filepath.Join(l.SourceRoot, "alias.yaml"), file
+				if unowned {
+					native.namePrefix = "entry-"
+				}
+			case "control file":
+				native.role = kustomizeinput.File
+			}
+			l.recordScopeVisits(&claim, []graphVisit{claim}, false, false)
+			l.recordScopeVisits(&native, []graphVisit{native}, !unowned, false)
+			l.scopes.contributions[0].active = name != "inactive claim" && !unowned
+			l.scopes.contributions[1].active = name != "inactive supplier"
+
+			record := manifest.DiscoveryRecord{Path: file, File: "owner.yaml", Authored: id}
+			occurrence := authoredOccurrence{Authored: id, Identity: id, facts: &occurrenceFacts{namespaced: true}}
+			generated := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID, "entry", manifest.NamedResource{},
+			).Named()
+			var supplied bool
+			wantIdentity := id
+			wantIdentity.Name = native.namePrefix + id.Name
+			l.projectAuthoredVisits(&record, &occurrence, "v1", func(o authoredOccurrence, p manifest.Production) {
+				if p.Owner == generated {
+					supplied = true
+					assert.Equal(t, o.Identity, wantIdentity)
+					assert.Equal(t, p.Authored, id)
+					assert.Equal(t, p.Source, manifest.BootstrapSourceID)
+					assert.Equal(t, p.Path, file)
+				}
+			})
+			assert.Equal(t, supplied, name == "checkout supplier" || unowned)
+		})
+	}
+}
+
+func TestProjectAuthoredVisits_ImportedRootIdentity(t *testing.T) {
+	t.Parallel()
+	const outerDir = "parent"
+	const innerDir = "parent/child"
+	type supplier struct {
+		Name string
+		Root string
+	}
+	for _, tc := range []struct {
+		name        string
+		innerPrefix string
+		want        []supplier
+	}{
+		{
+			name: "same identity", innerPrefix: "outer-",
+			want: []supplier{{Name: "outer-owner", Root: outerDir}},
+		},
+		{
+			name: "distinct identities", innerPrefix: "inner-",
+			want: []supplier{{Name: "outer-owner", Root: outerDir}, {Name: "inner-owner", Root: innerDir}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.SourceRoot = t.TempDir()
+			l.ensureScopes()
+			l.scopes.roots = []string{outerDir, innerDir}
+			file := filepath.Join(l.SourceRoot, innerDir, "owner.yaml")
+			builder := filepath.Join(l.SourceRoot, innerDir, "kustomization.yaml")
+			l.documents.cache = map[string]document{filepath.Dir(builder): {file: builder}}
+
+			outer := graphVisit{root: l.SourceRoot, dir: outerDir, source: manifest.BootstrapSourceID}
+			inner := graphVisit{root: l.SourceRoot, dir: innerDir, source: manifest.BootstrapSourceID}
+			l.recordScopeVisits(&outer, []graphVisit{
+				{file: builder, role: kustomizeinput.Resource, document: new(types.Kustomization)},
+				{file: file, role: kustomizeinput.Resource, namePrefix: "outer-"},
+			}, false, false)
+			l.recordScopeVisits(&inner, []graphVisit{
+				{file: file, role: kustomizeinput.Resource, namePrefix: tc.innerPrefix},
+			}, false, false)
+			l.scopes.contributions[0].active = true
+			l.scopes.contributions[1].active = true
+
+			id := testutil.KustomizationID("apps", "owner")
+			record := manifest.DiscoveryRecord{Path: file, File: innerDir + "/owner.yaml", Authored: id}
+			occurrence := authoredOccurrence{Authored: id, Identity: id, facts: &occurrenceFacts{namespaced: true}}
+			var suppliers []supplier
+			l.projectAuthoredVisits(&record, &occurrence, "v1", func(o authoredOccurrence, p manifest.Production) {
+				assert.Equal(t, p.Source, manifest.BootstrapSourceID)
+				suppliers = append(suppliers, supplier{Name: o.Identity.Name, Root: p.Owner.Name})
+			})
+			assert.Diff(t, suppliers, tc.want)
 		})
 	}
 }

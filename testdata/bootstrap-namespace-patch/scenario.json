@@ -5,7 +5,7 @@
     "paths": [
       "testdata/custom-bootstrap-source"
     ],
-    "reductions": "Synthetic reproduction of the Namespace patch and nested ConfigMap change in issue #1626."
+    "reductions": "Synthetic reproduction of the Namespace patch and nested ConfigMap change in issue #1626. The ionfury integration case reduces kubernetes/clusters/integration and the separate live versions.env edit from ionfury/homelab at a249de48aa6c00fe6e549c489eebb67fe4bd4073."
   },
   "repositories": [
     {
@@ -15,6 +15,16 @@
         {
           "name": "origin",
           "url": "https://github.com/example/fleet.git"
+        }
+      ]
+    },
+    {
+      "name": "ionfury",
+      "directory": "ionfury",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://github.com/example/ionfury.git"
         }
       ]
     }
@@ -38,9 +48,73 @@
         "unpatched"
       ],
       "overlay": "patch"
+    },
+    {
+      "repository": "repo",
+      "name": "parent-unpatched",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "unpatched"
+      ],
+      "overlay": "parent"
+    },
+    {
+      "repository": "repo",
+      "name": "parent-patched",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "parent-unpatched"
+      ],
+      "overlay": "parent-patch"
+    },
+    {
+      "repository": "ionfury",
+      "name": "ionfury-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "ionfury",
+      "name": "ionfury-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "ionfury-base"
+      ],
+      "overlay": "ionfury-edit"
+    },
+    {
+      "repository": "ionfury",
+      "name": "ionfury-unused",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "ionfury-head"
+      ],
+      "overlay": "ionfury-unused"
     }
   ],
   "overlays": [
+    {
+      "name": "ionfury-edit",
+      "directory": "overlays/ionfury-edit"
+    },
+    {
+      "name": "ionfury-unused",
+      "operations": [
+        {
+          "delete": "ionfury/clusters"
+        }
+      ]
+    },
     {
       "name": "patch",
       "directory": "overlays/patch"
@@ -48,18 +122,23 @@
     {
       "name": "edit",
       "directory": "overlays/edit"
+    },
+    {
+      "name": "parent",
+      "directory": "overlays/parent"
+    },
+    {
+      "name": "parent-patch",
+      "directory": "overlays/parent-patch"
     }
   ],
   "cases": [
     {
-      "name": "patched",
-      "description": "Show a nested ConfigMap edit below an entry with a Namespace patch.",
+      "name": "ionfury-integration",
+      "description": "Skip the unchanged integration entry while the root diff reports the live version edit.",
       "setup": [
         {
-          "commit": "patched"
-        },
-        {
-          "overlay": "edit"
+          "commit": "ionfury-head"
         }
       ],
       "env": {},
@@ -67,6 +146,146 @@
         "repeat": "reuse"
       },
       "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "@@commit:ionfury-base@@",
+              "--path",
+              "clusters/integration",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/ionfury-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "@@commit:ionfury-base@@",
+              "--path",
+              ".",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/ionfury-root-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "clusters/integration",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/ionfury-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@/../ionfury"
+    },
+    {
+      "name": "patched",
+      "description": "Show a nested ConfigMap edit below an entry with a Namespace patch.",
+      "setup": [
+        {
+          "commit": "patched"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1/flux-system",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1/flux-system",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
         {
           "id": "diff",
           "invoke": {
@@ -134,22 +353,335 @@
           }
         }
       ]
+    },
+    {
+      "name": "parent-patched",
+      "description": "Show the nested edit when the parent imports the patched bootstrap and the bundles.",
+      "setup": [
+        {
+          "commit": "parent-patched"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-unpatched",
+      "description": "Show the edit when the parent imports the unpatched bootstrap and the bundles.",
+      "setup": [
+        {
+          "commit": "parent-unpatched"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-parent-cluster",
+      "description": "Show the edit from the cluster directory when only the patched bootstrap imports the bundles.",
+      "setup": [
+        {
+          "commit": "patched"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change",
+          "edit": {
+            "overlay": "edit"
+          }
+        },
+        {
+          "id": "after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--only-kinds",
+              "ConfigMap",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--path",
+              "@@repo@@/clusters/c1",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
     {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "Empty output from the scoped diff and the failed direct build."
+    },
+    {
+      "path": "expect/build-after.stdout",
+      "cases": [
+        "patched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
+      ],
+      "purpose": "Full build ConfigMap expected from the authored workload and its Flux owner."
+    },
+    {
+      "path": "expect/build-before.stdout",
+      "cases": [
+        "patched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
+      ],
+      "purpose": "Full build ConfigMap expected from the authored workload and its Flux owner."
+    },
+    {
       "path": "expect/diff.stdout",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Complete authored command output."
     },
     {
       "path": "expect/empty.stderr",
       "cases": [
+        "ionfury-integration",
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Complete authored command output."
     },
@@ -157,14 +689,40 @@
       "path": "overlays/edit/repo/apps/demo/cm.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
     {
+      "path": "overlays/parent-patch/repo/clusters/c1/flux-system/kustomization.yaml",
+      "cases": [
+        "parent-patched"
+      ],
+      "purpose": "Authored input for the parent-builder layout."
+    },
+    {
+      "path": "overlays/parent/repo/clusters/c1/flux-system/kustomization.yaml",
+      "cases": [
+        "parent-unpatched"
+      ],
+      "purpose": "Authored input for the parent-builder layout."
+    },
+    {
+      "path": "overlays/parent/repo/clusters/c1/kustomization.yaml",
+      "cases": [
+        "parent-patched",
+        "parent-unpatched"
+      ],
+      "purpose": "Authored input for the parent-builder layout."
+    },
+    {
       "path": "overlays/patch/repo/clusters/c1/flux-system/kustomization.yaml",
       "cases": [
-        "patched"
+        "patched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -172,7 +730,10 @@
       "path": "repo/apps/demo/cm.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -180,7 +741,10 @@
       "path": "repo/apps/demo/kustomization.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -188,7 +752,10 @@
       "path": "repo/bundles/apps.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -196,7 +763,10 @@
       "path": "repo/bundles/apps/demo.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -204,7 +774,10 @@
       "path": "repo/bundles/kustomization.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -212,7 +785,10 @@
       "path": "repo/clusters/c1/flux-system/gotk-sync.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
     },
@@ -227,9 +803,76 @@
       "path": "repo/clusters/c1/flux-system/namespace.yaml",
       "cases": [
         "patched",
-        "unpatched"
+        "unpatched",
+        "parent-patched",
+        "parent-unpatched",
+        "no-parent-cluster"
       ],
       "purpose": "Authored input for the bootstrap regression."
+    },
+    {
+      "path": "ionfury/clusters/integration/declarations.yaml",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The platform declaration and its dependent ResourceSet preserve the integration selection path."
+    },
+    {
+      "path": "ionfury/clusters/integration/kustomization.yaml",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The integration package references the absent generator input.",
+      "package": "failure"
+    },
+    {
+      "path": "ionfury/clusters/live/kustomization.yaml",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The live package patches its bootstrap and generates the changed version ConfigMap."
+    },
+    {
+      "path": "ionfury/clusters/live/sync.yaml",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The Flux Kustomization claims the live package that declares it."
+    },
+    {
+      "path": "ionfury/clusters/live/versions.env",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The baseline value of the live generator input."
+    },
+    {
+      "path": "overlays/ionfury-edit/ionfury/clusters/live/versions.env",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The one-line edit outside the integration entry."
+    },
+    {
+      "path": "expect/ionfury-diff.stderr",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "Warnings for blocked declarations on both snapshots of the unchanged integration entry."
+    },
+    {
+      "path": "expect/ionfury-root-diff.stdout",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The root diff displays the healthy version edit."
+    },
+    {
+      "path": "expect/ionfury-build.stderr",
+      "cases": [
+        "ionfury-integration"
+      ],
+      "purpose": "The explicit integration build fails on the missing generator input."
     }
   ]
 }

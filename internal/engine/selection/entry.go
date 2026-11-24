@@ -19,9 +19,7 @@ func (c *admissionClosure) indexedEntryChanged() bool {
 	if !c.session.request.Matches(manifest.NamedResource{}) {
 		return false
 	}
-	relative, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
-	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{}).
-		Named()
+	owner := c.nativeEntryID()
 	record, _ := c.indexedRecord(owner)
 	return len(record.ContentRoots[manifest.BootstrapSourceID]) != 0 && c.affected(owner, nil)
 }
@@ -86,4 +84,10 @@ func (c *admissionClosure) runnableDeclarationFile(file string) bool {
 		known = true
 	}
 	return known
+}
+
+func (c *admissionClosure) nativeEntryID() manifest.NamedResource {
+	relative, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
+	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{}).
+		Named()
 }

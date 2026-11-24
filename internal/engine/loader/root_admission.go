@@ -108,8 +108,7 @@ func (l *Loader) nativeOperand(file string) bool {
 			continue
 		}
 		visit := &contribution.visits[ref.visit]
-		if visit.role == kustomizeinput.Resource &&
-			(visit.file == file || visit.origin != "" && visit.origin == file) {
+		if visit.resourceAt(file) {
 			return true
 		}
 	}

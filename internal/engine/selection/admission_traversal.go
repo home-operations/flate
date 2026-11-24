@@ -693,9 +693,7 @@ func (c *admissionClosure) awaitsEntryPublication(id manifest.NamedResource) boo
 	if Root(physical).Independent {
 		return false
 	}
-	path, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
-	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
-		Named()
+	owner := c.nativeEntryID()
 	status, _ := c.objects.GetStatus(owner)
 	return c.decision.Output(manifest.NamedResource{}) ||
 		status.Outcome() != store.OutcomeFailed && (c.role(owner).needed || !c.session.request.Changed)

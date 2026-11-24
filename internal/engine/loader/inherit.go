@@ -97,8 +97,7 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 		owner, _ := l.Index.Lookup(claim.ID)
 		origin := new(l.documents).localPath(owner.Path)
 		if owner.Path == "" || !slices.ContainsFunc(visits, func(visit graphVisit) bool {
-			return visit.role == kustomizeinput.Resource &&
-				(visit.file == owner.Path || visit.file == origin || visit.origin != "" && visit.origin == origin)
+			return visit.resourceAt(origin) || visit.role == kustomizeinput.Resource && visit.file == owner.Path
 		}) {
 			return false
 		}
@@ -271,6 +270,12 @@ func (l *Loader) projectAuthoredOccurrence(
 	return true
 }
 
+type projectedRootProduction struct {
+	occurrence   authoredOccurrence
+	production   manifest.Production
+	contribution int
+}
+
 func (l *Loader) projectAuthoredVisits(
 	record *manifest.DiscoveryRecord,
 	structured *authoredOccurrence,
@@ -282,19 +287,22 @@ func (l *Loader) projectAuthoredVisits(
 		owned = true
 		return false
 	})
-	for _, ref := range l.scopes.visits[record.Path] {
+	file := record.Path
+	var pendingBuffer [1]manifest.NamedResource
+	var rootBuffer [1]projectedRootProduction
+	pending, roots := pendingBuffer[:0], rootBuffer[:0]
+	// Named scopes precede native roots. A membership walk can supply a pending
+	// self-claim only through a matching resource projection in a real root.
+	for _, ref := range l.scopes.visits[file] {
 		contribution := &l.scopes.contributions[ref.contribution]
-		if !contribution.active || contribution.membershipOnly {
-			continue
-		}
 		visit := &contribution.visits[ref.visit]
-		if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
+		native, eligible, visitPending := contribution.authoredResource(visit, file, pending)
+		if !eligible {
 			continue
 		}
 		projectedVisit := *visit
 		projectedVisit.owner, projectedVisit.source = contribution.owner, contribution.source
 		occurrence, err := l.projectOccurrence(structured, &projectedVisit, version)
-		identity := occurrence.Identity
 		if err != nil {
 			// Production finalization reports invalid upstream identity projections.
 			return true
@@ -303,22 +311,100 @@ func (l *Loader) projectAuthoredVisits(
 			projected = true
 			continue
 		}
-		occurrence.requiresBuild = occurrence.requiresBuild || contribution.applies && visit.requiresBuild
+		requiresBuild := contribution.applies && visit.requiresBuild
+		occurrence.requiresBuild = occurrence.requiresBuild || requiresBuild
+		if requiresBuild && l.pendingCheckoutSelf(contribution, &occurrence) {
+			pending = append(pending, occurrence.Identity)
+		}
 		production := manifest.Production{
 			Owner: contribution.owner, Source: contribution.source,
 			Authored: record.Authored, Path: record.Path, File: record.File,
 		}
 		projectOccurrenceProduction(&occurrence, &production)
-		if production.Owner == (manifest.NamedResource{}) &&
-			!owned &&
-			(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
-			production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
-				Named()
+		if native {
+			production.Owner = l.authoredRootOwner(contribution, &occurrence, owned, visitPending)
 		}
-		publish(occurrence, production)
-		projected = true
+		switch {
+		case production.Owner != contribution.owner:
+			roots = append(roots, projectedRootProduction{
+				occurrence: occurrence, production: production, contribution: ref.contribution,
+			})
+			projected = true
+		case !contribution.membershipOnly:
+			publish(occurrence, production)
+			projected = true
+		}
+	}
+	for i := range roots {
+		root := &roots[i]
+		if !l.importedProductionRoot(root, roots) {
+			publish(root.occurrence, root.production)
+		}
 	}
 	return projected
+}
+
+//nolint:gocritic // Eligibility and native ownership are independent facts.
+func (s *scopeContribution) authoredResource(
+	visit *graphVisit, file string, pending []manifest.NamedResource,
+) (bool, bool, []manifest.NamedResource) {
+	if !visit.resourceAt(file) {
+		return false, false, nil
+	}
+	if visit.file != file {
+		pending = nil
+	}
+
+	native := s.owner == (manifest.NamedResource{}) && s.source == manifest.BootstrapSourceID
+	eligible := s.active && (!s.membershipOnly || native && len(pending) != 0)
+	return native, eligible, pending
+}
+
+func (l *Loader) pendingCheckoutSelf(scope *scopeContribution, occurrence *authoredOccurrence) bool {
+	return !l.documents.eager && scope.owner == occurrence.Identity &&
+		l.documents.artifacts[scope.context.root].CheckoutView()
+}
+
+func (l *Loader) authoredRootOwner(
+	scope *scopeContribution,
+	occurrence *authoredOccurrence,
+	owned bool,
+	pending []manifest.NamedResource,
+) manifest.NamedResource {
+	unowned := !scope.membershipOnly && !owned &&
+		(occurrence.requiresBuild || occurrence.Identity.Name != occurrence.Authored.Name)
+	if !unowned && !slices.Contains(pending, occurrence.Identity) {
+		return manifest.NamedResource{}
+	}
+	if _, root := slices.BinarySearch(l.scopes.roots, scope.context.dir); !root {
+		return manifest.NamedResource{}
+	}
+	return manifest.NewEntryKustomization(scope.source, scope.context.dir, manifest.NamedResource{}).Named()
+}
+
+func (l *Loader) importedProductionRoot(root *projectedRootProduction, roots []projectedRootProduction) bool {
+	if len(roots) <= 1 {
+		return false
+	}
+	packageContext := &l.scopes.contributions[root.contribution].context
+	builder := l.documents.cache[filepath.Join(packageContext.root, packageContext.dir)].file
+	for _, ref := range l.scopes.visits[builder] {
+		if ref.contribution == root.contribution {
+			continue
+		}
+		contribution := &l.scopes.contributions[ref.contribution]
+		visit := &contribution.visits[ref.visit]
+		if visit.file != builder || visit.role != kustomizeinput.Resource || visit.document == nil {
+			continue
+		}
+		for i := range roots {
+			other := &roots[i]
+			if other.contribution == ref.contribution && other.occurrence.Identity == root.occurrence.Identity {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Child {

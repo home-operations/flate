@@ -16,6 +16,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+const (
+	namespaceStrategyReset    = "Reset"
+	namespaceStrategyOverride = "Override"
+	namespaceStrategyMerge    = "Merge"
+)
+
 type namespaceTargets struct {
 	ordered []*request
 	first   map[string]*request
@@ -170,10 +176,10 @@ func namespaceMetadataFor(
 				continue
 			}
 			switch entry.Strategy {
-			case "Reset":
+			case namespaceStrategyReset:
 				meta.Labels, meta.Annotations = maps.Clone(entry.Labels), maps.Clone(entry.Annotations)
-			default:
-				override := entry.Strategy == "Override"
+			case namespaceStrategyOverride, namespaceStrategyMerge:
+				override := entry.Strategy == namespaceStrategyOverride
 				meta.Labels = mergeMetadata(meta.Labels, entry.Labels, override)
 				meta.Annotations = mergeMetadata(meta.Annotations, entry.Annotations, override)
 			}

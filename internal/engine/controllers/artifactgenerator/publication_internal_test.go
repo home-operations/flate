@@ -1,7 +1,9 @@
 package artifactgenerator
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
@@ -226,6 +228,90 @@ func TestArtifactGenerator_ManagedFailureOrder(t *testing.T) {
 	}
 }
 
+func TestArtifactGenerator_InvalidNamespaceMetadataStrategy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]any
+		index    int
+		strategy string
+	}{
+		{
+			name: "unknown_for_unmanaged_target",
+			metadata: map[string]any{"from": []any{
+				map[string]any{"namespace": "tenant", "strategy": "Merge"},
+				map[string]any{"namespace": "other", "strategy": "Overide"},
+			}},
+			index:    1,
+			strategy: "Overide",
+		},
+		{
+			name: "empty_with_source",
+			metadata: map[string]any{
+				"from":       []any{map[string]any{"namespace": "tenant", "strategy": ""}},
+				"fromSource": map[string]any{"path": "@repo/metadata.yaml"},
+			},
+		},
+		{
+			name: "omitted",
+			metadata: map[string]any{"from": []any{
+				map[string]any{"namespace": "tenant"},
+			}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner, err := cache.New(t.Context(), "")
+			assert.NoError(t, err)
+			defer func() { assert.NoError(t, owner.Close()) }()
+			c := New(st, task.NewBounded(2), owner)
+			input := &observedFS{FS: fstest.MapFS{
+				"file":          {Data: []byte("bytes")},
+				"metadata.yaml": {Data: []byte("kind: NamespaceMetadata\n")},
+			}}
+			setManagedGeneratorSource(st, input)
+			id := addManagedGenerator(t, st, managedGeneratorFixture{
+				name:    "generator",
+				outputs: []any{managedOutput("payload", "tenant", "@repo/file", "@artifact/file")},
+				managed: map[string]any{
+					"allowedNames": []any{"true"},
+					"metadata":     tc.metadata,
+				},
+			})
+			obj := st.GetObject(id).(*manifest.RawObject)
+			var got error
+			c.Tasks.Go(t.Context(), "generator", func(ctx context.Context) {
+				run := &execution{Controller: c}
+				run.run.Init(c.Controller, id)
+				defer run.run.Close()
+				got = run.reconcile(ctx, obj, manifest.DrainNone)
+			})
+			c.Tasks.BlockTillDone()
+			assert.Equal(t, c.Tasks.Failures(), 0)
+			assert.ErrorIf(t, !errors.Is(got, manifest.ErrInput), "reconcile error = %v, want ErrInput", got)
+			assert.ErrorIf(t, !errors.Is(got, manifest.ErrFlux), "reconcile error = %v, want ErrFlux", got)
+			want := fmt.Sprintf(
+				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: Reset, Override, Merge)",
+				tc.index,
+				tc.strategy,
+			)
+			assert.ErrorIf(
+				t,
+				got == nil || !strings.Contains(got.Error(), want),
+				"reconcile error = %v, want %q",
+				got,
+				want,
+			)
+			assert.Equal(t, input.opens.Load(), 0)
+			payload := managedArtifact("payload", "tenant")
+			assert.Equal(t, st.GetArtifact(payload, store.ArtifactContent) == nil, true)
+			assert.Equal(t, st.GetObject(payload) == nil, true)
+			assert.Equal(t, st.GetObject(manifest.NamedResource{Kind: "Namespace", Name: "tenant"}) == nil, true)
+		})
+	}
+}
+
 func TestArtifactGenerator_ManagedProducerConflict(t *testing.T) {
 	t.Parallel()
 	for _, order := range [][]string{{"a", "z"}, {"z", "a"}} {
@@ -241,7 +327,13 @@ func TestArtifactGenerator_ManagedProducerConflict(t *testing.T) {
 				id := addManagedGenerator(t, st, managedGeneratorFixture{
 					name: name, outputs: []any{managedOutput(name, "tenant", "@repo/file", "@artifact/file")},
 					managed: map[string]any{"allowedNames": []any{"true"}, "metadata": map[string]any{
-						"from": []any{map[string]any{"namespace": "*", "labels": map[string]any{"winner": name}}},
+						"from": []any{
+							map[string]any{
+								"namespace": "*",
+								"strategy":  "Merge",
+								"labels":    map[string]any{"winner": name},
+							},
+						},
 					}},
 				})
 				runForTest(t, c, id)

@@ -49,9 +49,24 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) error 
 			return err
 		}
 	}
-	if ns := spec.ManagedNamespaces; ns != nil && ns.Metadata != nil && ns.Metadata.FromSource != nil {
-		if err := validateFileSelector(ns.Metadata.FromSource.Path, spec.PathPattern, aliases); err != nil {
+	ns := spec.ManagedNamespaces
+	if ns == nil || ns.Metadata == nil {
+		return nil
+	}
+	if source := ns.Metadata.FromSource; source != nil {
+		if err := validateFileSelector(source.Path, spec.PathPattern, aliases); err != nil {
 			return fmt.Errorf("namespaces metadata fromSource path %w", err)
+		}
+	}
+	for i := range ns.Metadata.From {
+		switch strategy := ns.Metadata.From[i].Strategy; strategy {
+		case namespaceStrategyReset, namespaceStrategyOverride, namespaceStrategyMerge:
+		default:
+			return fmt.Errorf(
+				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: Reset, Override, Merge)",
+				i,
+				strategy,
+			)
 		}
 	}
 	return nil

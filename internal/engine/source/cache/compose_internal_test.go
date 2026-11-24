@@ -19,14 +19,8 @@ func TestCompose_InvalidOperation(t *testing.T) {
 		name      string
 		op        Copy
 		missingFS bool
-		prefix    string
 	}{
 		{name: "extract requires a tarball", op: Copy{From: "file", To: "output", Mode: ExtractArchive}},
-		{
-			name:   "extract glob attempts a directory with a tarball suffix",
-			op:     Copy{From: "*.tgz", To: "output", Mode: ExtractArchive},
-			prefix: "failed to extract tarball 'dir.tgz' to 'output':",
-		},
 		{name: "negative index", op: Copy{Input: -1}},
 		{name: "index past inputs", op: Copy{Input: 1}},
 		{name: "missing filesystem", missingFS: true},
@@ -41,9 +35,7 @@ func TestCompose_InvalidOperation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			owner := cachetest.New(t, "", New)
-			input := CompositionInput{FS: fstest.MapFS{
-				"file": {Data: []byte("input")}, "dir.tgz": {Mode: fs.ModeDir | 0o755},
-			}, Content: "generation"}
+			input := CompositionInput{FS: fstest.MapFS{"file": {Data: []byte("input")}}, Content: "generation"}
 			if tc.missingFS {
 				input.FS = nil
 			}
@@ -52,18 +44,72 @@ func TestCompose_InvalidOperation(t *testing.T) {
 			}, &Policy{MaxAge: Forever})
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-			if tc.prefix != "" {
-				assert.FatalIf(
-					t,
-					err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
-					"got %v, want prefix %q",
-					err,
-					tc.prefix,
-				)
-			}
 			assert.Equal(t, output == nil, true)
 			assert.Equal(t, key, "")
 			assert.Equal(t, descriptor.Digest.String(), "")
+		})
+	}
+}
+
+func TestCompose_ExtractGlob(t *testing.T) {
+	t.Parallel()
+	archive := compressedForTest(t, fstest.MapFS{"member": {Data: []byte("archive"), Mode: 0o750}})
+	for _, tc := range []struct {
+		name        string
+		input       fstest.MapFS
+		failedMatch string
+	}{
+		{
+			name: "directory with archive suffix",
+			input: fstest.MapFS{
+				"packages/bundle.tgz": {Data: archive},
+				"packages/README.txt": {Data: []byte("plain")},
+				"packages/cache.tgz":  {Mode: fs.ModeDir | 0o755},
+			},
+			failedMatch: "packages/cache.tgz",
+		},
+		{
+			name: "archive and plain file",
+			input: fstest.MapFS{
+				"packages/bundle.tgz": {Data: archive},
+				"packages/README.txt": {Data: []byte("plain")},
+			},
+		},
+		{
+			name:        "invalid archive contents",
+			input:       fstest.MapFS{"packages/broken.tgz": {Data: []byte("not an archive")}},
+			failedMatch: "packages/broken.tgz",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			owner := cachetest.New(t, "", New)
+			output, descriptor, key, err := owner.Compose(t.Context(), Composition{
+				Inputs: []CompositionInput{{FS: tc.input, Content: "generation"}},
+				Copies: []Copy{{From: "packages/*", To: "output", Mode: ExtractArchive}},
+				Policy: "fixed",
+			}, &Policy{MaxAge: Forever})
+			if tc.failedMatch != "" {
+				prefix := "failed to extract tarball '" + tc.failedMatch + "' to 'output':"
+				assert.FatalIf(
+					t,
+					err == nil || !strings.HasPrefix(err.Error(), prefix),
+					"got %v, want prefix %q",
+					err,
+					prefix,
+				)
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+				assert.Equal(t, output == nil, true)
+				assert.Equal(t, key, "")
+				assert.Equal(t, descriptor.Digest.String(), "")
+				return
+			}
+			assert.NoError(t, err)
+			assert.Diff(t, compositionFiles(t, output), map[string]compositionFile{
+				"output":        {Mode: fs.ModeDir | 0o750},
+				"output/member": {Data: "archive", Mode: 0o700},
+			})
 		})
 	}
 }

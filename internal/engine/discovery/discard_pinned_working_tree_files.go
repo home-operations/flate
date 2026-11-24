@@ -25,7 +25,10 @@ import (
 // Resolved sources must retain their objects and artifacts so a pinned root
 // claim cannot replace its own source with a working-tree alias.
 func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot string) error {
-	if err := d.loader.Admit(ctx, repoRoot); err != nil {
+	resolvedSources := d.resolvedSources.snapshot()
+	var scratch [8]manifest.NamedResource
+	admitted := slices.AppendSeq(scratch[:0], maps.Keys(resolvedSources))
+	if err := d.loader.Admit(ctx, repoRoot, admitted...); err != nil {
 		return err
 	}
 	occurrences := d.loader.PathObjects()
@@ -35,7 +38,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot st
 		return nil
 	}
 	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if _, resolved := d.resolvedSources.snapshot()[id]; resolved {
+		if _, resolved := resolvedSources[id]; resolved {
 			continue
 		}
 		if _, pinned := pinnedSources[id]; pinned {
@@ -94,19 +97,15 @@ func (d *Session) pinnedWorkingTreeFile(
 	}
 	file := record.File
 	if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
-		var mount *store.SourceArtifact
-		for source := range d.resolvedSources.snapshot() {
-			root, _ := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			if root.WorkingTree() && safepath.Contains(root.LocalPath, record.Path) &&
-				(mount == nil || len(root.LocalPath) > len(mount.LocalPath)) {
-				mount = root
-			}
-		}
-		file, _ = filepath.Rel(repoRoot, mount.OriginPath(record.Path))
-		file = filepath.ToSlash(file)
-		if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
+		projected := d.loader.WorkingTreePath(record.Path)
+		if !safepath.Contains(repoRoot, projected) {
 			return false
 		}
+		relative, err := filepath.Rel(repoRoot, projected)
+		if err != nil {
+			return false
+		}
+		file = filepath.ToSlash(relative)
 	}
 	for range index.ClaimOwners(file, manifest.NamedResource{}, id, nil) {
 		return true

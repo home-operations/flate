@@ -330,9 +330,10 @@ func (w *traversal) opaqueConfiguration(
 	cached *document,
 	yield func(graphVisit) bool,
 ) bool {
-	visit.readable = cached.pathState != pathMissing && !visit.deferDecode
+	unavailable := cached.pathState == pathMissing || cached.pathState == pathSourceUnavailable
+	visit.readable = !unavailable && !visit.deferDecode
 	if visit.role != kustomizeinput.Configuration {
-		if w.scopeVisits != nil && (cached.pathState == pathMissing || cached.pathState == pathUnavailable) {
+		if w.scopeVisits != nil && (unavailable || cached.pathState == pathStatFailed) {
 			w.unknownRecipes++
 		}
 		return yield(*visit)

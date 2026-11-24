@@ -125,6 +125,7 @@ func testTemplateInputsProviderDrafts(t *testing.T) {
 	const declaration = "<< $choice := inputs.choice >>\n"
 	const externalSecret = "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: secrets}\n"
 	const trackedPath = "metadata: {name: child}\nspec:\n  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: content}\n"
+	const fluxInstance = "kind: FluxInstance\nmetadata: {name: child}\nspec: {sync: '<< $choice >>'}\n"
 	for _, tc := range []struct {
 		name, template string
 		inline         []any
@@ -154,10 +155,13 @@ func testTemplateInputsProviderDrafts(t *testing.T) {
 			pending:  true,
 		},
 		{
-			name: "FluxInstance",
-			template: declaration + "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\n" +
-				"metadata: {name: child}\nspec: {sync: '<< $choice >>'}\n",
-			pending: true,
+			name:     "FluxInstance",
+			template: declaration + "apiVersion: fluxcd.controlplane.io/v1\n" + fluxInstance,
+			pending:  true,
+		},
+		{
+			name:     "FluxInstance in another group",
+			template: declaration + "apiVersion: example.invalid/v1\n" + fluxInstance,
 		},
 		{
 			name:     "dynamic API version in draft",

@@ -4,6 +4,8 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+
+	"github.com/home-operations/flate/internal/core/kustpath"
 )
 
 // ClaimInput MUST use the captured source's index coordinate and native components.
@@ -86,13 +88,7 @@ func (in *ClaimInput) claims() []KSClaim {
 				continue
 			}
 		}
-		prefix = filepath.ToSlash(prefix)
-		if prefix == "." {
-			prefix = ""
-		} else {
-			prefix += "/"
-		}
-		claim.Prefix = prefix
+		claim.Prefix = kustpath.ClaimPrefix(filepath.ToSlash(prefix))
 		out = append(out, claim)
 	}
 	return out

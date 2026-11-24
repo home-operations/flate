@@ -68,12 +68,16 @@ func (o *ViewOptions) localCurrent(current *FS) *FS {
 	return observed
 }
 
-func (g *localView) Stat(name string) (fs.FileInfo, error) {
-	info, err := g.Lstat(name)
-	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
-		return info, &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
+func (g *localView) inspect(name string) (fs.FileInfo, string, error) {
+	abs, err := g.mounted(name)
+	var info fs.FileInfo
+	if err == nil {
+		info, err = g.localStat(name, abs)
 	}
-	return info, err
+	if pathErr, ok := errors.AsType[*fs.PathError](err); ok && pathErr.Op != statOperation {
+		err = &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
+	}
+	return info, abs, err
 }
 
 func (g *localView) ReadFile(name string) ([]byte, error) {
@@ -90,10 +94,12 @@ func (g *localView) OpenRegular(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:wrapcheck // OpenRegular forwards os.Open PathError fields for the mounted regular file.
-	return os.Open(
-		abs,
-	)
+	return openLocalFile(abs)
+}
+
+//nolint:wrapcheck // Forward os.Open PathError fields for the admitted local file.
+func openLocalFile(abs string) (fs.File, error) {
+	return os.Open(abs)
 }
 
 type localObservation struct {
@@ -169,10 +175,7 @@ func (g *localView) Open(name string) (fs.File, error) {
 		}
 		return &gitFile{info: info, input: g, entries: entries}, nil
 	}
-	//nolint:wrapcheck // Open forwards os.Open PathError fields after local admission.
-	return os.Open(
-		abs,
-	)
+	return openLocalFile(abs)
 }
 
 func (g *localView) ReadLink(name string) (string, error) {
@@ -206,6 +209,8 @@ func (g *localView) mounted(name string) (string, error) {
 }
 
 // Directory admission belongs to one operation; descriptors retain no observations.
+//
+//nolint:errorlint // Reuse requires the exact PathError and unwrapped cause.
 func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 	var info fs.FileInfo
 	var err error
@@ -225,6 +230,10 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
 	}
 	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		if pathErr, ok := err.(*fs.PathError); ok && pathErr.Op == statOperation &&
+			pathErr.Path == name && pathErr.Err == fs.ErrNotExist {
+			return nil, pathErr
+		}
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	return info, err

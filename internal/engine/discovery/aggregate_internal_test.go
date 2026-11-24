@@ -2,8 +2,12 @@ package discovery
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,6 +25,19 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type builderProbeFS struct {
+	fstest.MapFS
+
+	probes map[string]int
+}
+
+func (f builderProbeFS) Stat(name string) (fs.FileInfo, error) {
+	if slices.Contains(manifest.KustomizeBuilderFilenames, path.Base(name)) {
+		f.probes[path.Dir(name)]++
+	}
+	return f.MapFS.Stat(name)
+}
 
 func TestAggregateInput_PackageEvidence(t *testing.T) {
 	t.Parallel()
@@ -44,9 +61,11 @@ func TestAggregateInput_PackageEvidence(t *testing.T) {
 			if authored {
 				files["kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [plain.yaml]\n")}
 			}
+			probes := make(map[string]int)
 			input := &store.SourceArtifact{
 				Provider:  store.ProviderInput,
-				LocalPath: root, LocalRoot: "/virtual/origin", Content: "immutable-original", FS: files,
+				LocalPath: root, LocalRoot: "/virtual/origin", Content: "immutable-original",
+				FS: builderProbeFS{MapFS: files, probes: probes},
 			}
 			packages := []loader.PackageEvidence{
 				{Path: "package", Independent: true},
@@ -55,7 +74,19 @@ func TestAggregateInput_PackageEvidence(t *testing.T) {
 					{Declaration: selection.OccurrenceID{Source: root, File: "plain.yaml", Document: 1}},
 				}},
 			}
-			aggregate, err := aggregateInput(input, root, packages)
+			entry := aggregateEntry{requested: root, directory: ".", authored: nativeEntry(input.FS, ".") != ""}
+			rootProbes, childProbes := probes["."], probes["package"]
+			aggregate, err := aggregateInput(input, entry, func() ([]loader.PackageEvidence, error) {
+				if authored {
+					t.Fatal("authored input requested aggregate packages")
+				}
+				return packages, nil
+			})
+			if !authored {
+				assert.Equal(t, rootProbes > 0, true)
+				assert.Equal(t, probes["."], rootProbes)
+				assert.Equal(t, probes["package"] > childProbes, true)
+			}
 			assert.NoError(t, err)
 			assert.Equal(t, input.Content, "immutable-original")
 			file := filepath.Join(root, "plain.yaml")
@@ -76,6 +107,114 @@ func TestAggregateInput_PackageEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAggregateInput_PackageAvailability(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/aggregate"
+	unavailable := errors.New("package listing unavailable")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "empty package list"},
+		{name: "failed package list", err: unavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			actual, err := aggregateInput(
+				input,
+				aggregateEntry{requested: root, directory: "."},
+				func() ([]loader.PackageEvidence, error) {
+					return nil, tc.err
+				},
+			)
+			assert.Equal(t, err, tc.err)
+			if tc.err == nil {
+				assert.Equal(t, actual, input)
+			}
+		})
+	}
+}
+
+func TestRequestedInventory_BuilderlessEntry(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+		"apps/kustomization.yaml": {Data: []byte("resources: [settings.yaml]\nnamespace: apps\n")},
+		"apps/settings.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\n")},
+		"loose.yaml":              {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: loose}\n")},
+	}}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	t.Cleanup(l.Close)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	cfg := testConfig(t, Config{Input: input, Path: root})
+	entries, err := Plan(t.Context(), cfg)
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected one planned aggregate: %v", entries)
+	planned := entries[0].Input
+	data, err := fs.ReadFile(planned.FS, "kustomization.yaml")
+	assert.NoError(t, err)
+	var builder kustypes.Kustomization
+	assert.NoError(t, yaml.Unmarshal(data, &builder))
+	assert.Diff(t, builder.Resources, []string{"apps", "loose.yaml"})
+
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
+	a := Admission{input: input, path: root, loader: l, packageRender: cfg.packagePreparation()}
+	plannedFrame, err := a.packageInventory(t.Context(), owner, planned)
+	assert.NoError(t, err)
+	documents, children, err := a.requestedInventory(t.Context(), owner)
+	assert.NoError(t, err)
+	assert.Diff(t, documents, inventoryDocuments(plannedFrame.children, plannedFrame.failedDocuments))
+	assert.FatalIf(
+		t, len(children) != 2 || len(children) != len(plannedFrame.children),
+		"got %d cold children and %d planned children", len(children), len(plannedFrame.children),
+	)
+	for i := range children {
+		assert.Diff(t, children[i].Doc, plannedFrame.children[i].Doc)
+		assert.Equal(t, children[i].Ordinal, plannedFrame.children[i].Ordinal)
+	}
+
+	t.Run("cold package lookup error", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		emptyDocuments, emptyChildren, lookupErr := a.requestedInventory(ctx, owner)
+		assert.Equal(t, lookupErr, context.Canceled)
+		assert.Equal(t, len(emptyDocuments), 0)
+		assert.Equal(t, len(emptyChildren), 0)
+	})
+	t.Run("matching prepared frame", func(t *testing.T) {
+		t.Parallel()
+		failed := manifest.DocOccurrence{Document: map[string]any{
+			"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
+			"metadata": map[string]any{"name": "failed", "namespace": "apps"},
+		}}
+		prepared := Admission{input: input, path: root, session: &Session{
+			prepared: map[manifest.NamedResource]*declarationPreparation{
+				owner.Named(): {complete: true, declarationRender: declarationRender{
+					owner: owner, source: input, children: children, failedDocuments: []manifest.DocOccurrence{failed},
+				}},
+			},
+		}}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		got, retained, err := prepared.requestedInventory(ctx, owner)
+		assert.NoError(t, err)
+		want := make(entryDocuments, len(documents)+1)
+		maps.Copy(want, documents)
+		want[manifest.DocIdentity(failed.Document)] = struct{}{}
+		assert.Diff(t, got, want)
+		assert.FatalIf(t, len(retained) != len(children), "retained %d children", len(retained))
+		for i := range retained {
+			assert.Diff(t, retained[i].Doc, children[i].Doc)
+		}
+	})
 }
 
 func TestPlan_BootstrapRootClusters(t *testing.T) {
@@ -258,11 +397,18 @@ func TestAggregateInput_PreservesSymlinks(t *testing.T) {
 	authored, err := builder.Build()
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, Content: "authored", FS: authored}
-	aggregate, err := aggregateInput(input, root, []loader.PackageEvidence{
+	packages := []loader.PackageEvidence{
 		{Path: ".", Independent: true, Occurrences: []selection.OccurrenceFacts{
 			{Declaration: selection.OccurrenceID{Source: root, File: "linked.yaml"}},
 		}},
-	})
+	}
+	aggregate, err := aggregateInput(
+		input,
+		aggregateEntry{requested: root, directory: "."},
+		func() ([]loader.PackageEvidence, error) {
+			return packages, nil
+		},
+	)
 	assert.NoError(t, err)
 	target, err := fs.ReadLink(aggregate.FS, "linked.yaml")
 	assert.NoError(t, err)
@@ -479,4 +625,71 @@ func addSharedMember(files fstest.MapFS) {
 		}
 	}
 	delete(files, "second/cm.yaml")
+}
+
+func TestBindEntry_BuilderView(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const relative = "entry/nested"
+	const child = relative + "/child"
+	directory := filepath.FromSlash(relative)
+	requested := filepath.Join(root, directory)
+	authored := (&store.SourceArtifact{
+		LocalPath: root,
+		LocalRoot: root,
+		FS: fstest.MapFS{
+			child + "/kustomization.yaml": {Data: []byte("resources: []\n")},
+		},
+	}).WithReads(new(store.ReadSet))
+	aggregate, err := aggregateInput(
+		authored,
+		aggregateEntry{requested: requested, directory: directory},
+		func() ([]loader.PackageEvidence, error) {
+			return []loader.PackageEvidence{{Path: child, Independent: true}}, nil
+		},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, aggregate.SameMaterial(authored, store.ArtifactContent), false)
+
+	session := &Session{cfg: Config{Input: aggregate, Path: requested}}
+	assert.Equal(t, session.hasEntryBuilder(), true)
+	for _, tc := range []struct {
+		name                  string
+		entryDemand, hasEntry bool
+	}{
+		{name: "authored"},
+		{name: "demanded overlay", entryDemand: true, hasEntry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := Admission{input: aggregate, path: requested, entryDemand: tc.entryDemand, session: session}
+			entry, err := a.literalEntry(relative)
+			assert.NoError(t, err)
+			assert.Equal(t, entry != nil, tc.hasEntry)
+		})
+	}
+}
+
+func TestSession_EntryBuilderCache(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	replace := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"entry/kustomization.yml": {Data: []byte("resources: []\n")},
+	}}
+	d := Session{}
+	assert.Equal(t, d.hasEntryBuilder(), false)
+	d.cfg.Input, d.cfg.Path = input, filepath.Join(root, "entry")
+	assert.Equal(t, d.hasEntryBuilder(), false)
+	replace.Content = "same"
+	d.cfg.Input = replace
+	assert.Equal(t, d.hasEntryBuilder(), true)
+	remounted := *replace
+	remounted.LocalPath = d.cfg.Path
+	d.cfg.Input = &remounted
+	assert.Equal(t, d.hasEntryBuilder(), false)
+	d.cfg.Input = replace
+	assert.Equal(t, d.hasEntryBuilder(), true)
+	d.cfg.Path = root
+	assert.Equal(t, d.hasEntryBuilder(), false)
 }

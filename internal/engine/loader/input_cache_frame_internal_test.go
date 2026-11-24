@@ -215,7 +215,7 @@ func patchedInputResult(t *testing.T, l *Loader, files fstest.MapFS) string {
 	app := filepath.Join(l.SourceRoot, "apps")
 	assert.Equal(t, l.documents.read(app).recipe, recipe)
 	packages, err := l.EnclosingPackages(t.Context(), input, "apps/leaf",
-		manifest.NamedResource{Kind: "ConfigMap", Name: "patched"})
+		func(id manifest.NamedResource) bool { return id.Kind == "ConfigMap" && id.Name == "patched" })
 	assert.NoError(t, err)
 	assert.FatalIf(t, !slices.Equal(packages, []string{"apps"}), "enclosing packages: %v", packages)
 	occurrences, err := l.Occurrences(t.Context(), app, "")

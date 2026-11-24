@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
+	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -587,19 +588,32 @@ func (l *Loader) restoreCachedBuilder(root string, file *cachedInput, absolute s
 }
 
 func (l *Loader) restoreLoadDirectories(state *inputCache, load *cachedLoad) {
+	root := state.input.LocalPath
+	reader := new(l.documents)
 	for _, directory := range load.Directories {
 		if !state.types[directory.Path].IsDir() {
 			continue
 		}
-		absolute := filepath.Join(state.input.LocalPath, filepath.FromSlash(directory.Path))
-		doc := l.documents.cache[absolute]
-		doc.pathState, doc.sourceRoot = pathDirectory, state.input.LocalPath
-		builder := false
-		for _, name := range manifest.KustomizeBuilderFilenames {
-			_, present := state.types[filepath.ToSlash(filepath.Join(directory.Path, name))]
-			builder = builder || present
+		absolute := filepath.Join(root, filepath.FromSlash(directory.Path))
+		if reader.mountedRoot(absolute) != root {
+			continue
 		}
-		doc.searched = doc.searched || !builder
+		doc := l.documents.cache[absolute]
+		doc.pathState, doc.sourceRoot = pathDirectory, root
+		if !doc.searched {
+			doc.searched = true
+			for range kustomizeinput.Builders(directory.Path, func(file string) bool {
+				if reader.mountedRoot(filepath.Join(root, file)) != root {
+					return true
+				}
+				// Only a known directory can rule out a present candidate from cached type bits.
+				mode, present := state.types[filepath.ToSlash(file)]
+				return kustomizeinput.BuilderEligible(present, mode == fs.ModeDir)
+			}) {
+				doc.searched = false
+				break
+			}
+		}
 		l.documents.cache[absolute] = doc
 	}
 }

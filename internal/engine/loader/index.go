@@ -376,8 +376,8 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 	//nolint:gocritic // The iterator supplies a value snapshot that this loop updates before publication.
 	for id, r := range l.Index.Files() {
 		kind := id.KindInfo()
-		if origin := new(l.documents).localPath(r.Path); origin != r.Path {
-			root := new(l.documents).mountedRoot(r.Path)
+		if origin := l.documents.localPath(r.Path); origin != r.Path {
+			root := l.documents.mountedRoot(r.Path)
 			file, err := filepath.Rel(root, r.Path)
 			r.File = ""
 			if err == nil {

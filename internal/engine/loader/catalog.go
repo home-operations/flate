@@ -351,14 +351,11 @@ func (l *Loader) rootFactsForApplication(application *manifest.EntryApplication)
 	if target == "" {
 		return rootApplication{}
 	}
-	bootstrap := l.Options.ConfiguredInput
-	if bootstrap == nil {
-		bootstrap, _ = l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	}
+	bootstrap := l.Store.BootstrapInput(l.Options.ConfiguredInput)
 	return rootApplication{
 		local:      true,
 		input:      input.Provider == store.ProviderInput,
-		sameOrigin: bootstrap.OriginPath(l.entryPath) == target,
+		sameOrigin: bootstrap.MatchesOrigin(l.entryPath, target),
 	}
 }
 

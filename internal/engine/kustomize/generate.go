@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/kustomize/patch"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -191,11 +192,11 @@ func setNestedString(dst *string, obj map[string]any, fields ...string) error {
 // none is present. Mirrors the lookup flux performs in both findOrGenerate and
 // its manifest scan.
 func kustomizationFileIn(fsys filesys.FileSystem, dir string) (string, bool) {
-	for _, name := range konfig.RecognizedKustomizationFileNames() {
-		kpath := filepath.Join(dir, name)
-		if fsys.Exists(kpath) && !fsys.IsDir(kpath) {
-			return kpath, true
-		}
+	for file := range kustomizeinput.Builders(dir, func(file string) bool {
+		present := fsys.Exists(file)
+		return kustomizeinput.BuilderEligible(present, present && fsys.IsDir(file))
+	}) {
+		return file, true
 	}
 	return "", false
 }

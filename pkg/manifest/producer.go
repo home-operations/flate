@@ -40,13 +40,17 @@ func ProducerNeedsCandidates(obj BaseManifest) bool {
 	return ok && r.producerNeedsCandidates()
 }
 
-func (r *RawObject) producerNeedsCandidates() bool {
-	if r.isFluxInstance() {
-		patches, _ := (specView{r.Spec}).child("kustomize").m["patches"].([]any)
-		return len(patches) != 0
-	}
-	if !r.isArtifactGenerator() {
+func (r *RawObject) hasGeneratedIdentityPatches() bool {
+	if !r.Named().isFluxInstance() {
 		return false
+	}
+	patches, _ := (specView{r.Spec}).child("kustomize").m["patches"].([]any)
+	return len(patches) != 0
+}
+
+func (r *RawObject) producerNeedsCandidates() bool {
+	if !r.isArtifactGenerator() {
+		return r.hasGeneratedIdentityPatches()
 	}
 	artifacts := r.artifactGeneratorSpec().spec.Artifacts
 	for i := range artifacts {
@@ -60,7 +64,9 @@ func (r *RawObject) producerNeedsCandidates() bool {
 func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget {
 	spec := specView{r.Spec}
 	switch {
-	case r.isFluxInstance() && r.producerNeedsCandidates():
+	case r.isArtifactGenerator():
+		return r.artifactTargets(candidates)
+	case r.hasGeneratedIdentityPatches():
 		var result []ProducerTarget
 		for _, id := range candidates {
 			kind := id.KindInfo()
@@ -69,8 +75,6 @@ func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget
 			}
 		}
 		return result
-	case r.isArtifactGenerator():
-		return r.artifactTargets(candidates)
 	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
 		name := cmp.Or(spec.child("target").str(nameKey), r.Name)
 		template := spec.child("target").child("template")

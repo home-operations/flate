@@ -164,8 +164,9 @@ func (v *graphVisit) reaches(input *store.SourceArtifact, entry string) bool {
 }
 
 // EnclosingPackages retains reached ancestors with a relevant declaration or an opaque recipe.
+// A nil predicate excludes ordinary declarations.
 func (l *Loader) EnclosingPackages(
-	ctx context.Context, input *store.SourceArtifact, relative string, target manifest.NamedResource,
+	ctx context.Context, input *store.SourceArtifact, relative string, matches func(manifest.NamedResource) bool,
 ) ([]string, error) {
 	var dirs []string
 	entry := input.OriginPath(filepath.Join(input.LocalPath, relative))
@@ -190,7 +191,7 @@ func (l *Loader) EnclosingPackages(
 		if !packageReached(input, resources, entry) {
 			continue
 		}
-		if reader.packageMayDeclare(ctx, resources, target) {
+		if reader.packageMayDeclare(ctx, resources, matches) {
 			dirs = append(dirs, filepath.ToSlash(dir))
 		}
 	}
@@ -198,7 +199,7 @@ func (l *Loader) EnclosingPackages(
 }
 
 func (r *documentReader) packageMayDeclare(
-	ctx context.Context, resources []graphVisit, target manifest.NamedResource,
+	ctx context.Context, resources []graphVisit, matches func(manifest.NamedResource) bool,
 ) bool {
 	for i := range resources {
 		resource := &resources[i]
@@ -207,12 +208,12 @@ func (r *documentReader) packageMayDeclare(
 		if opaque || resource.requiresBuild || resource.incomplete != "" || !resource.readable {
 			return true
 		}
-		if resource.role != kustomizeinput.Resource || resource.document != nil || target.Name != "" {
+		if matches == nil || resource.role != kustomizeinput.Resource || resource.document != nil {
 			continue
 		}
 		declarations, _ := r.completeFile(ctx, resource.file)
 		for id := range declarations.Objects {
-			if id.Group == target.Group && id.Kind == target.Kind {
+			if matches(id) {
 				return true
 			}
 		}

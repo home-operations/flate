@@ -2,6 +2,7 @@ package kustomize
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/source/gitrepo"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/engine/tree"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -127,16 +129,19 @@ func typedFluxDoc(tb testing.TB, doc map[string]any) map[string]any {
 	return typed
 }
 
+type generateManifestCase struct {
+	name         string
+	files        map[string]string
+	subPath      string
+	spec         map[string]any
+	blockedWrite bool
+}
+
 func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 	t.Parallel()
 	patch := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  replicas: 3\n"
 
-	cases := []struct {
-		name    string
-		files   map[string]string
-		subPath string
-		spec    map[string]any
-	}{
+	cases := []generateManifestCase{
 		{
 			name: "existing kustomization with resources",
 			files: map[string]string{
@@ -144,6 +149,24 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 				"deploy.yaml":        cmYAML("deploy"),
 			},
 			subPath: ".",
+		},
+		{
+			name: "recognized directory before alternate builder",
+			files: map[string]string{
+				"kustomization.yaml/README.md": "directory",
+				"kustomization.yml":            existingKustomization("deploy.yaml"),
+				"deploy.yaml":                  cmYAML("deploy"),
+			},
+			subPath: ".",
+		},
+		{
+			name: "canonical builder directory with no alternate",
+			files: map[string]string{
+				"kustomization.yaml/README.md": "directory",
+				"deploy.yaml":                  cmYAML("deploy"),
+			},
+			subPath:      ".",
+			blockedWrite: true,
 		},
 		{
 			name:    "existing kustomization no resources gets originAnnotations",
@@ -341,21 +364,16 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			case "null":
 				spec[field] = nil
 			}
-			cases = append(cases, struct {
-				name    string
-				files   map[string]string
-				subPath string
-				spec    map[string]any
-			}{
-				field + "/" + shape,
-				map[string]string{
+			cases = append(cases, generateManifestCase{
+				name: field + "/" + shape,
+				files: map[string]string{
 					"kustomization.yaml": existingKustomization(
 						"cm.yaml",
 					) + "namespace: original\nnamePrefix: before-\nnameSuffix: -after\n",
 					"cm.yaml": cmYAML("config"),
 				},
-				".",
-				spec,
+				subPath: ".",
+				spec:    spec,
 			})
 		}
 	}
@@ -376,24 +394,18 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 				field *string
 				value *any
 			}{shape: &shape, field: &field, value: &value})
-			cases = append(cases, struct {
-				name    string
-				files   map[string]string
-				subPath string
-				spec    map[string]any
-			}{field + "/" + shape, map[string]string{
-				"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config"),
-			}, ".", map[string]any{field: value}})
+			cases = append(cases, generateManifestCase{
+				name: field + "/" + shape,
+				files: map[string]string{
+					"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config"),
+				},
+				subPath: ".", spec: map[string]any{field: value},
+			})
 		}
 	}
 
 	for _, namespace := range []string{"", "apps"} {
-		cases = append(cases, struct {
-			name    string
-			files   map[string]string
-			subPath string
-			spec    map[string]any
-		}{
+		cases = append(cases, generateManifestCase{
 			name: "namespace identity/" + namespace,
 			files: map[string]string{
 				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
@@ -408,7 +420,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			generateManifestByteEquivalentToFluxName(t, &tc)
+			testGenerateManifestByteEquivalentToFluxCase(t, &tc)
 		})
 	}
 }
@@ -593,31 +605,24 @@ func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
 	}
 }
 
-func testGenerateManifestByteEquivalentToFluxCase(
-	t *testing.T,
-	testCaseInput *struct {
-		name    string
-		files   map[string]string
-		subPath string
-		spec    map[string]any
-	},
-) {
+func testGenerateManifestByteEquivalentToFluxCase(t *testing.T, tc *generateManifestCase) {
 	t.Helper()
 
-	root := testutil.WriteTree(t, testCaseInput.files)
-	doc := ksDoc(testCaseInput.spec)
+	root := testutil.WriteTree(t, tc.files)
+	dir := filepath.Join(root, tc.subPath)
+	doc := ksDoc(tc.spec)
 
 	gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: typedFluxDoc(t, doc)})
-	want, _, _, wantErr := gen.GenerateManifest(filepath.Join(root, testCaseInput.subPath))
+	want, path, action, wantErr := gen.GenerateManifest(dir)
 
 	borrowed := renderDoc(t, parsedKS(t, manifest.DeepCopyMap(doc)))
 	snapshot := manifest.DeepCopyMap(borrowed)
-	generateManifestResult5, generateManifestResult5Err := generateManifest(
-		testTreeFS(t, root),
-		filepath.Join(root, testCaseInput.subPath),
-		borrowed,
-	)
-	got, _, err := generateManifestResult5.data, generateManifestResult5.path, generateManifestResult5Err
+	input := testTreeFS(t, root)
+	got, err := generateManifest(input, dir, borrowed)
+	if tc.blockedWrite {
+		assert.NoError(t, wantErr)
+		assert.NoError(t, err)
+	}
 	assert.Diff(t, borrowed, snapshot)
 	if wantErr != nil || err != nil {
 		assert.FatalIf(
@@ -632,23 +637,21 @@ func testGenerateManifestByteEquivalentToFluxCase(
 
 	assert.FatalIf(
 		t,
-		string(got) != string(want),
+		string(got.data) != string(want),
 		"kustomization.yaml mismatch\n--- flux (want) ---\n%s\n--- in-memory (got) ---\n%s",
 		want,
-		got,
+		got.data,
 	)
-}
-
-func generateManifestByteEquivalentToFluxName(t *testing.T, tc *struct {
-	name    string
-	files   map[string]string
-	subPath string
-	spec    map[string]any
-},
-) {
-	t.Helper()
-
-	testGenerateManifestByteEquivalentToFluxCase(t, tc)
+	assert.Equal(t, got.path, path)
+	if tc.blockedWrite {
+		assert.Equal(t, action, fluxkustomize.CreatedAction)
+		assert.FatalIf(t, !input.IsDir(got.path), "generated path %q must be a directory", got.path)
+		err := writeGeneratedManifest(input, &got)
+		assert.FatalIf(t, !errors.Is(err, tree.ErrConflict), "flate write error = %v", err)
+		written, err := gen.WriteFile(dir)
+		assert.Equal(t, written, action)
+		assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), path), "Flux write error = %v", err)
+	}
 }
 
 func generateManifestByteEquivalentToFluxLoop(loopInputs struct {

@@ -109,7 +109,7 @@ func testNewEntryPolicySizeErrors(t *testing.T) {
 				assert.Equal(t, got.Op, "current-size")
 				assert.Equal(t, got.Path, "physical-file")
 				assert.Equal(t, got.Err, fs.ErrPermission)
-				_, err = view.Stat("file")
+				_, err = (&FS{view: view}).Stat("file")
 				got, ok = errors.AsType[*fs.PathError](err)
 				assert.FatalIf(t, !ok, "stat size error = %v", err)
 				assert.Equal(t, got.Op, statOperation)

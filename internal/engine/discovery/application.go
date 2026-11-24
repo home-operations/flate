@@ -3,10 +3,10 @@ package discovery
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"path"
 	"path/filepath"
 	"slices"
@@ -74,7 +74,7 @@ func (a *Admission) captureApplication(
 		slices.Sort(c.files)
 	}
 	generatedEntry := owner.visibleGeneration && receiptRenderOwner(support) && owner.source.artifact.WorkingTree() &&
-		owner.source.artifact.ApplicationOrigin(owner.application.Path) == a.input.OriginPath(a.path)
+		a.input.MatchesOrigin(a.path, owner.source.artifact.ApplicationOrigin(owner.application.Path))
 	evidence, err := q.trees.ApplicationReceipt(ctx, request, kustomize.EntryEvidence{
 		GeneratedEntry: generatedEntry,
 		Producer:       producer,
@@ -218,34 +218,29 @@ func (c *entryCapture) collectRelations(id manifest.NamedResource) {
 
 func (c *entryCapture) mapFiles() bool {
 	a := c.admission
+	var inputOrigin string
+	var mounts map[string]*store.SourceArtifact
+	mountsReady := false
 	for i, file := range c.files {
 		absolute := filepath.Join(a.input.LocalPath, filepath.FromSlash(file))
 		if safepath.Contains(a.input.LocalPath, absolute) {
 			continue
 		}
-		mapped, ok := c.mapFile(absolute)
-		if !ok {
+		if !mountsReady {
+			inputOrigin = a.input.OriginPath(a.input.LocalPath)
+			var scratch [8]manifest.NamedResource
+			admitted := slices.AppendSeq(scratch[:0], maps.Keys(a.resolvedSources.snapshot()))
+			mounts = loader.AdmittedWorkingTreeMounts(c.reads.GetArtifact, nil, admitted...)
+			mountsReady = true
+		}
+		origin := loader.ProjectWorkingTreePath(absolute, mounts)
+		if !safepath.Contains(inputOrigin, origin) {
 			return false
 		}
-		c.files[i] = mapped
+		relative, _ := filepath.Rel(inputOrigin, origin)
+		c.files[i] = filepath.ToSlash(relative)
 	}
 	return true
-}
-
-func (c *entryCapture) mapFile(absolute string) (string, bool) {
-	a := c.admission
-	for id := range a.resolvedSources.snapshot() {
-		artifact, _ := c.reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if !artifact.WorkingTree() || !safepath.Contains(artifact.LocalPath, absolute) {
-			continue
-		}
-		origin := artifact.OriginPath(absolute)
-		if safepath.Contains(a.input.OriginPath(a.input.LocalPath), origin) {
-			relative, _ := filepath.Rel(a.input.OriginPath(a.input.LocalPath), origin)
-			return filepath.ToSlash(relative), true
-		}
-	}
-	return "", false
 }
 
 // Admission borrows the canonical entry owner before and after Freeze.
@@ -487,21 +482,21 @@ func (a *Admission) captureConflictingApplications(reads *store.ReadSet) {
 
 //nolint:nilnil // A directory without a builder supplies no literal entry.
 func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, error) {
-	input := a.Input().FS
-	if overlay, ok := input.(*inputprojection.Overlay); ok && !a.entryDemand {
-		input = overlay.Authored.FS
+	input := a.Input()
+	if !a.entryDemand {
+		input = inputprojection.Authored(input)
 	}
-	for _, filename := range manifest.KustomizeBuilderFilenames {
-		_, err := fs.ReadFile(input, filepath.ToSlash(filepath.Join(relative, filename)))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
-		}
-		return manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{}), nil
+	file, known := a.session.cachedEntryBuilder(input, a.path)
+	if !known {
+		file = nativeEntry(input.FS, relative)
 	}
-	return nil, nil
+	if file == "" {
+		return nil, nil
+	}
+	if _, err := fs.ReadFile(input.FS, filepath.ToSlash(file)); err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
+	}
+	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{}), nil
 }
 
 func (a *Admission) applicationEntry(

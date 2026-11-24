@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -25,7 +26,7 @@ func Claims(
 		func(ks *manifest.Kustomization) bool { return !s.Policy(ks.Named()).Root },
 	)
 	reader := documentReader{cache: map[string]document{}}
-	reader.mountSources(s, nil)
+	reader.mountSources(s, nil, nil)
 	var claimBuf [16]ownerClaims
 	built := new(reader).buildClaims(repoRoot, candidates, func(id manifest.NamedResource) sourceScope {
 		location := SourceView(s, id, repoRoot)
@@ -326,6 +327,21 @@ func (r *documentReader) localBase(root, repoRoot string) string {
 }
 
 func (r *documentReader) localPath(file string) string {
-	dr := *r
-	return dr.artifacts[new(dr).mountedRoot(file)].OriginPath(file)
+	if len(r.artifacts) == 0 {
+		return file
+	}
+	return r.artifacts[r.mountedRoot(file)].OriginPath(file)
+}
+
+// WorkingTreePath uses the admitted mounts before the next mount refresh.
+func (l *Loader) WorkingTreePath(file string) string {
+	return cmp.Or(ProjectWorkingTreePath(file, l.documents.workingTree), file)
+}
+
+// ProjectWorkingTreePath returns an empty path when no admitted mount contains file.
+func ProjectWorkingTreePath(file string, mounts map[string]*store.SourceArtifact) string {
+	if mount := mounts[selectMount(file, "", mounts)]; mount != nil {
+		return mount.OriginPath(file)
+	}
+	return ""
 }

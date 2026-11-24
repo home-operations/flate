@@ -25,13 +25,18 @@ type fluxInstanceGenerationSpec struct {
 	Kustomize *operatorv1.Kustomize `json:"kustomize,omitempty"    yaml:"kustomize"`
 }
 
-func (r *RawObject) isFluxInstance() bool {
-	return r.Kind == kindFluxInstance && apiGroup(r.APIVersion) == FluxOperatorDomain
+// CanDeclareGeneratedEntry describes the kind before the sync specification is read.
+func (n NamedResource) CanDeclareGeneratedEntry() bool {
+	return n.isFluxInstance()
+}
+
+func (n NamedResource) isFluxInstance() bool {
+	return n.Kind == kindFluxInstance && n.Group == FluxOperatorDomain
 }
 
 //nolint:nilnil // An absent sync field leaves an empty generation recipe.
 func (r *RawObject) syncSpec() (*operatorv1.Sync, error) {
-	if !r.isFluxInstance() || r.Spec["sync"] == nil {
+	if !r.Named().isFluxInstance() || r.Spec["sync"] == nil {
 		return nil, nil
 	}
 	data, err := json.Marshal(r.Spec["sync"])

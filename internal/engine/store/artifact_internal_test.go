@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 
@@ -563,5 +564,24 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 	if (*testCaseInput.mode) == "alias" {
 		bootstrap := &SourceArtifact{LocalPath: "/origin", FS: fstest.MapFS{}}
 		assert.Equal(t, identity, bootstrap.HistoryIdentity())
+	}
+}
+
+func TestSourceArtifact_MatchesOrigin(t *testing.T) {
+	t.Parallel()
+	local, backing := t.TempDir(), t.TempDir()
+	input := &SourceArtifact{LocalPath: local, LocalRoot: backing, Provider: ProviderAlias}
+	for _, tc := range []struct {
+		name, path, origin string
+		want               bool
+	}{
+		{name: "same origin", path: "apps", origin: filepath.Join(backing, "apps"), want: true},
+		{name: "mixed spelling", path: "K", origin: filepath.ToSlash(filepath.Join(backing, "k")), want: runtime.GOOS == "windows"},
+		{name: "different origin", path: "apps", origin: filepath.Join(local, "apps"), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, input.MatchesOrigin(filepath.Join(local, tc.path), tc.origin), tc.want)
+		})
 	}
 }

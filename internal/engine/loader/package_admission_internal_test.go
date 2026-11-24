@@ -2,6 +2,7 @@ package loader
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -104,6 +105,15 @@ func TestPackages_RootAdmission(t *testing.T) {
 				"two-sibling/source.yaml": source,
 			},
 			want: map[string]bool{"one": true, "two": false, "two/nested": false, "two-sibling": true},
+		},
+		{
+			name: "host case and separators in application claims",
+			files: map[string]string{
+				"one/owner.yaml":          testutil.KustomizationYAML("one", "apps", "  path: './TWO\\K'\n"),
+				"two/k/source.yaml":       source,
+				"two/k-other/source.yaml": source,
+			},
+			want: map[string]bool{"one": true, "two/k": runtime.GOOS != "windows", "two/k-other": true},
 		},
 		{
 			name: "native and application claims agree",
@@ -228,7 +238,12 @@ func TestPackages_AliasApplicationOwnership(t *testing.T) {
 	files := fstest.MapFS{
 		"one/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps",
 			"  path: ./two\n  sourceRef: {kind: GitRepository, name: self}\n"))},
-		"two/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: apps}\n")},
+		"two/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child, namespace: apps}\n"),
+		},
+		"two-sibling/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n"),
+		},
 	}
 	st := store.New()
 	st.SetArtifact(
@@ -252,7 +267,7 @@ func TestPackages_AliasApplicationOwnership(t *testing.T) {
 	for _, pkg := range packages {
 		got[pkg.Path] = pkg.Independent
 	}
-	assert.Diff(t, got, map[string]bool{"one": true, "two": false})
+	assert.Diff(t, got, map[string]bool{"one": true, "two": false, "two-sibling": true})
 }
 
 func TestPackages_UnboundSourceScope(t *testing.T) {

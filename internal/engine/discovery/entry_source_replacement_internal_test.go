@@ -114,6 +114,35 @@ func TestAdmission_ReplacementWithdrawsSyntheticArtifact(t *testing.T) {
 
 func TestResolveEntrySources_RefreshPreservesSuppliedArtifact(t *testing.T) {
 	t.Parallel()
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured=%t", configured), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			stored := &store.SourceArtifact{
+				Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{"marker": {Data: []byte("stored")}},
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, stored)
+			cfg := Config{Path: root, Store: st}
+			want := "stored"
+			if configured {
+				cfg.Input = &store.SourceArtifact{
+					Provider: store.ProviderInput, LocalPath: root,
+					FS: fstest.MapFS{"marker": {Data: []byte("configured")}},
+				}
+				want = "configured"
+			}
+			d := newDiscoverer(&cfg)
+			t.Cleanup(d.Close)
+			for _, refresh := range []bool{false, true} {
+				_, err := d.resolveTestSources(t.Context(), refresh)
+				assert.NoError(t, err)
+				data, err := fs.ReadFile(d.admission().Input().FS, "marker")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), want)
+			}
+		})
+	}
 	st := store.New()
 	d := Session{cfg: Config{Path: t.TempDir(), Store: st}, loader: loader.New(st)}
 	t.Cleanup(d.loader.Close)

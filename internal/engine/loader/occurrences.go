@@ -378,12 +378,10 @@ type identityProjection struct {
 
 func (l *Loader) projectIdentity(
 	id manifest.NamedResource,
-	vValue *graphVisit,
+	v *graphVisit,
 	version string,
 	namespaced bool,
 ) (manifest.NamedResource, error) {
-	v := *vValue
-
 	projection := 0
 	if namespaced {
 		id = manifest.Resolve(id, v.namespace, v.fallback)

@@ -515,7 +515,7 @@ func testDocumentReaderSourceViewsAndReuseUnavailableSource(
 	repo := &manifest.GitRepository{Name: "released", Namespace: "n"}
 	st.AddObject(repo)
 	st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: (*testCaseInput.committed), Key: "pin"})
-	testCaseInput.r.mountSources(st, nil)
+	testCaseInput.r.mountSources(st, nil, nil)
 	{
 		_, err := testCaseInput.r.parseFile(
 			t.Context(),
@@ -581,7 +581,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	assert.Equal(t, st.GetObject(manifest.BootstrapSourceID) == nil, true)
 	mounted = append(mounted, bootstrapPath)
 	slices.Sort(mounted)
-	assert.Diff(t, reader.mountSources(st, nil), mounted)
+	assert.Diff(t, reader.mountSources(st, nil, nil), mounted)
 	assert.Equal(t, len(reader.views), len(mounted))
 	for _, path := range mounted {
 		body := reader.read(path).body
@@ -597,7 +597,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 			assert.FatalIf(t, again != body, "%s", "unchanged mounted document was re-parsed")
 		}
 	}
-	assert.Equal(t, len(reader.mountSources(st, nil)), 0)
+	assert.Equal(t, len(reader.mountSources(st, nil, nil)), 0)
 	ociPath, bucketPath := filepath.Join(root, "oci"), filepath.Join(root, "bucket")
 	late := filepath.Join(ociPath, "late")
 	{
@@ -609,7 +609,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 		"late/Kustomization": {Data: []byte("namespace: late\n")},
 	}})
 	st.DeleteObject(bucket.Named())
-	assert.Diff(t, reader.mountSources(st, nil), []string{bucketPath, ociPath})
+	assert.Diff(t, reader.mountSources(st, nil, nil), []string{bucketPath, ociPath})
 	{
 		body := reader.read(ociPath).body
 		assert.FatalIf(
@@ -648,7 +648,7 @@ func testDocumentReaderSourceViewsAndReuseNativeReaderOwnership(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, artifact)
 	r := documentReader{}
-	r.mountSources(st, nil)
+	r.mountSources(st, nil, nil)
 	assert.FatalIf(t, r.views[root] != artifact.FS, "%s", "temporary reader constructed a private operation view")
 	l := New(st)
 	l.mountSources()

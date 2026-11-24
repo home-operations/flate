@@ -114,5 +114,18 @@ func TestGeneratedTargets_PatchedSyncRequiresPreparation(t *testing.T) {
 	replacement := NamedResource{
 		Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "control", Name: "replacement",
 	}
-	assert.Diff(t, ProducerTargets(obj, replacement), []ProducerTarget{{NamedResource: replacement}})
+	unrelated := NamedResource{Kind: KindConfigMap, Namespace: "control", Name: "unrelated"}
+	want := []ProducerTarget{{NamedResource: replacement}}
+	assert.Diff(t, ProducerTargets(obj, replacement, unrelated), want)
+	assert.Equal(t, len(ProducerTargets(obj)), 0)
+
+	withoutSync := *obj
+	withoutSync.Spec = map[string]any{"kustomize": obj.Spec["kustomize"], "other": "omitted"}
+	targets, err = GeneratedTargets(&withoutSync)
+	assert.NoError(t, err)
+	assert.Equal(t, len(targets), 0)
+	catalog := CatalogObject(&withoutSync, withoutSync.Named())
+	assert.Diff(t, catalog.(*RawObject).Spec, map[string]any{"kustomize": obj.Spec["kustomize"]})
+	assert.Equal(t, ProducerNeedsCandidates(catalog), true)
+	assert.Diff(t, ProducerTargets(catalog, replacement, unrelated), want)
 }

@@ -105,8 +105,8 @@ func (g *FS) Location() *gitrepo.Location { return g.location }
 type view interface {
 	fs.ReadFileFS
 	fs.ReadDirFS
-	fs.StatFS
 	fs.ReadLinkFS
+	inspect(string) (fs.FileInfo, string, error)
 	// OpenRegular requires a regular file already admitted by Stat or ReadDir.
 	OpenRegular(string) (fs.File, error)
 }
@@ -491,13 +491,12 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// Stat exposes visible entries and preserves admitted Current semantics.
-func (g *gitView) Stat(name string) (fs.FileInfo, error) {
+func (g *gitView) inspect(name string) (fs.FileInfo, string, error) {
 	info, err := g.Lstat(name)
 	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
-		return info, &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
+		err = &fs.PathError{Op: statOperation, Path: pathErr.Path, Err: pathErr.Err}
 	}
-	return info, err
+	return info, "", err
 }
 
 // ReadDir returns sorted caller-owned entries.

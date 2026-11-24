@@ -53,14 +53,19 @@ func PreservesFiles(before, after *store.SourceArtifact) bool {
 	return native && view.sameFiles != nil && view.sameFiles == before.FS
 }
 
-// Callers MUST retain the listing's immutable backing when skipping Stat.
+func openRegular(input fs.FS, name string) (fs.File, error) {
+	if regular, ok := input.(interface {
+		OpenRegular(string) (fs.File, error)
+	}); ok {
+		return regular.OpenRegular(name)
+	}
+	//nolint:wrapcheck // Preserve the admitted filesystem's path errors.
+	return input.Open(name)
+}
+
 func (g *gitView) OpenRegular(name string) (fs.File, error) {
 	if node := g.nodes[name]; node != nil && node.mode.IsRegular() && g.current != nil && !g.changes[name] {
-		if current, ok := g.current.(*FS); ok {
-			return current.OpenRegular(name)
-		}
-		//nolint:wrapcheck // OpenRegular retains the admitted current filesystem's path errors.
-		return g.current.Open(name)
+		return openRegular(g.current, name)
 	}
 	return g.Open(name)
 }
@@ -170,13 +175,45 @@ func (g *FS) ReadFile(name string) ([]byte, error) {
 }
 
 // Stat MUST report excluded paths as absent even when backing metadata exists.
-//
-//nolint:wrapcheck // Stat forwards admitted metadata and the underlying PathError fields.
 func (g *FS) Stat(name string) (fs.FileInfo, error) {
+	info, _, err := g.inspect(name)
+	return info, err
+}
+
+func (g *FS) inspect(name string) (fs.FileInfo, string, error) {
 	if g.excludes(name) {
-		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
+		return nil, "", &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 	}
-	return g.view.Stat(name)
+	return g.view.inspect(name)
+}
+
+// InspectedFile retains the path admitted by the source filesystem.
+type InspectedFile struct {
+	input fs.FS
+	name  string
+	path  string
+}
+
+// InspectFile ties metadata and the open operation to the same filesystem view.
+func InspectFile(input fs.FS, name string) (fs.FileInfo, InspectedFile, error) {
+	file := InspectedFile{input: input, name: name}
+	if source, ok := input.(*FS); ok {
+		info, absolute, err := source.inspect(name)
+		if err == nil && info.Mode().IsRegular() {
+			file.path = absolute
+		}
+		return info, file, err
+	}
+	info, err := fs.Stat(input, name)
+	return info, file, err //nolint:wrapcheck // Preserve the filesystem's path errors.
+}
+
+// Open requires a regular file and an unchanged source view since inspection.
+func (f InspectedFile) Open() (fs.File, error) {
+	if f.path != "" {
+		return openLocalFile(f.path)
+	}
+	return openRegular(f.input, f.name)
 }
 
 // Lstat MUST enforce membership without following aliases.

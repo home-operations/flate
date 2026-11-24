@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -61,6 +62,56 @@ func TestClusterRoots_PinnedOwnership(t *testing.T) {
 			slices.Reverse(roots)
 			assert.Diff(t, paths(d.unpinnedRoots(roots)), tc.want)
 		})
+	}
+}
+
+func TestClusterRoots_PartitionAnchors(t *testing.T) {
+	t.Parallel()
+	input := &store.SourceArtifact{LocalPath: string(filepath.Separator)}
+	root := clusterRoot{
+		anchors: []bootstrapAnchor{
+			{target: "apps"},
+			{target: "apps/nested"},
+			{target: "apps/./nested"},
+			{target: "K-only"},
+			{target: "."},
+			{target: "K"},
+			{target: "K"},
+			{target: "K/K"},
+			{target: "K/K/a"},
+		},
+	}
+	declarations := []selection.OccurrenceID{
+		{Source: input.LocalPath, File: "apps", Document: 1},
+		{Source: input.LocalPath, File: "apps/nested/objects.yaml", Document: 1},
+		{Source: input.LocalPath, File: "apps/nested/objects.yaml", Document: 2},
+		{Source: input.LocalPath, File: "apps-other/object.yaml", Document: 1},
+		{Source: input.LocalPath, File: "K-only/object.yaml", Document: 1},
+		{Source: input.LocalPath, File: "K/file.yaml", Document: 1},
+		{Source: input.LocalPath, File: "K/K/a/object.yaml", Document: 1},
+	}
+	for _, declaration := range declarations {
+		root.seeds = append(root.seeds, selection.OccurrenceFacts{Declaration: declaration})
+	}
+	partitions := root.partitionAnchors(input)
+	assert.Equal(t, len(partitions), len(root.anchors))
+	wantPartitions := [][]selection.OccurrenceID{
+		declarations[:1], declarations[1:3], nil, nil, declarations[3:5],
+		declarations[5:6], nil, nil, declarations[6:],
+	}
+	if runtime.GOOS == "windows" {
+		wantPartitions[3] = declarations[4:5]
+		wantPartitions[4] = declarations[3:4]
+		wantPartitions[5] = nil
+		wantPartitions[6] = declarations[5:6]
+	}
+	for i, want := range wantPartitions {
+		assert.Equal(t, partitions[i].Path, root.anchors[i].target)
+		var got []selection.OccurrenceID
+		for j := range partitions[i].seeds {
+			got = append(got, partitions[i].seeds[j].Declaration)
+		}
+		assert.Diff(t, got, want)
 	}
 }
 

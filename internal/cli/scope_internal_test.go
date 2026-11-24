@@ -296,6 +296,21 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 }
 
 //nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
+func TestRun_NamedScope_AncestorDeclaration(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [ks.yaml, entry]\n")
+	testutil.WriteFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("app", "flux-system",
+		"  path: ./apps/workload\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+	testutil.WriteFile(t, root, "apps/entry/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "apps/entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: entry}\n")
+	testutil.WriteFile(t, root, "apps/workload/kustomization.yaml", "resources: []\n")
+	got := runCLI(t, "build", "ks", "app", "--path", filepath.Join(root, "apps", "entry"),
+		"--cache-dir=", "--concurrency", "2")
+	assert.Equal(t, got, cliResult{code: 1, stderr: "flate error: no Kustomization named \"app\" in --path\n"})
+}
+
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
 func TestRun_NamedScope_ParentChain(t *testing.T) {
 	root := writeNamedScopeFixture(t)
 	testutil.WriteFile(

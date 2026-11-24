@@ -479,7 +479,11 @@ func (r *RawObject) hasLiteralTemplateKind() bool {
 }
 
 func (r *RawObject) draftMayReadSource() bool {
-	return strings.HasSuffix(r.Kind, "List") || r.Named().KindInfo().Tracked || r.isFluxInstance()
+	if strings.HasSuffix(r.Kind, "List") {
+		return true
+	}
+	id := r.Named()
+	return id.KindInfo().Tracked || id.CanDeclareGeneratedEntry()
 }
 
 func (p *TemplateProjection) addObjectInputs(object BaseManifest, authoredNamespace string, pendingOnly bool) {

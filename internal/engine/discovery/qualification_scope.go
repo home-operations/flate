@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/kustomize/patch"
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -85,24 +86,27 @@ func (r entryReach) includes(origin string, evidence *applicationEvidence, captu
 		targets = []entryTarget{{origin: r.entry}}
 	}
 	for _, target := range targets {
-		if target.selected() && r.winners[target.occurrence] != (manifest.NamedResource{}) {
+		selected := target.selected()
+		relation := kustpath.RelateHost(origin, target.origin)
+		switch {
+		case !selected && relation == kustpath.HostEqual:
+			return true
+		case !evidence.visibleGeneration, selected && r.winners[target.occurrence] != (manifest.NamedResource{}):
 			continue
-		}
-		if !target.selected() && (origin == target.origin ||
-			evidence.visibleGeneration && safepath.Contains(target.origin, origin)) {
+		case !selected && relation == kustpath.HostDescendant:
 			return true
 		}
-		if !evidence.visibleGeneration || !safepath.Contains(origin, target.origin) ||
-			!safepath.Contains(r.entry, target.origin) || !r.packageReaches(evidence, target.origin) {
+		if !relation.Contains() ||
+			!kustpath.RelateHost(r.entry, target.origin).Contains() || !r.packageReaches(evidence, target.origin) {
 			continue
 		}
-		if !capture || !target.selected() {
-			evidence.descendant = !target.selected()
+		if !capture || !selected {
+			evidence.descendant = !selected
 			return true
 		}
 		evidence.reaches = append(evidence.reaches, target.occurrence)
 		// A reached occurrence inside the entry proves its generated ancestor covers the entry.
-		if target.coverEntry && origin != r.entry && safepath.Contains(origin, r.entry) {
+		if target.coverEntry && kustpath.RelateHost(origin, r.entry) == kustpath.HostAncestor {
 			evidence.descendant = true
 		}
 	}

@@ -369,8 +369,6 @@ type missingResourceFS struct {
 func (f *missingResourceFS) Open(name string) (fs.File, error) {
 	if name == f.missing {
 		f.opens++
-	} else if strings.HasPrefix(name, f.missing+"/") {
-		f.probes++
 	}
 	return f.FS.Open(name)
 }
@@ -381,6 +379,8 @@ func (f *missingResourceFS) Stat(name string) (fs.FileInfo, error) {
 		if f.statError != nil {
 			return nil, f.statError
 		}
+	} else if strings.HasPrefix(name, f.missing+"/") {
+		f.probes++
 	}
 	return fs.Stat(f.FS, name)
 }

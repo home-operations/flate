@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -26,11 +27,8 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 	if d.loading {
 		return nil
 	}
-	input := d.cfg.Input
-	if input == nil {
-		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-		d.cfg.Input = input
-	}
+	input := d.cfg.Store.BootstrapInput(d.cfg.Input)
+	d.cfg.Input = input
 	name, err := filepath.Rel(input.LocalPath, d.cfg.Path)
 	if err != nil {
 		return fmt.Errorf("rel: %w", err)
@@ -71,14 +69,19 @@ func (d *Session) prepareEnclosingPackages(ctx context.Context, input *store.Sou
 		if target.Name == "" && target.Namespace == "" {
 			continue
 		}
-		enclosing, err := d.loader.EnclosingPackages(ctx, input, entry, target)
+		var matches func(manifest.NamedResource) bool
+		if target.Name == "" {
+			matches = func(id manifest.NamedResource) bool { return id.Group == target.Group && id.Kind == target.Kind }
+		}
+		enclosing, err := d.loader.EnclosingPackages(ctx, input, entry, matches)
 		if err != nil {
 			return err
 		}
 		for _, path := range enclosing {
-			origin := input.OriginPath(filepath.Join(input.LocalPath, path))
-			if !owned[origin] && !slices.Contains(packages, path) {
+			origin := kustpath.HostKey(input.OriginPath(filepath.Join(input.LocalPath, path)))
+			if !owned[origin] {
 				packages = append(packages, path)
+				owned[origin] = true
 			}
 		}
 	}
@@ -165,8 +168,7 @@ func (a *Admission) authoredOwnersReachEntry(
 		material := evidence.source.artifact
 		origin := material.ApplicationOrigin(evidence.application.Path)
 		unknown := material == nil || material.Provider == store.ProviderGenerator
-		overlaps := safepath.Contains(origin, entry) || safepath.Contains(entry, origin)
-		if origin == "" && unknown || overlaps {
+		if origin == "" && unknown || kustpath.RelateHost(origin, entry).Overlaps() {
 			return true, nil
 		}
 	}
@@ -214,7 +216,7 @@ func (d *Session) lookupApplicationInputs(
 			return nil, err
 		}
 		origin := evidence.source.artifact.ApplicationOrigin(evidence.application.Path)
-		if origin != "" && !safepath.Contains(origin, entryOrigin) && !safepath.Contains(entryOrigin, origin) {
+		if origin != "" && !kustpath.RelateHost(origin, entryOrigin).Overlaps() {
 			inputs = append(inputs, origin)
 		}
 	}
@@ -239,7 +241,7 @@ func (d *Session) qualifyLookupOwners(
 			return err
 		}
 		if origin != "" {
-			owned[origin] = true
+			owned[kustpath.HostKey(origin)] = true
 		}
 	}
 	return nil
@@ -349,7 +351,7 @@ func (d *Session) prepareLookupPackage(
 	id := owner.Named()
 	entry := d.cfg.Input.OriginPath(d.cfg.Path)
 	restricted := input.LocalPath != "" && input.WorkingTree() &&
-		!safepath.Contains(entry, input.ApplicationOrigin(owner.Path))
+		!kustpath.RelateHost(entry, input.ApplicationOrigin(owner.Path)).Contains()
 	switch {
 	case restricted && !d.loader.EntryScope(id).Current():
 		d.loader.SetEntryScope(id, &selection.EntryScope{})

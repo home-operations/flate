@@ -134,7 +134,7 @@ func (a *Admission) emittedEntrySource(id manifest.NamedResource, declaration ma
 		if child.VisibleGeneration && !entry {
 			application, applies := runnableApplication(child.Obj)
 			entry = applies && application.Source == id &&
-				a.input.ApplicationOrigin(application.Path) == a.input.OriginPath(a.path) &&
+				a.input.MatchesOrigin(a.path, a.input.ApplicationOrigin(application.Path)) &&
 				a.store.GetDeclaration(child.Obj.Named()) == child.Obj
 		}
 		if source && entry {
@@ -357,11 +357,10 @@ func (a *Admission) reachesEntry(
 	if a.input == nil || a.path == "" {
 		return false
 	}
-	entry := a.input.OriginPath(a.path)
-	if a.entryOrigin(application, nil) == entry {
+	if a.input.MatchesOrigin(a.path, a.entryOrigin(application, nil)) {
 		return true
 	}
-	return occurrence != nil && a.checkoutTarget(application, occurrence) == entry
+	return occurrence != nil && a.input.MatchesOrigin(a.path, a.checkoutTarget(application, occurrence))
 }
 
 func (a *Admission) checkoutTarget(
@@ -375,7 +374,7 @@ func (a *Admission) checkoutTarget(
 		return ""
 	}
 	target := a.input.ApplicationOrigin(application.Path)
-	if target == "" || application.Path == "" && target != a.input.OriginPath(a.path) {
+	if target == "" || application.Path == "" && !a.input.MatchesOrigin(a.path, target) {
 		return ""
 	}
 	mount := occurrence.Mounted
@@ -385,11 +384,29 @@ func (a *Admission) checkoutTarget(
 	if !mount.WorkingTree() || mount.LocalPath != occurrence.Declaration.Source {
 		return ""
 	}
-	declaration := mount.OriginPath(filepath.Join(mount.LocalPath, occurrence.Declaration.File))
-	if !safepath.Contains(target, declaration) {
+	if !containsDeclaration(target, &occurrence.Declaration, mount, nil) {
 		return ""
 	}
 	return target
+}
+
+func configuredApplicationTarget(
+	input *store.SourceArtifact, path string, occurrence *selection.OccurrenceFacts,
+) (string, bool) {
+	target := input.OriginPath(filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(path)))
+	return target, containsDeclaration(target, &occurrence.Declaration, occurrence.Mounted, input)
+}
+
+func containsDeclaration(
+	target string, declaration *selection.OccurrenceID, mount, configured *store.SourceArtifact,
+) bool {
+	mount = cmp.Or(mount, configured)
+	file := filepath.Join(declaration.Source, declaration.File)
+	if mount != nil && mount.OriginPath(mount.LocalPath) != mount.LocalPath &&
+		safepath.Contains(mount.LocalPath, file) {
+		file = mount.OriginPath(file)
+	}
+	return safepath.Contains(target, file)
 }
 
 func (a *Admission) entryOrigin(application *manifest.EntryApplication, observed *store.SourceArtifact) string {

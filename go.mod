@@ -14,7 +14,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.10
-	github.com/controlplaneio-fluxcd/flux-operator v0.63.0
+	github.com/controlplaneio-fluxcd/flux-operator v0.63.1
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.7.2

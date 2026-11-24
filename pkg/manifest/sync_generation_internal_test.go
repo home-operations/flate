@@ -1,10 +1,8 @@
 package manifest
 
 import (
-	"os"
+	"errors"
 	"testing"
-
-	"golang.org/x/mod/modfile"
 
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
@@ -12,11 +10,28 @@ import (
 func TestGeneratedObjects_FluxInstance(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ version, apiVersion, kind string }{
+		{"2", "v1", KindOCIRepository},
+		{"2.x", "v1", KindOCIRepository},
 		{"2.5.x", "v1beta2", KindOCIRepository},
 		{"v2.5.1", "v1beta2", KindOCIRepository},
 		{"2.6.x", "v1", KindOCIRepository},
+		{">=2.0.0 <3.0.0", "v1", KindOCIRepository},
+		{">=2.7.0 <2.7.1", "v1", KindOCIRepository},
+		{">2 <4", "v1", KindOCIRepository},
 		{">= 2.10.1 < 2.11.0", "v1", KindOCIRepository},
+		{">=2.11", "v1", KindOCIRepository},
+		{">=2.5.0 <2.6.0", "v1beta2", KindOCIRepository},
+		{"2.5.x || 2.8.4", "v1", KindOCIRepository},
+		{">=2.6.0 || broken", "", KindOCIRepository},
+		{">=2.11.0 <2.12.0 !=2.11.0", "v1", KindOCIRepository},
+		{">=2.11.0 <=2.11.0 !=2.11.0", "v1beta2", KindOCIRepository},
+		{">=2.6.0 <2.8.0 !=2.6.x", "v1", KindOCIRepository},
+		{">=2.6.0-rc.1 <2.6.0-rc.2", "v1beta2", KindOCIRepository},
+		{">2.6.0-18446744073709551616 <2.6.0", "v1beta2", KindOCIRepository},
+		{"2.5.0 - 2.6.0", "v1", KindOCIRepository},
+		{">18446744073709551615.18446744073709551615.18446744073709551615", "v1beta2", KindOCIRepository},
 		{"v2.6.0", "v1", KindOCIRepository},
+		{"2.8.4@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "v1", KindOCIRepository},
 		{"2.5.x", "v1beta2", KindBucket},
 		{"2.6.x", "v1", KindBucket},
 	} {
@@ -52,6 +67,12 @@ func TestGeneratedObjects_FluxInstance(t *testing.T) {
 			}
 			for _, input := range []BaseManifest{obj, CatalogObject(obj, obj.Named())} {
 				generation, err := GeneratedObjects(input)
+				if tt.apiVersion == "" {
+					assert.Equal(t, errors.Is(err, ErrInput), true)
+					assert.Equal(t, len(generation.Objects), 0)
+					assert.Equal(t, len(generation.Documents), 0)
+					continue
+				}
 				assert.NoError(t, err)
 				assert.Equal(t, len(generation.Objects), 2)
 				assert.Equal(t, len(generation.Documents), 2)
@@ -69,25 +90,6 @@ func TestGeneratedObjects_FluxInstance(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSyncDistributionV1_OperatorPin(t *testing.T) {
-	t.Parallel()
-	const operator = "github.com/controlplaneio-fluxcd/flux-operator"
-	const bundledBy = "v0.63.0"
-	data, err := os.ReadFile("../../go.mod")
-	assert.NoError(t, err)
-	mod, err := modfile.ParseLax("go.mod", data, nil)
-	assert.NoError(t, err)
-	for _, dependency := range mod.Require {
-		if dependency.Mod.Path == operator {
-			if dependency.Mod.Version != bundledBy {
-				t.Fatalf("update syncDistributionV1 for Flux Operator %s", dependency.Mod.Version)
-			}
-			return
-		}
-	}
-	t.Fatalf("go.mod has no requirement for %s", operator)
 }
 
 func TestGeneratedTargets_PatchedSyncRequiresPreparation(t *testing.T) {

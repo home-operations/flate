@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -30,13 +31,13 @@ func TestRender_FluxInstanceGeneratorSource(t *testing.T) {
 			checkoutTree := fluxInstanceGeneratorFixture{
 				ref: tc.ref, name: "{namespace}-{app}", copyGlob: "base/**", material: "checkout",
 			}
-			writeFluxInstanceGeneratorTree(t, root, checkoutTree)
+			writeFluxInstanceGeneratorTree(t, root, &checkoutTree)
 			upstreamTree := checkoutTree
 			upstreamTree.material = "upstream"
 			if tc.provider != store.ProviderFetch {
 				upstreamTree.name, upstreamTree.copyGlob = "{app}", "base/cert-manager/**"
 			}
-			writeFluxInstanceGeneratorTree(t, upstream, upstreamTree)
+			writeFluxInstanceGeneratorTree(t, upstream, &upstreamTree)
 			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root},
 				Config{Concurrency: 2})
 			assert.NoError(t, err)
@@ -53,7 +54,7 @@ func TestRender_FluxInstanceGeneratorSource(t *testing.T) {
 
 			nextRoot := t.TempDir()
 			checkoutTree.material = tc.material + "-updated"
-			writeFluxInstanceGeneratorTree(t, nextRoot, checkoutTree)
+			writeFluxInstanceGeneratorTree(t, nextRoot, &checkoutTree)
 			nextInput := testDirectoryInput(t, nextRoot)
 			next := selected.WithSourceView(nextInput.FS)
 			next.Content = nextInput.Content
@@ -75,7 +76,7 @@ func TestRenderTrees_ChangedOnlyAndDiff_FluxInstanceGeneratorSource(t *testing.T
 	trees := make([]Tree, len(materials))
 	for side, material := range materials {
 		root := t.TempDir()
-		writeFluxInstanceGeneratorTree(t, root, fluxInstanceGeneratorFixture{
+		writeFluxInstanceGeneratorTree(t, root, &fluxInstanceGeneratorFixture{
 			ref: "main", name: "{namespace}-{app}", copyGlob: "base/**", material: material,
 		})
 		trees[side] = Tree{
@@ -102,6 +103,61 @@ func TestRenderTrees_ChangedOnlyAndDiff_FluxInstanceGeneratorSource(t *testing.T
 	}
 }
 
+func TestRenderTrees_FluxInstanceOCISourceVersion(t *testing.T) {
+	t.Parallel()
+	versions := [2]string{"2.5.x", "2"}
+	want := [2]string{manifest.SourceDomain + "/v1beta2", manifest.SourceDomain + "/v1"}
+	var trees [2]Tree
+	for side, version := range versions {
+		root := t.TempDir()
+		writeFluxInstanceGeneratorTree(t, root, &fluxInstanceGeneratorFixture{
+			ref: "main", name: "{namespace}-{app}", copyGlob: "base/**", material: "same", version: version,
+		})
+		tree := Tree{
+			Path: filepath.Join(root, "entry"), RepoRoot: root, Input: testDirectoryInput(t, root),
+			ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		}
+		results, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{
+			Concurrency: 2, CacheDir: t.TempDir(),
+		})
+		assert.NoError(t, err)
+		assert.FatalIf(t, len(results) != 1, "full side %d returned %d results", side, len(results))
+		assertFluxInstanceOCISourceVersion(t, fmt.Sprintf("full side %d", side), &results[0], want[side])
+		tree.ID.Side = manifest.TreeSide(side)
+		trees[side] = tree
+	}
+	for side := range trees {
+		trees[side].BaseInput = trees[0].Input
+	}
+	results, err := renderTreesForTest(t.Context(), t, trees[:], Config{
+		Concurrency: 2, CacheDir: t.TempDir(), Selection: selection.Request{Changed: true},
+	})
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(results) != len(trees), "changed-only render returned %d results", len(results))
+	for side := range results {
+		assertFluxInstanceOCISourceVersion(t, fmt.Sprintf("changed-only side %d", side), &results[side], want[side])
+	}
+}
+
+func assertFluxInstanceOCISourceVersion(t *testing.T, label string, run *Rendered, want string) {
+	t.Helper()
+	assert.NoError(t, run.Err)
+	id := fluxInstanceTestSourceID()
+	artifact, _ := run.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	assert.FatalIf(t, !artifact.Available(), "%s source %s is unreadable", label, id)
+	assert.Equal(t, artifact.Provider, store.ProviderAlias)
+	var versions []string
+	for _, batch := range run.Result.Manifests {
+		for _, doc := range batch.Documents {
+			if manifest.DocIdentity(doc) == id {
+				versions = append(versions, manifest.DocAPIVersion(doc))
+			}
+		}
+	}
+	t.Logf("%s source %s output API versions %v", label, id, versions)
+	assert.Diff(t, versions, []string{want})
+}
+
 func fluxInstanceTestGeneratorID() manifest.NamedResource {
 	return manifest.NamedResource{
 		Group: manifest.SourceExtensionsDomain, Kind: manifest.KindArtifactGenerator,
@@ -116,10 +172,10 @@ func fluxInstanceTestSourceID() manifest.NamedResource {
 }
 
 type fluxInstanceGeneratorFixture struct {
-	ref, name, copyGlob, material string
+	ref, name, copyGlob, material, version string
 }
 
-func writeFluxInstanceGeneratorTree(t *testing.T, root string, fixture fluxInstanceGeneratorFixture) {
+func writeFluxInstanceGeneratorTree(t *testing.T, root string, fixture *fluxInstanceGeneratorFixture) {
 	t.Helper()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [apps, checkout.yaml]\n")
 	testutil.WriteFile(t, root, "entry/checkout.yaml", testutil.KustomizationYAML("checkout", "flux-system",
@@ -145,9 +201,9 @@ spec:
 kind: FluxInstance
 metadata: {name: instance, namespace: flux-system}
 spec:
-  distribution: {version: 2.6.x}
+  distribution: {version: %q}
   sync: {name: sync, kind: OCIRepository, url: oci://127.0.0.1:0/sync, ref: %q, path: ./entry/apps}
-`, fixture.ref))
+`, cmp.Or(fixture.version, "2.6.x"), fixture.ref))
 	testutil.WriteFile(
 		t,
 		root,

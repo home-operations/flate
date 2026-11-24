@@ -100,8 +100,8 @@
       ]
     },
     {
-      "name": "test-warm",
-      "description": "External file declaration with warm cache.",
+      "name": "test-build-warm",
+      "description": "Prime one cache, then test the HelmRelease twice and build it twice. The test and build preserve the primed cache for the second replay.",
       "setup": [
         {
           "commit": "repo-base"
@@ -220,125 +220,6 @@
               "code": 0
             }
           }
-        }
-      ]
-    },
-    {
-      "name": "build-cold",
-      "description": "External file declaration with cold cache.",
-      "setup": [
-        {
-          "commit": "repo-base"
-        },
-        {
-          "commit": "baseline-base"
-        }
-      ],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "build",
-          "invoke": {
-            "argv": [
-              "build",
-              "hr",
-              "demo",
-              "-n",
-              "default",
-              "--path",
-              "@@repo@@/site-a",
-              "--cache-dir",
-              "@@cache@@",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--log-level",
-              "error"
-            ],
-            "cache": {
-              "reset": false
-            },
-            "expect": {
-              "stdout": "expect/hr-build.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "build-warm",
-      "description": "External file declaration with warm cache.",
-      "setup": [
-        {
-          "commit": "repo-base"
-        },
-        {
-          "commit": "baseline-base"
-        }
-      ],
-      "env": {},
-      "cache": {
-        "repeat": "reuse"
-      },
-      "steps": [
-        {
-          "id": "prime-test",
-          "invoke": {
-            "argv": [
-              "test",
-              "all",
-              "--path",
-              "@@repo@@/site-a",
-              "--cache-dir",
-              "@@cache@@",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--log-level",
-              "error"
-            ],
-            "cache": {
-              "reset": false
-            },
-            "expect": {
-              "stdout": "expect/prime-test.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
-        },
-        {
-          "id": "prime-diff",
-          "invoke": {
-            "argv": [
-              "diff",
-              "all",
-              "--path-orig",
-              "@@baseline@@/site-a",
-              "--path",
-              "@@repo@@/site-a",
-              "--cache-dir",
-              "@@cache@@",
-              "--concurrency",
-              "2",
-              "--no-progress",
-              "--log-level",
-              "error"
-            ],
-            "cache": {
-              "reset": false
-            },
-            "expect": {
-              "stdout": "expect/prime-diff.stdout",
-              "stderr": "expect/empty.stderr",
-              "code": 0
-            }
-          }
         },
         {
           "id": "build",
@@ -371,6 +252,53 @@
         },
         {
           "id": "build-again",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "-n",
+              "default",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build-cold",
+      "description": "External file declaration with cold cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
           "invoke": {
             "argv": [
               "build",
@@ -580,9 +508,8 @@
       "path": "baseline/charts/demo/Chart.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -592,9 +519,8 @@
       "path": "baseline/charts/demo/templates/cm.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -604,9 +530,8 @@
       "path": "baseline/layer/common/child.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -616,9 +541,8 @@
       "path": "baseline/layer/site-a/kustomization.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -628,9 +552,8 @@
       "path": "baseline/payload/one/hr.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -640,9 +563,8 @@
       "path": "baseline/site-a/parent.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -652,9 +574,8 @@
       "path": "baseline/site-a/sync.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -664,9 +585,8 @@
       "path": "expect/empty.stderr",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -676,9 +596,8 @@
       "path": "expect/hr-build.stdout",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -688,9 +607,8 @@
       "path": "expect/hr-diff.stdout",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -700,9 +618,8 @@
       "path": "expect/hr-test.stdout",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -712,9 +629,8 @@
       "path": "expect/prime-diff.stdout",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -724,9 +640,8 @@
       "path": "expect/prime-test.stdout",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -736,9 +651,8 @@
       "path": "repo/charts/demo/Chart.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -748,9 +662,8 @@
       "path": "repo/charts/demo/templates/cm.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -760,9 +673,8 @@
       "path": "repo/layer/common/child.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -772,9 +684,8 @@
       "path": "repo/layer/site-a/kustomization.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -784,9 +695,8 @@
       "path": "repo/payload/one/hr.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -796,9 +706,8 @@
       "path": "repo/site-a/parent.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],
@@ -808,9 +717,8 @@
       "path": "repo/site-a/sync.yaml",
       "cases": [
         "test-cold",
-        "test-warm",
+        "test-build-warm",
         "build-cold",
-        "build-warm",
         "diff-cold",
         "diff-warm"
       ],

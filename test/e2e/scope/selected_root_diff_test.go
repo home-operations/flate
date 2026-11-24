@@ -4,7 +4,7 @@ import "testing"
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
-	for _, name := range []string{
+	testScopeCases(t, "entry-membership", []string{
 		"selected-diff-referenced-patch",
 		"selected-diff-resource-removed",
 		"selected-diff-resource-added",
@@ -30,9 +30,5 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 		"named-missing-child-owner-renamed-reverse",
 		"named-missing-child-owner-renamed-nested-forward",
 		"named-missing-child-owner-renamed-nested-reverse",
-	} {
-		t.Run(name, func(t *testing.T) {
-			testScopeCase(t, "entry-membership", name)
-		})
-	}
+	})
 }

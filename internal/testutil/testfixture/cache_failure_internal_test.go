@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"syscall"
 	"testing"
 
@@ -62,4 +63,36 @@ func TestFixture_CacheFailureReplay(t *testing.T) {
 		}
 		assert.NoError(t, c.Close())
 	}
+
+	t.Run("commit overlay", func(t *testing.T) {
+		t.Parallel()
+		dir := fixtureSource(t, "reset")
+		s, err := load(dir)
+		assert.NoError(t, err)
+		s.Overlays[0].Operations = []operation{{CacheFailure: failure}}
+		data, err := json.Marshal(s)
+		assert.NoError(t, err)
+		testutil.WriteFile(t, dir, "scenario.json", string(data))
+		scenario := prepare(t, dir)
+		f := scenario.Materialize(t, "sequence")
+		other := scenario.Materialize(t, "sequence")
+		for range 2 {
+			f.StartReplay(t)
+			c, err := sourcecache.New(t.Context(), f.CachePath(failure.Cache))
+			assert.NoError(t, err)
+			_, _, _, err = c.Blob(t.Context(), key, &sourcecache.Policy{},
+				func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					t.Fatal("replay lost the cache seed")
+					return sourcecache.ProducerResult{}, nil
+				})
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
+				t.Fatalf("declared failure lost its cached classification: %v", err)
+			}
+			assert.NoError(t, c.Close())
+			assert.NoError(t, os.RemoveAll(f.CachePath(failure.Cache)))
+			_, err = os.Stat(other.CachePath(failure.Cache))
+			assert.NoError(t, err)
+		}
+	})
 }

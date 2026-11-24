@@ -9,22 +9,10 @@ import (
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_EntryApplicationRendered(t *testing.T) {
-	for _, name := range []string{"entry-application-rendered-fluxinstance", "entry-application-rendered-kustomization"} {
-		t.Run(name, func(t *testing.T) {
-			fixture := harness.Open(t, "entry-applicator", name)
-			want := fixture.Want(t)
-			first, second := fixture.Run(t), fixture.Run(t)
-			if !slices.Equal(first, want) {
-				t.Fatalf("first sequence:\nwant %#v\ngot %#v", want, first)
-			}
-			if !slices.Equal(second, want) {
-				t.Fatalf("second sequence:\nwant %#v\ngot %#v", want, second)
-			}
-			if !slices.Equal(first, second) {
-				t.Fatalf("sequences differ:\nfirst %#v\nsecond %#v", first, second)
-			}
-		})
-	}
+	testScopeCases(t, "entry-applicator", []string{
+		"entry-application-rendered-fluxinstance",
+		"entry-application-rendered-kustomization",
+	})
 }
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.

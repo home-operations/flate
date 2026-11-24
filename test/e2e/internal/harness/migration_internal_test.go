@@ -119,8 +119,12 @@ func migrationNodeViolation(node ast.Node, imports map[string]string) string {
 			break
 		}
 		imported := imports[base.Name]
-		if imported == harnessPath && n.Sel.Name != "Open" && n.Sel.Name != "Result" {
-			return "use Open, Case.Run and Case.Want"
+		if imported == harnessPath {
+			switch n.Sel.Name {
+			case "Open", "Prepare", "Case", "Result":
+			default:
+				return "use Open or Prepare with Case.Run and Case.Want"
+			}
 		}
 		if (imported == "strings" || imported == "bytes") && strings.HasPrefix(n.Sel.Name, "Contains") {
 			return "compare complete result bytes"
@@ -140,6 +144,7 @@ func TestMigrationGuard_Rules(t *testing.T) {
 		valid        bool
 	}{
 		{"harness alias", `package example; import h "github.com/home-operations/flate/test/e2e/internal/harness"; func f() { c := h.Open(nil,"entry-root","literal-app"); c.Run(nil); c.Want(nil) }`, true},
+		{"prepared fixture", `package example; import h "github.com/home-operations/flate/test/e2e/internal/harness"; func f() { open := h.Prepare(nil,"entry-root"); var c *h.Case = open(nil,"literal-app"); c.Run(nil); c.Want(nil) }`, true},
 		{"writer alias", `package example; import files "os"; func f() { files.WriteFile("repo",nil,0) }`, false},
 		{"direct CLI", `package example; import app "github.com/home-operations/flate/internal/cli"; var run = app.Run`, false},
 		{"inline YAML", "package example; const manifest = `apiVersion: v1\\nkind: ConfigMap`", false},

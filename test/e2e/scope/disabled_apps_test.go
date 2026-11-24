@@ -4,7 +4,7 @@ import "testing"
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_DisabledAppAdmission(t *testing.T) {
-	for _, name := range []string{
+	testScopeCases(t, "entry-membership", []string{
 		"disabled-nested-enabled",
 		"disabled-nested-absent",
 		"disabled-nested-commented",
@@ -16,16 +16,12 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 		"disabled-single-scoped",
 		"disabled-multi-root",
 		"disabled-multi-scoped",
-	} {
-		t.Run(name, func(t *testing.T) {
-			testScopeCase(t, "entry-membership", name)
-		})
-	}
+	})
 }
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_DisabledAppDiffSides(t *testing.T) {
-	for _, name := range []string{
+	testScopeCases(t, "entry-membership", []string{
 		"disabled-diff-nested-remove",
 		"disabled-diff-nested-restore",
 		"disabled-diff-nested-payload",
@@ -34,24 +30,16 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 		"membership-namespace-payload",
 		"membership-namespace-namespace-forward",
 		"membership-namespace-namespace-reverse",
-	} {
-		t.Run(name, func(t *testing.T) {
-			testScopeCase(t, "entry-membership", name)
-		})
-	}
+	})
 }
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.
 func TestE2E_SelectedEntrySelfOwnership(t *testing.T) {
-	for _, name := range []string{
+	testScopeCases(t, "entry-membership", []string{
 		"entry-self-ownership-selected-package",
 		"entry-self-ownership-plain-entry-ancestor",
 		"entry-self-ownership-disabled-foreign-owner",
-	} {
-		t.Run(name, func(t *testing.T) {
-			testScopeCase(t, "entry-membership", name)
-		})
-	}
+	})
 }
 
 //nolint:paralleltest // cli.Run changes process-wide logging and environment.

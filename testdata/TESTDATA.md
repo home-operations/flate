@@ -1150,10 +1150,12 @@ The private `decodeGetDocuments` helper remains for changed-only, partial-failur
 The parent layer references `../common/child.yaml`, which stays within the source repository.
 The child exposes `payload/one/hr.yaml`, with current value `"2"` and baseline value `"1"`.
 
-The six cases cover `test hr`, the named build, and `diff hr` with cold and warm caches.
+The five cases cover `test hr`, the named build, and `diff hr` with cold and warm caches.
 Cold cases invoke the affected command first and reset their isolated caches on each replay.
 Warm cases explicitly reuse `@@cache@@` after `test all` and `diff all` prime it.
-Each warm case declares two consecutive affected invocations without another priming command.
+Each warm command runs twice with no prime between the two calls.
+The warm test and build share their primes because neither command changes the primed cache contents.
+The warm diff changes the cache contents, so it keeps separate primes.
 Every warm reset flag is false, and its replay policy is `reuse`.
 The harness compares both complete streams and exit codes on two replays at concurrency 2.
 Only the final test duration uses the documented `<DUR>` replacement.
@@ -1167,9 +1169,7 @@ Expected test rows and human diffs follow the existing CLI output format.
 
 `external-file-helmrelease/diff-cold`: Compare the HelmRelease first with an empty cache.
 
-`external-file-helmrelease/test-warm`: Prime the cache, then test the HelmRelease twice consecutively.
-
-`external-file-helmrelease/build-warm`: Prime the cache, then build the named HelmRelease twice consecutively.
+`external-file-helmrelease/test-build-warm`: Prime the cache, then test the HelmRelease twice and build it twice.
 
 `external-file-helmrelease/diff-warm`: Prime the cache, then compare the HelmRelease twice consecutively.
 
@@ -1905,7 +1905,8 @@ Stage and unused-variable package proofs remain in `pkg/orchestrator/stage_preci
 | `reach-precision/interval` | `interval` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
 | `reach-precision/rename` | `rename` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
 
-The following CLI cases use a separate, small repository within the same scenario.
+`reach-precision-scope/` contains the three CLI cases and their small repository.
+Each case copies only its current and base trees.
 The Plex workload consumes NFS_MUSIC, and a nonempty sibling exposes accidental selection.
 Every invocation declares complete stdout, stderr, and exit status.
 Each sequence repeats twice with concurrency 2 and a reset cache between replays.
@@ -1914,9 +1915,9 @@ The metadata-only and unused-variable differences have empty expected output.
 
 | Case | Behavior | Consumer |
 | --- | --- | --- |
-| `reach-precision/consumed-variable` | Both builds retain complete workload output. The unfiltered diff shows the changed settings and Plex value while excluding the unrelated sibling. | `TestE2E_ReachPrecision/consumed-variable` |
-| `reach-precision/unused-variable` | An unused variable produces an empty workload diff. | `TestE2E_ReachPrecision/unused-variable` |
-| `reach-precision/metadata-only` | A reconciliation interval produces an empty workload diff. | `TestE2E_ReachPrecision/metadata-only` |
+| `reach-precision-scope/consumed-variable` | Both builds retain complete workload output. The unfiltered diff shows the changed settings and Plex value while excluding the unrelated sibling. | `TestE2E_ReachPrecision/consumed-variable` |
+| `reach-precision-scope/unused-variable` | An unused variable produces an empty workload diff. | `TestE2E_ReachPrecision/unused-variable` |
+| `reach-precision-scope/metadata-only` | A reconciliation interval produces an empty workload diff. | `TestE2E_ReachPrecision/metadata-only` |
 
 The SDK-only `registry` setup operation declares a chart directory, source files, and an exact URL sentinel.
 The materializer starts one local TLS registry and binds both source files to its URL.

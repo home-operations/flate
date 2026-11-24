@@ -20,6 +20,56 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestPreparation_AcceptChartDependencyInOrder(t *testing.T) {
+	t.Parallel()
+	input := fstest.MapFS{
+		"parent/Chart.yaml": {Data: []byte(`apiVersion: v2
+name: parent
+version: 1.0.0
+dependencies:
+- name: child
+  alias: zeta
+  version: 1.0.0
+  repository: https://example.invalid
+- name: child
+  alias: alpha
+  version: 1.0.0
+  repository: https://example.invalid
+`)},
+	}
+	client := NewClient(nil, nil)
+	described, err := client.describeInput(t.Context(), input, chartSelector{Path: "parent"}, "")
+	assert.NoError(t, err)
+	preparation := Preparation{loaded: described}
+	artifact := &store.SourceArtifact{FS: fstest.MapFS{
+		"child/Chart.yaml": {Data: []byte("apiVersion: v2\nname: child\nversion: 1.0.0\n")},
+	}}
+	hr := newHR()
+	for i, name := range []string{"alpha", "zeta"} {
+		before := preparation.loaded.captured.dependencyInputs()
+		key := preparation.loaded.key
+		dependencyErr := preparation.loaded.requireDependencies(t.Context(), client, hr, &RenderOptions{})
+		assert.FatalIf(t, dependencyErr == nil, "dependency %s is already resolved", name)
+		assert.Equal(
+			t,
+			dependencyErr.Error(),
+			fmt.Sprintf("unresolved chart dependency %s (https://example.invalid)", name),
+		)
+		assert.NoError(t, preparation.AcceptChartDependency(t.Context(), artifact))
+		after := preparation.loaded.captured.dependencyInputs()
+		assert.Equal(t, before[i].Capture.Empty(), true)
+		assert.Equal(t, after[i].Name, name)
+		assert.Equal(t, after[i].Capture.Empty(), false)
+		assert.Equal(t, preparation.loaded.key == key, false)
+	}
+	assert.Equal(t, described.captured.dependencyInputs()[0].Capture.Empty(), true)
+	assert.NoError(t, preparation.loaded.requireDependencies(t.Context(), client, hr, &RenderOptions{}))
+	loaded, err := preparation.loaded.captured.load()
+	assert.NoError(t, err)
+	assert.Equal(t, loaded.Dependencies()[0].Name(), "alpha")
+	assert.Equal(t, loaded.Dependencies()[1].Name(), "zeta")
+}
+
 func TestPrepareChart_RemoteDependency(t *testing.T) {
 	t.Parallel()
 	archive := chartArchive(t, fstest.MapFS{

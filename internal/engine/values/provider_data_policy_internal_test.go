@@ -43,7 +43,7 @@ func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 		"covered facts=%+v", facts)
 	assert.FatalIf(
 		t,
-		NewStoreProvider(st).Lookup(id).Data != raw,
+		NewStoreProvider(st, manifest.NamedResource{}).Lookup(id).Data != raw,
 		"%s",
 		"captured provider rejected visible prediction",
 	)
@@ -53,7 +53,7 @@ func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 	defer previous.Retire()
 	assert.FatalIf(
 		t,
-		NewStoreProvider(&previous).Lookup(id).Data != raw,
+		NewStoreProvider(&previous, previous.ID()).Lookup(id).Data != raw,
 		"%s",
 		"captured provider rejected visible prediction",
 	)
@@ -108,8 +108,13 @@ func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 			wantFacts.Materializers = []manifest.NamedResource{owner}
 		}
 		assert.Diff(t, facts, wantFacts)
-		assert.Diff(t, NewStoreProvider(reader).Lookup(id), wantFacts)
-		assert.FatalIf(t, NewStoreProvider(reader).Lookup(id).Data != nil, "%s", "provider fabricated declared data")
+		assert.Diff(t, NewStoreProvider(reader, consumer).Lookup(id), wantFacts)
+		assert.FatalIf(
+			t,
+			NewStoreProvider(reader, consumer).Lookup(id).Data != nil,
+			"%s",
+			"provider fabricated declared data",
+		)
 	}
 }
 
@@ -136,7 +141,7 @@ func TestStoreProvider_BareMetadataDoesNotAdmitNamespace(t *testing.T) {
 			defer reads.Close()
 			id := raw.Named()
 			id.Namespace = consumer.Namespace
-			facts := NewStoreProvider(&reads).Lookup(id)
+			facts := NewStoreProvider(&reads, reads.ID()).Lookup(id)
 			assert.Equal(t, facts.Declared, false)
 			assert.Equal(t, facts.Data == nil, true)
 			assert.Diff(t, facts.Keys, manifest.KeySet{Names: []string{"VALUE"}, Complete: true})

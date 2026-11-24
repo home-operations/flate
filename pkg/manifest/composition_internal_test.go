@@ -31,6 +31,10 @@ func TestGitRepository_IncludeReferences(t *testing.T) {
 		refs := slices.Collect(References(git, view))
 		assert.Equal(t, len(refs), 4)
 		assert.Equal(t, git.ReferenceCapacity().References, 4)
+		assert.Equal(t, refs[0].Name, "auth")
+		assert.Equal(t, refs[0].Use, "secretRef")
+		assert.Equal(t, refs[1].Name, "proxy")
+		assert.Equal(t, refs[1].Use, "proxySecretRef")
 		for i, ref := range refs[2:] {
 			assert.Equal(
 				t,
@@ -76,9 +80,13 @@ type compositionSource struct {
 	GitRepository
 
 	facts ArtifactComposition
+	calls int
 }
 
-func (s *compositionSource) Composition() ArtifactComposition { return s.facts }
+func (s *compositionSource) Composition() ArtifactComposition {
+	s.calls++
+	return s.facts
+}
 
 func TestReferences_CompositionOverride(t *testing.T) {
 	t.Parallel()
@@ -87,7 +95,27 @@ func TestReferences_CompositionOverride(t *testing.T) {
 		Include:   []sourcev1.GitRepositoryInclude{{GitRepositoryRef: LocalObjectReference{Name: "input"}}},
 	}).Composition()
 	input.Includes[0].Reference.Kind = KindBucket
-	source := &compositionSource{facts: input}
-	refs := slices.Collect(References(source, ReferenceAll))
-	assert.Equal(t, cmp.Diff([]Reference{input.Includes[0].Reference}, refs, cmp.AllowUnexported(Reference{})), "")
+	second := input.Includes[0]
+	second.Reference.Name = "second"
+	input.Includes = append(input.Includes, second)
+	want := []Reference{input.Includes[0].Reference, second.Reference}
+	for _, tc := range []struct {
+		name  string
+		count int
+	}{
+		{name: "ordered includes", count: 2},
+		{name: "stop after first", count: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			source := &compositionSource{facts: input}
+			var refs []Reference
+			References(source, ReferenceAll)(func(ref Reference) bool {
+				refs = append(refs, ref)
+				return len(refs) < tc.count
+			})
+			assert.Equal(t, cmp.Diff(want[:tc.count], refs, cmp.AllowUnexported(Reference{})), "")
+			assert.Equal(t, source.calls, 1)
+		})
+	}
 }

@@ -71,6 +71,43 @@ func TestReaderFinalizer_ChartDependencies(t *testing.T) {
 	})
 }
 
+func TestChartFiles_PartialDependencies(t *testing.T) {
+	t.Parallel()
+	input := fstest.MapFS{
+		"parent/Chart.yaml": {Data: []byte(`apiVersion: v2
+name: parent
+version: 1.0.0
+dependencies:
+- name: invalid
+  version: 1.0.0
+  repository: file://../../outside
+- name: missing
+  version: 1.0.0
+  repository: file://../missing
+- name: present
+  version: 1.0.0
+  repository: file://../present
+- name: remote
+  version: 1.0.0
+  repository: https://example.invalid
+`)},
+		"present/Chart.yaml":        {Data: []byte("apiVersion: v2\nname: present\nversion: 1.0.0\n")},
+		"present/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")},
+	}
+	files, bodies, err := chartFiles(t.Context(), fileInput{fs: input, name: "parent"}, "parent", true)
+	assert.NoError(t, err)
+	assert.Diff(t, files.names, []string{
+		"parent/Chart.yaml",
+		"parent/.helmignore",
+		"present/.helmignore",
+		"present/Chart.yaml",
+		"present/templates/cm.yaml",
+	})
+	assert.Diff(t, files.missing, []string{"missing"})
+	assert.Equal(t, files.remote, true)
+	assert.Diff(t, bodies, [][]byte{input["present/templates/cm.yaml"].Data})
+}
+
 func TestFilter_ChartDependencyRepositoryInputs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []chartDependencyChange{

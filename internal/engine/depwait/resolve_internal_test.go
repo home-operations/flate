@@ -45,13 +45,18 @@ func TestResolvedProvider_AbsenceIsFrozen(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
 	defer reads.Retire()
-	provider := values.NewStoreProvider(&reads)
+	provider := values.NewStoreProvider(&reads, reads.ID())
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	st.AddObject(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "late"}})
 	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	assert.Equal(t, reads.Valid(), false)
-	assert.FatalIf(t, values.NewStoreProvider(st).Lookup(id).Data == nil, "%v", "new invocation missed arrival")
+	assert.FatalIf(
+		t,
+		values.NewStoreProvider(st, manifest.NamedResource{}).Lookup(id).Data == nil,
+		"%v",
+		"new invocation missed arrival",
+	)
 }
 
 func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
@@ -61,7 +66,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	st.AddDeclaration(
 		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Origin: manifest.SuppliedDeclaration},
 	)
-	provider := values.NewStoreProvider(st)
+	provider := values.NewStoreProvider(st, manifest.NamedResource{})
 	captured := provider.Lookup(data.Named()).Data
 	result1, err := captured.Value("VALUE")
 	value := result1.Value
@@ -80,7 +85,7 @@ func TestClassify_RepeatedInputAllocations(t *testing.T) {
 	st := store.New()
 	data := &manifest.ConfigMap{Name: "input", Data: map[string]any{"VALUE": "first"}}
 	st.AddObject(data)
-	provider := values.NewStoreProvider(st)
+	provider := values.NewStoreProvider(st, manifest.NamedResource{})
 	provider.Lookup(data.Named())
 	one := testing.AllocsPerRun(100, func() { provider.Lookup(data.Named()) })
 	two := testing.AllocsPerRun(100, func() { provider.Lookup(data.Named()); provider.Lookup(data.Named()) })
@@ -116,7 +121,7 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	var before store.ReadSet
 	parent := testutil.KustomizationID("apps", "reader")
 	before.Init(st, parent, nil)
-	input := values.NewStoreProvider(&before).Lookup(id)
+	input := values.NewStoreProvider(&before, before.ID()).Lookup(id)
 	w := Waiter{
 		Store: &before, Parent: parent, Missing: NewMissingPolicy(
 			nil),
@@ -133,7 +138,7 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	var after store.ReadSet
 	after.Init(st, parent, nil)
 	defer after.Retire()
-	data := values.NewStoreProvider(&after).Lookup(id).Data
+	data := values.NewStoreProvider(&after, after.ID()).Lookup(id).Data
 	assert.FatalIf(t, data != nil, "%s", "settled declaration fabricated data")
 }
 
@@ -235,7 +240,7 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 	var reads store.ReadSet
 	reads.Init(st, ks.Named(), nil)
 	defer reads.Retire()
-	provider := values.NewStoreProvider(&reads)
+	provider := values.NewStoreProvider(&reads, reads.ID())
 	input := provider.Lookup(data.Named())
 	w := Waiter{
 		Store: &reads, Parent: ks.Named(), Missing: NewMissingPolicy(

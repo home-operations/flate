@@ -199,7 +199,7 @@ func (c *execution) resolve(
 	level manifest.DrainLevel,
 ) (*store.SourceArtifact, error) {
 	id := facts.Named()
-	composed := len(facts.Composition().Includes) != 0
+	composed := facts.Composition().Composed()
 	if composed && c.acquisition == nil {
 		c.acquisition = new(store.ReadSet)
 		c.acquisition.Init(c.Store, id, nil)
@@ -339,7 +339,7 @@ func (c *execution) compose(
 	level manifest.DrainLevel,
 ) (*store.SourceArtifact, error) {
 	composition := facts.Composition()
-	if len(composition.Includes) == 0 {
+	if !composition.Composed() {
 		return artifact, nil
 	}
 	if _, err := c.run.RequireRefresh(ctx, facts, manifest.GateArtifacts, level); err != nil {

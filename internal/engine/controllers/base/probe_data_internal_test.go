@@ -50,7 +50,11 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			var probe Execution
 			probe.InitProbe(c, object)
 			defer probe.Close()
-			inputs, err := probe.DataInputs(t.Context(), object, values.NewStoreProvider(&probe.Reads))
+			inputs, err := probe.DataInputs(
+				t.Context(),
+				object,
+				values.NewStoreProvider(&probe.Reads, probe.Reads.ID()),
+			)
 			assert.Equal(t, err != nil, true)
 			assert.Equal(t, len(inputs), 0)
 			assert.Equal(t, calls, 0)
@@ -63,7 +67,11 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			var normal Execution
 			normal.Init(c, object.Named())
 			defer normal.Close()
-			inputs, err = normal.DataInputs(t.Context(), object, values.NewStoreProvider(&normal.Reads))
+			inputs, err = normal.DataInputs(
+				t.Context(),
+				object,
+				values.NewStoreProvider(&normal.Reads, normal.Reads.ID()),
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Input.Data, manifest.Data(input))
@@ -80,7 +88,7 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			assert.Equal(t, resumed, true)
 			probe.Close()
 			probe.Init(c, object.Named())
-			inputs, err = probe.DataInputs(t.Context(), object, values.NewStoreProvider(&probe.Reads))
+			inputs, err = probe.DataInputs(t.Context(), object, values.NewStoreProvider(&probe.Reads, probe.Reads.ID()))
 			assert.NoError(t, err)
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, calls, 2)
@@ -113,7 +121,7 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 		e := new(Execution)
 		e.InitProbe(c, owner)
 		t.Cleanup(e.Close)
-		inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+		inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 		assert.NoError(t, err)
 		err = e.AwaitData(t.Context(), DataWait{
 			Inputs: inputs,
@@ -168,7 +176,7 @@ func TestDataInputs_PreflightPrecedesCapture(t *testing.T) {
 	var e Execution
 	e.Init(New(st, nil), owner.Named())
 	defer e.Close()
-	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, len(inputs), 0)
 	_, statusKnown := st.GetStatus(owner.Named())
@@ -193,7 +201,7 @@ func TestDataInputs_ProbeRequiresRawProductionMaterialization(t *testing.T) {
 	var e Execution
 	e.InitProbe(New(st, nil), owner)
 	defer e.Close()
-	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 	assert.Equal(t, errors.Is(err, errIncompleteHistory), true)
 	assert.Equal(t, len(inputs), 0)
 	assert.Equal(t, st.GetObject(input) == nil, true)
@@ -269,7 +277,7 @@ func TestAwaitData_EncryptedSubstitutionProjection(t *testing.T) {
 			var e Execution
 			e.Init(c, owner.Named())
 			defer e.Close()
-			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 			assert.NoError(t, err)
 			assert.Equal(t, len(e.Unreadable), 1)
 			resumed := false
@@ -310,7 +318,7 @@ func TestAwaitData_OrderedAssessments(t *testing.T) {
 	var e Execution
 	e.Init(New(st, task.NewBounded(2)), owner.Named())
 	defer e.Close()
-	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 	assert.NoError(t, err)
 	resumed := false
 	assert.NoError(t, e.AwaitData(t.Context(), DataWait{
@@ -366,7 +374,7 @@ func TestAwaitData_MalformedMaterialReturnsDirectly(t *testing.T) {
 			var e Execution
 			e.Init(New(st, task.NewBounded(2)), owner.Named())
 			defer e.Close()
-			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+			inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 			assert.NoError(t, err)
 			assert.Equal(t, len(inputs), len(owner.PostBuild.SubstituteFrom))
 			assert.FatalIf(
@@ -762,7 +770,7 @@ func TestAwaitData_ExistingInputMissingKeyReturnsDirectly(t *testing.T) {
 	var e Execution
 	e.Init(New(st, task.NewBounded(2)), owner.Named())
 	defer e.Close()
-	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+	inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 	assert.NoError(t, err)
 	assert.Equal(t, inputs[0].Result.NeedsInput(), false)
 	err = e.AwaitData(t.Context(), DataWait{

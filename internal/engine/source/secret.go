@@ -242,7 +242,7 @@ func SecretLookup(reads *store.ReadSet) SecretGetter {
 	if reads == nil {
 		return nil
 	}
-	provider := values.NewStoreProvider(reads)
+	provider := values.NewStoreProvider(reads, reads.ID())
 	return func(namespace, name string) store.ReferenceFacts {
 		return provider.Lookup(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name})
 	}

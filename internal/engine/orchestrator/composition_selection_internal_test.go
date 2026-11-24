@@ -275,6 +275,21 @@ func testBootstrapOverwriteResult(t *testing.T, result *Rendered, included strin
 	assert.Diff(t, documents[0]["data"], map[string]any{"value": value})
 }
 
+func assertIncludeClosureMembership(t *testing.T, result *Rendered, want []manifest.NamedResource) {
+	t.Helper()
+	decision := result.selection.Snapshot()
+	var got []manifest.NamedResource
+	for _, obj := range result.store.Objects() {
+		id := obj.Named()
+		if manifest.KindOf(obj).Runnable && !id.ReportHidden() && decision.Reconcile(id) {
+			got = append(got, id)
+		}
+	}
+	slices.SortFunc(got, manifest.NamedResource.Compare)
+	slices.SortFunc(want, manifest.NamedResource.Compare)
+	assert.Diff(t, got, want)
+}
+
 func testIncludeClosureResult(t *testing.T, fixture *testfixture.Fixture, tc *includeClosureCase, result *Rendered) {
 	t.Helper()
 	input := manifest.NamedResource{
@@ -309,6 +324,13 @@ func testIncludeClosureResult(t *testing.T, fixture *testfixture.Fixture, tc *in
 	assert.Equal(t, decision.Reconcile(including), true)
 	assert.Equal(t, decision.Reconcile(consumer), true)
 	assert.Equal(t, decision.Reconcile(unrelated), false)
+	if tc.name == "include-added" || tc.name == "include-removed" {
+		want := []manifest.NamedResource{including, consumer}
+		if hasInclude {
+			want = append(want, input)
+		}
+		assertIncludeClosureMembership(t, result, want)
+	}
 	artifact, ok := result.store.GetArtifact(including, store.ArtifactContent).(*store.SourceArtifact)
 	assert.FatalIf(t, !ok, "missing completed source %v", including)
 	if artifact.ComposedFrom != nil {

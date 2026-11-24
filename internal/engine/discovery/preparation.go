@@ -180,15 +180,9 @@ func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
 	if d.admission().reachesEntry(&application, nil) {
 		return false
 	}
+	provider := values.NewStoreProvider(d.loader, ks.Named())
 	ready := true
-	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
-		if keyed, data := ref.DataInput(); !data || keyed {
-			continue
-		}
-		input := d.cfg.Store.ReferenceFacts(ref.NamedResource, d.loader.Index, ks.Named())
-		value := values.Resolve(
-			&values.ResolveRequest{Reference: ref, Facts: input, Permission: d.loader.Options.Missing},
-		)
+	for value := range values.SubstitutionInputs(ks, provider, d.loader.Options.Missing) {
 		if value.MaterialError() != nil {
 			return true
 		}

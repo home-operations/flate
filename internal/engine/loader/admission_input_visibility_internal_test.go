@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -37,6 +38,52 @@ func TestAdmission_DuplicateInputContent(t *testing.T) {
 			testAdmissionDuplicateInputContentCase(t, &scenario)
 		},
 		)
+	}
+}
+
+func TestAdmission_UnreadableSubstitutionInput(t *testing.T) {
+	t.Parallel()
+	consumer := testutil.KustomizationID("apps", "reader")
+	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	fixture := effectiveInputCase{expression: "${NAME:=fallback}", unreadable: true}
+	var loaders [2]*Loader
+	var stores [2]*store.Store
+	var indexes [2]*manifest.DiscoveryIndex
+	var projections [2]map[manifest.NamedResource]inputprojection.Projection
+	for side := range loaders {
+		root := t.TempDir()
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+			Provider: store.ProviderInput, LocalPath: root, FS: fixture.files(side),
+		})
+		l := New(st)
+		l.SourceRoot = root
+		configureSelection(t, l, selection.Request{Changed: true})
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+		binding := l.ReferenceFacts(settings, nil, manifest.NamedResource{})
+		assert.FatalIf(t, binding.Data == nil, "side %d lost the root binding", side)
+		assert.Equal(t, st.Policy(settings).Root, true)
+		assert.Equal(t, binding.Data.KeysKnown(), false)
+		assert.Equal(t, binding.Data.HasKeys(), false)
+		_, projected := l.InputContent[consumer]
+		assert.Equal(t, projected, false)
+		loaders[side], stores[side], indexes[side], projections[side] = l, st, l.Index, l.InputContent
+	}
+
+	changes, err := change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
+	assert.NoError(t, err)
+	changes, err = changes.WithReaders(t.Context(), indexes, projections, manifest.WorkScope{})
+	assert.NoError(t, err)
+	changes, err = changes.WithDeclarations(t.Context(), change.DeclarationInputs{Stores: stores})
+	assert.NoError(t, err)
+	for side, l := range loaders {
+		l.side, l.sideKnown = manifest.TreeSide(side), true
+		l.Options.Changes = changes
+		proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Selected, consumer), true)
 	}
 }
 

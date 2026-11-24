@@ -259,7 +259,7 @@ func (f *Fetcher) fetch(
 	if repo.Ignore != nil {
 		viewOptions.Ignore = *repo.Ignore
 	}
-	if len(repo.Composition().Includes) != 0 {
+	if repo.Composition().Composed() {
 		viewOptions.Mode, viewOptions.Ignore = gittree.Checkout, ""
 	}
 	policy.Timeout = new(repo.OperationTimeout())

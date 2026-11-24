@@ -26,6 +26,23 @@ func (c *capturedChart) dependencyInputs() []chartinput.Dependency {
 	return c.dependencies.Dependencies
 }
 
+func pendingDependency(dependencies []chartinput.Dependency) *chartinput.Dependency {
+	for i := range dependencies {
+		if dependencies[i].Capture.Empty() {
+			return &dependencies[i]
+		}
+	}
+	return nil
+}
+
+func unresolvedDependency(dep *chartinput.Dependency) error {
+	return manifest.NewError(
+		manifest.ErrInput,
+		nil,
+		fmt.Sprintf("unresolved chart dependency %s (%s)", dep.Name, dep.Declaration.Repository),
+	)
+}
+
 func (c *capturedChart) fingerprint() string {
 	var parent string
 	if c.files == nil {
@@ -72,12 +89,8 @@ func (c *capturedChart) load() (*chart.Chart, error) {
 	}
 	for i := range dependencies {
 		dep := &dependencies[i]
-		if dep.Capture.Files == nil && dep.Capture.Archive == nil {
-			return nil, manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				fmt.Sprintf("unresolved chart dependency %s (%s)", dep.Name, dep.Declaration.Repository),
-			)
+		if dep.Capture.Empty() {
+			return nil, unresolvedDependency(dep)
 		}
 		child, err := dep.Capture.Load()
 		if err != nil {
@@ -116,9 +129,8 @@ func (c *Client) completeDescription(
 	d := *description
 	built := *description.captured.dependencies
 	if !fresh {
-		options := chartinput.Options{Name: d.location, Validate: validateDependencyPath}
 		var err error
-		built, _, err = description.captured.dependencies.Complete(ctx, input, options)
+		built, err = description.captured.dependencies.Complete(ctx, input, d.location)
 		if err != nil {
 			return chartDescription{}, manifest.NewError(manifest.ErrInput, err, "")
 		}

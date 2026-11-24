@@ -57,14 +57,14 @@ func NewRenderRequest(
 		}
 	}
 	return RenderRequest{
-		Source:                  source,
-		SubPath:                 ks.Path,
-		Spec:                    ks,
-		HeldSlot:                options.HeldSlot,
-		SkipKinds:               options.SkipKinds,
-		StrictSubstitutions:     options.StrictSubstitutions,
-		SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
-		UnreadableSubstitutions: unreadable,
+		Source:                      source,
+		SubPath:                     ks.Path,
+		Spec:                        ks,
+		HeldSlot:                    options.HeldSlot,
+		SkipKinds:                   options.SkipKinds,
+		StrictSubstitutions:         options.StrictSubstitutions,
+		UncertainSubstitutionInputs: values.UncertainSubstitutionInputs(inputs),
+		UnreadableSubstitutions:     unreadable,
 	}, nil
 }
 

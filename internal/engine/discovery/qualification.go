@@ -193,7 +193,7 @@ func (a *Admission) readApplication(
 			resolved = entryResolution{object: evidence.generatedSource}
 		}
 	}
-	if resolved.artifact == nil && resolved.object != nil && len(resolved.object.Composition().Includes) != 0 {
+	if resolved.artifact == nil && resolved.object != nil && resolved.object.Composition().Composed() {
 		evidence.source = resolved
 		if !evidence.private && a.reachesEntry(&application, nil) {
 			reads.RequireData(application.Source)

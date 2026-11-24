@@ -24,13 +24,17 @@ type helmReleaseCatalog struct {
 	ChartVersion string                 `json:"ChartVersion,omitempty"`
 }
 
+type annotatedManifest interface {
+	GetAnnotations() map[string]string
+}
+
 // EncodeCatalog MUST preserve fields omitted or shadowed by declaration JSON tags.
 func EncodeCatalog(object BaseManifest) ([]byte, error) {
 	if object == nil {
 		return nil, nil
 	}
 	snapshot := catalogSnapshot{Identity: object.Named(), Suspended: object.Suspended(), Labels: object.GetLabels()}
-	if annotated, ok := object.(interface{ GetAnnotations() map[string]string }); ok {
+	if annotated, ok := object.(annotatedManifest); ok {
 		snapshot.Annotations = annotated.GetAnnotations()
 	}
 	var err error

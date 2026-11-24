@@ -50,7 +50,7 @@ func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shapin
 	}
 	p := &Shaping{
 		spec: ks, docs: docs, preparation: request.Preparation,
-		active:     values.RenderSubstitutionActive(ks, request.SubstitutionActive),
+		active:     values.SubstitutionActive(ks, request.UncertainSubstitutionInputs),
 		unreadable: request.UnreadableSubstitutions,
 	}
 	output := manifest.Fingerprint(docs)

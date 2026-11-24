@@ -441,7 +441,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		parentsForTest(result.Index)[childID])
 
 	generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
-	generatedCM, ok := values.NewStoreProvider(st).Lookup(generated).Data.(*manifest.ConfigMap)
+	generatedCM, ok := values.NewStoreProvider(st, manifest.NamedResource{}).Lookup(generated).Data.(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		st.GetObject(generated) != nil,
@@ -449,10 +449,10 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		"pinned generator lookup entered canonical inventory",
 	)
 	assert.FatalIf(t, !ok || generatedCM.Data["value"] != "pinned" ||
-		values.NewStoreProvider(st).
+		values.NewStoreProvider(st, manifest.NamedResource{}).
 			Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}).Data !=
 			nil, "pinned generators = %v", generatedCM)
-	fileGenerated, ok := values.NewStoreProvider(st).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).Data.(*manifest.ConfigMap)
+	fileGenerated, ok := values.NewStoreProvider(st, manifest.NamedResource{}).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).Data.(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		!ok || fileGenerated.Data["value"] != "pinned",

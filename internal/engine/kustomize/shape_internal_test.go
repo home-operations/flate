@@ -453,7 +453,11 @@ func TestShaping_DependencySubstitutionInputs(t *testing.T) {
 				t,
 				values.ExpandPostBuildSubstituteReference(
 					effective,
-					resolveTestInputs(effective, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)),
+					resolveTestInputs(
+						effective,
+						values.NewStoreProvider(st, manifest.NamedResource{}),
+						depwait.NewMissingPolicy(nil),
+					),
 				),
 			)
 			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(parsedChild.Document)}}

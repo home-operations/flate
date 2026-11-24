@@ -162,7 +162,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 						Origin: manifest.SuppliedDeclaration,
 					},
 				)
-				provider := values.NewStoreProvider(st)
+				provider := values.NewStoreProvider(st, manifest.NamedResource{})
 				prepared, err := kustomize.Prepare(ks, resolveTestInputs(ks, provider, depwait.NewMissingPolicy(nil)))
 				assert.FatalIf(t, err != nil, "%v", err)
 				assert.FatalIf(
@@ -198,7 +198,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	}
 	ordinary, err := kustomize.Prepare(
 		ks,
-		resolveTestInputs(ks, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil)),
+		resolveTestInputs(ks, values.NewStoreProvider(st, manifest.NamedResource{}), depwait.NewMissingPolicy(nil)),
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	want := replayKey(t.Context(), ordinary.Content("/repo", map[string]struct{}{"VALUE": {}}, true))
@@ -214,7 +214,11 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
 			prepared, err := kustomize.Prepare(
 				ks,
-				resolveTestInputs(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads), c.Missing),
+				resolveTestInputs(
+					ks,
+					values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, ks.Named()),
+					c.Missing,
+				),
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{

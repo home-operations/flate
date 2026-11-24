@@ -292,6 +292,7 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 			}
 			assert.Equal(t, KindOf(raw), want)
 			assert.Equal(t, raw.Named().Group, tc.group)
+			assert.Equal(t, raw.Named().IsArtifactGenerator(), tc.tracked)
 			assert.Diff(t, raw.EmissionPolicy(), EmissionPolicy{})
 			assert.Equal(t, ProducerNeedsCandidates(raw), tc.tracked)
 			targets := ProducerTargets(
@@ -299,6 +300,16 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 				NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "app-api"},
 			)
 			assert.Equal(t, len(targets) == 1, tc.tracked)
+			assert.Equal(t, raw.initArtifactGeneratorSpec().generator != nil, tc.tracked)
+			assert.Equal(t, raw.isArtifactGenerator(), tc.tracked)
+			if tc.tracked {
+				changed := *raw
+				changed.APIVersion = "foreign.example/v1"
+				assert.Equal(t, changed.isArtifactGenerator(), false)
+				changed.APIVersion = raw.APIVersion
+				changed.Kind = KindGitRepository
+				assert.Equal(t, changed.isArtifactGenerator(), false)
+			}
 		})
 	}
 }

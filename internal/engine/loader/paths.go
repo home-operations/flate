@@ -273,16 +273,16 @@ func (l *Loader) projectionFile(
 }
 
 type projectionNames struct {
-	names         map[string]struct{}
-	active, known bool
+	names map[string]struct{}
+	known bool
 }
 
 func (l *Loader) projectionNames(
 	ctx context.Context,
-	child, prepared *manifest.Kustomization,
+	child *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
+	active bool,
 ) (projectionNames, error) {
-	active := values.ProjectionSubstitutionActive(prepared)
 	declared, err := child.RenderDocument()
 	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)
@@ -311,7 +311,7 @@ func (l *Loader) projectionNames(
 		}
 	}
 	known = known && len(roots) != 0
-	return projectionNames{names: names, active: active, known: known}, nil
+	return projectionNames{names: names, known: known}, nil
 }
 
 //nolint:gocritic // Lazy map initialization MUST remain visible to the caller across path resolutions.
@@ -336,29 +336,6 @@ func (l *Loader) hydratePathReferences(
 		}
 	}
 	return ctx.Err() == nil
-}
-
-type pathBindings struct {
-	known  bool
-	inputs map[manifest.NamedResource]manifest.Data
-}
-
-func (l *Loader) pathBindings(
-	child *manifest.Kustomization,
-	provider *values.StoreProvider,
-) pathBindings {
-	known := true
-	bindings := map[manifest.NamedResource]manifest.Data{}
-	for _, ref := range child.PostBuild.SubstituteFrom {
-		inputID := manifest.NamedResource{Kind: ref.Kind, Name: ref.Name, Namespace: child.Namespace}
-		input := provider.Lookup(inputID)
-		known = known && input.Data != nil && len(input.Materializers) == 0 &&
-			l.Store.Policy(inputID).Root
-		if input.Data != nil {
-			bindings[inputID] = input.Data
-		}
-	}
-	return pathBindings{known: known, inputs: bindings}
 }
 
 //nolint:gocritic // Lazy map initialization MUST remain visible to the caller across catalog lookups.
@@ -468,29 +445,15 @@ func (p *substitutionResolution) resolveValue(
 		return value, false
 	}
 	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l)
+		p.provider = values.NewStoreProvider(l, manifest.NamedResource{})
 	}
-	resolved, known := values.ResolveStaticValue(value, parent, p.provider, l.Options.Missing)
+	resolved, known, needsInput := values.ResolveStaticValue(value, parent, p.provider, l.Options.Missing)
+	p.needsInputs = p.needsInputs || needsInput
 	if known {
 		if p.resolved == nil {
 			p.resolved = map[scalarContext]string{}
 		}
 		p.resolved[key] = resolved
-	}
-	if !known && parent.PostBuild != nil {
-		for ref := range manifest.References(parent, manifest.ReferenceRelations) {
-			if keyed, data := ref.DataInput(); !data || keyed {
-				continue
-			}
-			result := values.Resolve(
-				&values.ResolveRequest{
-					Reference:  ref,
-					Facts:      p.provider.Lookup(ref.NamedResource),
-					Permission: l.Options.Missing,
-				},
-			)
-			p.needsInputs = p.needsInputs || result.NeedsInput()
-		}
 	}
 	return resolved, known
 }
@@ -563,38 +526,36 @@ func (p *substitutionResolution) projectSubstitutions(
 		return ctx.Err()
 	}
 	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l)
+		p.provider = values.NewStoreProvider(l, manifest.NamedResource{})
 	}
-	bindings := l.pathBindings(child, p.provider)
-	if !bindings.known {
-		return nil
+	bindings := map[manifest.NamedResource]manifest.Data{}
+	var inputs []values.Result
+	for result := range values.SubstitutionInputs(child, p.provider, l.Options.Missing) {
+		inputID := result.ID()
+		input := p.provider.Lookup(inputID)
+		if input.Data == nil || len(input.Materializers) != 0 || !l.Store.Policy(inputID).Root {
+			return nil
+		}
+		bindings[inputID] = input.Data
+		inputs = append(inputs, result)
 	}
 	prepared := new(*child)
 	prepared.PostBuild = new(*child.PostBuild)
-	var inputs []values.Result
-	for ref := range manifest.References(prepared, manifest.ReferenceRelations) {
-		if keyed, data := ref.DataInput(); data && !keyed {
-			inputs = append(
-				inputs,
-				values.Resolve(
-					&values.ResolveRequest{
-						Reference:  ref,
-						Facts:      p.provider.Lookup(ref.NamedResource),
-						Permission: l.Options.Missing,
-					},
-				),
-			)
-		}
-	}
 	if err := values.ExpandPostBuildSubstituteReference(prepared, inputs); err != nil {
-		return nil //nolint:nilerr // Reconciliation MUST report substitution errors; incomplete bindings cannot certify content.
+		// Reconciliation reports substitution errors when projection cannot certify content.
+		return nil
+	}
+	uncertain := values.UncertainSubstitutionInputs(inputs)
+	active := values.SubstitutionActive(prepared, uncertain)
+	if uncertain {
+		return nil
 	}
 	roots := record.ContentRoots
 	if occurrence, ok := l.catalogOccurrence(id); roots == nil && ok {
 		source, _, _ := occurrence.SourcePath()
 		roots = map[manifest.NamedResource][]string{source: occurrence.facts.roots}
 	}
-	projection, err := l.projectionNames(ctx, child, prepared, roots)
+	projection, err := l.projectionNames(ctx, child, roots, active)
 	if err != nil {
 		return err
 	}
@@ -603,8 +564,8 @@ func (p *substitutionResolution) projectSubstitutions(
 			p.projections = map[manifest.NamedResource]inputprojection.Projection{}
 		}
 		p.projections[id] = inputprojection.Projection{
-			Content: prepared.Content(nil, projection.names, projection.active),
-			Inputs:  bindings.inputs,
+			Content: prepared.Content(nil, projection.names, active),
+			Inputs:  bindings,
 		}
 	}
 	return nil

@@ -106,7 +106,7 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 			readable: true,
 		}},
 	})
-	resolution := substitutionResolution{loader: l, provider: values.NewStoreProvider(reader)}
+	resolution := substitutionResolution{loader: l, provider: values.NewStoreProvider(reader, manifest.NamedResource{})}
 	assert.NoError(t, resolution.resolveContextual(t.Context()))
 	assert.Equal(t, len(resolution.contextual), 2)
 	for _, color := range []string{"red", "blue"} {

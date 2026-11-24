@@ -3,6 +3,7 @@ package chartinput_test
 import (
 	"errors"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -70,12 +71,7 @@ func testDescribeMissingDependenciesCase(t *testing.T, tc *struct {
 	description, missing, err := chartinput.Describe(
 		t.Context(),
 		input,
-		chartinput.Options{Name: "parent", Archive: false, Validate: func(name string) error {
-			if !fs.ValidPath(name) || strings.HasPrefix(name, "../") {
-				return fs.ErrInvalid
-			}
-			return nil
-		}},
+		chartinput.Options{Name: "parent"},
 		nil,
 	)
 	assert.FatalIf(t, err != nil || missing, "description: missing=%v err=%v", missing, err)
@@ -101,6 +97,51 @@ func testDescribeMissingDependenciesCase(t *testing.T, tc *struct {
 	assert.FatalIf(t, dep.Name != want, "name=%q, want %q", dep.Name, want)
 }
 
+func TestDescription_RecaptureClearsStaleCoordinates(t *testing.T) {
+	t.Parallel()
+	input := fstest.MapFS{
+		"parent/Chart.yaml": {
+			Data: []byte(`apiVersion: v2
+name: parent
+version: 1.0.0
+dependencies:
+- name: child
+  version: 1.0.0
+  repository: file://../child
+`),
+		},
+		"child/Chart.yaml": {Data: []byte("apiVersion: v2\nname: child\nversion: 1.0.0\n")},
+	}
+	initial, _, err := chartinput.Describe(t.Context(), input, chartinput.Options{Name: "parent"}, nil)
+	assert.NoError(t, err)
+	for _, tc := range []struct {
+		name, parent, repository, path string
+		err                            error
+	}{
+		{name: "outside", parent: ".", err: fs.ErrInvalid},
+		{name: "malformed_url", parent: "parent", repository: "file://%zz/child"},
+		{name: "missing", parent: "moved/parent", path: "moved/child", err: fs.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			original := initial
+			original.Dependencies = slices.Clone(initial.Dependencies)
+			if tc.repository != "" {
+				original.Dependencies[0].Declaration.Repository = tc.repository
+			}
+			recaptured, err := original.Complete(t.Context(), input, tc.parent)
+			assert.FatalIf(t, err == nil, "recapture succeeded for %s", tc.name)
+			if tc.err != nil {
+				assert.Equal(t, errors.Is(err, tc.err), true)
+			}
+			assert.Equal(t, recaptured.Dependencies[0].Path, tc.path)
+			assert.Equal(t, recaptured.Dependencies[0].Capture.Empty(), true)
+			assert.Equal(t, original.Dependencies[0].Path, "child")
+			assert.Equal(t, original.Dependencies[0].Capture.Empty(), false)
+		})
+	}
+}
+
 func TestDescribe_EmptyRepositoryMissing(t *testing.T) {
 	t.Parallel()
 	input := fstest.MapFS{
@@ -113,11 +154,7 @@ func TestDescribe_EmptyRepositoryMissing(t *testing.T) {
 	description, missing, err := chartinput.Describe(
 		t.Context(),
 		input,
-		chartinput.Options{
-			Name:     "parent",
-			Archive:  false,
-			Validate: func(string) error { return nil },
-		},
+		chartinput.Options{Name: "parent"},
 		nil,
 	)
 	if !errors.Is(err, fs.ErrNotExist) || missing {
@@ -140,11 +177,7 @@ func TestDescribe_PartialInputs(t *testing.T) {
 	description, _, err := chartinput.Describe(
 		t.Context(),
 		input,
-		chartinput.Options{
-			Name:     "parent",
-			Archive:  false,
-			Validate: func(string) error { return nil },
-		},
+		chartinput.Options{Name: "parent"},
 		nil,
 	)
 	if !errors.Is(err, fs.ErrNotExist) {

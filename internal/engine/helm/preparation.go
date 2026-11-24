@@ -2,7 +2,6 @@ package helm
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -177,34 +176,26 @@ func (d *chartDescription) requireDependencies(
 	hr *manifest.HelmRelease,
 	input *RenderOptions,
 ) error {
-	dependencies := d.captured.dependencyInputs()
-	for i := range dependencies {
-		dep := &dependencies[i]
-		if dep.Capture.Files != nil || dep.Capture.Archive != nil {
-			continue
-		}
-		reads, captured := input.Sources.reader.(*store.ReadSet)
-		if captured && client.fetcher != nil {
-			_, err := client.fetcher.FetchDependency(
-				ctx,
-				hr.ChartSource().Namespace,
-				&dep.Declaration,
-				input.Sources.index,
-				reads,
-				&cache.Policy{},
-				true,
-			)
-			if err != nil {
-				return err
-			}
-		}
-		return manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			fmt.Sprintf("unresolved chart dependency %s (%s)", dep.Name, dep.Declaration.Repository),
-		)
+	dep := pendingDependency(d.captured.dependencyInputs())
+	if dep == nil {
+		return nil
 	}
-	return nil
+	reads, captured := input.Sources.reader.(*store.ReadSet)
+	if captured && client.fetcher != nil {
+		_, err := client.fetcher.FetchDependency(
+			ctx,
+			hr.ChartSource().Namespace,
+			&dep.Declaration,
+			input.Sources.index,
+			reads,
+			&cache.Policy{},
+			true,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return unresolvedDependency(dep)
 }
 
 func (p *Preparation) bindSource(hr *manifest.HelmRelease, artifact *store.SourceArtifact, input *RenderOptions) {
@@ -271,29 +262,25 @@ func (c *Client) PrepareChart(
 		}
 		*p = Preparation{client: c, declaration: hr, source: artifact, loaded: loaded, chartPrepared: true}
 	}
-	dependencies := p.loaded.captured.dependencyInputs()
-	for i := range dependencies {
-		dep := &dependencies[i]
-		if dep.Capture.Files != nil || dep.Capture.Archive != nil {
-			continue
-		}
-		reads, ok := input.Sources.reader.(*store.ReadSet)
-		if !ok || c.fetcher == nil {
-			return nil, manifest.NewError(manifest.ErrInput, nil, "chart dependency acquisition is unavailable")
-		}
-		return func(ctx context.Context) (source.PreparedFetch, error) {
-			return c.fetcher.FetchDependency(
-				ctx,
-				hr.ChartSource().Namespace,
-				&dep.Declaration,
-				input.Sources.index,
-				reads,
-				&cache.Policy{},
-				false,
-			)
-		}, nil
+	dep := pendingDependency(p.loaded.captured.dependencyInputs())
+	if dep == nil {
+		return nil, nil
 	}
-	return nil, nil
+	reads, ok := input.Sources.reader.(*store.ReadSet)
+	if !ok || c.fetcher == nil {
+		return nil, manifest.NewError(manifest.ErrInput, nil, "chart dependency acquisition is unavailable")
+	}
+	return func(ctx context.Context) (source.PreparedFetch, error) {
+		return c.fetcher.FetchDependency(
+			ctx,
+			hr.ChartSource().Namespace,
+			&dep.Declaration,
+			input.Sources.index,
+			reads,
+			&cache.Policy{},
+			false,
+		)
+	}, nil
 }
 
 // AcceptChartDependency consumes the artifact before the acquisition owner closes its handle.
@@ -314,17 +301,15 @@ func (p *Preparation) AcceptChartDependency(ctx context.Context, artifact *store
 	}
 	built := *p.loaded.captured.dependencies
 	built.Dependencies = slices.Clone(built.Dependencies)
-	p.loaded.captured.dependencies = &built
-	for i := range built.Dependencies {
-		dep := &built.Dependencies[i]
-		if dep.Capture.Files == nil && dep.Capture.Archive == nil {
-			dep.Capture = chartinput.Capture{Files: captured.files, Archive: captured.archive}
-			p.loaded.remote = true
-			p.loaded.fingerprint = p.loaded.captured.fingerprint()
-			p.loaded.key = p.loaded.fingerprint
-			p.loaded.chart, p.loaded.analysis, p.loaded.record = nil, nil, nil
-			return nil
-		}
+	dep := pendingDependency(built.Dependencies)
+	if dep == nil {
+		panic("chart dependency completion without a pending dependency")
 	}
-	panic("chart dependency completion without a pending dependency")
+	dep.Capture = chartinput.Capture{Files: captured.files, Archive: captured.archive}
+	p.loaded.captured.dependencies = &built
+	p.loaded.remote = true
+	p.loaded.fingerprint = p.loaded.captured.fingerprint()
+	p.loaded.key = p.loaded.fingerprint
+	p.loaded.chart, p.loaded.analysis, p.loaded.record = nil, nil, nil
+	return nil
 }

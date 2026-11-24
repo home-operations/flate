@@ -171,7 +171,7 @@ func (r *localResolver) committed(
 		ignore = *repository.Ignore
 	}
 	mode := gittree.Source
-	if len(repository.Composition().Includes) != 0 {
+	if repository.Composition().Composed() {
 		mode, ignore = gittree.Checkout, ""
 	}
 	work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")

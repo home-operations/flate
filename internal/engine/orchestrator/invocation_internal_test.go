@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,30 +120,52 @@ func testInvocationLazySelectionLifetime(t *testing.T, stage string) {
 
 func TestInvocation_ValidationAndPartialAllocation(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"identity", "supply", "transport", "cache"} {
-		t.Run(name, func(t *testing.T) {
+	valid := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}
+	malformed := Tree{ID: manifest.TreeID{Cluster: "../app", Side: manifest.TreeHead}}
+	for _, tc := range []struct {
+		name, setup, identityError string
+		trees                      []Tree
+	}{
+		{name: "duplicate", identityError: "duplicate tree ./1", trees: []Tree{valid, valid}},
+		{name: "malformed_before_supply", setup: "supply", identityError: `invalid cluster path "../app"`, trees: []Tree{malformed}},
+		{name: "duplicate_before_transport", setup: "transport", identityError: "duplicate tree ./1", trees: []Tree{valid, valid}},
+		{name: "malformed_before_cache", setup: "cache", identityError: `invalid cluster path "../app"`, trees: []Tree{malformed}},
+		{name: "supply", setup: "supply", trees: []Tree{valid}},
+		{name: "transport", setup: "transport", trees: []Tree{valid}},
+		{name: "cache", setup: "cache", trees: []Tree{valid}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			trees := []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}
-			cfg := Config{Concurrency: 2}
-			switch name {
-			case "identity":
-				trees = append(trees, trees[0])
+			cfg := Config{Concurrency: 2, CacheDir: filepath.Join(t.TempDir(), "cache")}
+			switch tc.setup {
 			case "supply":
 				cfg.Supply = []store.Declaration{{Doc: map[string]any{"kind": "ConfigMap"}}}
 			case "transport":
 				cfg.GitTransports = sourcegit.Transports{"": nil}
 			case "cache":
-				cfg.CacheDir = filepath.Join(t.TempDir(), "file")
 				testutil.WriteFileAt(t, cfg.CacheDir, "not a directory")
 			}
-			invocation, err := RenderTrees(t.Context(), trees, cfg)
-			assert.FatalIf(t, err == nil, "missing %s error", name)
-			if name == "transport" {
+			invocation, err := RenderTrees(t.Context(), tc.trees, cfg)
+			t.Cleanup(func() { assert.NoError(t, invocation.Close()) })
+			assert.FatalIf(t, err == nil, "missing %s error", tc.name)
+
+			if tc.identityError != "" {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, err.Error(), tc.identityError)
+				assert.Equal(t, invocation == nil, true)
+				if tc.setup != "cache" {
+					_, statErr := os.Stat(cfg.CacheDir)
+					assert.Equal(t, errors.Is(statErr, fs.ErrNotExist), true)
+				}
+				return
+			}
+
+			if tc.setup == "transport" {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			}
-			if name == "cache" || name == "transport" {
+			if tc.setup == "cache" || tc.setup == "transport" {
 				assert.FatalIf(t, invocation == nil || invocation.Config.Network == nil,
-					"allocated network lost on %s initialization failure: %v", name, err)
+					"allocated network lost on %s initialization failure: %v", tc.setup, err)
 				assert.Equal(t, errors.Is(invocation.err, err), true)
 				assert.NoError(t, invocation.Close())
 				assert.NoError(t, invocation.Close())

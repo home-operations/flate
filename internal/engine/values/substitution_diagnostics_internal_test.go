@@ -27,7 +27,7 @@ func TestExpandPostBuildSubstituteReference_CapturedFailure(t *testing.T) {
 		{Kind: manifest.KindSecret, Name: "unreadable"},
 	}, Substitute: map[string]string{"INLINE": "retained"}}
 	before := entry.Clone()
-	inputs := resolveInputsForTest(entry, NewStoreProvider(store.New()), testPermissions(nil))
+	inputs := resolveInputsForTest(entry, NewStoreProvider(store.New(), manifest.NamedResource{}), testPermissions(nil))
 	err := ExpandPostBuildSubstituteReference(entry, inputs)
 	assert.Equal(t, err, inputs[0].Err())
 	assert.Equal(t, errors.Is(err, manifest.ErrObjectNotFound), true)

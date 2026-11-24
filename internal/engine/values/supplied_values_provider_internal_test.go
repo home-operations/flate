@@ -34,7 +34,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	var first store.ReadSet
 	first.Init(s, consumer.Named(), nil)
 	defer first.Close()
-	input := NewStoreProvider(&first).Lookup(supplied.Named())
+	input := NewStoreProvider(&first, first.ID()).Lookup(supplied.Named())
 
 	assert.FatalIf(
 		t,
@@ -63,7 +63,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	second.Init(s, consumer.Named(), nil)
 	second.GetObject(consumer.Named())
 	defer second.Close()
-	resolved := NewStoreProvider(&second).Lookup(supplied.Named()).Data
+	resolved := NewStoreProvider(&second, second.ID()).Lookup(supplied.Named()).Data
 	assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
 	second.Accept(store.AssessmentReconciled)
 	assert.Diff(
@@ -81,7 +81,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	var third store.ReadSet
 	third.Init(s, consumer.Named(), nil)
 	defer third.Close()
-	restored := NewStoreProvider(&third).Lookup(supplied.Named()).Data
+	restored := NewStoreProvider(&third, third.ID()).Lookup(supplied.Named()).Data
 	valueResult2, valueResultErr := restored.Value("VALUE")
 	value, err = valueResult2.Value, valueResultErr
 	assert.NoError(t, err)
@@ -113,7 +113,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 			StringData: map[string]any{"VALUE": "repository", "tag": ""},
 		},
 	)
-	provider := NewStoreProvider(s)
+	provider := NewStoreProvider(s, manifest.NamedResource{})
 	ks := &manifest.Kustomization{
 		Name:      "consumer",
 		Namespace: "apps",

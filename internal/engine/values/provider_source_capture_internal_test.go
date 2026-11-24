@@ -73,7 +73,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	reads.Init(s, reader, nil)
 	defer reads.Close()
 	counted := &countedDataReader{ReadSet: &reads}
-	provider := NewStoreProvider(counted)
+	provider := NewStoreProvider(counted, counted.ID())
 	input := provider.Lookup(first.Named())
 	assert.FatalIf(
 		t,
@@ -144,11 +144,11 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	fresh.Init(s, reader, nil)
 	defer fresh.Close()
 	{
-		got := NewStoreProvider(&fresh).Lookup(first.Named()).Data
+		got := NewStoreProvider(&fresh, fresh.ID()).Lookup(first.Named()).Data
 		assert.FatalIf(t, got != &next, "next execution retained preceding value: %v", got)
 	}
 	{
-		got := NewStoreProvider(&fresh).Lookup(absent).Data
+		got := NewStoreProvider(&fresh, fresh.ID()).Lookup(absent).Data
 		assert.FatalIf(t, got == nil, "%s", "fresh execution retained frozen absence")
 	}
 }

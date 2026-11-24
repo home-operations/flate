@@ -331,7 +331,7 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		}
 		return
 	}
-	obj := values.NewStoreProvider((*inputs.st)).Lookup((*inputs.id)).Data
+	obj := values.NewStoreProvider((*inputs.st), manifest.NamedResource{}).Lookup((*inputs.id)).Data
 	assert.FatalIf(
 		t,
 		!(*inputs.tc).existing && (*inputs.st).GetObject((*inputs.id)) != nil,
@@ -359,7 +359,7 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		reads.Init((*inputs.st), (*inputs.ks).Named(), nil)
 		reads.GetObject(reads.ID())
 		defer reads.Close()
-		input := values.NewStoreProvider(&reads).Lookup((*inputs.id))
+		input := values.NewStoreProvider(&reads, reads.ID()).Lookup((*inputs.id))
 		assert.FatalIf(
 			t,
 			input.Data == nil,
@@ -404,7 +404,7 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		Name = "sibling"
 	assert.FatalIf(
 		t,
-		values.NewStoreProvider((*inputs.st)).Lookup((*inputs.id)).Data == nil,
+		values.NewStoreProvider((*inputs.st), manifest.NamedResource{}).Lookup((*inputs.id)).Data == nil,
 		"%s",
 		"failed generator stopped its sibling",
 	)

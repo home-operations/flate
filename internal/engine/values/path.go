@@ -6,30 +6,26 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ResolveStaticValue never certifies a substitution that depends on unread input.
+// ResolveStaticValue reports absent input only when the scalar remains unknown.
 func ResolveStaticValue(
 	value string,
 	parent *manifest.Kustomization,
 	provider provider,
 	missing missingPolicy,
-) (string, bool) {
+) (resolved string, known, needsInput bool) { //nolint:nonamedreturns // The names distinguish the two boolean results.
 	parent = new(*parent)
 	if parent.PostBuild != nil {
 		parent.PostBuild = new(*parent.PostBuild)
 	}
 	unknownInputs := false
+	absentInput := false
 	var inline map[string]string
 	var inputs []Result
 	if parent.PostBuild != nil {
 		inline = parent.PostBuild.Substitute
-		for ref := range manifest.References(parent, manifest.ReferenceRelations) {
-			if keyed, data := ref.DataInput(); !data || keyed {
-				continue
-			}
-			result := Resolve(
-				&ResolveRequest{Reference: ref, Facts: provider.Lookup(ref.NamedResource), Permission: missing},
-			)
+		for result := range SubstitutionInputs(parent, provider, missing) {
 			unknownInputs = unknownInputs || !result.StaticCertain()
+			absentInput = absentInput || result.NeedsInput()
 			inputs = append(inputs, result)
 		}
 	}
@@ -43,15 +39,16 @@ func ResolveStaticValue(
 	if parent.PostBuild != nil {
 		variables = manifest.VarsMap(parent.PostBuild.Substitute)
 	}
-	if !staticSubstitutionActive(parent, unknownInputs) {
-		return value, true
+	if !SubstitutionActive(parent, unknownInputs) {
+		return value, true, false
 	}
 	incomplete := false
 	resolved, err := envsubst.Eval(value, func(name string) (string, bool) {
-		value, known := variables[name]
+		value, found := variables[name]
 		_, fixed := inline[name]
 		incomplete = incomplete || unknownInputs && !fixed
-		return value, known
+		return value, found
 	})
-	return resolved, err == nil && !incomplete
+	known = err == nil && !incomplete
+	return resolved, known, !known && absentInput
 }

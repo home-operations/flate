@@ -372,13 +372,14 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			)
 			assert.FatalIf(t, s.GetObject(target) != nil, "%s", "runtime declaration has a data writer")
 
-			data := values.NewStoreProvider(s).Lookup(target).Data
+			data := values.NewStoreProvider(s, manifest.NamedResource{}).Lookup(target).Data
 			assert.FatalIf(t, data != nil, "%s", "runtime declaration fabricated data")
 		}
 		(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &store.Emission{Complete: true}, nil)
 		assert.FatalIf(
 			t,
-			len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s).Lookup(target).Data != nil,
+			len(s.Productions(target, nil)) != 0 ||
+				values.NewStoreProvider(s, manifest.NamedResource{}).Lookup(target).Data != nil,
 			"%s",
 			"omitted declaration retained",
 		)
@@ -457,7 +458,7 @@ func testEmitRuntimeProducerTargetsCase1(t *testing.T, tc *struct {
 		if got := s.Productions(target, nil); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
 			t.Fatalf("runtime declaration evidence: %v", got)
 		}
-		data := values.NewStoreProvider(s).Lookup(target).Data
+		data := values.NewStoreProvider(s, manifest.NamedResource{}).Lookup(target).Data
 		known := false
 		assert.FatalIf(t, (data != nil) != known,
 			"known-key availability=%t want %t", data != nil, known)
@@ -502,7 +503,7 @@ func testEmitRuntimeProducerTargetsCase1Part1(
 		Name = "next"
 	assert.FatalIf(t, len((*s).Productions((*target), nil)) != 1, "%s", "target rename lost new contribution")
 
-	data := values.NewStoreProvider((*s)).Lookup((*target)).Data
+	data := values.NewStoreProvider((*s), manifest.NamedResource{}).Lookup((*target)).Data
 	assert.FatalIf(t, data != nil, "%s", "renamed declaration fabricated data")
 }
 
@@ -574,7 +575,7 @@ func testEmitRuntimeProducerDataPrecedenceCase1(t *testing.T, pending *string, a
 			},
 		)
 	}
-	data := values.NewStoreProvider(s).Lookup(target).Data
+	data := values.NewStoreProvider(s, manifest.NamedResource{}).Lookup(target).Data
 	if !(*actual) {
 		assert.FatalIf(t, data != nil, "%s", "declaration fabricated data")
 
@@ -662,7 +663,7 @@ func testEmitRuntimeProducerTargetsCase1Tail(t *testing.T, inputs *testEmitRunti
 		assert.FatalIf(
 			t,
 			len((*inputs.s).Productions(target, nil)) != 0 ||
-				values.NewStoreProvider((*inputs.s)).Lookup(target).Data != nil,
+				values.NewStoreProvider((*inputs.s), manifest.NamedResource{}).Lookup(target).Data != nil,
 			"%s",
 			"last supporter withdrawal retained target data",
 		)

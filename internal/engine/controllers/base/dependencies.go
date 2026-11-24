@@ -97,7 +97,7 @@ func (e *Execution) dependencyWaiter() depwait.Waiter {
 // Data MUST remain bound to this execution's input capture.
 func (e *Execution) Data() *values.StoreProvider {
 	if e.data == nil {
-		e.data = values.NewStoreProvider(&e.Reads)
+		e.data = values.NewStoreProvider(&e.Reads, e.Reads.ID())
 	}
 	return e.data
 }

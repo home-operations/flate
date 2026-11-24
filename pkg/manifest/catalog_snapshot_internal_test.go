@@ -56,6 +56,50 @@ func TestCatalogCodec_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestCatalogCodec_AnnotationStorage(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		object      BaseManifest
+		annotations map[string]string
+		supported   bool
+		encoded     string
+	}{
+		{
+			name:        "stored annotations",
+			object:      &Kustomization{Name: "root", Annotations: map[string]string{"flag": "value"}},
+			annotations: map[string]string{"flag": "value"},
+			supported:   true,
+			encoded:     `{"Identity":{"group":"kustomize.toolkit.fluxcd.io","kind":"Kustomization","name":"root"},"Annotations":{"flag":"value"},"Data":{"name":"root"}}`,
+		},
+		{
+			name:        "empty annotations",
+			object:      &Kustomization{Name: "root", Annotations: map[string]string{}},
+			annotations: map[string]string{},
+			supported:   true,
+			encoded:     `{"Identity":{"group":"kustomize.toolkit.fluxcd.io","kind":"Kustomization","name":"root"},"Data":{"name":"root"}}`,
+		},
+		{
+			name:    "unsupported annotations",
+			object:  &ResourceSet{Name: "set", Labels: map[string]string{"app": "test"}, Suspend: true},
+			encoded: `{"Identity":{"group":"fluxcd.controlplane.io","kind":"ResourceSet","name":"set"},"Labels":{"app":"test"},"Data":{"name":"set"},"Suspended":true}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			catalog := CatalogObject(tc.object, tc.object.Named())
+			annotated, supported := catalog.(annotatedManifest)
+			assert.Equal(t, supported, tc.supported)
+			if supported {
+				assert.Diff(t, annotated.GetAnnotations(), tc.annotations)
+			}
+			encoded, err := EncodeCatalog(catalog)
+			assert.NoError(t, err)
+			assert.Equal(t, string(encoded), tc.encoded)
+		})
+	}
+}
+
 func TestCatalogCodec_NonemptyHelmChart(t *testing.T) {
 	t.Parallel()
 	parsed, err := ParseDoc(map[string]any{

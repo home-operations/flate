@@ -56,6 +56,8 @@ func (k KindInfo) APIVersion() string {
 // IsSource preserves source-group membership for unknown identities.
 func (k KindInfo) IsSource() bool { return k.Group == SourceDomain }
 
+func (k KindInfo) isArtifactGenerator() bool { return k.Tracked && k.Kind == KindArtifactGenerator }
+
 type kindEntry struct {
 	KindInfo
 

@@ -391,9 +391,6 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 	}
 
 	trees := inputTrees(c.hasBaseline(req.pair))
-	if err := orchestrator.ValidateTrees(trees); err != nil {
-		return early(err)
-	}
 	cfg := buildOrchCfg(c)
 	ssrfguard.Restrict(cfg.RestrictEgress)
 	owner, err := orchestrator.NewInvocation(ctx, cfg)

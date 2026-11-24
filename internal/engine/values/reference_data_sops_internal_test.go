@@ -22,7 +22,7 @@ func TestStoreProvider_DeclaredOutputsHaveNoData(t *testing.T) {
 	st.AddObject(declaration)
 	assert.FatalIf(
 		t,
-		NewStoreProvider(st).Lookup(target).Data != nil || st.GetObject(target) != nil,
+		NewStoreProvider(st, manifest.NamedResource{}).Lookup(target).Data != nil || st.GetObject(target) != nil,
 		"%s",
 		"declared output fabricated data",
 	)

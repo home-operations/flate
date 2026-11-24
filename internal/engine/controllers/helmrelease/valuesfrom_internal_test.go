@@ -46,7 +46,7 @@ func TestController_ValuesFromExternalSecretMerge(t *testing.T) {
 			Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "values.yaml",
 		}},
 	}
-	provider := values.NewStoreProvider(st)
+	provider := values.NewStoreProvider(st, manifest.NamedResource{})
 	inputs := resolveTestInputs(hr, provider, c.Missing)
 	assert.Equal(t, len(inputs), 1)
 	input := &inputs[0]
@@ -367,7 +367,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
+	inputs := resolveTestInputs(hr, values.NewStoreProvider(st, manifest.NamedResource{}), c.Missing)
 	seed, err := helm.Prepare(
 		hr,
 		helm.NewSources(st, nil).Declaration,
@@ -551,7 +551,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				},
 			}
 			st.AddObject(hr)
-			inputs := resolveTestInputs(hr, values.NewStoreProvider(st), c.Missing)
+			inputs := resolveTestInputs(hr, values.NewStoreProvider(st, manifest.NamedResource{}), c.Missing)
 			seed, err := helm.Prepare(
 				hr,
 				helm.NewSources(st, nil).Declaration,

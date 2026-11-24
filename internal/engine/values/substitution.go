@@ -1,6 +1,7 @@
 package values
 
 import (
+	"iter"
 	"math"
 	"unicode/utf8"
 
@@ -11,27 +12,35 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ProjectionSubstitutionActive requires a prepared Kustomization with known inputs.
-func ProjectionSubstitutionActive(ks *manifest.Kustomization) bool {
-	return preparedSubstitutionActive(ks)
+// SubstitutionInputs preserves authored order and repeated reference occurrences.
+func SubstitutionInputs(
+	ks *manifest.Kustomization,
+	provider provider,
+	missing missingPolicy,
+) iter.Seq[Result] {
+	return func(yield func(Result) bool) {
+		for ref := range manifest.References(ks, manifest.ReferenceRelations) {
+			if keyed, data := ref.DataInput(); !data || keyed {
+				continue
+			}
+			result := Resolve(
+				&ResolveRequest{Reference: ref, Facts: provider.Lookup(ref.NamedResource), Permission: missing},
+			)
+			if !yield(result) {
+				return
+			}
+		}
+	}
 }
 
-// RenderSubstitutionActive requires ks to contain the expanded, readable bindings.
-func RenderSubstitutionActive(ks *manifest.Kustomization, uncertainUsedInputs bool) bool {
-	return uncertainUsedInputs || preparedSubstitutionActive(ks)
-}
-
-func staticSubstitutionActive(ks *manifest.Kustomization, unknownInputs bool) bool {
-	return preparedSubstitutionActive(ks) || unknownInputs
-}
-
-func preparedSubstitutionActive(ks *manifest.Kustomization) bool {
-	return ks.PostBuild != nil && len(ks.PostBuild.Substitute) != 0 ||
+// SubstitutionActive MUST receive a Kustomization with expanded readable bindings when known.
+func SubstitutionActive(ks *manifest.Kustomization, uncertain bool) bool {
+	return uncertain || ks.PostBuild != nil && len(ks.PostBuild.Substitute) != 0 ||
 		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 }
 
-// ResolvedSubstitutionActive MUST preserve evaluation when satisfied inputs have no readable names.
-func ResolvedSubstitutionActive(inputs []Result) bool {
+// UncertainSubstitutionInputs MUST preserve evaluation when satisfied inputs have no readable names.
+func UncertainSubstitutionInputs(inputs []Result) bool {
 	for i := range inputs {
 		result := &inputs[i]
 		if keyed, data := result.ref.DataInput(); data && !keyed && result.effect == Used && !result.certain {

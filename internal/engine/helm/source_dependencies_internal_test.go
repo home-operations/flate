@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,8 +13,9 @@ import (
 	"testing"
 	"testing/fstest"
 
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+
 	"github.com/home-operations/flate/internal/engine/helm/chartinput"
-	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -96,6 +98,37 @@ func TestCaptureChart_DependencyFailures(t *testing.T) {
 			if tc.name == "missing" {
 				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 			}
+		})
+	}
+}
+
+func TestCapturedChart_DependencyErrorOrder(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, message string
+		archive       []byte
+		cause         error
+	}{
+		{name: "present_empty_archive", archive: []byte{}, cause: io.EOF, message: "dependency first: EOF"},
+		{name: "unresolved", cause: manifest.ErrInput, message: "unresolved chart dependency first (https://example.invalid)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			captured := capturedChart{
+				parent: &chart.Chart{Metadata: &chart.Metadata{Name: "parent"}},
+				dependencies: &chartinput.Description{Dependencies: []chartinput.Dependency{
+					{
+						Name:        "first",
+						Declaration: chart.Dependency{Repository: "https://example.invalid"},
+						Capture:     chartinput.Capture{Archive: tc.archive},
+					},
+					{Name: "later"},
+				}},
+			}
+			_, err := captured.load()
+			assert.FatalIf(t, err == nil, "load succeeded")
+			assert.Equal(t, errors.Is(err, tc.cause), true)
+			assert.Equal(t, err.Error(), tc.message)
 		})
 	}
 }
@@ -212,10 +245,7 @@ func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bo
 	d, missing, err := chartinput.Describe(
 		ctx,
 		input,
-		chartinput.Options{Name: name, Archive: archiveShape, Validate: func(name string) error {
-			_, err := safepath.ArchiveName(name)
-			return err
-		}},
+		chartinput.Options{Name: name, Archive: archiveShape},
 		nil,
 	)
 	captured := capturedChart{files: d.Parent.Files, archive: d.Parent.Archive}

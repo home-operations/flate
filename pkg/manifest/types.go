@@ -36,6 +36,11 @@ func (n NamedResource) IsCRD() bool {
 	return n.Group == apix.GroupName && n.Kind == KindCustomResourceDefinition
 }
 
+// IsArtifactGenerator matches the registered group and kind.
+func (n NamedResource) IsArtifactGenerator() bool {
+	return n.KindInfo().isArtifactGenerator()
+}
+
 // ReportHidden reports whether the identity is internal to reconciliation reports.
 func (n NamedResource) ReportHidden() bool {
 	return n.internalKustomization() || n == BootstrapSourceID
@@ -261,10 +266,10 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 		if obj == nil {
 			return
 		}
-		includes := obj.Composition().Includes
+		composition := obj.Composition()
 		active := true
 		ordinary := yield
-		if len(includes) != 0 {
+		if composition.Composed() {
 			ordinary = func(ref Reference) bool {
 				active = yield(ref)
 				return active
@@ -297,8 +302,8 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 		if !active {
 			return
 		}
-		for i := range includes {
-			if !yield(includes[i].Reference) {
+		for i := range composition.Includes {
+			if !yield(composition.Includes[i].Reference) {
 				return
 			}
 		}
@@ -414,16 +419,18 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 }
 
 func (r *RawObject) kind() KindInfo {
-	info := KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
-	if r.Kind == KindArtifactGenerator && info.Group == SourceExtensionsDomain {
-		info = kindTable[kindArtifactGenerator].KindInfo
+	id := r.Named()
+	if id.Kind == KindArtifactGenerator {
+		info := id.KindInfo()
 		info.apiVersion = r.APIVersion
+		return info
 	}
-	return info
+	return KindInfo{Group: id.Group, Kind: id.Kind, apiVersion: r.APIVersion}
 }
 
 func (r *RawObject) isArtifactGenerator() bool {
-	return r.Kind == KindArtifactGenerator && apiGroup(r.APIVersion) == SourceExtensionsDomain
+	return r.generator != nil && r.generator.kind == r.Kind && r.generator.apiVersion == r.APIVersion ||
+		r.Named().IsArtifactGenerator()
 }
 
 func referenceExpression(expr *string) *string {

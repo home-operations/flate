@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestInputCache_RestoresIndependentWalks(t *testing.T) {
@@ -176,17 +175,13 @@ func TestInputCache_RejectsFrameWithoutComponentEdges(t *testing.T) {
 	assert.Equal(t, packageReached(state.input, visits, entry), true)
 
 	origin, url := state.input.OriginPath(root), state.input.URL
-	previous := cache.BlobKey{Content: manifest.Fingerprint(struct {
-		Version             int
-		Domain, Origin, URL string
-	}{Version: 1, Domain: "loader-inputs", Origin: origin, URL: url}), Render: cache.RenderAccepted}
-	state.lookup = previous
-	assert.NoError(t, first.PersistInputs(t.Context()))
-	policy := &cache.Policy{MaxAge: cache.Forever}
-	_, _, _, err = owner.Blob(t.Context(), previous, policy, nil)
+	frame, err := first.cacheSourceInputs(state)
 	assert.NoError(t, err)
+	assert.FatalIf(t, frame == nil, "expected an input frame for the earlier lookup")
+	publishVersionedInputFrame(t, first, frame, 1)
+	policy := &cache.Policy{MaxAge: cache.Forever}
 
-	current, _ := cache.InputFrameIdentity(origin, url, nil)
+	current := cache.InputFrameLookup(origin, url)
 	_, _, _, err = owner.Blob(t.Context(), current, policy, nil)
 	assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
 	restored := cachedFixtureLoader(t, root, files, owner)

@@ -67,7 +67,7 @@ func Render(
 	if err != nil {
 		return nil, nil, err
 	}
-	prepared.request, prepared.retry = req, retry
+	prepared.retry = retry
 	if req.Spec != nil {
 		prepared.maxAge = req.Spec.Interval.Duration
 	}
@@ -76,6 +76,7 @@ func Render(
 	blobKey := sourcecache.BlobKey{
 		Content: prepared.key,
 		Render:  sourcecache.RenderPending,
+		Lookups: prepared.addresses,
 		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
 			return prepared.validate(ctx, cache, &result, generation)
 		},
@@ -114,6 +115,7 @@ type Preparation struct {
 	lower          fs.FS
 	root, key      string
 	binding        sourcecache.RenderBinding[renderPolicy]
+	lookups        sourcecache.RenderLookups
 }
 
 // Matches MUST NOT grant publication authority or validate current source bytes.
@@ -147,12 +149,13 @@ func samePreparationDeclaration(previous, current *manifest.Kustomization) bool 
 type renderRequest struct {
 	Preparation
 
-	request RenderRequest
-	retry   sourcecache.RetryConfig
-	maxAge  time.Duration
+	request   RenderRequest
+	retry     sourcecache.RetryConfig
+	maxAge    time.Duration
+	addresses *sourcecache.RenderLookups
 }
 
-func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (renderRequest, error) {
+func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (*renderRequest, error) {
 	work := req.Work.Preparation()
 	var err error
 	switch {
@@ -166,7 +169,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		return renderRequest{}, err
+		return nil, err
 	}
 	lower := req.Source.FS
 	root, err := renderRoot(req)
@@ -174,7 +177,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		return renderRequest{}, manifest.NewError(manifest.ErrInput, err, "")
+		return nil, manifest.NewError(manifest.ErrInput, err, "")
 	}
 	previous, key := req.Preparation, ""
 	if previous.Matches(c, req) && previous.root == root && previous.policyKey == policyKey {
@@ -186,31 +189,29 @@ func (c *TreeCache) prepareRender(ctx context.Context, req *RenderRequest) (rend
 			key = previous.key
 		}
 	}
-	if key != "" && key == previous.key {
-		req.Work.Fingerprint(key)
-		previous.lower = lower
-		previous.bindSource(req)
-		return renderRequest{Preparation: *previous}, nil
-	}
-	if req.Preparation != nil {
-		*req.Preparation = Preparation{}
-	}
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-	if key == "" {
+	var prepared Preparation
+	if key != "" {
+		prepared = *previous
+		prepared.lower = lower
+	} else {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		key = renderKey(req, root, policyKey)
+		work.Finish(nil)
+		prepared = Preparation{
+			cache: c.owner, label: req.Label, subPath: req.SubPath,
+			policyKey: policyKey,
+			lower:     lower, root: root, key: key,
+		}
 	}
 	req.Work.Fingerprint(key)
-	work.Finish(nil)
-	prepared := Preparation{
-		cache: c.owner, label: req.Label, subPath: req.SubPath,
-		policyKey: policyKey,
-		lower:     lower, root: root, key: key,
-	}
 	prepared.bindSource(req)
-	if req.Preparation != nil {
-		*req.Preparation = prepared
+	request := &renderRequest{Preparation: prepared, request: *req}
+	request.addresses = &request.Preparation.lookups
+	if previous != nil {
+		*previous = prepared
+		request.addresses = &previous.lookups
 	}
-	return renderRequest{Preparation: prepared}, nil
+	return request, nil
 }
 
 func renderRoot(req *RenderRequest) (string, error) {
@@ -314,6 +315,7 @@ func (r *renderRequest) validate(
 		return false, err
 	}
 	result.docs = validated.Documents
+	frame.Lookup = r.addresses.Accepted(r.key)
 	result.receipt = renderDomain.Receipt(frame)
 	return true, nil
 }

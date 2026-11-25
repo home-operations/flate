@@ -127,7 +127,7 @@ func (c *Cache) acceptedCandidate(ctx context.Context, key *acquireKey,
 	}
 	generation, descriptor, _, err := c.Blob(
 		ctx,
-		BlobKey{Content: key.accepted, Render: RenderAccepted},
+		BlobKey{Content: key.accepted, Render: RenderAccepted, Lookups: key.lookups},
 		&Policy{MaxAge: Forever, Work: key.policy.HistoryWork},
 		nil,
 	)

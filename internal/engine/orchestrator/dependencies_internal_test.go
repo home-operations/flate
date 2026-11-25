@@ -385,10 +385,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, pers
 	prepares := excludedOrderingPreparations(side, persistent)
 	if broken {
 		entryPreparation := manifest.WorkCounts{
-			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
-		}
-		if !persistent {
-			entryPreparation.RawKeyPrepares = 3
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 2, FileEntries: 13,
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: testutil.KustomizationID("\x00", "."),
@@ -421,7 +418,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, pers
 			OwnerPrepares: 1,
 			FileEntries:   2,
 		}
-		helmPreparation := manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
+		helmPreparation := manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 4}
 		if !persistent {
 			helmPreparation.RawKeyPrepares = 3
 		}
@@ -507,9 +504,9 @@ func excludedOrderingPreparations(side Rendered, persistent bool) map[manifest.W
 		Namespace: "flux-system",
 		Name:      "shared",
 	}
-	bootstrapKeys, entryKeys, selectedKeys := uint64(7), uint64(6), uint64(13)
+	bootstrapKeys, entryKeys, selectedKeys := uint64(4), uint64(2), uint64(6)
 	if !persistent {
-		bootstrapKeys, entryKeys, selectedKeys = 2, 3, 5
+		bootstrapKeys, entryKeys, selectedKeys = 2, 2, 4
 	}
 	prepares := map[manifest.WorkKey]manifest.WorkCounts{
 		{Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {

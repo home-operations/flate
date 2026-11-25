@@ -29,7 +29,8 @@ func NewRenderDomain[P, H any](domain RenderDomain[P, H]) *RenderDomain[P, H] {
 
 // RenderFrame MUST retain Frame by pointer because Frame contains atomic state.
 type RenderFrame struct {
-	Key     string
+	Key string
+	// Lookup addresses accepted storage and MUST NOT confer acceptance by itself.
 	Lookup  string
 	Binding string
 	Output  []byte

@@ -30,6 +30,45 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
+func TestSameView_CapturedMembership(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name             string
+		edit             func(*FS) *FS
+		uncaptured, same bool
+	}{
+		{name: "equivalent", same: true},
+		{name: "policy key", edit: func(view *FS) *FS {
+			view.policyKey = "other-policy"
+			return view
+		}},
+		{name: "extra exclusion", edit: func(view *FS) *FS {
+			artifact := &store.SourceArtifact{FS: view, LocalPath: root}
+			return ExcludeDirectory(artifact, filepath.Join(root, "second-cache")).FS.(*FS)
+		}},
+		{name: "ignored membership", edit: func(view *FS) *FS {
+			view.membership.ignored = map[string]struct{}{"newly-ignored.yaml": {}}
+			return view
+		}},
+		{name: "uncaptured backing", uncaptured: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			identity := "captured"
+			if tc.uncaptured {
+				identity = ""
+			}
+			first := &FS{view: &gitView{identity: identity}, membership: membership{directory: "cache"}}
+			second := &FS{view: &gitView{identity: identity}, membership: first.membership}
+			if tc.edit != nil {
+				second = tc.edit(second)
+			}
+			assert.Equal(t, first.SameView(second), tc.same)
+		})
+	}
+}
+
 func TestPreservesFiles_Admission(t *testing.T) {
 	t.Parallel()
 	const file = "app.yaml"

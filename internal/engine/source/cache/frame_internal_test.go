@@ -542,12 +542,11 @@ func TestInputFrameIdentity_ContentAndScope(t *testing.T) {
 	}
 	frame, err := NewFrame(inputFrameDomain, initial, []byte("payload"))
 	assert.NoError(t, err)
-	lookup, content := InputFrameIdentity("/source", "https://fixture.invalid/one", frame)
+	lookup := InputFrameLookup("/source", "https://fixture.invalid/one")
+	content := frame.ContentIdentity()
 	assert.Equal(t, lookup.Render, RenderAccepted)
+	assert.Equal(t, lookup.Content, "7ff7f56806c168ac80b318d4f06993436a89130b2fbddbfad1d6c2ac3747c38e")
 	assert.FatalIf(t, content == "", "missing certified content identity")
-	emptyLookup, emptyContent := InputFrameIdentity("/source", "https://fixture.invalid/one", nil)
-	assert.Equal(t, emptyLookup.Content, lookup.Content)
-	assert.Equal(t, emptyContent, "")
 	for _, change := range []struct {
 		name     string
 		metadata observations
@@ -562,13 +561,11 @@ func TestInputFrameIdentity_ContentAndScope(t *testing.T) {
 			t.Parallel()
 			changed, frameErr := NewFrame(inputFrameDomain, change.metadata, []byte(change.payload))
 			assert.NoError(t, frameErr)
-			currentLookup, currentContent := InputFrameIdentity("/source", "https://fixture.invalid/one", changed)
-			assert.Equal(t, currentLookup.Content, lookup.Content)
-			assert.Equal(t, currentContent != content, true)
+			assert.Equal(t, changed.ContentIdentity() != content, true)
 		})
 	}
 	for _, scope := range [][2]string{{"/other", "https://fixture.invalid/one"}, {"/source", "https://fixture.invalid/two"}} {
-		other, _ := InputFrameIdentity(scope[0], scope[1], frame)
+		other := InputFrameLookup(scope[0], scope[1])
 		assert.Equal(t, other.Content != lookup.Content, true)
 	}
 }

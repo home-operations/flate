@@ -78,7 +78,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				}
 				wantLookup := manifest.WorkCounts{}
 				if persistent {
-					wantLookup = manifest.WorkCounts{Attempts: 1, Completed: 1}
+					wantLookup = manifest.WorkCounts{Attempts: 2, Completed: 2, CacheService: 1}
 				}
 				assert.Equal(t, lookup, wantLookup)
 			}

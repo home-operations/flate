@@ -218,11 +218,11 @@ type entrySnapshot struct {
 	Application entryApplication       `json:"Application"`
 }
 
-func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (renderRequest, error) {
+func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (*renderRequest, error) {
 	req.Spec = nil
 	prepared, err := c.prepareRender(ctx, req)
 	if err != nil {
-		return renderRequest{}, err
+		return nil, err
 	}
 	prepared.key = manifest.Fingerprint(struct {
 		EntryPath   string

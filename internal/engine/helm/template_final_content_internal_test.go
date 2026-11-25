@@ -191,7 +191,7 @@ func TestPrepareTemplate_FinalContentSnapshots(t *testing.T) {
 				return false, nil
 			}
 			result := templateResult{record: record, docs: documents, receipt: record.receipt}
-			_, err = result.admit(t.Context(), client, &next)
+			_, err = result.admit(t.Context(), client, next)
 			assert.NoError(t, err)
 			assert.Equal(t, observed.Accepted, false)
 			updated, err := record.frame.Stored.PreparePublication(t.Context(), cache.FramePublicationInput{
@@ -267,7 +267,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 			if record != nil {
 				result.receipt = record.receipt
 			}
-			admission := result.admission(&request)
+			admission := result.admission(request)
 			assert.Equal(t, record != nil, persistent || regime != "disk")
 			var observed RenderAdmission
 			request.input.Admit = func(value RenderAdmission) (bool, error) {
@@ -288,7 +288,7 @@ func TestTemplate_FinalContentRebinding(t *testing.T) {
 					assert.Equal(t, record.frame.Stored == nil, true)
 				}
 				result := templateResult{record: record, receipt: admission.Receipt}
-				_, err = result.admit(t.Context(), client, &request)
+				_, err = result.admit(t.Context(), client, request)
 				assert.NoError(t, err)
 			}
 			_, complete = client.PreviousRender(t.Context(), hr, nil, current)

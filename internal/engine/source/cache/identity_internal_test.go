@@ -74,6 +74,28 @@ func TestBuildIdentity_Dirty(t *testing.T) {
 	}
 }
 
+func TestRenderLookups_ContentChange(t *testing.T) {
+	t.Parallel()
+	var lookups RenderLookups
+	prepare := func(content string, phase RenderMode) string {
+		key := acquireKey{producer: blobProducer{content: content, render: phase}, render: true}
+		lookups.prepare(content, phase, &key, nil)
+		return key.id
+	}
+
+	assert.Equal(t, prepare("before", RenderPending), blobID(processIdentity, "before", RenderPending))
+	before := prepare("before", RenderAccepted)
+	assert.Equal(t, before, blobID(processIdentity, "before", RenderAccepted))
+	assert.Equal(t, lookups.Accepted("after"), "")
+	assert.Equal(t, lookups.Accepted("before"), before)
+
+	assert.Equal(t, prepare("after", RenderPending), blobID(processIdentity, "after", RenderPending))
+	assert.Equal(t, lookups.Accepted("after"), "")
+	after := prepare("after", RenderAccepted)
+	assert.Equal(t, after, blobID(processIdentity, "after", RenderAccepted))
+	assert.Equal(t, lookups.Accepted("after"), after)
+}
+
 //nolint:paralleltest // The test changes the process build identity and restores it afterward.
 func TestBlob_RenderBuildIdentity(t *testing.T) {
 	original := processIdentity

@@ -529,15 +529,15 @@ func (f *selectedSelfFixture) assertPreparation(
 		Phase:  manifest.WorkPreparation,
 	}
 	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
-	files, rootEntries := uint64(44), uint64(69)
+	files, rootEntries := uint64(42), uint64(69)
 	if side == 1 {
-		files, rootEntries = 24, 49
+		files, rootEntries = 22, 49
 	}
 	assertWitnessPreparations(
 		t,
 		preparation,
 		map[manifest.WorkKey]manifest.WorkCounts{
-			{Source: source, Phase: manifest.WorkPreparation}: {FileEntries: 4, ReaderEdges: 2},
+			{Source: source, Phase: manifest.WorkPreparation}: {FileEntries: 2, ReaderEdges: 1},
 			{Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
 				Attempts:       3,
 				Completed:      3,
@@ -547,11 +547,11 @@ func (f *selectedSelfFixture) assertPreparation(
 				RawKeyPrepares: 0,
 			},
 			{Owner: source, Source: source, Phase: manifest.WorkPreparation}: {
-				Attempts:      2,
-				Completed:     2,
+				Attempts:      1,
+				Completed:     1,
 				FileEntries:   files,
-				ReaderEdges:   2,
-				OwnerPrepares: 2,
+				ReaderEdges:   1,
+				OwnerPrepares: 1,
 			},
 		},
 	)

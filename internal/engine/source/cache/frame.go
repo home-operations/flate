@@ -184,6 +184,9 @@ func (f *Frame) readAccepted(input fs.File, size int64) (*Frame, error) {
 	return f, nil
 }
 
+// ContentIdentity identifies the certified frame contents before acceptance.
+func (f *Frame) ContentIdentity() string { return f.raw }
+
 // Payload returns immutable bytes after validating the complete payload identity.
 func (f *Frame) Payload(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -298,19 +301,13 @@ func (o *frameIdentityTokens) UnmarshalJSONFrom(input *jsontext.Decoder) error {
 	}
 }
 
-// InputFrameIdentity separates stable source lookup from certified frame content.
-//
-//nolint:gocritic // The lookup key and certified frame content are distinct results; nonamedreturns forbids result names.
-func InputFrameIdentity(origin, url string, content *Frame) (BlobKey, string) {
+// InputFrameLookup identifies saved loader state for the source origin and URL.
+func InputFrameLookup(origin, url string) BlobKey {
 	lookup := manifest.Fingerprint(struct {
 		Version             int
 		Domain, Origin, URL string
 	}{Version: inputFrameVersion, Domain: inputFrameDomain, Origin: origin, URL: url})
-	identity := ""
-	if content != nil {
-		identity = content.raw
-	}
-	return BlobKey{Content: lookup, Render: RenderAccepted}, identity
+	return BlobKey{Content: lookup, Render: RenderAccepted}
 }
 
 // FramePublication keeps prepared bytes and identities immutable across concurrent callers.

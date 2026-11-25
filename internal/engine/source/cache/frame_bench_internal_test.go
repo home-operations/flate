@@ -35,8 +35,7 @@ func BenchmarkOpenFrame_Input(b *testing.B) {
 						opened, openErr := OpenFrame(b.Context(), inputFrameDomain, generation, &decoded)
 						assert.NoError(b, openErr)
 						if history {
-							_, identity := InputFrameIdentity("source", "url", opened)
-							content.Content = identity
+							content.Content = opened.ContentIdentity()
 							_, complete := opened.History(manifest.BootstrapSourceID, content)
 							assert.Equal(b, complete, true)
 						}

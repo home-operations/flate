@@ -95,6 +95,7 @@ func (c *TreeCache) PreviousRender(
 		sourcecache.BlobKey{
 			Content: prepared.key,
 			Render:  sourcecache.RenderAccepted,
+			Lookups: prepared.addresses,
 		},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.History()},
 		nil,

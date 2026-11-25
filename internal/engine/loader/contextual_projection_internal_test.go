@@ -152,8 +152,7 @@ func TestSubstitutionResolution_RestoredCoverage(t *testing.T) {
 		compact: true,
 		sources: map[string]parsedSource{
 			l.SourceRoot: {
-				input:   parsedInputIdentity(input),
-				binding: new(input.Input(store.ArtifactContent | store.ArtifactRevision)),
+				binding: new(parsedBindingFor(input)),
 				documents: map[string]*parsedDocument{
 					file: {
 						coverage: manifest.ApplicationDocuments,

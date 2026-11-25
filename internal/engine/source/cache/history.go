@@ -37,7 +37,13 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if err != nil || !enabled {
 		return err
 	}
-	metadata, lookupErr := c.RenderMetadata(ctx, inventory.Key, inventory.Lookup, inventory.Work)
+	if err = ctx.Err(); err != nil {
+		return &Error{err}
+	}
+	producer := blobProducer{content: inventory.Key, render: RenderAccepted}
+	key := acquireKey{producer: producer, id: inventory.Lookup, render: true}
+	key.prepare(inventory.Work)
+	metadata, lookupErr := c.renderMetadata(ctx, &key, inventory.Work)
 
 	if lookupErr != nil && !errors.Is(lookupErr, errdef.ErrNotFound) {
 		return lookupErr
@@ -46,13 +52,13 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	if snapshot := c.snapshot.Load(); snapshot != nil {
 		history = snapshot.histories[inventory.Key]
 	}
-	if lookupErr == nil && metadata.Descriptor.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
+	if lookupErr == nil && metadata.Annotations[acceptedRenderAnnotation] == inventory.Acceptance &&
 		history.matches(&inventory.History, inventory.Acceptance) {
 		identity := ""
 		if history != nil {
 			identity = history.identity
 		}
-		if metadata.Descriptor.Annotations[historyIdentityAnnotation] == identity {
+		if metadata.Annotations[historyIdentityAnnotation] == identity {
 			return ctx.Err()
 		}
 	}
@@ -62,10 +68,9 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 		acceptance = manifest.Fingerprint(history)
 		history.identity = acceptance
 	}
-	producer := blobProducer{content: inventory.Key, render: RenderAccepted}
 	_, _, err = c.acquire(
 		ctx,
-		new(acquireKey{producer: producer, id: inventory.Lookup, render: true}),
+		&key,
 		&Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}, Work: inventory.Work},
 		acquisitionCallbacks{
 			validate: func(_ context.Context, e *entry) (bool, error) {

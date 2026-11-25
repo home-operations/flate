@@ -64,17 +64,11 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 			)
 		}
 	}
-	renderMetadataResult, err := c.RenderMetadata(t.Context(), "", "", nil)
-	enabled := renderMetadataResult.Enabled
+	inventory := AcceptedInventory[inventoryContent]{}
+	err := RecordInventory(t.Context(), c, inventory)
 	{
 		_, ok := errors.AsType[*Error](err)
-		assert.FatalIf(
-			t,
-			!ok || !errors.Is(err, manifest.ErrInput) || enabled,
-			"invalid metadata content: enabled=%t, %v",
-			enabled,
-			err,
-		)
+		assert.FatalIf(t, !ok || !errors.Is(err, manifest.ErrInput), "invalid inventory content: %v", err)
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -88,14 +82,11 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 		_, ok := errors.AsType[*Error](err)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled), "canceled render lookup: %v", err)
 	}
-	renderMetadataResult2, renderMetadataResult2Err := c.RenderMetadata(canceled, "render", "", nil)
-	enabled, err = renderMetadataResult2.Enabled, renderMetadataResult2Err
+	inventory.Key = "render"
+	err = RecordInventory(canceled, c, inventory)
 	{
-		_, ok := errors.AsType[*Error](
-			err,
-		)
-		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled) ||
-			enabled != persisted, "canceled metadata lookup: enabled=%t, %v", enabled, err)
+		_, ok := errors.AsType[*Error](err)
+		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled), "canceled inventory lookup: %v", err)
 	}
 	assert.Equal(t, c.CanPersistRenders(), persisted)
 	raw := BlobKey{Content: "raw-source"}

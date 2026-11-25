@@ -224,10 +224,11 @@ func (r *templateRequest) lookupRender(
 	ctx context.Context,
 	history bool,
 ) (*renderRecord, []manifest.DocOccurrence, error) {
+	work := r.input.Work.History()
 	reader, _, _, err := r.client.cache.Blob(
 		ctx,
-		cache.BlobKey{Content: r.key, Render: cache.RenderPending},
-		&cache.Policy{MaxAge: cache.Forever, Work: r.input.Work.History()},
+		cache.BlobKey{Content: r.key, Render: cache.RenderPending, Lookups: r.addresses},
+		&cache.Policy{MaxAge: cache.Forever, Work: work, HistoryWork: work},
 		nil,
 	)
 	if errors.Is(err, errdef.ErrNotFound) {
@@ -310,6 +311,7 @@ func (r *templateRequest) template(
 	blobKey := cache.BlobKey{
 		Content: r.key,
 		Render:  cache.RenderPending,
+		Lookups: r.addresses,
 		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
 			return r.validate(ctx, c, &result, generation)
 		},

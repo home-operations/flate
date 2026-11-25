@@ -293,6 +293,61 @@ func TestEntryFrontier_FrozenOwnership(t *testing.T) {
 	assert.Diff(t, frozen.rootOwners, owners)
 }
 
+func TestEnclosingPackages_DeclarationCandidates(t *testing.T) {
+	t.Parallel()
+	const fluxInstance = "kind: FluxInstance\nmetadata: {name: cluster, namespace: flux-system}\n"
+	const sync = "spec:\n  sync: {kind: GitRepository, url: 'https://example.invalid/repo', ref: main, path: ./apps}\n"
+	target := testutil.KustomizationID("requested", "")
+	matchKind := func(id manifest.NamedResource) bool { return id.Group == target.Group && id.Kind == target.Kind }
+	matchGenerator := manifest.NamedResource.CanDeclareGeneratedEntry
+	for _, tc := range []struct {
+		name, declaration, transform string
+		match                        func(manifest.NamedResource) bool
+		want                         []string
+	}{
+		{
+			name: "ordinary declaration in another namespace", match: matchKind, want: []string{"apps"},
+			declaration: testutil.KustomizationYAML("app", "different", "  path: ./workload\n"),
+		},
+		{
+			name:        "ordinary declaration without a predicate",
+			declaration: testutil.KustomizationYAML("app", "requested", "  path: ./workload\n"),
+		},
+		{
+			name: "opaque ancestor without a predicate", transform: "namePrefix: install-\n", want: []string{"apps"},
+			declaration: testutil.KustomizationYAML("app", "requested", "  path: ./workload\n"),
+		},
+		{
+			name: "same kind in a different group", match: matchGenerator,
+			declaration: "apiVersion: example.invalid/v1\n" + fluxInstance + sync,
+		},
+		{
+			name: "FluxInstance without sync", match: matchGenerator, want: []string{"apps"},
+			declaration: "apiVersion: " + manifest.FluxOperatorDomain + "/v1\n" + fluxInstance,
+		},
+		{
+			name: "FluxInstance with sync", match: matchGenerator, want: []string{"apps"},
+			declaration: "apiVersion: " + manifest.FluxOperatorDomain + "/v1\n" + fluxInstance + sync,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{
+				"apps/kustomization.yaml":       {Data: []byte("resources: [candidate.yaml, entry]\n" + tc.transform)},
+				"apps/candidate.yaml":           {Data: []byte(tc.declaration)},
+				"apps/entry/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+				"apps/entry/cm.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: entry}\n"),
+				},
+			}}
+			l := New(store.New())
+			got, err := l.EnclosingPackages(t.Context(), input, "apps/entry", tc.match)
+			assert.NoError(t, err)
+			assert.Diff(t, got, tc.want)
+		})
+	}
+}
+
 func TestEnclosingApplications_ResourceMembership(t *testing.T) {
 	t.Parallel()
 	const definition = "clusters/app"

@@ -3,6 +3,7 @@ package kustomizeinput
 
 import (
 	"fmt"
+	"io/fs"
 	"iter"
 	"path/filepath"
 	"strconv"
@@ -17,7 +18,30 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/core/kustpath"
+	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// Builders follows Flux's filename order and skips failed stats and directories.
+func Builders(dir string, exists func(string) bool) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for _, name := range manifest.KustomizeBuilderFilenames {
+			file := filepath.Join(dir, name)
+			if exists(file) && !yield(file) {
+				return
+			}
+		}
+	}
+}
+
+// BuilderFile applies Flux's eligibility rule to a source stat.
+func BuilderFile(info fs.FileInfo, err error) bool {
+	return BuilderEligible(err == nil, err == nil && info.IsDir())
+}
+
+// BuilderEligible follows Flux's Exists and IsDir checks.
+func BuilderEligible(present, directory bool) bool {
+	return present && !directory
+}
 
 // Role distinguishes terminal inputs from accumulated resources and configurations.
 type Role uint8

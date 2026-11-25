@@ -2,6 +2,7 @@ package kustpath
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -70,6 +71,75 @@ func TestResolve_SlashPolicies(t *testing.T) {
 				tc.want,
 				tc.ok,
 			)
+		})
+	}
+}
+
+func TestClaimPrefix_CoordinateDomains(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ directory, want string }{
+		{"", ""},
+		{".", ""},
+		{"/", "/"},
+		{"C:/", "C:/"},
+		{"//server/share/", "//server/share/"},
+		{"apps/../shared", "apps/../shared/"},
+		{"apps//", "apps/"},
+	} {
+		t.Run(tc.directory, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, ClaimPrefix(tc.directory), tc.want)
+		})
+	}
+}
+
+func TestRelateHost_PathCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, base, target string
+		want               HostRelation
+	}{
+		{name: "clean equivalent", base: "/apps/./nested", target: "/apps/nested", want: HostEqual},
+		{name: "nested", base: "/apps", target: "/apps/nested", want: HostAncestor},
+		{name: "ancestor", base: "/apps/nested", target: "/apps", want: HostDescendant},
+		{name: "sibling prefix", base: "/apps", target: "/apps-other", want: HostDisjoint},
+		{name: "host root", base: "/", target: "/apps", want: HostAncestor},
+		{name: "relative root", base: ".", target: "apps", want: HostAncestor},
+		{name: "relative escape", base: ".", target: "../apps", want: HostDisjoint},
+		{name: "relative parent", base: "..", target: "../..", want: HostDisjoint},
+		{name: "relative parent subtree", base: "..", target: "../../child", want: HostDisjoint},
+		{name: "relative parent child", base: "..", target: "../child", want: HostAncestor},
+		{name: "missing evidence", base: "", target: ".", want: HostDisjoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, RelateHost(tc.base, tc.target), tc.want)
+		})
+	}
+}
+
+func TestRelateHost_WindowsCoordinates(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	for _, tc := range []struct {
+		name, base, target string
+		want               HostRelation
+	}{
+		{name: "folded directory", base: "C:/Source/K", target: "c:/SOURCE/k", want: HostEqual},
+		{name: "alternate separator", base: "C:/Source", target: "c:" + string(filepath.Separator) + "SOURCE/k", want: HostAncestor},
+		{name: "different volume", base: "C:/Source", target: "D:/Source/k", want: HostDisjoint},
+		{name: "volume relative", base: "C:/", target: "C:Source", want: HostDisjoint},
+		{name: "share root", base: "//host/share", target: "//HOST/SHARE/source", want: HostAncestor},
+		{name: "different share", base: "//host/share", target: "//host/shared/source", want: HostDisjoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, RelateHost(tc.base, tc.target), tc.want)
+			if tc.want == HostEqual {
+				assert.Equal(t, HostKey(tc.base), HostKey(tc.target))
+			}
 		})
 	}
 }

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"io/fs"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -381,6 +382,53 @@ func TestInputCache_TracksAlternateBuilderFiles(t *testing.T) {
 				assert.Equal(t, restored, true)
 			}
 			assert.Equal(t, replay.documents.read(dir).recipe, want)
+		})
+	}
+}
+
+func TestInputCache_RestoresBuilderAbsence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		node    *fstest.MapFile
+		mount   string
+		pending bool
+	}{
+		{name: "missing"},
+		{name: "directory", node: &fstest.MapFile{Mode: fs.ModeDir}},
+		{name: "regular file", node: &fstest.MapFile{Data: []byte("resources: [object.yaml]\n")}, pending: true},
+		{name: "unresolved symlink", node: &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("missing")}, pending: true},
+		{name: "unavailable builder mount", mount: "apps/kustomization.yaml", pending: true},
+		{name: "unavailable directory mount", mount: "apps", pending: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const candidate = "apps/kustomization.yaml"
+			root := t.TempDir()
+			dir := filepath.Join(root, "apps")
+			files := fstest.MapFS{"apps/object.yaml": {Data: []byte("kind: ConfigMap\n")}}
+			modes := map[string]fs.FileMode{"apps": fs.ModeDir}
+			if tc.node != nil {
+				files[candidate] = tc.node
+				modes[candidate] = tc.node.Mode.Type()
+			}
+			l := New(store.New())
+			defer l.Close()
+			l.documents.views[root] = files
+			if tc.mount != "" {
+				l.documents.views[filepath.Join(root, filepath.FromSlash(tc.mount))] = unavailableSource{}
+			}
+			cold := documentReader{views: l.documents.views}
+			l.restoreLoadDirectories(&inputCache{
+				input: &store.SourceArtifact{LocalPath: root},
+				types: modes,
+			}, &cachedLoad{Directories: []cachedDirectory{{Path: "apps"}}})
+			assert.Equal(t, l.documents.cache[dir].searched, !tc.pending)
+			assert.Equal(t, l.documents.cache[dir].pathState == pathDirectory, tc.mount != "apps")
+			want, got := cold.read(dir), l.documents.read(dir)
+			assert.Equal(t, got.file, want.file)
+			assert.Equal(t, got.recipe, want.recipe)
+			assert.Diff(t, got.body, want.body)
 		})
 	}
 }

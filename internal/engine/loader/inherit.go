@@ -14,11 +14,11 @@ import (
 )
 
 // Admit MUST finish construction before its caller publishes admission.
-func (l *Loader) Admit(ctx context.Context, repoRoot string) error {
+func (l *Loader) Admit(ctx context.Context, repoRoot string, admitted ...manifest.NamedResource) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	l.mountSources()
+	l.mountSources(admitted...)
 	return l.admit(ctx, repoRoot, nil)
 }
 

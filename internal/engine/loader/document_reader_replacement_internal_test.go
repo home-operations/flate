@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 
@@ -269,13 +270,25 @@ func TestDocumentReader_MountedRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
-	reader := documentReader{views: map[string]fs.FS{root: nil, nested: nil}}
+	pinned := filepath.Join(nested, "pinned")
+	origin := t.TempDir()
+	file := filepath.Join(pinned, "file")
+	reader := documentReader{
+		views: map[string]fs.FS{root: nil, nested: nil, pinned: nil},
+		artifacts: map[string]*store.SourceArtifact{
+			root:   {Provider: store.ProviderInput, LocalPath: root},
+			nested: {Provider: store.ProviderAlias, LocalPath: nested, LocalRoot: origin},
+			pinned: {Provider: store.ProviderCommit, LocalPath: pinned},
+		},
+		cache: map[string]document{file: {sourceRoot: pinned}},
+	}
 	for _, tc := range []struct {
 		name, file, want string
 	}{
 		{name: "root", file: root, want: root},
 		{name: "child", file: filepath.Join(root, "file"), want: root},
 		{name: "nested", file: filepath.Join(nested, "dir", "file"), want: nested},
+		{name: "cached pinned", file: file, want: pinned},
 		{name: "sibling prefix", file: filepath.Join(root, "nested-other", "file"), want: root},
 		{name: "outside", file: root + "-other/file"},
 		{name: "cleaned", file: nested + string(filepath.Separator) + string(filepath.Separator) + "file", want: nested},
@@ -285,4 +298,127 @@ func TestDocumentReader_MountedRoot(t *testing.T) {
 			assert.Equal(t, new(reader).mountedRoot(tc.file), tc.want)
 		})
 	}
+	reader.workingTree = map[string]*store.SourceArtifact{
+		root: reader.artifacts[root], nested: reader.artifacts[nested],
+	}
+	l := Loader{documents: reader}
+	assert.Equal(t, l.WorkingTreePath(file), filepath.Join(origin, "pinned", "file"))
+	assert.Equal(t, l.WorkingTreePath(root+"-other/file"), root+"-other/file")
+
+	t.Run("unadmitted aliases", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		l := New(st)
+		t.Cleanup(l.Close)
+		parent := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "parent"}
+		shared, child := parent, parent
+		shared.Name, child.Name = "shared", "child"
+		for id, mount := range map[manifest.NamedResource]*store.SourceArtifact{
+			parent: {Provider: store.ProviderAlias, LocalPath: root, LocalRoot: origin, FS: fstest.MapFS{}},
+			shared: {Provider: store.ProviderAlias, LocalPath: root, LocalRoot: nested, FS: fstest.MapFS{}},
+			child:  {Provider: store.ProviderAlias, LocalPath: nested, LocalRoot: pinned, FS: fstest.MapFS{}},
+		} {
+			st.SetArtifact(id, mount)
+		}
+		l.Index.Records[shared] = manifest.DiscoveryRecord{File: "shared.yaml"}
+		l.Index.Records[child] = manifest.DiscoveryRecord{File: "child.yaml"}
+		assert.NoError(t, l.Admit(t.Context(), root, parent))
+		childFile := filepath.Join(nested, "dirty.yaml")
+		topFile := filepath.Join(root, "dirty.yaml")
+		l.documents.cache[childFile] = document{sourceRoot: nested}
+		l.documents.cache[topFile] = document{sourceRoot: root}
+		assert.Equal(t, l.documents.localPath(childFile), filepath.Join(pinned, "dirty.yaml"))
+		assert.Equal(t, l.documents.localPath(topFile), filepath.Join(nested, "dirty.yaml"))
+		assert.Equal(t, l.WorkingTreePath(childFile), filepath.Join(origin, "nested", "dirty.yaml"))
+		assert.Equal(t, l.WorkingTreePath(topFile), filepath.Join(origin, "dirty.yaml"))
+
+		l.documents.cache[childFile] = document{sourceRoot: root}
+		assert.NoError(t, l.Admit(t.Context(), root, parent, child))
+		assert.Equal(t, l.documents.cache[childFile].sourceRoot, root)
+		assert.Equal(t, l.WorkingTreePath(childFile), filepath.Join(pinned, "dirty.yaml"))
+	})
+
+	t.Run("admitted alias lifetime", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		loader := New(st)
+		t.Cleanup(loader.Close)
+		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "alias"}
+		file := filepath.Join(nested, "file")
+		assert.NoError(t, loader.Admit(t.Context(), root))
+		assert.Equal(t, loader.WorkingTreePath(file), file)
+		for _, backing := range []string{origin, root} {
+			st.SetArtifact(id, &store.SourceArtifact{
+				Provider: store.ProviderAlias, LocalPath: nested, LocalRoot: backing, FS: fstest.MapFS{},
+			})
+			assert.NoError(t, loader.Admit(t.Context(), root, id))
+			assert.Equal(t, loader.WorkingTreePath(file), filepath.Join(backing, "file"))
+		}
+		st.SetArtifact(id, nil)
+		assert.NoError(t, loader.Admit(t.Context(), root, id))
+		assert.Equal(t, loader.WorkingTreePath(file), file)
+	})
+}
+
+func TestDocumentReader_MountInvalidatesCachedOwnership(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	child := filepath.Join(root, "Child")
+	sibling := filepath.Join(root, "Child-other", "file")
+	path := filepath.Join(child, "file")
+	if runtime.GOOS == "windows" {
+		path = filepath.ToSlash(filepath.Join(root, "child", "file"))
+	}
+	parent := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+	mounted := &store.SourceArtifact{LocalPath: child, FS: fstest.MapFS{}}
+	parentOnly := map[string]*store.SourceArtifact{root: parent}
+	withChild := map[string]*store.SourceArtifact{root: parent, child: mounted}
+	for _, tc := range []struct {
+		name, before, after string
+		initial, mounts     map[string]*store.SourceArtifact
+	}{
+		{name: "add nested", before: root, after: child, initial: parentOnly, mounts: withChild},
+		{name: "remove nested", before: child, after: root, initial: withChild, mounts: parentOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reader := documentReader{}
+			reader.setSources(tc.initial)
+			reader.cache = map[string]document{
+				path: {sourceRoot: tc.before, selected: true}, sibling: {sourceRoot: root},
+			}
+			assert.Equal(t, reader.mountedRoot(path), tc.before)
+			reader.setSources(tc.mounts)
+			assert.Equal(t, reader.cache[path].sourceRoot, "")
+			assert.Equal(t, reader.cache[path].selected, true)
+			assert.Equal(t, reader.cache[sibling].sourceRoot, root)
+			assert.Equal(t, reader.mountedRoot(path), tc.after)
+		})
+	}
+}
+
+func TestDocumentReader_EquivalentMountTie(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	t.Run("equivalent roots", func(t *testing.T) {
+		t.Parallel()
+		reader := documentReader{
+			views: map[string]fs.FS{"C:/Root/Child": nil, "C:/Root/child": nil, "D:/Root/Child": nil},
+		}
+		assert.Equal(t, reader.mountedRoot("c:/root/CHILD/file"), "C:/Root/Child")
+	})
+	t.Run("deeper root", func(t *testing.T) {
+		t.Parallel()
+		const shallow, deep = "C:/KKK", "C:/KKK/x"
+		const file = "C:/KKK/x/file.yaml"
+		reader := documentReader{views: map[string]fs.FS{shallow: nil, deep: nil}}
+		mounts := map[string]*store.SourceArtifact{
+			shallow: {Provider: store.ProviderAlias, LocalPath: shallow, LocalRoot: "C:/shallow"},
+			deep:    {Provider: store.ProviderAlias, LocalPath: deep, LocalRoot: "C:/deep"},
+		}
+		assert.Equal(t, reader.mountedRoot(file), deep)
+		assert.Equal(t, ProjectWorkingTreePath(file, mounts), filepath.FromSlash("C:/deep/file.yaml"))
+	})
 }

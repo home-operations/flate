@@ -3,7 +3,6 @@ package discovery
 import (
 	"cmp"
 	"context"
-	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
@@ -154,6 +153,7 @@ func (w *qualificationWalk) projectedOperands(qualifies func(manifest.BaseManife
 	if len(projections) == 0 {
 		return nil
 	}
+	entry := w.admission.input.OriginPath(w.admission.path)
 	var operands []selection.OccurrenceFacts
 	seen := make(map[manifest.NamedResource]bool)
 	visited := make(map[manifest.NamedResource]bool)
@@ -178,12 +178,7 @@ func (w *qualificationWalk) projectedOperands(qualifies func(manifest.BaseManife
 		seen[id] = true
 		occurrence, known := loader.Occurrence(id)
 		if !known || !occurrence.Located || occurrence.Mounted == nil ||
-			!safepath.Contains(
-				w.admission.input.OriginPath(w.admission.path),
-				occurrence.Mounted.OriginPath(
-					filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File),
-				),
-			) {
+			!containsDeclaration(entry, &occurrence.Declaration, occurrence.Mounted, nil) {
 			continue
 		}
 		operands = append(operands, occurrence)

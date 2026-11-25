@@ -3,6 +3,7 @@ package loader
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -57,11 +58,11 @@ func TestPackageClaims_UnavailableSource(t *testing.T) {
 	}
 	file := filepath.Join(l.SourceRoot, "owner.yaml")
 	l.documents.cache[file] = document{eligible: selection.RootEligible}
-	claims := l.packageClaims([]selection.OccurrenceFacts{{
+	occurrences := []selection.OccurrenceFacts{{
 		Identity: ks.Named(), Authored: ks.Named(), Object: ks,
 		Declaration: selection.OccurrenceID{Source: l.SourceRoot, File: "owner.yaml"},
-	}})
-	assert.Diff(t, claims, []string(nil))
+	}}
+	assert.Equal(t, len(slices.Collect(l.packageClaims(occurrences))), 0)
 }
 
 func TestFilterClaimedPackageRoots_UnavailableSource(t *testing.T) {

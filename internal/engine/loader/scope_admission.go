@@ -55,7 +55,9 @@ func (l *Loader) visitRootScopes(repoRoot string, kss []store.Child) {
 	if l.entry == entryKustomize {
 		entry := l.fileCoordinate(l.entryPath)
 		projected := filepath.Join(repoRoot, filepath.FromSlash(entry))
-		if new(l.documents).localPath(l.entryPath) == new(l.documents).localPath(projected) &&
+		r := &l.documents
+		mount := r.artifacts[r.mountedRoot(l.entryPath)]
+		if mount.MatchesOrigin(l.entryPath, r.localPath(projected)) &&
 			!slices.Contains(l.scopes.roots, entry) {
 			v := graphVisit{
 				root: repoRoot, dir: entry, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource,

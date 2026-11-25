@@ -95,7 +95,7 @@ type Session struct {
 	bootstrapInput         *store.SourceArtifact
 	entryBuilderInput      *store.SourceArtifact
 	entryBuilderPath       string
-	entryBuilder           bool
+	entryBuilder           string
 	aggregate              bool
 	aggregateRequiresBuild bool
 	entryPackagesToQualify [][]selection.OccurrenceFacts
@@ -335,10 +335,7 @@ func newDiscoverer(config *Config) *Session {
 		return d
 	}
 	prepared := cfg.Entry.prepared
-	input := cfg.Input
-	if input == nil {
-		input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	}
+	input := cfg.Store.BootstrapInput(cfg.Input)
 	if input == nil {
 		return d
 	}

@@ -2,11 +2,14 @@
 package safepath
 
 import (
+	"cmp"
 	"fmt"
 	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/home-operations/flate/internal/core/kustpath"
 )
 
 // ArchiveName rejects absolute, drive-qualified, traversal and invalid-separator
@@ -39,6 +42,5 @@ func Escaped(rel string) bool {
 
 // Contains reports whether target lies within an absolute, symlink-resolved root.
 func Contains(root, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	return err == nil && !Escaped(rel)
+	return kustpath.RelateHost(cmp.Or(root, "."), cmp.Or(target, ".")).Contains()
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -311,6 +312,15 @@ func (s *Store) SourceArtifactIDs() []manifest.NamedResource {
 	return ids
 }
 
+// BootstrapInput prefers the configured input over the effective bootstrap artifact.
+func (s *Store) BootstrapInput(configured *SourceArtifact) *SourceArtifact {
+	if configured != nil {
+		return configured
+	}
+	input, _ := s.GetArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact)
+	return input
+}
+
 // GetArtifact returns the artifact for id, or nil if none was set.
 func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact {
 	sh := s.shardFor(id)
@@ -459,6 +469,12 @@ func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
 		sh.publishArtifactLocked(id, &record, nil)
 		sh.artifacts[id] = record
 	}
+}
+
+// MatchesOrigin requires an artifact-local path and a projected origin.
+func (a *SourceArtifact) MatchesOrigin(path, origin string) bool {
+	path = a.OriginPath(path)
+	return path == origin || kustpath.RelateHost(path, origin) == kustpath.HostEqual
 }
 
 // OriginPath projects mutable inputs and aliases onto their physical input origin.

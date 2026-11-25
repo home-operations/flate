@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -356,14 +357,20 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 		l.roots.occurrences = map[rootCoordinate]*rootEvidence{}
 		l.roots.identities = map[manifest.NamedResource]*rootEvidence{}
 	}
-	owners := l.packageOwners(packages)
 	paths := make([]string, len(packages))
+	directories := make([]string, len(packages))
+	targets := make(map[string]int, len(packages))
+	for i := range packages {
+		paths[i] = packages[i].Path
+		directories[i] = filepath.Join(l.SourceRoot, filepath.FromSlash(paths[i]))
+		targets[kustpath.HostKey(directories[i])] = i
+	}
+	owners, identities := l.packageOwners(packages, directories, targets)
 	eligible := make([]bool, len(packages))
 	runnable := make([]bool, len(packages))
 	for i := range packages {
 		p := &packages[i]
-		paths[i] = p.Path
-		builder := l.documents.cache[filepath.Join(l.SourceRoot, p.Path)].file
+		builder := l.documents.cache[directories[i]].file
 		eligible[i] = builder != "" &&
 			(!l.scopes.complete || l.documents.cache[builder].eligible >= selection.RootEligible)
 		for index := range p.Occurrences {
@@ -380,8 +387,8 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 	}
 	for i := range packages {
 		p := &packages[i]
-		native := l.documents.cache[filepath.Join(l.SourceRoot, p.Path)].body != nil
-		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, p.Path, manifest.NamedResource{}).Named()
+		native := l.documents.cache[directories[i]].body != nil
+		id := identities[i]
 		scope := selection.RootScopeFacts{
 			NamespaceEligible: true,
 			PackageKnown:      true,
@@ -423,59 +430,61 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 	}
 }
 
-func (l *Loader) packageOwners(packages []PackageEvidence) [][]int {
+func (l *Loader) packageOwners(
+	packages []PackageEvidence, directories []string, targets map[string]int,
+) ([][]int, []manifest.NamedResource) {
 	owners := make([][]int, len(packages))
-	paths := make([]string, len(packages))
-	targets := make(map[string]int, len(packages))
-	for i := range packages {
-		paths[i] = filepath.Join(l.SourceRoot, filepath.FromSlash(packages[i].Path))
-		targets[paths[i]] = i
-	}
-	claims := map[string][]int{}
-	for i := range packages {
-		p := &packages[i]
-		doc := l.documents.cache[paths[i]]
-		if l.documents.cache[doc.file].eligible == selection.RootInactive {
-			continue
-		}
-		if doc.body != nil {
-			l.addNativePackageOwners(p.Path, i, targets, owners)
-		}
-		for _, claim := range l.packageClaims(p.Occurrences) {
-			claims[claim] = append(claims[claim], i)
-		}
-	}
-	for target, dir := range paths {
-		for {
-			owners[target] = append(owners[target], claims[dir]...)
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
+	claims, ids, indices := NewPackageClaimIndex(len(packages), func(i int) string { return packages[i].Path },
+		func(add func(int, string)) {
+			for i := range packages {
+				p := &packages[i]
+				doc := l.documents.cache[directories[i]]
+				if l.documents.cache[doc.file].eligible == selection.RootInactive {
+					continue
+				}
+				if doc.body != nil {
+					l.addNativePackageOwners(p.Path, i, targets, owners)
+				}
+				for prefix := range l.packageClaims(p.Occurrences) {
+					add(i, prefix)
+				}
 			}
-			dir = parent
+		})
+	for target, dir := range directories {
+		for group := range claims.ClaimOwners(kustpath.HostKey(dir), manifest.NamedResource{}, manifest.NamedResource{}, nil) {
+			for _, id := range group {
+				owners[target] = append(owners[target], indices[id])
+			}
 		}
+	}
+	for target := range owners {
 		owners[target] = slices.DeleteFunc(owners[target], func(owner int) bool { return owner == target })
 		slices.Sort(owners[target])
 		owners[target] = slices.Compact(owners[target])
 	}
-	return owners
+	return owners, ids
 }
 
-func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) []string {
-	var claims []string
-	for i := range occurrences {
-		source, path, application := occurrences[i].SourcePath()
-		file := filepath.Join(occurrences[i].Declaration.Source, filepath.FromSlash(occurrences[i].Declaration.File))
-		if !application || l.documents.cache[file].eligible == selection.RootInactive {
-			continue
-		}
-		location := SourceView(l.Store, source, l.SourceRoot)
-		if !location.Pinned && !location.External {
+func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for i := range occurrences {
+			source, path, application := occurrences[i].SourcePath()
+			declaration := &occurrences[i].Declaration
+			file := filepath.Join(declaration.Source, filepath.FromSlash(declaration.File))
+			if !application || l.documents.cache[file].eligible == selection.RootInactive {
+				continue
+			}
+			location := SourceView(l.Store, source, l.SourceRoot)
+			if location.Pinned || location.External {
+				continue
+			}
 			input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			claims = append(claims, input.OriginPath(filepath.Join(location.Path, manifest.NormalizeClaimBase(path))))
+			directory := input.OriginPath(filepath.Join(location.Path, manifest.NormalizeClaimBase(path)))
+			if !yield(kustpath.ClaimPrefix(kustpath.HostKey(directory))) {
+				return
+			}
 		}
 	}
-	return claims
 }
 
 func (l *Loader) addNativePackageOwners(path string, owner int, targets map[string]int, owners [][]int) {
@@ -483,7 +492,7 @@ func (l *Loader) addNativePackageOwners(path string, owner int, targets map[stri
 	for visitIndex := range visits {
 		visit := &visits[visitIndex]
 		for _, file := range [2]string{visit.file, filepath.Dir(visit.file)} {
-			if target, known := targets[file]; known && target != owner {
+			if target, known := targets[kustpath.HostKey(file)]; known && target != owner {
 				owners[target] = append(owners[target], owner)
 			}
 		}

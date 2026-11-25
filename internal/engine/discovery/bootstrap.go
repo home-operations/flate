@@ -145,10 +145,7 @@ func (p *entrySourcePublisher) publish(candidate *entryResolution, addObject boo
 }
 
 func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
-	admitted := d.cfg.Input
-	if admitted == nil {
-		admitted, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	}
+	admitted := d.cfg.Store.BootstrapInput(d.cfg.Input)
 	if admitted == nil {
 		var err error
 		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, d.cfg.RepoRoot, d.cfg.Work)
@@ -442,10 +439,7 @@ func (d *Session) admission() *Admission {
 		d.refreshAdmission(admission)
 		return admission
 	}
-	input := d.cfg.Input
-	if input == nil {
-		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	}
+	input := d.cfg.Store.BootstrapInput(d.cfg.Input)
 	admission := &Admission{
 		packageRender:     d.cfg.packagePreparation(),
 		generatorPackages: d.generatorPackages,

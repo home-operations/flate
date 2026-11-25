@@ -2,6 +2,7 @@ package loader
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"maps"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -90,8 +92,13 @@ const (
 	pathDirectory
 	pathFile
 	pathMissing
-	pathUnavailable
+	pathStatFailed
+	pathSourceUnavailable
 )
+
+func (s pathState) excludesBuilder() bool {
+	return s == pathFile || s == pathMissing || s == pathSourceUnavailable
+}
 
 // documentReader caches positive and negative results by absolute source-view directory.
 //
@@ -103,6 +110,7 @@ type documentReader struct {
 	// Views MUST stay shared when discovery copies a reader.
 	views            map[string]fs.FS
 	artifacts        map[string]*store.SourceArtifact
+	workingTree      map[string]*store.SourceArtifact
 	parsed           *ParsedInputs
 	compact          bool
 	eager            bool
@@ -140,18 +148,48 @@ type sourceReader interface {
 	ListObjects(string, string) []manifest.BaseManifest
 }
 
-func mountSource(mounted map[string]*store.SourceArtifact, artifact store.Artifact) {
-	if art, ok := artifact.(*store.SourceArtifact); ok && art.LocalPath != "" {
+func mountSource(
+	mounted map[string]*store.SourceArtifact, artifact store.Artifact,
+) *store.SourceArtifact {
+	art, _ := artifact.(*store.SourceArtifact)
+	if mounted != nil && art != nil && art.LocalPath != "" {
 		mounted[art.LocalPath] = art
 	}
+	return art
+}
+
+// AdmittedWorkingTreeMounts lets the last eligible ID in identity order win at each path.
+// Callers can also supply the general source table to index all admitted artifacts in the same pass.
+func AdmittedWorkingTreeMounts(
+	getArtifact func(manifest.NamedResource, store.ArtifactRead) store.Artifact,
+	mounted map[string]*store.SourceArtifact,
+	admitted ...manifest.NamedResource,
+) map[string]*store.SourceArtifact {
+	var scratch [8]manifest.NamedResource
+	ids := append(scratch[:0], admitted...)
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	var workingTree map[string]*store.SourceArtifact
+	for _, id := range ids {
+		art := mountSource(mounted, getArtifact(id, store.ArtifactContent))
+		if !art.WorkingTree() || art.LocalPath == "" {
+			continue
+		}
+		if workingTree == nil {
+			workingTree = map[string]*store.SourceArtifact{}
+		}
+		workingTree[art.LocalPath] = art
+	}
+	return workingTree
 }
 
 func (r *documentReader) mountSources(
 	s sourceReader,
 	input *store.SourceArtifact,
-	candidates ...*manifest.DiscoveryIndex,
+	index *manifest.DiscoveryIndex,
+	admitted ...manifest.NamedResource,
 ) []string {
 	mounted := map[string]*store.SourceArtifact{}
+	r.workingTree = AdmittedWorkingTreeMounts(s.GetArtifact, mounted, admitted...)
 	for info := range manifest.Kinds() {
 		if !info.SourceArtifact {
 			continue
@@ -160,7 +198,7 @@ func (r *documentReader) mountSources(
 			mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
 		}
 	}
-	for _, index := range candidates {
+	if index != nil {
 		for id := range index.Records {
 			if id.KindInfo().SourceArtifact && index.Records[id].File != "" {
 				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
@@ -170,18 +208,15 @@ func (r *documentReader) mountSources(
 			}
 		}
 	}
-	artifact := s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	mountSource(mounted, artifact)
-	if bootstrap, ok := artifact.(*store.SourceArtifact); ok && bootstrap.Provider == store.ProviderInput {
+	bootstrap := mountSource(mounted, s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
+	if bootstrap != nil && bootstrap.Provider == store.ProviderInput {
 		r.bootstrap = bootstrap.LocalPath
 	}
 	if r.configured != nil && mounted[r.configured.LocalPath] == nil {
 		mountSource(mounted, r.configured)
 		r.bootstrap = r.configured.LocalPath
 	}
-	if input != nil {
-		mountSource(mounted, input)
-	}
+	mountSource(mounted, input)
 	return r.setSources(mounted)
 }
 
@@ -237,7 +272,7 @@ func (r *documentReader) invalidateSources(changed []string, mounted map[string]
 			delete(r.views, root)
 		}
 		for file := range r.cache {
-			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
+			if kustpath.RelateHost(root, file).Contains() {
 				if r.cache[file].selected {
 					r.cache[file] = document{selected: true}
 				} else {
@@ -248,7 +283,7 @@ func (r *documentReader) invalidateSources(changed []string, mounted map[string]
 	}
 }
 
-func (l *Loader) refreshSources(input *store.SourceArtifact) {
+func (l *Loader) refreshSources(input *store.SourceArtifact, admitted ...manifest.NamedResource) {
 	l.documents.projections = l.Options.Projections
 	if l.documents.projections == nil {
 		l.documents.projections = &l.projections
@@ -259,7 +294,7 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 		l.documents.parsed = inputs
 	}
 	l.documents.configured = l.Options.ConfiguredInput
-	changed := l.documents.mountSources(l.Store, input, l.Index)
+	changed := l.documents.mountSources(l.Store, input, l.Index, admitted...)
 	if len(changed) == 0 {
 		return
 	}
@@ -295,15 +330,15 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 	*previous = scopeConstruction{}
 }
 
-func (l *Loader) mountSources() {
-	l.refreshSources(l.provisionalInput)
+func (l *Loader) mountSources(admitted ...manifest.NamedResource) {
+	l.refreshSources(l.provisionalInput, admitted...)
 	if l.provisionalInput != nil {
 		return
 	}
 	for _, root := range l.documents.changed {
 		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {
-			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
+			if kustpath.RelateHost(root, r.Path).Contains() {
 				l.DiscardOccurrence(id)
 			}
 		}
@@ -340,21 +375,23 @@ func (r *documentReader) input(file string) fileInput {
 }
 
 func (r *documentReader) mountedRoot(file string) string {
-	dr := *r
-	doc := dr.cache[file]
-	if doc.sourceRoot != "" {
-		return doc.sourceRoot
-	}
-	if len(dr.views) == 0 {
+	return selectMount(file, r.cache[file].sourceRoot, r.views)
+}
+
+func selectMount[T any](file, cachedRoot string, mounts map[string]T) string {
+	if len(mounts) == 0 {
 		return ""
 	}
-	file = filepath.Clean(file)
+	if _, ok := mounts[cachedRoot]; cachedRoot != "" && ok {
+		return cachedRoot
+	}
 	selected := ""
-	for root := range dr.views {
-		if len(root) <= len(selected) || !strings.HasPrefix(file, root) {
+	for root := range mounts {
+		if !kustpath.RelateHost(root, file).Contains() {
 			continue
 		}
-		if len(file) == len(root) || root == string(filepath.Separator) || file[len(root)] == filepath.Separator {
+		relation := kustpath.RelateHost(selected, root)
+		if selected == "" || relation == kustpath.HostAncestor || relation == kustpath.HostEqual && root < selected {
 			selected = root
 		}
 	}
@@ -370,12 +407,12 @@ type builderDocument struct {
 func (r *documentReader) read(dir string) builderDocument {
 	cached := r.cache[dir]
 	complete := cached.body != nil || cached.searched ||
-		cached.pathState == pathFile || cached.pathState == pathMissing
+		cached.pathState.excludesBuilder()
 	if !complete || cached.deferred != nil {
 		r.restore(dir)
 		cached = r.cache[dir]
 		complete = cached.body != nil || cached.searched ||
-			cached.pathState == pathFile || cached.pathState == pathMissing
+			cached.pathState.excludesBuilder()
 	}
 	if complete {
 		return builderDocument{body: cached.body, file: cached.file, recipe: cached.recipe}
@@ -392,7 +429,7 @@ func (r *documentReader) read(dir string) builderDocument {
 		info, err := fs.Stat(inputFile.fs, inputFile.name)
 		cached = new(*r).rememberStat(dir, info, err)
 	}
-	if cached.pathState == pathFile || cached.pathState == pathMissing {
+	if cached.pathState.excludesBuilder() {
 		return builderDocument{}
 	}
 	return r.readBuilder(dir, new(cached))
@@ -402,18 +439,24 @@ func (r *documentReader) readBuilder(dir string, cachedValue *document) builderD
 	cached := *cachedValue
 	cached.searched = true
 	var found bool
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		file := filepath.Join(dir, name)
-		inputFile2 := new(*r).input(file)
-		data, err := fs.ReadFile(inputFile2.fs, inputFile2.name)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
+	var inspected gittree.InspectedFile
+	for file := range kustomizeinput.Builders(dir, func(file string) bool {
+		input := r.input(file)
+		info, opened, err := gittree.InspectFile(input.fs, input.name)
+		inspected = opened
+		return kustomizeinput.BuilderFile(info, err)
+	}) {
 		if found {
 			cached.recipe &^= recipeResourceOnly
 			break
 		}
 		found = true
+		builder, err := inspected.Open()
+		var data []byte
+		if err == nil {
+			data, err = io.ReadAll(builder)
+			err = errors.Join(err, builder.Close())
+		}
 		var k types.Kustomization
 		if err != nil || yaml.Unmarshal(data, &k) != nil {
 			cached.file, cached.pathState = file, pathDirectory
@@ -551,8 +594,10 @@ func (r *documentReader) rememberStat(file string, info fs.FileInfo, err error) 
 		cached.pathState = pathFile
 	case errors.Is(err, fs.ErrNotExist):
 		cached.pathState = pathMissing
+	case errors.Is(err, errSourceUnavailable):
+		cached.pathState = pathSourceUnavailable
 	default:
-		cached.pathState = pathUnavailable
+		cached.pathState = pathStatFailed
 	}
 	if dr.cache != nil {
 		dr.cache[file] = cached

@@ -611,7 +611,8 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	st.AddObject(pinned)
 	st.SetArtifact(pinned.Named(), &store.SourceArtifact{
 		Provider:  store.ProviderCommit,
-		LocalPath: t.TempDir(), LocalRoot: root, Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
+		LocalPath: filepath.Join(alias.artifact.LocalPath, "nested"), LocalRoot: root,
+		Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
 	})
 	assert.NoError(t, d.loader.Admit(t.Context(), root))
 	for i, subpath := range []string{"./", "./nested"} {
@@ -637,6 +638,14 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	relative, err := filepath.Rel(root, file)
 	assert.NoError(t, err)
 	d.loader.Index.Records[dirty.Named()] = manifest.DiscoveryRecord{File: filepath.ToSlash(relative), Path: file}
+	outside := &manifest.ConfigMap{Name: "outside"}
+	st.AddObject(outside)
+	outsideFile := filepath.Join(alias.artifact.LocalPath+"-outside", "nested", "outside.yaml")
+	outsideRelative, err := filepath.Rel(root, outsideFile)
+	assert.NoError(t, err)
+	d.loader.Index.Records[outside.Named()] = manifest.DiscoveryRecord{
+		File: filepath.ToSlash(outsideRelative), Path: outsideFile,
+	}
 	assert.NoError(t, d.loader.Admit(t.Context(), root))
 	claims := d.pinnedWorkingTreeClaims(root, d.loader.PathObjects())
 	assert.FatalIf(
@@ -672,6 +681,9 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	assert.Equal(t, st.GetObject(dirty.Named()) == nil, true)
 	_, ok = d.loader.Index.Lookup(dirty.Named())
 	assert.Equal(t, ok, false)
+	assert.Equal(t, st.GetObject(outside.Named()) == outside, true)
+	_, ok = d.loader.Index.Lookup(outside.Named())
+	assert.Equal(t, ok, true)
 }
 
 func aliasRequestReads(t *testing.T, st *store.Store, id manifest.NamedResource) *store.ReadSet {

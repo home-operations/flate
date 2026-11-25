@@ -27,6 +27,16 @@ func TestStore_SetArtifact(t *testing.T) {
 	assert.Equal(t, count, 1)
 	got := s.GetArtifact(id, ArtifactContent)
 	assert.ErrorIf(t, got == nil, "GetArtifact: nil")
+	t.Run("configured bootstrap input takes precedence", func(t *testing.T) {
+		t.Parallel()
+		st := New()
+		configured := &SourceArtifact{LocalPath: "/configured"}
+		stored := &SourceArtifact{LocalPath: "/stored"}
+		assert.Equal(t, st.BootstrapInput(nil), nil)
+		st.SetArtifact(manifest.BootstrapSourceID, stored)
+		assert.Equal(t, st.BootstrapInput(nil), stored)
+		assert.Equal(t, st.BootstrapInput(configured), configured)
+	})
 	t.Run("equal acquisition replaces stale reads", func(t *testing.T) {
 		t.Parallel()
 		st := New()

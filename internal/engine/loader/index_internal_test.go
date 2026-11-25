@@ -87,7 +87,7 @@ func admitForTest(s *store.Store, root string) {
 func rendererFixture(t *testing.T, l *Loader, root string) *manifest.DiscoveryIndex {
 	t.Helper()
 	admitForTest(l.Store, root)
-	l.documents.mountSources(l.Store, nil)
+	l.documents.mountSources(l.Store, nil, nil)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)

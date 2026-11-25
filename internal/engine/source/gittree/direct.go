@@ -30,11 +30,9 @@ func Sub(input fs.FS, dir string) (fs.FS, error) {
 	return &sub.FS, nil
 }
 
-func (g *directView) Stat(
-	name string,
-) (fs.FileInfo, error) {
-	//nolint:wrapcheck // Stat forwards fs.Stat PathError fields for the underlying filesystem.
-	return fs.Stat(g.FS, name)
+func (g *directView) inspect(name string) (fs.FileInfo, string, error) {
+	info, err := fs.Stat(g.FS, name)
+	return info, "", err //nolint:wrapcheck // Preserve the filesystem's path errors.
 }
 
 func (g *directView) Lstat(

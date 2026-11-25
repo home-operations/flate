@@ -7,17 +7,18 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 
-	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -89,13 +90,21 @@ func (d *Session) Plan(ctx context.Context) ([]Entry, error) {
 	}
 	entries := clusterEntries(roots, input, d.cfg.Path)
 	for i := range entries {
-		if entries[i].aggregate {
-			entries[i].Input, err = aggregateInput(input, d.cfg.Path, d.packages)
-			if err != nil {
-				return nil, err
-			}
-			entries[i].aggregate = entries[i].Input != input
+		if !entries[i].aggregate {
+			continue
 		}
+		relative, relErr := filepath.Rel(input.LocalPath, d.cfg.Path)
+		if relErr != nil {
+			return nil, fmt.Errorf("entry path: %w", relErr)
+		}
+		entry := aggregateEntry{requested: d.cfg.Path, directory: relative, authored: d.hasEntryBuilder()}
+		entries[i].Input, err = aggregateInput(input, entry, func() ([]loader.PackageEvidence, error) {
+			return d.packages, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		entries[i].aggregate = entries[i].Input != input
 	}
 	if err := l.PersistInputs(ctx); err != nil {
 		return nil, err
@@ -191,10 +200,9 @@ func (d *Session) plannedGeneratorPackages(
 	ctx context.Context, entry *Entry, roots []clusterRoot, relative string,
 ) ([]string, error) {
 	input := d.cfg.Input
-	generator := operatorv1.GroupVersion.WithKind(operatorv1.FluxInstanceKind).GroupKind()
-	packages, err := d.loader.EnclosingPackages(ctx, input, relative, manifest.NamedResource{
-		Group: generator.Group, Kind: generator.Kind,
-	})
+	packages, err := d.loader.EnclosingPackages(
+		ctx, input, relative, manifest.NamedResource.CanDeclareGeneratedEntry,
+	)
 	if err != nil {
 		return packages, err
 	}
@@ -210,11 +218,7 @@ func (d *Session) plannedGeneratorPackages(
 		if pkg == relative || slices.Contains(packages, pkg) {
 			continue
 		}
-		native, err := nativeEntry(input.FS, pkg)
-		if err != nil {
-			return nil, err
-		}
-		if native {
+		if nativeEntry(input.FS, pkg) != "" {
 			packages = slices.Insert(packages, 0, pkg)
 		}
 	}
@@ -365,22 +369,36 @@ func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan strin
 }
 
 func (r *clusterRoot) partitionAnchors(input *store.SourceArtifact) []clusterRoot {
+	type anchorOwner struct {
+		index, length int
+	}
 	roots := make([]clusterRoot, len(r.anchors))
+	prefixes := make([]string, len(r.anchors))
+	best := make(map[string]anchorOwner, len(r.anchors))
 	for i, anchor := range r.anchors {
 		roots[i].Path = anchor.target
+		dir := filepath.Join(input.LocalPath, anchor.target)
+		prefix := kustpath.ClaimPrefix(kustpath.HostKey(dir))
+		prefixes[i] = prefix
+		if len(dir) > best[prefix].length {
+			best[prefix] = anchorOwner{index: i, length: len(dir)}
+		}
 	}
+	claims, _, owners := loader.NewPackageClaimIndex(len(roots), func(i int) string { return roots[i].Path },
+		func(add func(int, string)) {
+			for i, prefix := range prefixes {
+				if best[prefix].index == i {
+					add(i, prefix)
+				}
+			}
+		})
 	for i := range r.seeds {
 		seed := &r.seeds[i]
-		file := filepath.Join(seed.Declaration.Source, seed.Declaration.File)
-		selected, depth := -1, 0
-		for j, anchor := range r.anchors {
-			dir := filepath.Join(input.LocalPath, anchor.target)
-			if len(dir) > depth && safepath.Contains(dir, file) {
-				selected, depth = j, len(dir)
-			}
-		}
-		if selected >= 0 {
-			roots[selected].seeds = append(roots[selected].seeds, *seed)
+		file := kustpath.HostKey(filepath.Join(seed.Declaration.Source, seed.Declaration.File))
+		for group := range claims.ClaimOwners(file, manifest.NamedResource{}, manifest.NamedResource{}, nil) {
+			owner := &roots[owners[group[0]]]
+			owner.seeds = append(owner.seeds, *seed)
+			break
 		}
 	}
 	return roots
@@ -427,31 +445,23 @@ func ownedUnanchoredRoots(roots []clusterRoot) []bool {
 	return owned
 }
 
-func aggregateInput(
-	input *store.SourceArtifact,
-	requested string,
-	packages []loader.PackageEvidence,
-) (*store.SourceArtifact, error) {
-	relative, _ := filepath.Rel(input.LocalPath, requested)
-	authored, err := nativeEntry(input.FS, relative)
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
-	}
-	if authored {
-		return input, nil
-	}
-	return syntheticAggregateInput(input, requested, packages)
+type aggregateEntry struct {
+	requested, directory string
+	authored             bool
 }
 
-func syntheticAggregateInput(
-	input *store.SourceArtifact,
-	requested string,
-	packages []loader.PackageEvidence,
+func aggregateInput(
+	input *store.SourceArtifact, entry aggregateEntry, packages func() ([]loader.PackageEvidence, error),
 ) (*store.SourceArtifact, error) {
-	resources, err := aggregateResources(input, requested, packages)
+	if entry.authored {
+		return input, nil
+	}
+	evidence, err := packages()
 	if err != nil {
 		return nil, err
 	}
+	directory := filepath.ToSlash(entry.directory)
+	resources := aggregateResources(input, entry, evidence)
 	if len(resources) == 0 {
 		return input, nil
 	}
@@ -464,10 +474,9 @@ func syntheticAggregateInput(
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("encode entry package: %w", err), "")
 	}
 	const fileMode = 0o644
-	relative, _ := filepath.Rel(input.LocalPath, requested)
 	overlay := tree.NewBuilder(input.FS)
 	if err = overlay.AddFile(
-		filepath.ToSlash(filepath.Join(relative, manifest.KustomizeBuilderFilenames[0])),
+		path.Join(directory, manifest.KustomizeBuilderFilenames[0]),
 		data,
 		fileMode,
 	); err != nil {
@@ -477,11 +486,10 @@ func syntheticAggregateInput(
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("construct entry package: %w", err), "")
 	}
-	projected := *input
+	projected := input.WithSourceView(&inputprojection.Overlay{Tree: content, Authored: input, Resources: resources})
 	projected.LocalRoot = input.OriginPath(input.LocalPath)
 	projected.Content, projected.Digest, projected.ContentFingerprint = "", "", nil
-	projected.FS = &inputprojection.Overlay{Tree: content, Authored: input, Resources: resources}
-	return &projected, nil
+	return projected, nil
 }
 
 func aggregateRequiresBuild(entry *Entry, packages []loader.PackageEvidence) bool {
@@ -501,9 +509,11 @@ func aggregateRequiresBuild(entry *Entry, packages []loader.PackageEvidence) boo
 
 func aggregateResources(
 	input *store.SourceArtifact,
-	requested string,
+	entry aggregateEntry,
 	packages []loader.PackageEvidence,
-) ([]string, error) {
+) []string {
+	knownDirectory := filepath.Join(input.LocalPath, entry.directory)
+	requested := entry.requested
 	var resources []string
 	for i := range packages {
 		pkg := &packages[i]
@@ -511,11 +521,8 @@ func aggregateResources(
 		if !pkg.Independent || !safepath.Contains(requested, absolute) {
 			continue
 		}
-		exists, err := nativeEntry(input.FS, pkg.Path)
-		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect aggregate package: %w", err), "")
-		}
-		if exists {
+		if kustpath.RelateHost(knownDirectory, absolute) != kustpath.HostEqual &&
+			nativeEntry(input.FS, pkg.Path) != "" {
 			resource, _ := filepath.Rel(requested, absolute)
 			resources = append(resources, filepath.ToSlash(resource))
 			continue
@@ -532,7 +539,7 @@ func aggregateResources(
 	}
 	slices.Sort(resources)
 	resources = slices.Compact(resources)
-	return resources, nil
+	return resources
 }
 
 type entryDocuments map[manifest.NamedResource]struct{}
@@ -573,19 +580,14 @@ func (a *Admission) requestedInventory(
 	if frame := a.preparedInventory(owner, input); frame != nil {
 		return inventoryDocuments(frame.children, frame.failedDocuments), frame.children, frame.inventoryError()
 	}
-	authored, err := nativeEntry(input.FS, owner.Path)
-	if err != nil {
-		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect requested package: %w", err), "")
+	entry := aggregateEntry{
+		requested: a.path, directory: owner.Path, authored: nativeEntry(input.FS, owner.Path) != "",
 	}
-	if !authored {
-		packages, packageErr := a.loader.Packages(ctx)
-		if packageErr != nil {
-			return nil, nil, packageErr
-		}
-		input, err = syntheticAggregateInput(input, a.path, packages)
-		if err != nil {
-			return nil, nil, err
-		}
+	input, err := aggregateInput(input, entry, func() ([]loader.PackageEvidence, error) {
+		return a.loader.Packages(ctx)
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 	frame, err := a.packageInventory(ctx, owner, input)
 	if err != nil {
@@ -609,18 +611,13 @@ func inventoryDocuments(children []store.Child, failed []manifest.DocOccurrence)
 	return documents
 }
 
-func nativeEntry(input fs.FS, dir string) (bool, error) {
-	for _, name := range manifest.KustomizeBuilderFilenames {
-		_, err := fs.Stat(input, filepath.ToSlash(filepath.Join(dir, name)))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return false, fmt.Errorf("inspect builder in %q: %w", dir, err)
-		}
-		return true, nil
+func nativeEntry(input fs.FS, dir string) string {
+	for file := range kustomizeinput.Builders(dir, func(file string) bool {
+		return kustomizeinput.BuilderFile(fs.Stat(input, filepath.ToSlash(file)))
+	}) {
+		return file
 	}
-	return false, nil
+	return ""
 }
 
 func (d *Session) beginRootPlan(ctx context.Context) error {
@@ -628,17 +625,12 @@ func (d *Session) beginRootPlan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	relative, err := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
-	if err != nil {
+	if _, err := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path); err != nil {
 		return fmt.Errorf("entry path: %w", err)
-	}
-	authored, err := nativeEntry(d.cfg.Input.FS, relative)
-	if err != nil {
-		return err
 	}
 	d.packages = slices.Clone(packages)
 	d.planner = &entryPlanner{
-		directoryInventory: !authored,
+		directoryInventory: !d.hasEntryBuilder(),
 		session:            d,
 		inputs:             map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
 		coordinates:        map[selection.OccurrenceID]bool{},
@@ -684,18 +676,21 @@ func (d *Session) hasEntryBuilder() bool {
 	if input == nil {
 		return false
 	}
-	if input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) &&
-		d.entryBuilderPath == d.cfg.Path {
-		return d.entryBuilder
+	if file, known := d.cachedEntryBuilder(input, d.cfg.Path); known {
+		return file != ""
 	}
-	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, false
-	relative, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
-	for _, filename := range manifest.KustomizeBuilderFilenames {
-		_, err := fs.Stat(input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
-		if !errors.Is(err, fs.ErrNotExist) {
-			d.entryBuilder = true
-			return true
-		}
+	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, ""
+	relative, err := filepath.Rel(input.LocalPath, d.cfg.Path)
+	if err == nil {
+		d.entryBuilder = nativeEntry(input.FS, relative)
 	}
-	return false
+	return d.entryBuilder != ""
+}
+
+func (d *Session) cachedEntryBuilder(input *store.SourceArtifact, absolute string) (string, bool) {
+	if d != nil && d.entryBuilderInput != nil && d.entryBuilderPath == absolute &&
+		input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
+		return d.entryBuilder, true
+	}
+	return "", false
 }

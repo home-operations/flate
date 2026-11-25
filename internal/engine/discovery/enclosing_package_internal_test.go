@@ -5,14 +5,17 @@ import (
 	"errors"
 	"maps"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"testing/fstest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -104,6 +107,19 @@ spec:
 		{name: "unlinked application", builder: "resources: [application.yaml]\n"},
 		{name: "ordinary resources", builder: "resources: [entry/plain.yaml]\n"},
 		{
+			name:    "instance without sync",
+			builder: "resources: [entry/plain.yaml, application.yaml]\n",
+			extra: map[string]string{"apps/application.yaml": "apiVersion: fluxcd.controlplane.io/v1\n" +
+				"kind: FluxInstance\nmetadata: {name: instance, namespace: flux-system}\n"},
+			build: true,
+		},
+		{
+			name:    "foreign FluxInstance kind",
+			builder: "resources: [entry/plain.yaml, application.yaml]\n",
+			extra: map[string]string{"apps/application.yaml": "apiVersion: example.test/v1\n" +
+				"kind: FluxInstance\nmetadata: {name: instance, namespace: flux-system}\n"},
+		},
+		{
 			name:    "transform without an instance",
 			builder: "resources: [entry/plain.yaml]\nnamePrefix: private-\n",
 			build:   true,
@@ -116,6 +132,7 @@ spec:
 		})
 	}
 	t.Run("source includes", testEnclosingPackageSourceIncludes)
+	t.Run("Windows origin keys", testEnclosingPackageWindowsOrigins)
 }
 
 type enclosingPackageOperandsCase struct {
@@ -173,7 +190,14 @@ spec:
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(entries) != 1 || !entries[0].aggregate, "expected one synthetic entry: %v", entries)
 	planned := entries[0].prepared.generatorPackages
-	assert.Equal(t, len(planned) != 0, tc.want || tc.build)
+	var wantPackages []string
+	if tc.want || tc.build {
+		wantPackages = []string{"apps"}
+		if tc.extra["kustomization.yaml"] != "" {
+			wantPackages = append(wantPackages, ".")
+		}
+	}
+	assert.Diff(t, planned, wantPackages)
 	admission := session.admission()
 	admission.generatorPackages = planned
 	inventories := assertEnclosingInventoryReuse(t, admission, recorder.Scope(), planned)
@@ -292,6 +316,117 @@ func assertPrivatePreparationError(t *testing.T, walk *qualificationWalk, invent
 	matched, err := walk.visitGeneration(ctx, &applicationEvidence{object: invalid, private: true})
 	assert.Equal(t, matched, false)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
+}
+
+func testEnclosingPackageWindowsOrigins(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows host path folding")
+	}
+
+	const (
+		shared = "apps/team"
+		entry  = shared + "/entry"
+	)
+	release := func(name string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\n" +
+			"metadata: {name: " + name + ", namespace: apps}\nspec: {}\n")}
+	}
+	workload := release("workload")
+	builder := &fstest.MapFile{Data: []byte("resources: [entry/workload.yaml]\n")}
+	root := t.TempDir()
+	input := &store.SourceArtifact{
+		Provider:  store.ProviderInput,
+		LocalPath: filepath.Join(root, "input"),
+		LocalRoot: filepath.Join(root, "PhysIcal"),
+		FS: fstest.MapFS{
+			"application.yaml": {Data: []byte(testutil.KustomizationYAML("application", "apps",
+				"  interval: 1m\n  path: ./apps/team\n  sourceRef: {kind: GitRepository, name: alias}\n"))},
+			"apps/kustomization.yaml":      {Data: []byte("resources: [team/entry/control.yaml]\n")},
+			shared + "/kustomization.yaml": builder,
+			entry + "/workload.yaml":       workload,
+			entry + "/control.yaml":        release("control"),
+		},
+	}
+	alias := &store.SourceArtifact{
+		Provider:  store.ProviderAlias,
+		LocalPath: filepath.Join(root, "alias"),
+		LocalRoot: filepath.Join(root, "pHYSical"),
+		FS: fstest.MapFS{
+			shared + "/kustomization.yaml": builder,
+			entry + "/workload.yaml":       workload,
+		},
+	}
+	st := store.New()
+	source := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
+	sourceID := source.Named()
+	st.AddObject(source)
+	st.SetArtifact(sourceID, alias)
+	cacheOwner := cachetest.New(t, "", cache.New)
+	var recorder manifest.WorkRecorder
+	work := recorder.Scope()
+	ctx := t.Context()
+	session, err := Begin(ctx, Config{
+		Store: st, PrepareDocuments: base.PrepareDocuments, Input: input, RepoRoot: input.LocalPath,
+		Path:      filepath.Join(input.LocalPath, entry),
+		Selection: selection.Request{Roots: []manifest.NamedResource{testutil.HelmReleaseID("apps", "")}},
+		Cache:     cacheOwner, Trees: kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2)), Work: work,
+	})
+	assert.NoError(t, err)
+	t.Cleanup(session.Close)
+	session.resolvedSources.record(sourceID, &entryResolution{
+		object: source, input: input, artifact: alias, provider: store.ProviderAlias, entry: true,
+	})
+	assert.NoError(t, constructTestSources(ctx, session))
+	entries, err := session.Plan(ctx)
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(entries) != 1, "expected one planned entry: %v", entries)
+	assert.Equal(t, entries[0].Path, filepath.Join(input.LocalPath, entry))
+
+	publishedAlias, _ := st.GetArtifact(sourceID, store.ArtifactContent).(*store.SourceArtifact)
+	bootstrapOrigin := session.cfg.Input.ApplicationOrigin(shared)
+	aliasOrigin := publishedAlias.ApplicationOrigin(shared)
+	key := kustpath.HostKey(bootstrapOrigin)
+	assert.FatalIf(t, bootstrapOrigin == aliasOrigin || filepath.ToSlash(bootstrapOrigin) == key ||
+		filepath.ToSlash(aliasOrigin) == key || kustpath.HostKey(aliasOrigin) != key,
+		"expected two noncanonical spellings of one origin: %q and %q", bootstrapOrigin, aliasOrigin)
+
+	application := testutil.KustomizationID("apps", "application")
+	control := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "apps", manifest.NamedResource{}).Named()
+	owners := []manifest.NamedResource{application, control}
+	slices.SortFunc(owners, manifest.NamedResource.Compare)
+	bootstrapPrepares := work.Source(manifest.BootstrapSourceID).RenderWork().Preparation()
+	appPrepares := work.Recorder(&manifest.WorkKey{Owner: application, Source: sourceID}).
+		Scope().
+		RenderWork().
+		Preparation()
+	before := bootstrapPrepares.Counts.OwnerPrepares + appPrepares.Counts.OwnerPrepares
+	ready, err := session.Load(ctx)
+	assert.NoError(t, err)
+	assert.FatalIf(t, !ready, "expected loaded selection: %v", session.PendingSources())
+	var candidates []manifest.NamedResource
+	for id, frame := range session.prepared {
+		if frame.lookup != noLookup {
+			candidates = append(candidates, id)
+		}
+	}
+	slices.SortFunc(candidates, manifest.NamedResource.Compare)
+	assert.Diff(t, candidates, owners)
+	after := bootstrapPrepares.Counts.OwnerPrepares + appPrepares.Counts.OwnerPrepares
+	assert.Equal(t, appPrepares.Counts.OwnerPrepares, uint64(1))
+	// The independent enclosing package accounts for one preparation.
+	assert.Equal(t, after-before, uint64(2))
+	admission := session.admission()
+	for _, id := range owners {
+		frame := session.prepared[id]
+		assert.FatalIf(t, frame == nil, "missing lookup inventory for %s", id)
+		first, err := admission.packageInventory(ctx, frame.owner, frame.source)
+		assert.NoError(t, err)
+		second, err := admission.packageInventory(ctx, frame.owner, frame.source)
+		assert.NoError(t, err)
+		assert.Equal(t, second, first)
+	}
+	assert.Equal(t, bootstrapPrepares.Counts.OwnerPrepares+appPrepares.Counts.OwnerPrepares, after)
 }
 
 func testEnclosingPackageSourceIncludes(t *testing.T) {

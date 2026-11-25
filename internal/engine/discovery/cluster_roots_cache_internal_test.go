@@ -3,6 +3,7 @@ package discovery
 import (
 	"errors"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -122,6 +123,7 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 	for _, tc := range []struct {
 		name, path          string
 		anchored, seed, pin bool
+		unknownScan         bool
 		deferWorkload       bool
 	}{
 		{name: "disjoint workload", path: "workload", anchored: true, deferWorkload: true},
@@ -129,7 +131,11 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 		{name: "seed", path: "workload", anchored: true, seed: true},
 		{name: "pinned source", path: "workload", anchored: true, pin: true},
 		{name: "above scan", path: ".", anchored: true},
+		{name: "at scan", path: "entry", anchored: true},
+		{name: "path case differs", path: "ENTRY", anchored: true, deferWorkload: runtime.GOOS != "windows"},
 		{name: "below scan", path: "entry/child", anchored: true},
+		{name: "sibling prefix", path: "entry-other", anchored: true, deferWorkload: true},
+		{name: "unknown scan origin", path: "entry", anchored: true, unknownScan: true, deferWorkload: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -143,6 +149,9 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 			}
 			if tc.anchored {
 				planner.roots[0].anchors = []bootstrapAnchor{{target: "entry"}}
+			}
+			if tc.unknownScan {
+				planner.session.cfg.Path = ""
 			}
 			if tc.pin {
 				input = &store.SourceArtifact{
@@ -163,6 +172,72 @@ func TestFollowTarget_WorkloadDeferral(t *testing.T) {
 	}
 }
 
+func TestEntryReach_CapturesSelectedDescendant(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, application   string
+		selected, visible   bool
+		reaches, descendant bool
+	}{
+		{name: "ancestor", application: ".", selected: true, visible: true, reaches: true, descendant: true},
+		{name: "equivalent spelling", application: "apps" + string(filepath.Separator) + ".", selected: true, visible: true, reaches: true},
+		{name: "case only", application: "APPS", selected: true, visible: true, reaches: runtime.GOOS == "windows"},
+		{name: "exact entry", application: "apps", selected: true, visible: true, reaches: true},
+		{name: "unselected exact entry without generation", application: "apps", reaches: true},
+		{name: "unselected equivalent entry without generation", application: "apps" + string(filepath.Separator) + ".", reaches: true},
+		{name: "unselected ancestor without generation", application: "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			entry := filepath.Join(root, "apps")
+			occurrence := selection.OccurrenceID{Source: root, File: "apps/selected.yaml"}
+			target := entryTarget{origin: entry}
+			if tc.selected {
+				target = entryTarget{
+					origin: filepath.Join(entry, "selected.yaml"), occurrence: occurrence, coverEntry: true,
+				}
+			}
+			reach := entryReach{
+				entry: entry, targets: []entryTarget{target},
+				packageReaches: func(_ *applicationEvidence, path string) bool { return path == target.origin },
+			}
+			evidence := applicationEvidence{visibleGeneration: tc.visible}
+			origin := root + string(filepath.Separator) + tc.application
+			assert.Equal(t, reach.includes(origin, &evidence, true), tc.reaches)
+			assert.Equal(t, evidence.descendant, tc.descendant)
+			assert.Equal(t, slices.Contains(evidence.reaches, occurrence), tc.selected && tc.reaches)
+		})
+	}
+}
+
+func TestAdmission_ReachesEntryAcrossMounts(t *testing.T) {
+	t.Parallel()
+	root, checkout, alias := t.TempDir(), t.TempDir(), t.TempDir()
+	files := fstest.MapFS{}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: checkout, LocalRoot: root, FS: files}
+	st := store.New()
+	source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
+	st.SetArtifact(source.Named(), &store.SourceArtifact{
+		Provider: store.ProviderAlias, LocalPath: alias, LocalRoot: root, FS: files,
+	})
+	admission := Admission{input: input, path: filepath.Join(checkout, "apps"), store: st}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{path: "apps", want: true},
+		{path: "APPS", want: runtime.GOOS == "windows"},
+		{path: "apps-other"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			application := manifest.EntryApplication{Source: source.Named(), Path: tc.path}
+			assert.Equal(t, admission.reachesEntry(&application, nil), tc.want)
+		})
+	}
+}
+
 func TestPlan_CatalogSourceScope(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -172,19 +247,28 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 	planner := entryPlanner{
 		session: d, coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]bool{},
 	}
-	for _, side := range []string{"left", "right"} {
+	mounts := map[string]*store.SourceArtifact{
+		"left": input,
+		"right": {
+			Provider: store.ProviderAlias, LocalPath: t.TempDir(), LocalRoot: root, FS: input.FS,
+		},
+	}
+	mounts["right-sibling"] = mounts["right"]
+	for _, side := range []string{"left", "right", "right-sibling"} {
 		source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
+		mount := mounts[side]
 		planner.catalog.occurrences = append(planner.catalog.occurrences, selection.OccurrenceFacts{
-			Declaration: selection.OccurrenceID{Source: root, File: side + "/source.yaml"},
-			Identity:    source.Named(), Object: source,
+			Declaration: selection.OccurrenceID{Source: mount.LocalPath, File: side + "/source.yaml"},
+			Identity:    source.Named(), Object: source, Mounted: mount,
 		})
 	}
 	for _, side := range []string{"left", "right"} {
 		owner := &manifest.Kustomization{Name: "root", Namespace: "apps"}
 		owner.Path = "./" + side
+		mount := mounts[side]
 		candidate := clusterRoot{Path: side, seeds: []selection.OccurrenceFacts{{
-			Declaration: selection.OccurrenceID{Source: root, File: side + "/sync.yaml"},
-			Identity:    owner.Named(), Object: owner,
+			Declaration: selection.OccurrenceID{Source: mount.LocalPath, File: side + "/sync.yaml"},
+			Identity:    owner.Named(), Object: owner, Mounted: mount,
 		}}}
 		assert.NoError(t, planner.start(t.Context(), &candidate))
 		id := planner.catalog.occurrences[0].Identity
@@ -194,6 +278,76 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 		repeated, _ := planner.catalogSource(id)
 		assert.Equal(t, repeated == selected, true)
 	}
+}
+
+func TestPlan_CatalogScopeWithoutMount(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"apps/sync.yaml":          {Data: []byte(testutil.KustomizationYAML("sync", "apps", "  path: ./apps\n"))},
+		"apps-sibling/other.yaml": {Data: []byte(testutil.KustomizationYAML("other", "apps", "  path: ./elsewhere\n"))},
+	}
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	d := newDiscoverer(&Config{Path: root, Input: input, Store: st})
+	t.Cleanup(d.Close)
+	d.loader.SourceRoot = root
+	_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, d.beginRootPlan(t.Context()))
+	assert.FatalIf(t, len(d.planner.roots) != 2, "roots = %+v", d.planner.roots)
+	assert.Equal(t, d.planner.roots[0].Path, "apps")
+	assert.Equal(t, d.planner.roots[0].seeds[0].Mounted, (*store.SourceArtifact)(nil))
+
+	mapped := *input
+	mapped.LocalRoot = t.TempDir()
+	d.cfg.Input = &mapped
+	assert.NoError(t, d.planner.start(t.Context(), &d.planner.roots[0]))
+	occurrences := d.planner.catalogView.occurrences
+	assert.FatalIf(t, len(occurrences) != 1, "catalog = %+v", occurrences)
+	assert.Equal(t, occurrences[0].Declaration.File, "apps/sync.yaml")
+
+	secondMount := &store.SourceArtifact{
+		Provider: store.ProviderAlias, LocalPath: t.TempDir(), LocalRoot: mapped.LocalRoot, FS: files,
+	}
+	mountedRoot := d.planner.roots[0]
+	mountedRoot.seeds = slices.Clone(mountedRoot.seeds)
+	mountedSeed := &mountedRoot.seeds[0]
+	mountedSeed.Declaration.Source = secondMount.LocalPath
+	mountedSeed.Mounted = secondMount
+	d.planner.catalog.occurrences = slices.Clone(d.planner.catalog.occurrences)
+	for i := range d.planner.catalog.occurrences {
+		occurrence := &d.planner.catalog.occurrences[i]
+		occurrence.Declaration.Source = secondMount.LocalPath
+		occurrence.Mounted = secondMount
+	}
+	target, contains := configuredApplicationTarget(&mapped, "./apps", mountedSeed)
+	assert.Equal(t, target, filepath.Join(mapped.LocalRoot, "apps"))
+	assert.Equal(t, contains, true)
+	assert.NoError(t, d.planner.start(t.Context(), &mountedRoot))
+	occurrences = d.planner.catalogView.occurrences
+	assert.FatalIf(t, len(occurrences) != 1, "mounted catalog = %+v", occurrences)
+	assert.Equal(t, occurrences[0].Declaration, mountedSeed.Declaration)
+
+	d.cfg.Trees = testTrees(t)
+	d.planner.directoryInventory = false
+	d.planner.roots[0].seeds[0].RequiresBuild = true
+	assert.Equal(t, d.planner.rootRequiresPreparation(&d.planner.roots[0], &mapped), true)
+	mountedSeed.RequiresBuild = true
+	assert.Equal(t, d.planner.rootRequiresPreparation(&mountedRoot, &mapped), true)
+	mountedSibling := *mountedSeed
+	mountedSibling.Declaration.File = "apps-sibling/other.yaml"
+	mountedRoot.seeds = []selection.OccurrenceFacts{mountedSibling}
+	assert.Equal(t, d.planner.rootRequiresPreparation(&mountedRoot, &mapped), false)
+
+	d.cfg.Path = filepath.Join(root, "apps")
+	seed := &d.planner.roots[0].seeds[0]
+	application := manifest.EntryApplication{Path: "apps"}
+	parent := clusterRoot{Path: "."}
+	assert.Equal(t, d.planner.bootstrapRoot(&parent, seed, &mapped, &application), true)
+	sibling := d.planner.roots[1].seeds[0]
+	assert.Equal(t, d.planner.bootstrapRoot(&parent, &sibling, &mapped, &application), false)
 }
 
 func TestPlan_CatalogNamespaceProjection(t *testing.T) {

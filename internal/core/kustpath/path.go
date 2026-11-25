@@ -58,6 +58,15 @@ func Resolve(base, ref string, policy Policy) (string, bool) {
 	return resolved, true
 }
 
+// ClaimPrefix formats a resolved slash coordinate without cleaning its components.
+func ClaimPrefix(directory string) string {
+	if directory == "" || directory == "." {
+		return ""
+	}
+	directory = strings.TrimRight(directory, "/")
+	return directory + "/"
+}
+
 func remoteReference(ref string) bool {
 	if strings.Contains(ref, "://") {
 		return true

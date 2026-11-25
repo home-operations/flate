@@ -100,10 +100,7 @@ func (k *Kustomization) appendClaims(claims []KSClaim, path string, components [
 			}
 		}
 		base = false
-		if prefix != "" {
-			prefix += "/"
-		}
-		claims = append(claims, KSClaim{ID: k.Named(), Prefix: prefix})
+		claims = append(claims, KSClaim{ID: k.Named(), Prefix: kustpath.ClaimPrefix(prefix)})
 		return true
 	})
 	return claims

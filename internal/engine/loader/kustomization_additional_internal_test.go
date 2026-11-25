@@ -12,6 +12,8 @@ import (
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
+	"github.com/home-operations/flate/internal/engine/source/gitrepo"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -97,14 +99,16 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
+	input := unreadableInputFS{denied: "plain/unreadable/kustomization.yaml", FS: fstest.MapFS{
+		"plain/unreadable/kustomization.yaml": {Data: []byte("resources: [ks.yaml]\n")},
+		"plain/unreadable/kustomization.yml":  {Data: []byte("resources: [ks.yaml]\n")},
+		"plain/unreadable/ks.yaml": {
+			Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n")),
+		},
+	}}
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
-			"plain/unreadable/kustomization.yaml": {Mode: fs.ModeDir | 0o755},
-			"plain/unreadable/ks.yaml": {
-				Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n")),
-			},
-		}},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: input},
 	)
 	l := New(st)
 	l.mountSources()
@@ -129,6 +133,66 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 		_, ok := l.Index.Lookup(testutil.KustomizationID("apps", "raw"))
 		assert.FatalIf(t, ok, "%v", "unreadable builder admitted raw resource")
 	}
+}
+
+func TestDocumentReader_BuilderReadOrder(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &builderReadFS{FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [wrong.yaml]\n")},
+		"kustomization.yml":  {Data: []byte("resources: [selected.yaml]\n")},
+		"Kustomization":      {Data: []byte("resources: [alternate.yaml]\n")},
+	}}
+	reader := documentReader{views: map[string]fs.FS{root: input}, cache: map[string]document{}}
+
+	builder := reader.read(root)
+	assert.Equal(t, builder.file, filepath.Join(root, "kustomization.yml"))
+	assert.FatalIf(t, builder.body == nil, "%s", "selected builder was not read")
+	assert.Diff(t, builder.body.Resources, []string{"selected.yaml"})
+	assert.Equal(t, builder.recipe&recipeResourceOnly, 0)
+	assert.Diff(t, input.reads, []string{"kustomization.yml"})
+}
+
+type builderReadFS struct {
+	fs.FS
+
+	reads []string
+}
+
+func (f *builderReadFS) Stat(name string) (fs.FileInfo, error) {
+	if name == "kustomization.yaml" {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+	}
+	return fs.Stat(f.FS, name)
+}
+
+func (f *builderReadFS) Open(name string) (fs.File, error) {
+	f.reads = append(f.reads, name)
+	return f.FS.Open(name)
+}
+
+func TestDocumentReader_LocalBuilder(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml/README.md", "directory")
+	testutil.WriteFile(t, root, "kustomization.yml", "namespace: from-file\n")
+
+	location, err := gitrepo.Locate(t.Context(), root, root)
+	assert.NoError(t, err)
+	directory, err := gittree.OpenDirectory(t.Context(), location)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, directory.Close()) })
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+		Provider: store.ProviderInput, LocalPath: root, FS: directory.Artifact().FS,
+	})
+	l := New(st)
+	t.Cleanup(l.Close)
+	l.mountSources()
+	builder := l.documents.read(root)
+	assert.Equal(t, builder.file, filepath.Join(root, "kustomization.yml"))
+	assert.FatalIf(t, builder.body == nil, "%s", "regular builder was not read")
+	assert.Equal(t, builder.body.Namespace, "from-file")
 }
 
 func TestDocumentReader_IndexedSource(t *testing.T) {

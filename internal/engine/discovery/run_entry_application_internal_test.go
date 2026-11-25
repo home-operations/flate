@@ -266,13 +266,25 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 
 func TestRun_EntryPackage(t *testing.T) {
 	t.Parallel()
-	for _, filename := range manifest.KustomizeBuilderFilenames {
-		t.Run(filename, func(t *testing.T) {
+	type builderCase struct {
+		name, builder string
+		skipDirectory bool
+	}
+	cases := make([]builderCase, 0, 1+len(manifest.KustomizeBuilderFilenames))
+	cases = append(cases, builderCase{name: "directory before file", builder: "kustomization.yml", skipDirectory: true})
+	for _, builder := range manifest.KustomizeBuilderFilenames {
+		cases = append(cases, builderCase{name: builder, builder: builder})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			const root = "/virtual/entry-package"
 			input := fstest.MapFS{
-				filename:  {Data: []byte("resources: [cm.yaml]\n")},
-				"cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
+				tc.builder: {Data: []byte("resources: [cm.yaml]\n")},
+				"cm.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
+			}
+			if tc.skipDirectory {
+				input["kustomization.yaml"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755}
 			}
 			st := store.New()
 			observed := &entryGeneratorFS{FS: input}
@@ -300,7 +312,9 @@ func TestBindEntry_PackageReadFailure(t *testing.T) {
 	st := store.New()
 	st.SetArtifact(
 		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: unreadableEntryFS{fstest.MapFS{}}},
+		&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: unreadableEntryFS{FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: []\n")},
+		}}},
 	)
 	d := newDiscoverer(&Config{Path: root, Store: st})
 	_, err := d.bindEntry(t.Context(), root)
@@ -319,13 +333,36 @@ func TestBindEntry_PackageReadFailure(t *testing.T) {
 	assert.Equal(t, d.binding, Binding{})
 }
 
-type unreadableEntryFS struct{ fs.FS }
+func TestBindEntry_PackageStatFailure(t *testing.T) {
+	t.Parallel()
+	input := unreadableEntryFS{statDenied: true, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: []\n")},
+		"kustomization.yml":  {Data: []byte("resources: []\n")},
+	}}
+	a := Admission{input: &store.SourceArtifact{FS: input}}
+	entry, err := a.literalEntry(".")
+	assert.NoError(t, err)
+	assert.FatalIf(t, entry == nil, "no entry after an earlier builder stat failed")
+}
+
+type unreadableEntryFS struct {
+	fs.FS
+
+	statDenied bool
+}
 
 func (f unreadableEntryFS) Open(name string) (fs.File, error) {
 	if name == "kustomization.yaml" {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 	}
 	return f.FS.Open(name)
+}
+
+func (f unreadableEntryFS) Stat(name string) (fs.FileInfo, error) {
+	if f.statDenied && name == "kustomization.yaml" {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+	}
+	return fs.Stat(f.FS, name)
 }
 
 type entryGeneratorFS struct {

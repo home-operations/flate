@@ -327,7 +327,7 @@ func (d *Session) Close() {
 	d.publicOperands = nil
 	d.entryBuilderInput = nil
 	d.entryBuilderPath = ""
-	d.entryBuilder = false
+	d.entryBuilder = ""
 	d.pendingSources = nil
 	d.lookupSources = nil
 	d.sourceGroups = nil

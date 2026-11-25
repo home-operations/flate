@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	"github.com/home-operations/flate/internal/engine/loader"
@@ -107,14 +108,15 @@ func (p *entryPlanner) start(ctx context.Context, root *clusterRoot) error {
 	clear(p.seen)
 	p.scope = rootScope{occurrences: seeds}
 	boundary := ""
+	input := p.session.cfg.Input
 	for i := range seeds {
-		application, applies := manifest.ApplicationFor(occurrenceObject(&seeds[i]))
+		seed := &seeds[i]
+		application, applies := manifest.ApplicationFor(occurrenceObject(seed))
 		if !applies {
 			continue
 		}
-		target := filepath.Join(p.session.cfg.Input.LocalPath, manifest.NormalizeClaimBase(application.Path))
-		file := filepath.Join(seeds[i].Declaration.Source, seeds[i].Declaration.File)
-		if safepath.Contains(target, file) && (boundary == "" || len(target) < len(boundary)) {
+		target, contains := configuredApplicationTarget(input, application.Path, seed)
+		if contains && (boundary == "" || len(target) < len(boundary)) {
 			boundary = target
 		}
 	}
@@ -122,7 +124,7 @@ func (p *entryPlanner) start(ctx context.Context, root *clusterRoot) error {
 	if boundary != "" {
 		p.catalogView.occurrences = nil
 		for candidate := range p.catalog.objects() {
-			if safepath.Contains(boundary, filepath.Join(candidate.Declaration.Source, candidate.Declaration.File)) {
+			if containsDeclaration(boundary, &candidate.Declaration, candidate.Mounted, input) {
 				p.catalogView.occurrences = append(p.catalogView.occurrences, *candidate)
 			}
 		}
@@ -143,40 +145,37 @@ func (p *entryPlanner) start(ctx context.Context, root *clusterRoot) error {
 
 func (d *Session) unpinnedRoots(pending []clusterRoot) []clusterRoot {
 	slices.SortFunc(pending, func(a, b clusterRoot) int { return strings.Compare(a.Path, b.Path) })
-	claims := manifest.DiscoveryIndex{Claims: map[string][]manifest.NamedResource{}}
-	owners := make(map[manifest.NamedResource]int, len(pending))
-	for i := range pending {
-		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, pending[i].Path, manifest.NamedResource{}).
-			Named()
-		owners[id] = i
-		for prefix := range pending[i].pinned.Claims {
-			claims.Claims[prefix] = append(claims.Claims[prefix], id)
-		}
-	}
+	claims, _, owners := loader.NewPackageClaimIndex(len(pending), func(i int) string { return pending[i].Path },
+		func(add func(int, string)) {
+			for i := range pending {
+				for prefix := range pending[i].pinned.Claims {
+					add(i, prefix)
+				}
+			}
+		})
 	active := make([]bool, len(pending))
 	for i := range active {
 		active[i] = true
 	}
 	claimed := func(child, owner int) bool {
-		for group := range claims.ClaimOwners(pending[child].Path+"/", manifest.NamedResource{}, manifest.NamedResource{},
+		for range claims.ClaimOwners(pending[child].Path+"/", manifest.NamedResource{}, manifest.NamedResource{},
 			func(id manifest.NamedResource) bool {
-				return owners[id] == owner && owner != child
+				return owners[id] == owner
 			}) {
-			if len(group) != 0 {
-				return true
-			}
+			return true
 		}
 		return false
 	}
 	var roots []clusterRoot
 	for {
-		selected := pinnedRoot(&claims, owners, pending, active)
+		selected := pinnedRoot(claims, owners, pending, active)
 		if selected < 0 {
 			break
 		}
 		roots = append(roots, pending[selected])
+		active[selected] = false
 		for i := range pending {
-			if active[i] && (i == selected || claimed(i, selected)) {
+			if active[i] && claimed(i, selected) {
 				active[i] = false
 			}
 		}
@@ -294,7 +293,7 @@ func (p *entryPlanner) follow(
 		return nil, err
 	}
 	application.Path = filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(application.Path)))
-	qualifies := seed && p.bootstrapRoot(root, &occurrence.Declaration, input, &application)
+	qualifies := seed && p.bootstrapRoot(root, occurrence, input, &application)
 	absolute, local := p.followTarget(root, input, application.Path, seed)
 
 	if absolute == "" {
@@ -366,7 +365,7 @@ func (p *entryPlanner) followOutput(
 	key.input = p.inputs[visit.occurrence.Declaration.Source]
 	configured := p.session.cfg.Input
 	if err != nil || !p.objects[key].VisibleGeneration ||
-		configured.OriginPath(p.session.cfg.Path) != input.OriginPath(absolute) {
+		!configured.MatchesOrigin(p.session.cfg.Path, input.OriginPath(absolute)) {
 		return children, err
 	}
 	if !slices.ContainsFunc(children, func(child selection.OccurrenceFacts) bool { return child.RequiresBuild }) {
@@ -403,7 +402,7 @@ func (p *entryPlanner) followTarget(
 	if !seed && local && cfg.Changes != nil && p.singleAnchoredRoot(root) {
 		scan, target := cfg.Input.OriginPath(cfg.Path), input.OriginPath(absolute)
 		// An anchored single entry has no cluster membership to learn from disjoint workloads.
-		if !safepath.Contains(scan, target) && !safepath.Contains(target, scan) {
+		if !kustpath.RelateHost(scan, target).Overlaps() {
 			return "", false
 		}
 	}
@@ -416,15 +415,16 @@ func (p *entryPlanner) singleAnchoredRoot(root *clusterRoot) bool {
 
 func (p *entryPlanner) bootstrapRoot(
 	root *clusterRoot,
-	declaration *selection.OccurrenceID,
+	occurrence *selection.OccurrenceFacts,
 	input *store.SourceArtifact,
 	application *manifest.EntryApplication,
 ) bool {
-	file := filepath.Join(declaration.Source, declaration.File)
-	packagePath := p.session.cfg.Input.OriginPath(filepath.Join(p.session.cfg.Input.LocalPath, root.Path))
-	origin := p.session.cfg.Input.OriginPath(filepath.Join(p.session.cfg.Input.LocalPath, application.Path))
-	entry := packagePath == p.session.cfg.Input.OriginPath(p.session.cfg.Path)
-	if !entry && !safepath.Contains(origin, file) && safepath.Contains(packagePath, origin) {
+	configured := p.session.cfg.Input
+	packagePath := configured.OriginPath(filepath.Join(configured.LocalPath, root.Path))
+	origin := configured.OriginPath(filepath.Join(configured.LocalPath, application.Path))
+	entry := configured.MatchesOrigin(p.session.cfg.Path, packagePath)
+	if !entry && safepath.Contains(packagePath, origin) &&
+		!containsDeclaration(origin, &occurrence.Declaration, occurrence.Mounted, configured) {
 		return false
 	}
 	if input == nil {
@@ -801,9 +801,7 @@ func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.S
 		if !valid {
 			continue
 		}
-		target := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(application.Path))
-		declaration := filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File)
-		if safepath.Contains(target, declaration) {
+		if _, contains := configuredApplicationTarget(input, application.Path, occurrence); contains {
 			return true
 		}
 	}

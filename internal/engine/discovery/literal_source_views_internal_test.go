@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/engine/selection"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
@@ -68,6 +70,106 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		assert.Equal(t, qualified.artifact == nil, true)
 		assert.Equal(t, a.session == nil, true)
 		assert.Equal(t, a.qualification.session == nil, true)
+	})
+	t.Run("overlapping aliases", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		root := filepath.Join(workspace, "input")
+		origin := filepath.Join(workspace, "physical")
+		parent := filepath.Join(workspace, "mount")
+		child := filepath.Join(parent, "nested")
+		st := store.New()
+		sources := &entrySourcePublisher{mutable: map[manifest.NamedResource]entryResolution{}}
+		loser := manifest.NamedResource{
+			Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "loser",
+		}
+		winner, outer := loser, loser
+		winner.Name, outer.Name = "winner", "parent"
+		projected := filepath.Join(origin, "projected")
+		for _, mount := range []struct {
+			id            manifest.NamedResource
+			local, origin string
+		}{
+			{id: outer, local: parent, origin: origin},
+			{id: winner, local: child, origin: projected},
+			{id: loser, local: child, origin: filepath.Join(origin, "other")},
+		} {
+			id := mount.id
+			object, _ := id.BindLocal(mount.local)
+			artifact := &store.SourceArtifact{
+				Provider: store.ProviderAlias, LocalPath: mount.local, LocalRoot: mount.origin, FS: fstest.MapFS{},
+			}
+			st.AddObject(object)
+			st.SetArtifact(id, artifact)
+			sources.record(id, &entryResolution{object: object, artifact: artifact})
+		}
+		sources.freeze()
+		a := &Admission{
+			input:           &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, LocalRoot: origin},
+			resolvedSources: sources,
+		}
+		var reads store.ReadSet
+		reads.Init(st, manifest.BootstrapSourceID, nil)
+		defer reads.Retire()
+		capture := entryCapture{
+			admission: a, reads: &reads, files: []string{"../mount/nested/first.yaml", "../mount/nested/second.yaml"},
+		}
+		assert.Equal(t, capture.mapFiles(), true)
+		assert.Diff(t, capture.files, []string{"projected/first.yaml", "projected/second.yaml"})
+		assert.Equal(t, reads.Valid(), true)
+
+		pinned := &manifest.GitRepository{Name: "pinned", Namespace: "apps"}
+		st.AddObject(pinned)
+		st.SetArtifact(pinned.Named(), &store.SourceArtifact{
+			Provider: store.ProviderCommit, LocalPath: origin, LocalRoot: origin, FS: fstest.MapFS{},
+		})
+		claim := &manifest.Kustomization{
+			Name: "pinned-claim", Namespace: "apps", Path: "./projected",
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: pinned.Name},
+		}
+		st.AddObject(claim)
+		l := loader.New(st)
+		t.Cleanup(l.Close)
+		d := Session{cfg: Config{Store: st}, loader: l, resolvedSources: sources}
+		assert.NoError(t, l.Admit(t.Context(), origin))
+		claims := d.pinnedWorkingTreeClaims(origin, l.PathObjects())
+		assert.Diff(t, claims.index.Claims, map[string][]manifest.NamedResource{"projected/": {claim.Named()}})
+
+		for _, file := range []struct{ name, path string }{
+			{name: "first", path: filepath.Join(child, "first.yaml")},
+			{name: "control", path: filepath.Join(parent, "control.yaml")},
+		} {
+			object := &manifest.ConfigMap{Name: file.name}
+			st.AddObject(object)
+			relative, err := filepath.Rel(origin, file.path)
+			assert.NoError(t, err)
+			l.Index.Records[object.Named()] = manifest.DiscoveryRecord{
+				File: filepath.ToSlash(relative),
+				Path: file.path,
+			}
+		}
+		assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), origin))
+		dirty := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first"}
+		control := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "control"}
+		assert.Equal(t, l.WorkingTreePath(filepath.Join(child, "first.yaml")), filepath.Join(projected, "first.yaml"))
+		_, indexed := l.Index.Lookup(dirty)
+		assert.Equal(t, indexed, false)
+		assert.Equal(t, st.GetObject(dirty) == nil, true)
+		_, indexed = l.Index.Lookup(control)
+		assert.Equal(t, indexed, true)
+		assert.Equal(t, st.GetObject(control) != nil, true)
+
+		assert.Equal(t, reads.Valid(), true)
+		replacement := *sources.snapshot()[loser].artifact
+		replacement.Content = manifest.Fingerprint("losing alias replacement")
+		st.SetArtifact(loser, &replacement)
+		assert.Equal(t, reads.Valid(), false)
+
+		var outsideReads store.ReadSet
+		outsideReads.Init(st, manifest.BootstrapSourceID, nil)
+		defer outsideReads.Retire()
+		capture.reads, capture.files = &outsideReads, []string{"../physical/unmounted.yaml"}
+		assert.Equal(t, capture.mapFiles(), false)
 	})
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {

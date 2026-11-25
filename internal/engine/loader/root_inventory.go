@@ -3,6 +3,7 @@ package loader
 import (
 	"path/filepath"
 
+	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -70,7 +71,8 @@ func (r *rootInventory) retainMembership() {
 func (r *rootInventory) removeSource(source string) {
 	for coordinate := range r.occurrences {
 		evidence := r.occurrences[coordinate]
-		if coordinate.declaration.Source == source || evidence.packageRoot {
+		file := filepath.Join(coordinate.declaration.Source, filepath.FromSlash(coordinate.declaration.File))
+		if evidence.packageRoot || kustpath.RelateHost(source, file).Contains() {
 			delete(r.occurrences, coordinate)
 			if r.identities[coordinate.identity] == evidence {
 				delete(r.identities, coordinate.identity)

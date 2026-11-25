@@ -1,6 +1,9 @@
 package orchestrator
 
 import (
+	"context"
+	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +13,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/engine/helm"
 	"github.com/home-operations/flate/internal/engine/selection"
+	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/testfixture"
@@ -21,14 +27,16 @@ func TestRenderTrees_EntryRenderFeedback(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, edit, marker string
-		renders            uint64
+		accepted           []string
 		policyOnly         bool
+		repeatMarker       bool
 	}{
-		{name: "omission", edit: "edit-omit", marker: "before", renders: 1},
-		{name: "convergence", marker: "after", renders: 2},
-		{name: "longer chain", edit: "edit-converge", marker: "after", renders: 3},
-		{name: "cycle", edit: "edit-cycle", marker: "middle", renders: 2},
-		{name: "policy only", marker: "before", renders: 1, policyOnly: true},
+		{name: "omission", edit: "edit-omit", marker: "before", accepted: []string{"before"}},
+		{name: "convergence", marker: "after", accepted: []string{"before", "after"}},
+		{name: "longer chain", edit: "edit-converge", marker: "after", accepted: []string{"before", "middle", "after"}},
+		{name: "cycle", edit: "edit-cycle", marker: "middle", accepted: []string{"before", "middle"}},
+		{name: "policy only", marker: "before", accepted: []string{"before"}, policyOnly: true},
+		{name: "equal markers", marker: "before", accepted: []string{"before", "before"}, repeatMarker: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -37,33 +45,20 @@ func TestRenderTrees_EntryRenderFeedback(t *testing.T) {
 			if step >= 0 {
 				fixture.Edit(t, fixture.Plan.Steps[step])
 			}
-			if tc.policyOnly {
-				const template = "charts/bootstrap/templates/instance.yaml"
-				original, err := os.ReadFile(filepath.Join(fixture.Repo, template))
-				assert.NoError(t, err)
-				policy := strings.Replace(string(original),
-					`- op: replace
-                    path: /spec/values/marker
-                    value: {{ default "after" .Values.result | quote }}`,
-					`- op: add
-                    path: /spec/upgrade
-                    value: {remediation: {retries: 3}}`, 1)
-				assert.FatalIf(t, policy == string(original), "missing feedback patch")
-				testutil.WriteFile(t, fixture.Repo, template, policy)
+			if tc.policyOnly || tc.repeatMarker {
+				writeEntryFeedbackPatch(t, fixture.Repo, tc.repeatMarker)
 			}
 			const path = "kubernetes/apps"
-			runs, err := renderTreesForTest(t.Context(), t, []Tree{{
-				ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
-				RepoRoot: fixture.Repo,
-				Path:     filepath.Join(fixture.Repo, path),
-				SelfURLs: []string{"https://example.invalid/fixture"},
-			}}, Config{Concurrency: 2, RecordWork: true})
-			assert.Equal(t, err != nil, tc.edit == "edit-cycle")
-			assert.FatalIf(t, len(runs) != 1 || runs[0].Result == nil, "missing render result: %v", runs)
-			run := &runs[0]
 			release := testutil.HelmReleaseID("flux-system", "flux-instance")
-			assert.Equal(t, workCounts(run.Result.Work, release, manifest.WorkHelm).Attempts, tc.renders)
-			assert.Equal(t, run.Err != nil, tc.edit == "edit-cycle")
+			run, witness := renderEntryFeedbackFixture(t, fixture.Repo, path, release)
+			cycle := tc.edit == "edit-cycle"
+			assert.Equal(t, run.Err != nil, cycle)
+			want := witness.expected(tc.accepted, tc.repeatMarker)
+			got := witness.acceptances()
+			assert.Diff(t, got, want)
+			assertEntryFeedbackWork(t, run, release, want)
+			t.Logf("accepted Helm keys and markers: %+v", got)
+			witness.assertRejection(run, want[0].Key, cycle)
 			if tc.policyOnly {
 				effective, ok := run.store.GetDeclaration(release).(*manifest.HelmRelease)
 				assert.FatalIf(t, !ok || effective.Upgrade == nil || effective.Upgrade.Remediation == nil,
@@ -85,6 +80,213 @@ func TestRenderTrees_EntryRenderFeedback(t *testing.T) {
 			t.Fatal("missing marker output")
 		})
 	}
+}
+
+func writeEntryFeedbackPatch(t *testing.T, repo string, repeatMarker bool) {
+	t.Helper()
+	const template = "charts/bootstrap/templates/instance.yaml"
+	original, err := os.ReadFile(filepath.Join(repo, template))
+	assert.NoError(t, err)
+	patch := `- op: add
+                    path: /spec/upgrade
+                    value: {remediation: {retries: 3}}`
+	if repeatMarker {
+		patch = `- op: add
+                    path: /spec/values/sequence
+                    value: second`
+	}
+	changed := strings.Replace(string(original),
+		`- op: replace
+                    path: /spec/values/marker
+                    value: {{ default "after" .Values.result | quote }}`, patch, 1)
+	assert.FatalIf(t, changed == string(original), "missing feedback patch")
+	testutil.WriteFile(t, repo, template, changed)
+}
+
+type entryFeedbackAcceptance struct {
+	Key, Marker string
+}
+
+func assertEntryFeedbackWork(
+	t *testing.T, run *Rendered, release manifest.NamedResource, accepted []entryFeedbackAcceptance,
+) {
+	t.Helper()
+	chart := manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindHelmChart,
+		Namespace: release.Namespace, Name: "flux-system-flux-instance",
+	}
+	want := make(map[manifest.WorkKey]manifest.WorkCounts, len(accepted))
+	for _, item := range accepted {
+		key := manifest.WorkKey{Tree: run.ID, Owner: release, Source: chart, Phase: manifest.WorkHelm, Input: item.Key}
+		want[key] = manifest.WorkCounts{Attempts: 1, Completed: 1}
+	}
+	assert.Equal(t, len(want), len(accepted))
+	got := make(map[manifest.WorkKey]manifest.WorkCounts)
+	for i := range run.Result.Work {
+		row := &run.Result.Work[i]
+		if row.Key.Owner == release && row.Key.Phase == manifest.WorkHelm {
+			got[row.Key] = row.Counts
+		}
+	}
+	assert.Diff(t, got, want)
+}
+
+type entryFeedbackEmission struct {
+	declaration *manifest.HelmRelease
+	receipt     *manifest.RenderReceipt
+	marker      string
+}
+
+type entryFeedbackWitness struct {
+	t         *testing.T
+	o         *Orchestrator
+	release   manifest.NamedResource
+	probe     *helm.Client
+	emissions []entryFeedbackEmission
+}
+
+func (w *entryFeedbackWitness) expected(markers []string, repeatMarker bool) []entryFeedbackAcceptance {
+	w.t.Helper()
+	pairs := make([]entryFeedbackAcceptance, 0, len(markers))
+	for i, marker := range markers {
+		expected := w.emissions[0].declaration.Clone()
+		expected.Values = maps.Clone(expected.Values)
+		expected.Values["marker"] = marker
+		if repeatMarker && i == 1 {
+			expected.Values["sequence"] = "second"
+		}
+		key := w.probeAdmission(w.t.Context(), expected, nil).Key
+		pairs = append(pairs, entryFeedbackAcceptance{Key: key, Marker: marker})
+	}
+	return pairs
+}
+
+func (w *entryFeedbackWitness) assertRejection(run *Rendered, firstKey string, cycle bool) {
+	w.t.Helper()
+	failure := run.Result.Failed[w.release]
+	assert.Equal(w.t, failure.Status == store.StatusFailed, cycle)
+	if !cycle {
+		return
+	}
+	hr, ok := w.o.store.GetDeclaration(w.release).(*manifest.HelmRelease)
+	assert.FatalIf(w.t, !ok, "missing rejected Helm declaration")
+	rejected := w.probeAdmission(w.t.Context(), hr, nil).Key
+	assert.Equal(w.t, rejected, firstKey)
+	w.t.Logf("rejected Helm key: %q", rejected)
+	const diagnostic = "generated sync root requests a previous Helm render key"
+	assert.Equal(w.t, failure.Message, diagnostic)
+	assert.Equal(w.t, slices.ContainsFunc(run.Result.Warnings, func(warning manifest.Warning) bool {
+		return warning.Resource == w.release && warning.Category == manifest.WarnDependencyCycle &&
+			warning.Message == diagnostic
+	}), true)
+}
+
+func (w *entryFeedbackWitness) probeAdmission(
+	ctx context.Context, hr *manifest.HelmRelease, previous *helm.RenderAdmission,
+) helm.RenderAdmission {
+	w.t.Helper()
+	sources := helm.NewSources(w.o.store, w.o.index)
+	prepared, err := helm.Prepare(hr, sources.Declaration, nil, w.probe.ValuesCache())
+	assert.NoError(w.t, err)
+	var observed helm.RenderAdmission
+	stop := errors.New("stop before Helm rendering")
+	_, _, err = w.probe.Template(ctx, prepared, prepared.Values, helm.RenderOptions{
+		Options: w.o.hrc.Options, Sources: sources, Previous: previous,
+		Admit: func(admission helm.RenderAdmission) (bool, error) {
+			observed = admission
+			return false, stop
+		},
+	})
+	assert.Equal(w.t, errors.Is(err, stop), true)
+	assert.Equal(w.t, observed.Key != "", true)
+	return observed
+}
+
+func (w *entryFeedbackWitness) matchesReceipt(
+	ctx context.Context, hr *manifest.HelmRelease, key string, receipt *manifest.RenderReceipt,
+) bool {
+	admission := w.probeAdmission(ctx, hr, &helm.RenderAdmission{Key: key, Accepted: true, Receipt: receipt})
+	return admission.Accepted && admission.Key == key && admission.Receipt == receipt
+}
+
+func (w *entryFeedbackWitness) observe(id manifest.NamedResource, payload any) {
+	w.t.Helper()
+	if id != w.release {
+		return
+	}
+	emission, ok := payload.(*store.Emission)
+	if !ok || !emission.Complete || emission.Render == nil {
+		return
+	}
+	hr, ok := w.o.store.GetDeclaration(id).(*manifest.HelmRelease)
+	if !ok {
+		w.t.Error("accepted Helm emission is missing its declaration")
+		return
+	}
+	for i := range emission.Manifests {
+		doc := emission.Manifests[i].Document
+		if doc["kind"] != manifest.KindConfigMap || manifest.DocMetadata(doc).Name != "witness" {
+			continue
+		}
+		data, _ := doc["data"].(map[string]any)
+		marker, _ := data["marker"].(string)
+		w.emissions = append(
+			w.emissions,
+			entryFeedbackEmission{declaration: hr, receipt: emission.Render, marker: marker},
+		)
+		return
+	}
+	w.t.Error("accepted Helm emission is missing the witness marker")
+}
+
+func (w *entryFeedbackWitness) acceptances() []entryFeedbackAcceptance {
+	w.t.Helper()
+	ctx := w.t.Context()
+	accepted := make([]entryFeedbackAcceptance, 0, len(w.emissions))
+	for i := range w.emissions {
+		emission := &w.emissions[i]
+		key := w.probeAdmission(ctx, emission.declaration, nil).Key
+		assert.FatalIf(w.t, !w.matchesReceipt(ctx, emission.declaration, key, emission.receipt),
+			"accepted Helm receipt does not match key %q", key)
+		item := entryFeedbackAcceptance{Key: key, Marker: emission.marker}
+		if n := len(accepted); n != 0 {
+			last := accepted[n-1]
+			if last == item {
+				continue
+			}
+			// Equal markers must not let a receipt from a different key pass.
+			if last.Marker == item.Marker {
+				assert.Equal(w.t, w.matchesReceipt(ctx, emission.declaration, key, w.emissions[i-1].receipt), false)
+			}
+		}
+		accepted = append(accepted, item)
+	}
+	return accepted
+}
+
+func renderEntryFeedbackFixture(
+	t *testing.T, repo, path string, release manifest.NamedResource,
+) (*Rendered, *entryFeedbackWitness) {
+	t.Helper()
+	invocation := prepareOrderingTrees(t, []Tree{{
+		ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		RepoRoot: repo,
+		Path:     filepath.Join(repo, path),
+		SelfURLs: []string{"https://example.invalid/fixture"},
+	}}, &Config{Concurrency: 2, RecordWork: true})
+	run := &invocation.results[0]
+	o := run.Orchestrator
+	cache, err := sourcecache.New(t.Context(), "")
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, cache.Close()) })
+	witness := &entryFeedbackWitness{t: t, o: o, release: release, probe: helm.NewClient(cache, nil)}
+	// A retained assessment can publish during settlement without re-entering the controller.
+	unsubscribe := o.store.AddListener(store.EventArtifactUpdated, witness.observe, false)
+	defer unsubscribe()
+	invocation.renderTrees(t.Context())
+	assert.FatalIf(t, run.Result == nil || len(witness.emissions) == 0, "missing accepted render result: %v", run.Err)
+	t.Cleanup(run.Result.Close)
+	return run, witness
 }
 
 func TestRenderTrees_EntryQualificationLatePrivateDependencies(t *testing.T) {

@@ -182,6 +182,7 @@ func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 		}
 	}
 	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true, Selection: selection.Request{Changed: true}}
+	admissionInput := witnessAdmissionInput()
 	var first [2]string
 	for _, regime := range []string{"cold", "warm"} {
 		runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
@@ -192,7 +193,7 @@ func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 			for i := range run.Result.Work {
 				row := &run.Result.Work[i]
 				if row.Key.Owner == (manifest.NamedResource{}) && row.Key.Phase == manifest.WorkPreparation &&
-					row.Key.Input == "admission" {
+					row.Key.Input == admissionInput {
 					counts += row.Counts.OwnerPrepares
 				}
 			}

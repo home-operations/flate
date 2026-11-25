@@ -114,18 +114,28 @@ type BuiltInput struct {
 	Root          string
 	Owner, Source manifest.NamedResource
 	Reads         map[string]bool
-	// RegisterBuilt owns Support on every call, including rejection.
+	// BuiltInventory leaves Support with the caller. RegisterBuilt takes it for other outcomes.
 	Support *store.ReadSet
 	// PrepareDocuments stamps a private authored document for comparison with build output.
 	PrepareDocuments func(manifest.BaseManifest, []manifest.DocOccurrence)
 }
+
+// BuiltPublication distinguishes reusable inventory from an installed declaration batch.
+type BuiltPublication uint8
+
+// Publication progresses from rejection through reusable inventory to installed declarations.
+const (
+	BuiltRejected BuiltPublication = iota
+	BuiltInventory
+	BuiltRegistered
+)
 
 // RegisterBuilt MUST receive sanitized immutable build output and retire support in publication order.
 func (l *Loader) RegisterBuilt(
 	ctx context.Context,
 	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
 	docs []store.Child,
-) error {
+) (BuiltPublication, error) {
 	retained := false
 	defer func() {
 		if !retained {
@@ -134,56 +144,40 @@ func (l *Loader) RegisterBuilt(
 	}()
 	switch err := ctx.Err(); {
 	case err != nil:
-		return err
+		return BuiltRejected, err
 	case l.frozen || input.Support == nil || !input.Support.Valid():
-		return nil
+		return BuiltRejected, nil
 	}
+	docs = slices.Clone(docs)
 	if scope := l.EntryScope(input.Owner); scope != nil {
-		docs = slices.DeleteFunc(slices.Clone(docs), func(child store.Child) bool {
+		docs = slices.DeleteFunc(docs, func(child store.Child) bool {
 			return !scope.Allows(child.Obj.Named())
 		})
 	}
+	previous := l.builtBatches[input.Owner]
 	root := input.Root
 	var inputs builtInputs
-	var selected map[string]bool
 	scopeRoot, builder := l.SourceRoot, filepath.ToSlash(root)
 	if filepath.IsAbs(root) {
 		sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
 		var admitted bool
 		var err error
 		scopeRoot, admitted, err = l.admitBuiltRoot(ctx, &input, sourceRoot)
-		if err != nil || !admitted {
-			return err
+		switch {
+		case err != nil || !input.Support.Valid():
+			return BuiltRejected, err
+		case !admitted && previous != nil && previous.input.Support == input.Support:
+			retained = true
+			return BuiltRegistered, nil
+		case !admitted:
+			retained = true
+			return BuiltInventory, nil
 		}
 		rel, _ := filepath.Rel(sourceRoot, root)
-		selected = map[string]bool{}
-		inputs = l.selectBuiltInputs(sourceRoot, rel, &input, selected)
+		inputs = l.selectBuiltInputs(sourceRoot, rel, &input, map[string]bool{})
 		builder = l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
 	}
-	records, locations, authored := make([]manifest.DiscoveryRecord, len(docs)),
-		make([]authoredOccurrence, len(docs)), map[manifest.NamedResource]store.Child{}
-	for i := range docs {
-		record, original := l.builtRecord(&input, docs[i].Obj, &inputs, builder)
-		records[i] = record
-		locations[i] = l.locations[docs[i].Obj.Named()]
-		if original.Obj != nil {
-			authored[docs[i].Obj.Named()] = original
-		}
-	}
-	l.removeReplacedRecords(new(input), authored, selected)
-	for i := range docs {
-		if locations[i].Declaration != (occurrenceID{}) {
-			l.locations[docs[i].Obj.Named()] = locations[i]
-		}
-	}
-	previous := l.builtBatches[input.Owner]
-	input.Reads = maps.Clone(input.Reads)
-	// Directory membership and node-kind probes MUST NOT claim descendant content.
-	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
-	l.publishBuiltRecords(
-		&builtBatch{input: &input, documents: slices.Clone(docs), builder: builder},
-		docs, records, authored,
-	)
+	l.replaceBuiltRecords(&input, docs, &inputs, builder)
 	if filepath.IsAbs(root) {
 		rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
 		l.refreshNativeBuildFacts(root, rebuild)
@@ -194,7 +188,62 @@ func (l *Loader) RegisterBuilt(
 	if previous != nil && previous.input.Support != input.Support {
 		l.Store.Retire(previous.input.Support)
 	}
-	return err
+	if !retained {
+		return BuiltRejected, err
+	}
+	return BuiltRegistered, err
+}
+
+type retainedBuiltChild struct {
+	authored store.Child
+	reuse    bool
+}
+
+func (l *Loader) replaceBuiltRecords(
+	input *BuiltInput, docs []store.Child, inputs *builtInputs, builder string,
+) {
+	records, locations, retainedChildren := make([]manifest.DiscoveryRecord, len(docs)),
+		make([]authoredOccurrence, len(docs)), map[manifest.NamedResource]retainedBuiltChild{}
+	for i := range docs {
+		child := &docs[i]
+		id := child.Obj.Named()
+		record, authored := l.builtRecord(input, child.Obj, inputs, builder)
+		retained := retainedBuiltChild{authored: authored}
+		if built := l.builtRoots[id]; built.batch != nil {
+			previous, _ := l.Index.Lookup(id)
+			oldChild := &built.batch.documents[built.index]
+			if previous.BuilderOwner == input.Owner && previous.Declaration == oldChild.Obj &&
+				previous.Equal(record) && sameBuiltChild(oldChild, child) {
+				record.Declaration, child.Obj = oldChild.Obj, oldChild.Obj
+				retained.reuse = true
+			}
+		}
+		records[i] = record
+		locations[i] = l.locations[id]
+		if authored.Obj != nil || retained.reuse {
+			retainedChildren[id] = retained
+		}
+	}
+	l.removeReplacedRecords(input, retainedChildren, inputs.selected)
+	for i := range docs {
+		if locations[i].Declaration != (occurrenceID{}) {
+			l.locations[docs[i].Obj.Named()] = locations[i]
+		}
+	}
+	input.Reads = maps.Clone(input.Reads)
+	// Directory membership and node-kind probes MUST NOT claim descendant content.
+	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
+	l.publishBuiltRecords(
+		&builtBatch{input: input, documents: docs, builder: builder},
+		records, retainedChildren,
+	)
+}
+
+func sameBuiltChild(a, b *store.Child) bool {
+	return store.SameDeclarationContent(a, b) &&
+		slices.EqualFunc(a.Warnings, b.Warnings, func(a, b manifest.Warning) bool {
+			return a.Subject == b.Subject && a.Count == b.Count
+		})
 }
 
 func (l *Loader) builtRecord(
@@ -376,7 +425,10 @@ type builtRoot struct {
 	index int
 }
 
-type builtInputs struct{ inputs, shared []string }
+type builtInputs struct {
+	inputs, shared []string
+	selected       map[string]bool
+}
 
 func (l *Loader) selectBuiltInputs(
 	sourceRoot, rel string,
@@ -419,16 +471,16 @@ func (l *Loader) selectBuiltInputs(
 	}
 	slices.Sort(inputs)
 	slices.Sort(shared)
-	return builtInputs{inputs: slices.Compact(inputs), shared: slices.Compact(shared)}
+	return builtInputs{inputs: slices.Compact(inputs), shared: slices.Compact(shared), selected: selected}
 }
 
 func (l *Loader) removeReplacedRecords(
 	inputValue *BuiltInput,
-	authored map[manifest.NamedResource]store.Child,
+	retainedChildren map[manifest.NamedResource]retainedBuiltChild,
 	selected map[string]bool,
 ) {
 	input := *inputValue
-	l.removeBuiltBatch(&input, authored)
+	l.removeBuiltBatch(&input, retainedChildren)
 	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range l.Index.Files() {
 		if id == input.Owner {
@@ -437,7 +489,7 @@ func (l *Loader) removeReplacedRecords(
 		if record.Builder != "" && record.BuilderOwner != input.Owner {
 			continue
 		}
-		if _, retained := authored[id]; retained {
+		if _, retained := retainedChildren[id]; retained {
 			continue
 		}
 		if record.Builder == "" && slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
@@ -468,7 +520,7 @@ func (l *Loader) removeReplacedRecords(
 	}
 }
 
-func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.NamedResource]store.Child) {
+func (l *Loader) removeBuiltBatch(input *BuiltInput, retainedChildren map[manifest.NamedResource]retainedBuiltChild) {
 	previous := l.builtBatches[input.Owner]
 	if previous == nil {
 		return
@@ -481,7 +533,7 @@ func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.Named
 		if !ok || id == input.Owner || record.Declaration != child.Obj || record.BuilderOwner != input.Owner {
 			continue
 		}
-		if _, retained := authored[id]; retained {
+		if _, retained := retainedChildren[id]; retained {
 			continue
 		}
 		if existing := l.Store.GetObject(id); existing != nil &&
@@ -576,9 +628,8 @@ func (l *Loader) setBuiltProduction(
 
 func (l *Loader) publishBuiltRecords(
 	batch *builtBatch,
-	docs []store.Child,
 	records []manifest.DiscoveryRecord,
-	authored map[manifest.NamedResource]store.Child,
+	retainedChildren map[manifest.NamedResource]retainedBuiltChild,
 ) {
 	if l.builtBatches == nil {
 		l.builtBatches = map[manifest.NamedResource]*builtBatch{}
@@ -590,29 +641,31 @@ func (l *Loader) publishBuiltRecords(
 	if l.builtRoots == nil {
 		l.builtRoots = make(map[manifest.NamedResource]builtRoot)
 	}
-	for i := range docs {
-		child := docs[i]
+	for i := range batch.documents {
+		child := batch.documents[i]
 		obj := child.Obj
 		id := obj.Named()
 		if id == batch.input.Owner {
 			continue
 		}
 		l.builtRoots[id] = builtRoot{batch: batch, index: i}
+		retained := retainedChildren[id]
 		independent := selection.Root(l.roots.get(id).view()).Independent
-		if existing := l.Store.GetObject(
-			id,
-		); !independent && existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
-			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
-			l.Store.DeleteObject(id)
-		}
-		if !independent {
+		if !independent && !retained.reuse {
+			if existing := l.Store.GetObject(id); existing != nil &&
+				l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+				(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
+				l.Store.DeleteObject(id)
+			}
 			delete(l.admitted, id)
 		}
 		l.Index.Records[id] = records[i]
-		if original, retained := authored[id]; retained {
-			child = original
+		switch {
+		case retained.authored.Obj != nil:
+			l.candidates[id] = retained.authored
+		case !retained.reuse:
+			l.candidates[id] = child
 		}
-		l.candidates[id] = child
 	}
 }
 

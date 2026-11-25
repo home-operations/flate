@@ -737,18 +737,17 @@ func (w *qualificationWalk) prepare(
 		w.q.pending = true
 		return nil
 	}
-	prepared, known := w.q.session.prepared[ks.Named()]
-	reused := known && prepared.registered && prepared.matches(ks, input, support)
-	if err := w.q.session.prepareEntryPackage(ctx, ks, input, support); err != nil {
+	prepared, err := w.q.session.prepareEntryPackage(ctx, ks, input, support)
+	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("context: %w", ctx.Err())
 		}
 		return nil
 	}
-	if frame := w.q.session.prepared[ks.Named()]; frame == nil || !frame.registered {
+	if frame := w.q.session.prepared[ks.Named()]; frame == nil || frame.publication == loader.BuiltRejected {
 		return nil
 	}
-	w.q.changed = w.q.changed || !reused
+	w.q.changed = w.q.changed || prepared
 	w.q.pending = !w.reads.Valid()
 	return nil
 }

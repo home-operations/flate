@@ -50,9 +50,10 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	}
 	target := filepath.Join(root, "target")
 	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "target", manifest.NamedResource{}).Named()
-	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+	_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 		Root: target, Owner: owner, Source: manifest.BootstrapSourceID,
-	}), nil))
+	}), nil)
+	assert.NoError(t, registrationErr)
 	doc := l.documents.cache[target]
 	doc.selected = true
 	l.documents.cache[target] = doc

@@ -87,7 +87,7 @@ func (d *Session) prepareEnclosingPackages(ctx context.Context, input *store.Sou
 	}
 	for _, path := range packages {
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, path, manifest.NamedResource{})
-		if err := d.prepareLookupPackage(ctx, owner, input, nil); err != nil {
+		if _, err := d.prepareLookupPackage(ctx, owner, input, nil); err != nil {
 			return err
 		}
 	}
@@ -291,22 +291,24 @@ func (a *Admission) qualifyLookupOwner(
 		return origin, nil
 	}
 	if material.Provider == store.ProviderGenerator {
-		return origin, d.prepareLookupPackage(ctx, ks, material, evidence.document)
+		_, err = d.prepareLookupPackage(ctx, ks, material, evidence.document)
+		return origin, err
 	}
-	if _, err := d.resolveEntrySource(ctx, a, application.Source, &entrySourceGroup{
+	if _, resolveErr := d.resolveEntrySource(ctx, a, application.Source, &entrySourceGroup{
 		reference: sourceReference(ks, application.Source),
 		object:    evidence.generatedSource,
 		projected: evidence.generatedSource != nil,
 		entry:     true,
-	}); err != nil {
-		return "", err
+	}); resolveErr != nil {
+		return "", resolveErr
 	}
 	published, _ := d.cfg.Store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	evidence.source.artifact = published
 	if !published.Available() || !a.applicationReach(evidence) {
 		return origin, nil
 	}
-	return origin, d.prepareLookupPackage(ctx, ks, published, evidence.document)
+	_, err = d.prepareLookupPackage(ctx, ks, published, evidence.document)
+	return origin, err
 }
 
 func (d *Session) awaitLookupSource(admission *Admission, inventory []store.Child, source manifest.NamedResource) {
@@ -347,7 +349,7 @@ func (d *Session) LookupSources() []selection.LookupSource {
 
 func (d *Session) prepareLookupPackage(
 	ctx context.Context, owner *manifest.Kustomization, input *store.SourceArtifact, document map[string]any,
-) error {
+) (bool, error) {
 	id := owner.Named()
 	entry := d.cfg.Input.OriginPath(d.cfg.Path)
 	restricted := input.LocalPath != "" && input.WorkingTree() &&
@@ -358,23 +360,47 @@ func (d *Session) prepareLookupPackage(
 	case !restricted:
 		d.loader.SetEntryScope(id, nil)
 	}
+	previous := d.prepared[id]
 	frame, err := d.lookupInventory(ctx, owner, input, requiredLookup)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !frame.inventoryReady() {
 		if restricted && !frame.complete {
 			d.loader.AdmitDeclarations([]store.Declaration{{Obj: owner, Doc: document}})
 		}
-		return nil
+		return false, nil
 	}
+	scope, match := d.lookupScope(ctx, frame, entry, restricted)
+	if match && ctx.Err() == nil {
+		d.loader.AdmitDeclarations([]store.Declaration{{Obj: owner, Doc: document}})
+	}
+	scopeChanged := scope != nil && d.loader.SetEntryScope(id, scope)
+	if canceled := ctx.Err(); canceled != nil {
+		return false, canceled
+	}
+	if !match {
+		return frame.support.Valid() && (frame != previous || scopeChanged && scope.Current()), nil
+	}
+	registered, err := d.registerProducer(ctx, frame)
+	return registered || err == nil && scopeChanged && scope.Current(), err
+}
+
+func (d *Session) lookupScope(
+	ctx context.Context, frame *declarationPreparation, entry string, restricted bool,
+) (*selection.EntryScope, bool) {
+	id, input := frame.owner.Named(), frame.source
 	matches := d.cfg.Selection.Matches
 	match := matches(id) || slices.ContainsFunc(frame.children, func(child store.Child) bool {
 		return matches(child.Obj.Named())
 	})
 	var scope *selection.EntryScope
 	if restricted {
-		scope = &selection.EntryScope{Preparation: &frame.support, Source: input, SourceID: owner.EffectiveSourceID()}
+		scope = &selection.EntryScope{
+			Preparation: &frame.support,
+			Source:      input,
+			SourceID:    frame.owner.EffectiveSourceID(),
+		}
 		if match {
 			scope.Children, frame.lookupErr = d.entryMembership(ctx, frame, entry)
 		}
@@ -384,16 +410,7 @@ func (d *Session) prepareLookupPackage(
 		}
 		match = frame.lookupErr == nil && (matches(id) || slices.ContainsFunc(frame.children, matchesInside))
 	}
-	if match && ctx.Err() == nil {
-		d.loader.AdmitDeclarations([]store.Declaration{{Obj: owner, Doc: document}})
-	}
-	if scope != nil {
-		d.loader.SetEntryScope(id, scope)
-	}
-	if !match || ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return d.registerProducer(ctx, frame)
+	return scope, match
 }
 
 type lookupMode uint8

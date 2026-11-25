@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  demo/demo
+  ✓  Kustomization  flux-system/cluster-apps
+  ✓  HelmRelease    demo/demo
+
+  ✓ 3 passed   <DUR>

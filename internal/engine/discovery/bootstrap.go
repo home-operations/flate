@@ -406,6 +406,7 @@ type Admission struct {
 	resolvedSources       *entrySourcePublisher
 	input                 *store.SourceArtifact
 	path                  string
+	entryCoordinates      *entryCoordinates
 	remotes               []string
 	// Construction MUST finish all view writes before runtime admission.
 	aliasViews    sourceViews
@@ -445,6 +446,7 @@ func (d *Session) admission() *Admission {
 		generatorPackages: d.generatorPackages,
 		input:             input,
 		path:              d.cfg.Path,
+		entryCoordinates:  d.entryCoordinates,
 		remotes:           d.remotes,
 		aliasViews:        maps.Clone(d.aliasViews),
 		resolvedSources:   d.resolvedSources,
@@ -454,7 +456,7 @@ func (d *Session) admission() *Admission {
 		session:           d,
 	}
 	admission.requestedEntry = manifest.EntryApplication{
-		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),
+		Source: manifest.BootstrapSourceID, Path: admission.relativeInventoryPath(d.cfg.Path),
 	}
 	d.entryState = entryQualification{
 		changedOnly: d.cfg.Selection.Changed,

@@ -1787,6 +1787,12 @@ They require a successful diff and changed-only build with complete output.
 
 `multi-cluster/root-partition`: Repository-root discovery uses three explicit bootstrap roots and retains colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
 
+`multi-cluster/filtered-bootstrap`: Two clusters apply different source filters to the same checkout. Their bootstrap declarations sit in native packages below the sync paths. The root build includes both bootstrap inventories. The root and scoped diffs report the changed ConfigMap and Namespace. The root keeps the unchanged cluster separate.
+
+`multi-cluster/filtered-workload-only`: Edit only the main cluster ConfigMap. Compare the complete root and scoped diff output. The sibling cluster reports no changes.
+
+`multi-cluster/filtered-sync-builder` and `multi-cluster/filtered-sync-builder-reverse`: Add a builder at the main cluster sync path on one revision. Compare both full builds and both diff directions at the repository root and the sync path. The ConfigMap and Namespace exchange their complete old and new documents.
+
 `multi-cluster/chart-sync`: A local Helm chart emits a FluxInstance in each of two sibling cluster paths. Root build and test keep the two copies of `cluster-info` and `cluster-apps` in their own clusters. The root diff contains one cluster's edit and leaves the other cluster unchanged.
 
 `multi-cluster/chart-sync-overlap`: The authored `flux-instance` Kustomization and the generated `flux-system` Kustomization apply the same nested package. Both builds require one copy of each disputed resource, with the generated root's owner label and one warning naming both producers.

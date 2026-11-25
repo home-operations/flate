@@ -254,7 +254,8 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 	for publication := a.applications.Load(); publication != nil; publication = publication.next {
 		appliers = append(appliers, publication.object)
 	}
-	err := a.qualifyEntry(t.Context(), st, nil)
+	walk := qualificationWalk{admission: a, store: st, inventory: a.inventoryPath()}
+	err := walk.qualifyEntry(t.Context())
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(appliers) != 1, "qualifying publications: got %d, want 1", len(appliers))
 	assert.Equal(t, appliers[0], manifest.BaseManifest(applier))
@@ -340,7 +341,7 @@ func TestBindEntry_PackageStatFailure(t *testing.T) {
 		"kustomization.yml":  {Data: []byte("resources: []\n")},
 	}}
 	a := Admission{input: &store.SourceArtifact{FS: input}}
-	entry, err := a.literalEntry(".")
+	entry, err := a.literalEntry("", ".")
 	assert.NoError(t, err)
 	assert.FatalIf(t, entry == nil, "no entry after an earlier builder stat failed")
 }

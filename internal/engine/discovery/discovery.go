@@ -93,16 +93,14 @@ type Config struct {
 // Session retains invocation-local declaration construction until Freeze.
 type Session struct {
 	bootstrapInput         *store.SourceArtifact
-	entryBuilderInput      *store.SourceArtifact
-	entryBuilderPath       string
-	entryBuilder           string
+	entryBuilder           entryBuilderLookup
 	aggregate              bool
 	aggregateRequiresBuild bool
 	entryPackagesToQualify [][]selection.OccurrenceFacts
-	partitionedEntry       bool
 	generatorPackages      []string
 	publicOperands         []manifest.NamedResource
 	entryPackages          []*plannedPackage
+	entryCoordinates       *entryCoordinates
 	planner                *entryPlanner
 	packages               []loader.PackageEvidence
 	planLoaded             bool
@@ -340,20 +338,35 @@ func newDiscoverer(config *Config) *Session {
 		return d
 	}
 	matched := cfg.Entry.matches(input, cfg.Path)
-	if !matched && (input != cfg.Entry.Input || cfg.Path != cfg.Entry.Path) {
+	if !matched && (cfg.Path != cfg.Entry.Path ||
+		!input.SameMaterial(cfg.Entry.Input, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)) {
 		return d
 	}
 	if matched {
 		l.Options.ParsedInputs = prepared.parsed
 		d.entryPackages = prepared.packages
-	} else if cfg.Projections == nil {
-		l.Options.Projections = prepared.projections
+	} else {
+		if cfg.Projections == nil {
+			l.Options.Projections = prepared.projections
+		}
+		// Only bootstrap recipes survive a parser view change.
+		for _, pkg := range prepared.packages {
+			if pkg.render.owner.Path == cfg.Entry.packagePath {
+				d.entryPackages = append(d.entryPackages, pkg)
+			}
+		}
 	}
 	d.aliasViews = maps.Clone(prepared.aliasViews)
 	d.entryPackagesToQualify = prepared.packagesToQualify
 	d.generatorPackages = prepared.generatorPackages
+	d.entryCoordinates = &entryCoordinates{partitioned: cfg.Entry.partitioned}
+	if cfg.Entry.packagePath != "" {
+		d.entryCoordinates.packagePath = filepath.Join(input.LocalPath, cfg.Entry.packagePath)
+	}
+	if builder := cfg.Entry.builder; builder != nil {
+		d.entryBuilder = entryBuilderLookup{input: cfg.Entry.Input, path: cfg.Entry.target, file: *builder}
+	}
 	d.cfg.Entry = cfg.Entry
-	d.partitionedEntry = cfg.Entry.partitioned
 	d.cfg.Path = cmp.Or(cfg.Entry.target, cfg.Path)
 	d.aggregate, d.aggregateRequiresBuild = cfg.Entry.aggregate, prepared.unknown
 	return d
@@ -365,17 +378,16 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 	l.SourceRoot = repoRoot
 
 	total, rounds := 0, 0
-	if err := d.loadEntryInput(ctx, l, &total); err != nil {
-		return err
-	}
-	registeredPackage, err := d.preparePlannedPackages(ctx)
+	registeredPackage, err := d.loadEntryPreparation(ctx, &total)
 	if err != nil {
 		return err
 	}
-	// Projection can change a source reference, which MUST resolve before its path enters scope construction.
-	l.PreferExisting = true
-	var pending []sourceExpansion
-	indexedForQualification := false
+	var (
+		pending                 []sourceExpansion
+		added                   int
+		loadErr                 error
+		indexedForQualification bool
+	)
 	for prepared := true; prepared; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -386,8 +398,7 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		}
 		kustomizations := d.loader.Kustomizations()
 		pending = d.enqueueExpansions(kustomizations, pending[:0])
-		next, added, loadErr := d.loadExpansions(ctx, repoRoot, pending, &total)
-		pending = next
+		pending, added, loadErr = d.loadExpansions(ctx, repoRoot, pending, &total)
 		switch {
 		case loadErr != nil:
 			return loadErr
@@ -549,19 +560,26 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 			previous, _ := d.cfg.Store.GetObject(d.binding.Producer).(*manifest.Kustomization)
 			return previous, nil
 		}
-		accepted, err := d.commitBinding(ctx, root, &binding)
+		accepted, err := d.installBinding(ctx, root, &binding)
 		if err != nil {
 			return nil, err
 		}
-		if accepted == (Binding{}) {
-			continue
+		if accepted {
+			return root, nil
 		}
-		d.binding = accepted
-		if root != nil {
-			d.entryApplier = manifest.DiagnosticFor(root.Named(), root).Resource
-		}
-		return root, nil
 	}
+}
+
+func (d *Session) installBinding(ctx context.Context, root *manifest.Kustomization, binding *Binding) (bool, error) {
+	accepted, err := d.commitBinding(ctx, root, binding)
+	if err != nil || accepted == (Binding{}) {
+		return false, err
+	}
+	d.binding = accepted
+	if root != nil {
+		d.entryApplier = manifest.DiagnosticFor(root.Named(), root).Resource
+	}
+	return true, nil
 }
 
 func (d *Session) prepareRequest(request *selection.PrepareRequest) selection.PrepareRequest {

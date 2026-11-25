@@ -1,0 +1,8 @@
+resources: [gotk-sync.yaml, ns.yaml]
+patches:
+- patch: |-
+    - op: add
+      path: /metadata/labels
+      value: {patched: "true"}
+  target:
+    kind: Namespace

@@ -326,3 +326,91 @@ func TestAdmission_EmptyRootOwnerInventoryShared(t *testing.T) {
 	assert.Equal(t, len(closure.ownerCandidates), 0)
 	assert.Equal(t, reader.lists, 2*expected)
 }
+
+func TestAdmission_AuthoredInputOutsideBootstrapInventory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                                        string
+		inside, needed, nonSource, unloaded         bool
+		bootstrap, inactive, indexOnly, transformed bool
+		noRootOccurrence, want                      bool
+	}{
+		{name: "needed outside inventory", needed: true, want: true},
+		{name: "located outside inventory without root occurrence", needed: true, noRootOccurrence: true, want: true},
+		{name: "transformed source outside inventory", needed: true, transformed: true},
+		{name: "unrequested outside inventory"},
+		{name: "needed inside inventory", inside: true, needed: true},
+		{name: "non-source", nonSource: true, needed: true},
+		{name: "unloaded source", unloaded: true, needed: true},
+		{name: "bootstrap source", bootstrap: true, needed: true},
+		{name: "inactive source", inactive: true, needed: true},
+		{name: "index-only source", indexOnly: true, needed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			dir := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: dir, Provider: store.ProviderInput, FS: fstest.MapFS{}}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			var object manifest.BaseManifest = &manifest.HelmRepository{Name: "repository", Namespace: "apps"}
+			if tc.nonSource {
+				object = &manifest.ConfigMap{Name: "values", Namespace: "apps"}
+			}
+			id := object.Named()
+			owner := (&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "apps"}).Named()
+			file := filepath.Join(dir, "apps", "repository.yaml")
+			record := manifest.DiscoveryRecord{Path: file, Parent: owner, Authored: id}
+			if tc.transformed {
+				record.Productions = []manifest.Production{{
+					Source: manifest.BootstrapSourceID, Owner: owner, Authored: id,
+					Declaration: owner, Path: file, File: "apps/repository.yaml",
+				}}
+			}
+			occurrence := OccurrenceFacts{
+				Identity: id, Authored: id, Catalog: object, CatalogKnown: true, Mounted: input,
+				Declaration: OccurrenceID{Source: dir, File: "apps/repository.yaml"},
+			}
+			eligibility := RootEligible
+			if tc.inactive {
+				eligibility = RootInactive
+			}
+			occurrences := map[manifest.NamedResource]OccurrenceFacts{id: occurrence}
+			if tc.indexOnly {
+				occurrence = OccurrenceFacts{}
+				delete(occurrences, id)
+			}
+			if tc.noRootOccurrence {
+				occurrence = OccurrenceFacts{}
+			}
+			facts := &solverFacts{
+				store:   st,
+				context: SourceContext{Root: dir},
+				index: manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: record},
+				},
+				occurrences: occurrences,
+				roots: map[manifest.NamedResource]RootEvidence{id: {
+					Identity: id, Record: RootRecordFrom(&record), Occurrence: occurrence,
+					Scope: RootScopeFacts{
+						Path: file, Eligibility: eligibility, NamespaceEligible: true,
+						Loaded:    !tc.unloaded && !tc.indexOnly,
+						Bootstrap: tc.bootstrap, EntryKustomize: true, OutsideInventory: !tc.inside,
+						Owners: []RootOwnerFacts{{Identity: owner}},
+					},
+				}},
+			}
+			c := solverClosure(t, st, facts)
+			c.states[id] = admissionState{role: admissionRole{needed: tc.needed}}
+			evidence := declarationEvidence{owner: owner}
+			c.classifyAuthoredDeclaration(id, &evidence)
+			assert.Equal(t, evidence.authored, tc.want)
+			assert.Equal(t, evidence.owner == (manifest.NamedResource{}), tc.want)
+			if tc.transformed {
+				c.states[id] = admissionState{role: admissionRole{needed: true, ordinary: true}}
+				declaration := c.declarationEvidence(id)
+				assert.Equal(t, declaration.owner, owner)
+				assert.Equal(t, c.hydrateDeclaration(t.Context(), id, nil, &declaration), nil)
+			}
+		})
+	}
+}

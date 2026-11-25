@@ -118,6 +118,7 @@ type RootScopeFacts struct {
 	NativeOperand     bool
 	NativeEntry       bool
 	EntryKustomize    bool
+	OutsideInventory  bool
 	Application       bool
 	LocalApplication  bool
 	InputApplication  bool
@@ -133,6 +134,12 @@ type RootScopeFacts struct {
 	PackageEligible   bool
 	PackageRunnable   bool
 	NativePackage     bool
+}
+
+// OutsideInventorySource excludes checkout sources already handled by bootstrap.
+func (s *RootScopeFacts) OutsideInventorySource(id manifest.NamedResource) bool {
+	physical := s.OutsideInventory && s.Loaded && id.KindInfo().IsSource()
+	return physical && !s.Bootstrap && s.Eligibility != RootInactive
 }
 
 // RootOwnerFacts borrows a scope owner's indexed path.

@@ -7,7 +7,8 @@ func TestE2E_RepositoryRootMultiCluster_IsolatesCollidingIdentities(t *testing.T
 	testScopeCases(t, "multi-cluster", []string{
 		"root-partition", "one-sided-diff", "shared-instance", "shared-instance-refs", "shared-classic",
 		"classic-native", "classic-generated-values", "instance-subpackage", "instance-subpackage-values",
-		"authored-parent", "shared-member", "chart-sync",
+		"authored-parent", "shared-member", "chart-sync", "filtered-bootstrap",
+		"filtered-workload-only", "filtered-sync-builder", "filtered-sync-builder-reverse",
 	})
 }
 

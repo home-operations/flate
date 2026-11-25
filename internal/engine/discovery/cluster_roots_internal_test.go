@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -10,12 +12,294 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestClusterEntries_BootstrapPackage(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, scan, builder string
+		packagePath         string
+		explicitAncestor    bool
+		grouped             bool
+	}{
+		{
+			name: "repository root", scan: ".", builder: "cluster/flux/bootstrap/kustomization.yaml",
+			packagePath: "cluster/flux/bootstrap",
+		},
+		{
+			name: "sync directory", scan: "cluster/flux", builder: "cluster/flux/bootstrap/kustomization.yaml",
+			packagePath: "cluster/flux/bootstrap",
+		},
+		{
+			name: "sync builder", scan: ".", builder: "cluster/flux/kustomization.yaml",
+			packagePath: "cluster/flux",
+		},
+		{
+			name: "grouped roots", scan: ".", builder: "cluster/flux/bootstrap/kustomization.yaml",
+			packagePath: "cluster/flux/bootstrap", grouped: true,
+		},
+		{
+			name: "explicit ancestor", scan: "cluster", builder: "cluster/flux/bootstrap/kustomization.yaml",
+			explicitAncestor: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{tt.builder: {}}}
+			roots := []clusterRoot{{
+				Path: "cluster/flux/bootstrap", packageBuild: &plannedPackage{},
+				anchors:    []bootstrapAnchor{{target: "cluster/flux", source: manifest.BootstrapSourceID}},
+				qualifying: []selection.OccurrenceID{{Source: root}},
+			}}
+			wantPackages := 1
+			if tt.grouped {
+				secondary := roots[0]
+				secondary.Path = "cluster/flux/secondary"
+				secondary.packageBuild = &plannedPackage{}
+				roots = append(roots, secondary)
+				wantPackages++
+			}
+			scan := filepath.Join(root, tt.scan)
+			entries := clusterEntries(roots, input, scan)
+			assert.FatalIf(t, len(entries) != 1, "entries = %+v", entries)
+			assert.Equal(t, entries[0].ID, manifest.ClusterID("cluster/flux"))
+			assert.Equal(t, entries[0].Path, scan)
+			relative := "cluster/flux"
+			target := filepath.Join(root, relative)
+			if tt.explicitAncestor {
+				relative, target = tt.scan, ""
+			}
+			assert.Equal(t, entries[0].target, target)
+			prepared := entryInputs{input: *input}
+			prepared.collectEntryOperands(&entries[0], roots, relative, false)
+			assert.Equal(t, len(prepared.packages), wantPackages)
+			assert.Equal(t, entries[0].packagePath, tt.packagePath)
+			entries[0].prepared = &entryInputs{input: *input, parsed: new(loader.ParsedInputs)}
+			session := newDiscoverer(&Config{Input: input, Path: scan, Store: store.New(), Entry: &entries[0]})
+			t.Cleanup(session.Close)
+			file, known := session.cachedEntryBuilder(input, target)
+			assert.Equal(t, known, !tt.explicitAncestor)
+			wantBuilder := ""
+			if tt.packagePath == "cluster/flux" {
+				wantBuilder = tt.builder
+			}
+			assert.Equal(t, file, wantBuilder)
+		})
+	}
+}
+
+const bootstrapLayoutBuilder = "resources: [cm.yaml, other.yaml]\n"
+
+func TestCompareEntryApplications_BootstrapLayouts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, builder, value string
+		wantFirst            string
+		wantBound, wantError bool
+	}{
+		{name: "equal", builder: bootstrapLayoutBuilder, value: "old", wantFirst: "inventory"},
+		{name: "reordered", builder: "resources: [other.yaml, cm.yaml]\n", value: "old", wantFirst: "other"},
+		{
+			name: "different", builder: bootstrapLayoutBuilder, value: "new",
+			wantFirst: "inventory", wantBound: true,
+		},
+		{
+			name: "failed inventory", value: "old", wantBound: true, wantError: true,
+			builder: bootstrapLayoutBuilder + "patches:\n- target: {kind: ConfigMap}\n  patch: |-\n" +
+				"    - op: replace\n      path: /missing/key\n      value: rejected\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, reverse := range []bool{false, true} {
+				left := bootstrapLayoutSession(t, "entry/bootstrap", "old", bootstrapLayoutBuilder)
+				right := bootstrapLayoutSession(t, "entry", tc.value, tc.builder)
+				first, second := left, right
+				if reverse {
+					first, second = right, left
+				}
+				assert.NoError(t, first.CompareEntryApplications(t.Context(), second, new(change.Set), true))
+				assertBootstrapLayoutBinding(t, left, "inventory", bindingExpectation{bound: tc.wantBound})
+				assertBootstrapLayoutBinding(t, right, tc.wantFirst, bindingExpectation{
+					bound: tc.wantBound, failed: tc.wantError,
+				})
+			}
+		})
+	}
+	t.Run("canceled second capture", testCanceledBootstrapCapture)
+}
+
+type bindingExpectation struct {
+	bound, failed bool
+}
+
+func assertBootstrapLayoutBinding(t *testing.T, side *Session, wantFirst string, want bindingExpectation) {
+	t.Helper()
+	relative, err := filepath.Rel(side.cfg.Input.LocalPath, side.entryCoordinates.packagePath)
+	assert.NoError(t, err)
+	path := filepath.ToSlash(relative)
+	id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, path, manifest.NamedResource{}).Named()
+	frame := side.prepared[id]
+	assert.FatalIf(t, frame == nil, "missing inventory for %s", path)
+	if wantFirst != "" {
+		assert.FatalIf(t, len(frame.children) != 2, "expected two inventory documents for %s", path)
+		assert.Equal(t, frame.children[0].Obj.Named().Name, wantFirst)
+	}
+	key, bound := store.Bindings(side.loader.Index).Slot(id)
+	assert.Equal(t, bound, want.bound)
+	if bound {
+		wantKey := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
+		assert.Equal(t, side.binding.Producer, id)
+		assert.Equal(t, side.binding.Path, path)
+		assert.Equal(t, side.binding.Source, manifest.BootstrapSourceID)
+		assert.Equal(t, key, wantKey)
+		assert.Equal(t, side.binding.Failure != nil, want.failed)
+	}
+}
+
+func testCanceledBootstrapCapture(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		first := bootstrapLayoutSession(t, "entry/bootstrap", "old", bootstrapLayoutBuilder)
+		second := bootstrapLayoutSession(t, "entry", "old", bootstrapLayoutBuilder)
+		if reverse {
+			first, second = second, first
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		var captured *store.ReadSet
+		prepare := second.cfg.PrepareDocuments
+		second.cfg.PrepareDocuments = func(owner manifest.BaseManifest, docs []manifest.DocOccurrence) {
+			captured = first.entryAdmission.qualification.proposal
+			assert.FatalIf(t, captured == nil, "the first capture must finish before cancellation")
+			artifact := captured.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+			assert.FatalIf(t, artifact == nil, "the first proposal must hold the bootstrap artifact")
+			cancel()
+			prepare(owner, docs)
+		}
+		err := first.CompareEntryApplications(ctx, second, new(change.Set), true)
+		assert.Equal(t, errors.Is(err, context.Canceled), true)
+		assert.FatalIf(t, captured == nil, "the first capture must finish before cancellation")
+		assert.Equal(t, captured.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), nil)
+		assert.Equal(t, first.entryAdmission.qualification.proposal, nil)
+		assert.Equal(t, second.entryAdmission.qualification.proposal, nil)
+		assert.Equal(t, first.binding, Binding{})
+		assert.Equal(t, second.binding, Binding{})
+	}
+}
+
+func TestSameEntryInventory_DuplicateIdentity(t *testing.T) {
+	t.Parallel()
+	object := &manifest.ConfigMap{Name: "inventory"}
+	first := store.Child{Obj: object, Doc: map[string]any{"value": "first"}}
+	second := store.Child{Obj: object, Doc: map[string]any{"value": "second"}}
+	for _, tc := range []struct {
+		name  string
+		right []store.Child
+		equal bool
+	}{
+		{name: "same occurrences", right: []store.Child{second, first, first}, equal: true},
+		{name: "different counts", right: []store.Child{second, first, second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			left, right := new(declarationPreparation), new(declarationPreparation)
+			left.children, right.children = []store.Child{first, second, first}, tc.right
+			assert.Equal(t, left.sameEntryInventory(right), tc.equal)
+			assert.Equal(t, right.sameEntryInventory(left), tc.equal)
+			assert.Equal(t, left.children[0].Doc["value"], "first")
+			assert.Equal(t, right.children[0].Doc["value"], "second")
+		})
+	}
+}
+
+func TestCompareEntryApplications_QualifiedBootstrapOwner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		reverse bool
+	}{
+		{name: "application first"},
+		{name: "application second", reverse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			left := bootstrapLayoutSession(t, "entry/bootstrap", "'${version}'", "resources: [cm.yaml]\n")
+			right := bootstrapLayoutSession(t, "entry", "'${version}'", "resources: [cm.yaml]\n")
+			app := &manifest.Kustomization{Name: "bootstrap", Namespace: "apps", Path: "./entry/bootstrap"}
+			app.PostBuild = &kustomizev1.PostBuild{
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
+			}
+			left.cfg.Store.AddObject(app)
+			left.admission().AddApplication(left.cfg.Store, app)
+			first, second := left, right
+			if tc.reverse {
+				first, second = right, left
+			}
+			assert.NoError(t, first.CompareEntryApplications(t.Context(), second, new(change.Set), true))
+			assert.Equal(t, left.binding, Binding{})
+			assert.Equal(t, right.binding, Binding{})
+			frame := left.prepared[app.Named()]
+			assert.FatalIf(t, frame == nil || frame.complete, "expected an incomplete application inventory")
+
+			left.cfg.Store.AddObject(&manifest.ConfigMap{
+				Name: "values", Namespace: "apps", Data: map[string]any{"version": "qualified"},
+			})
+			assert.NoError(t, first.CompareEntryApplications(t.Context(), second, new(change.Set), true))
+			assert.Equal(t, left.binding.Producer, app.Named())
+			frame = left.prepared[app.Named()]
+			assert.FatalIf(
+				t, frame == nil || !frame.complete || len(frame.children) != 1,
+				"missing qualified inventory",
+			)
+			assert.Equal(t, frame.children[0].Doc["data"].(map[string]any)["version"], "qualified")
+			literal := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID, "entry", manifest.NamedResource{},
+			).Named()
+			assert.Equal(t, right.binding.Producer, literal)
+			assert.Equal(t, left.binding.Key, right.binding.Key)
+		})
+	}
+}
+
+func bootstrapLayoutSession(t *testing.T, pkg, value, builder string) *Session {
+	t.Helper()
+	root := t.TempDir()
+	input := &store.SourceArtifact{
+		LocalPath: root, Provider: store.ProviderInput, FS: fstest.MapFS{
+			pkg + "/kustomization.yaml": {Data: []byte(builder)},
+			pkg + "/cm.yaml": {Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: inventory}\ndata: {version: " + value + "}\n",
+			)},
+			pkg + "/other.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
+		},
+	}
+	path := filepath.Join(root, "entry")
+	entry := &Entry{
+		Path: path, Input: input, target: path, packagePath: pkg,
+		prepared: &entryInputs{input: *input, parsed: new(loader.ParsedInputs)},
+	}
+	cfg := testConfig(t, Config{
+		Input: input, Path: path, Store: store.New(), Entry: entry,
+		Selection: selection.Request{Changed: true}, Changes: new(change.Set),
+	})
+	session, err := BeginTest(t.Context(), cfg)
+	assert.NoError(t, err)
+	t.Cleanup(session.Close)
+	ready, err := session.Load(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, ready, true)
+	assert.Equal(t, session.entryScanPath(), path)
+	return session
+}
 
 func TestClusterRoots_PinnedOwnership(t *testing.T) {
 	t.Parallel()

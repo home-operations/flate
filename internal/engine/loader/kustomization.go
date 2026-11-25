@@ -253,12 +253,13 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 		if r.artifacts[root].SameMaterial(art, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
 			continue
 		}
-		r.views[root] = art.FS
-		if overlay, ok := art.FS.(*inputprojection.Overlay); ok {
-			r.views[root] = overlay.Authored.FS
-		}
-		if art.FS == nil {
+		switch view := art.FS.(type) {
+		case nil:
 			r.views[root] = unavailableSource{}
+		case *inputprojection.Overlay:
+			r.views[root] = view.Authored.FS
+		default:
+			r.views[root] = view
 		}
 	}
 	r.artifacts = mounted
@@ -630,10 +631,25 @@ func isManifestFile(path string) bool {
 	return false
 }
 
-// DiscardOccurrence retires a physical declaration and its published identity.
+// DiscardOccurrence retires a physical declaration.
 func (l *Loader) DiscardOccurrence(id manifest.NamedResource) {
 	delete(l.Index.Records, id)
 	delete(l.candidates, id)
 	delete(l.locations, id)
+	var artifact *store.SourceArtifact
+	if id.KindInfo().SourceArtifact {
+		artifact, _ = l.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	}
+	l.retireFileDeclaration(id, artifact)
+}
+
+func (l *Loader) retireFileDeclaration(id manifest.NamedResource, artifact *store.SourceArtifact) {
+	// An indexed occurrence MUST NOT revoke the source that supplies its mounted files.
+	if artifact != nil && artifact.LocalPath == l.documents.bootstrap && artifact.SameMaterial(
+		l.documents.artifacts[artifact.LocalPath],
+		store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,
+	) {
+		return
+	}
 	l.Store.DeleteObject(id)
 }

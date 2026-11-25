@@ -137,6 +137,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 			},
 		)
 		tree.Input, tree.Path = input, path
+		tree.SelfURLs = []string{"https://example.test/cluster.git"}
 		o, constructionErr := newOrchestrator(b.Context(), new(config), new(tree), task.NewBounded(config.Concurrency))
 		assert.NoError(b, constructionErr)
 		if localErr := o.bootstrap(b.Context()); localErr != nil {

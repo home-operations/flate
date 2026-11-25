@@ -23,6 +23,25 @@ type sourceExpansion struct {
 	source *store.SourceArtifact
 }
 
+func (d *Session) loadEntryPreparation(ctx context.Context, total *int) (bool, error) {
+	l := d.loader
+	if err := d.loadEntryInput(ctx, l, total); err != nil {
+		return false, err
+	}
+	registered, err := d.preparePlannedPackages(ctx)
+	if err != nil {
+		return false, err
+	}
+	// The sync scan must preserve the prepared bootstrap owner's claims.
+	l.PreferExisting = true
+	if d.entryScanPath() == d.cfg.Path {
+		return registered, nil
+	}
+	work := d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)
+	_, err = d.loadAt(ctx, d.cfg.Path, total, &sourceLoad{work: work})
+	return registered, err
+}
+
 func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *int) error {
 	if d.loading {
 		return nil
@@ -38,13 +57,11 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 	} else if !info.IsDir() {
 		return fmt.Errorf("input path %q is not a directory", d.cfg.Path)
 	}
+	path := d.entryScanPath()
+	l.EntryReachPath = d.cfg.Path
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if _, err := d.loadAt(
-		ctx,
-		d.cfg.Path,
-		total,
-		&sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
-	); err != nil {
+	work := d.cfg.Work.Record(manifest.WorkPreparation, path)
+	if _, err := d.loadAt(ctx, path, total, &sourceLoad{work: work}); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
@@ -57,7 +74,7 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 
 func (d *Session) prepareEnclosingPackages(ctx context.Context, input *store.SourceArtifact, entry string) error {
 	if d.cfg.Trees == nil || entry == "." || !d.cfg.Selection.RestrictedPackageLookup() ||
-		d.partitionedEntry {
+		d.entryCoordinates.isPartitioned() {
 		return nil
 	}
 	owned, err := d.prepareEnclosingApplications(ctx, input, entry)
@@ -304,7 +321,7 @@ func (a *Admission) qualifyLookupOwner(
 	}
 	published, _ := d.cfg.Store.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	evidence.source.artifact = published
-	if !published.Available() || !a.applicationReach(evidence) {
+	if !published.Available() || !a.applicationReach(evidence, a.inventoryPath()) {
 		return origin, nil
 	}
 	_, err = d.prepareLookupPackage(ctx, ks, published, evidence.document)

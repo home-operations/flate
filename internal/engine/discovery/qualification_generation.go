@@ -40,7 +40,7 @@ func (w *qualificationWalk) visitGeneration(ctx context.Context, evidence *appli
 		}
 	}
 	if w.reads.Policy(evidence.object.Named()).Supplied() {
-		matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
+		matched, err := w.readApplication(ctx, w.reads, evidence)
 		if matched {
 			w.q.recordMatch(evidence)
 		}
@@ -86,7 +86,7 @@ func (w *qualificationWalk) visitSyncRoot(
 	if reused, pending := w.matchReceipt(ctx, generated, nil); reused || pending {
 		return reused, nil
 	}
-	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, generated)
+	eligible, err := w.readApplication(ctx, w.reads, generated)
 	if err != nil {
 		return false, err
 	}

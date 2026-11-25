@@ -771,14 +771,17 @@ func (c *admissionClosure) classifyAuthoredDeclaration(
 ) {
 	occurrence, located := c.occurrence(id)
 	root := c.rootEvidence(id)
-	acquire := c.states[id].requested && c.bootstrapPrerequisite(id)
-	authored := root.Admitted && located && !root.Owner.ReportHidden() &&
-		store.RawDeclarationAuthority(c.facts.SelectionIndex(), id, false)
+	scope := &c.capturedRoot(id).Scope
+	sourceNeeded := scope.OutsideInventorySource(id) && c.role(id).needed
+	rawCandidate := sourceNeeded || root.Admitted && !root.Owner.ReportHidden()
+	authored := located && rawCandidate && store.RawDeclarationAuthority(c.facts.SelectionIndex(), id, false)
+	inputNeeded := sourceNeeded && authored
+	acquire := inputNeeded || c.states[id].requested && c.bootstrapPrerequisite(id)
 	if root.Owner != (manifest.NamedResource{}) && !acquire && !authored {
 		evidence.owner = root.Owner
 		return
 	}
-	if !located || root.Occurrence.Declaration == (OccurrenceID{}) {
+	if !located || !inputNeeded && root.Occurrence.Declaration == (OccurrenceID{}) {
 		return
 	}
 	if root.Admitted || acquire {

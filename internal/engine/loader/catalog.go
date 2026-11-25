@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -27,6 +28,7 @@ type physicalView struct {
 	projections *[64]*map[manifest.BaseManifest]producerFact
 	nativeEntry *manifest.Kustomization
 	sourceRoot  string
+	inventory   string
 	entry       entryKind
 	compact     bool
 	eager       bool
@@ -79,9 +81,13 @@ func (c *Catalog) RootEvidence(
 }
 
 func (l *Loader) physicalView() physicalView {
+	inventory := ""
+	if _, split := l.entryScope(); split {
+		inventory = l.entryPath
+	}
 	return physicalView{
 		index: l.Index, locations: l.locations, roots: &l.roots, files: l.documents.cache,
-		candidates: l.candidates, nativeEntry: l.nativeEntry,
+		candidates: l.candidates, nativeEntry: l.nativeEntry, inventory: inventory,
 		sourceRoot: l.SourceRoot, entry: l.entry, compact: l.documents.compact, eager: l.documents.eager,
 	}
 }
@@ -291,7 +297,8 @@ func (v *physicalView) rootScope(live *Loader, input *rootScopeInput) rootEviden
 			Loaded: doc.loaded, Bootstrap: doc.bootstrap, Initial: doc.initial, Terminal: terminal,
 			NativeOperand: native, NativeEntry: v.nativeEntry != nil && v.nativeEntry.Named() == id,
 			EntryKustomize: v.entry == entryKustomize, Compact: v.compact && !v.eager,
-			Owners: input.admission.owners, Peers: input.admission.peers,
+			OutsideInventory: v.inventory != "" && record.Path != "" && !safepath.Contains(v.inventory, record.Path),
+			Owners:           input.admission.owners, Peers: input.admission.peers,
 			Candidate: v.candidates[id].Obj != nil,
 		},
 	}

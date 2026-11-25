@@ -1,0 +1,6 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: sync, namespace: apps}
+spec:
+  url: https://example.test/partial.git
+  ref: {branch: main}

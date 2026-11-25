@@ -63,7 +63,7 @@ func (c *admissionClosure) prepareApplicationDemand(route *EntryRoute, literalCh
 func (c *admissionClosure) applicationDemand(
 	id manifest.NamedResource, route *EntryRoute, named bool,
 ) ([]manifest.NamedResource, OccurrenceID) {
-	if named && !c.namedSelection(id) {
+	if named && !c.session.RequestsNamedRoot(id) {
 		return nil, OccurrenceID{}
 	}
 	if !named && (!c.role(id).needed || !c.states[id].changed) {

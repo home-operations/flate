@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"cmp"
 	"errors"
 	"maps"
 	"slices"
@@ -322,9 +323,19 @@ func (s *selectionSide) includes(namespace string) bool {
 	return ok
 }
 
+type ancestryStatus struct {
+	status store.StatusInfo
+	prior  manifest.NamedResource
+}
+
+type ancestryCache struct {
+	owner    *Snapshot
+	resolved map[manifest.NamedResource]ancestryStatus
+}
+
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {
-	local := make(map[manifest.NamedResource]store.StatusInfo, len(candidates))
-	counterpart := make(map[manifest.NamedResource]store.StatusInfo)
+	local := ancestryCache{owner: &s.run, resolved: make(map[manifest.NamedResource]ancestryStatus, len(candidates))}
+	counterpart := ancestryCache{owner: &other.run, resolved: make(map[manifest.NamedResource]ancestryStatus)}
 	var path []manifest.NamedResource
 	for _, id := range candidates {
 		actual, _ := store.Bindings(s.run.Index).Producer(id)
@@ -336,54 +347,42 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 			s.recordUnavailable(id, unavailable)
 			continue
 		}
-		owner, resolved := &s.run, local
+		start, cache := actual, local
 		selected := s.run.Decision.Output(actual)
 		if s.run.Store.GetObject(actual) == nil || s.run.Decision.restricted() && !selected {
 			// Producers outside this projection MUST use the other snapshot's ancestry cache.
-			owner, resolved = &other.run, counterpart
-		}
-		start := actual
-		if owner != &s.run {
+			cache = counterpart
 			start, _ = store.Bindings(other.run.Index).Producer(id)
 		}
-		unavailable, path = s.walkUnavailable(start, owner, resolved, path)
-		if !unavailable.IsUnavailable() && owner == &s.run {
-			if prior, found := s.unpublishedAncestor(other, path); found {
-				unavailable, path = s.walkUnavailable(prior, &other.run, counterpart, path)
-			}
+		var trace ancestryStatus
+		trace, path = s.walkUnavailable(start, other, cache, path)
+		if trace.prior != (manifest.NamedResource{}) {
+			trace, path = s.walkUnavailable(trace.prior, other, counterpart, path)
 		}
-		s.recordUnavailable(id, unavailable)
+		s.recordUnavailable(id, trace.status)
 	}
 }
 
 func (s *selectionSide) unpublishedAncestor(
 	other *selectionSide,
-	path []manifest.NamedResource,
-) (manifest.NamedResource, bool) {
-	if other.run.Index == nil {
-		return manifest.NamedResource{}, false
+	id manifest.NamedResource,
+) manifest.NamedResource {
+	if s.run.Store.EmissionOwner(id) != (manifest.NamedResource{}) || other.run.Store.GetDeclaration(id) != nil {
+		return manifest.NamedResource{}
 	}
-	for _, id := range path {
-		if s.run.Store.EmissionOwner(id) != (manifest.NamedResource{}) || other.run.Store.GetDeclaration(id) != nil {
-			continue
-		}
-		record, found := s.run.Index.Lookup(id)
-		if !found || record.File == "" || record.Authored == (manifest.NamedResource{}) {
-			continue
-		}
-		var prior manifest.NamedResource
-		for candidate := range other.run.Index.Records {
-			previous := other.run.Index.Records[candidate]
-			if candidate != id && (prior == (manifest.NamedResource{}) || candidate.Compare(prior) < 0) &&
-				other.publishedDeclaration(candidate, &previous, &record) {
-				prior = candidate
-			}
-		}
-		if prior != (manifest.NamedResource{}) {
-			return prior, true
+	record, found := s.run.Index.Lookup(id)
+	if !found || record.File == "" || record.Authored == (manifest.NamedResource{}) {
+		return manifest.NamedResource{}
+	}
+	var prior manifest.NamedResource
+	for candidate := range other.run.Index.Records {
+		previous := other.run.Index.Records[candidate]
+		if candidate != id && (prior == (manifest.NamedResource{}) || candidate.Compare(prior) < 0) &&
+			other.publishedDeclaration(candidate, &previous, &record) {
+			prior = candidate
 		}
 	}
-	return manifest.NamedResource{}, false
+	return prior
 }
 
 func (s *selectionSide) publishedDeclaration(
@@ -421,27 +420,32 @@ func (s *selectionSide) localStatus(id manifest.NamedResource) store.StatusInfo 
 
 func (s *selectionSide) walkUnavailable(
 	id manifest.NamedResource,
-	owner *Snapshot,
-	resolved map[manifest.NamedResource]store.StatusInfo,
+	other *selectionSide,
+	cache ancestryCache,
 	path []manifest.NamedResource,
-) (store.StatusInfo, []manifest.NamedResource) {
+) (ancestryStatus, []manifest.NamedResource) {
+	owner, resolved := cache.owner, cache.resolved
 	path = path[:0]
-	var unavailable store.StatusInfo
+	var trace ancestryStatus
 	for {
-		if info, ok := resolved[id]; ok {
-			unavailable = info
+		if cached, ok := resolved[id]; ok {
+			trace = cached
 			break
 		}
 		// A zero cache entry stops ownership cycles while the path is unresolved.
-		resolved[id] = store.StatusInfo{}
+		resolved[id] = ancestryStatus{}
 		path = append(path, id)
 		actual := id
 		if key, mapped := store.Bindings(owner.Index).Slot(id); mapped {
 			actual, _ = store.Bindings(s.run.Index).Producer(key)
 		}
 		info := s.localStatus(actual)
+		if info.Outcome() == store.OutcomePassed && s.run.Store.EmissionOwner(actual) == (manifest.NamedResource{}) &&
+			s.run.Store.GetDeclaration(actual) != nil {
+			break
+		}
 		if info.IsUnavailable() {
-			unavailable = info
+			trace.status = info
 			break
 		}
 		ancestry := owner
@@ -454,10 +458,15 @@ func (s *selectionSide) walkUnavailable(
 		}
 		id = parent
 	}
-	for _, parent := range path {
-		resolved[parent] = unavailable
+	findPrior := owner == &s.run && other.run.Index != nil && !trace.status.IsUnavailable()
+	// A cached suffix must retain the first prior identity seen by a fresh walk.
+	for _, parent := range slices.Backward(path) {
+		if findPrior {
+			trace.prior = cmp.Or(s.unpublishedAncestor(other, parent), trace.prior)
+		}
+		resolved[parent] = trace
 	}
-	return unavailable, path
+	return trace, path
 }
 
 func (s *selectionSide) prepareSubjects() {

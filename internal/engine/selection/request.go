@@ -52,6 +52,16 @@ func (s Request) matches(id manifest.NamedResource, named bool) bool {
 	return false
 }
 
+// RequestsNamedRoot requires an explicit name in the invocation request.
+func (s *Session) RequestsNamedRoot(id manifest.NamedResource) bool {
+	for _, root := range s.request.Roots {
+		if root.Name != "" && rootMatchesIdentity(root, id, true) {
+			return true
+		}
+	}
+	return false
+}
+
 func rootMatchesIdentity(root, id manifest.NamedResource, named bool) bool {
 	groupAndKindMatch := root.Group == id.Group && root.Kind == id.Kind
 	nameMatches := !named || root.Name == "" || root.Name == id.Name

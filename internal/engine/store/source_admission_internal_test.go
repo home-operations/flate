@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"fmt"
 	"strconv"
 	"testing"
@@ -192,6 +193,75 @@ func TestSourceAdmission_ConcurrentReplacement(t *testing.T) {
 			}
 		})
 	}
+	for _, path := range []struct {
+		name  string
+		bound bool
+	}{{name: "direct"}, {name: "bound", bound: true}} {
+		t.Run("admission after omission snapshot/"+path.name, func(t *testing.T) {
+			t.Parallel()
+			testPublicationAdmissionRace(t, path.bound)
+		})
+	}
+}
+
+func testPublicationAdmissionRace(t *testing.T, bound bool) {
+	t.Helper()
+	s := New()
+	source := manifest.BootstrapSourceID
+	owner := &manifest.Kustomization{
+		Name: "parent", Namespace: "apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: source.Kind, Name: source.Name, Namespace: source.Namespace,
+		},
+	}
+	raw := emissionChild("child", "raw")
+	raw.SourceSupport = source
+	id, bare := raw.Obj.Named(), raw.Obj.Named()
+	bare.Namespace = ""
+	s.AddObject(owner)
+	s.SetArtifact(source, &SourceArtifact{Content: "first", FS: fstest.MapFS{}})
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		bare: {Productions: []manifest.Production{{
+			Owner: owner.Named(), Source: source, Authored: bare, Path: "child.yaml", File: "child.yaml",
+		}}},
+	}})
+
+	_, _, output := s.GetEmission(owner.Named())
+	defer output.Finish()
+	output.Complete = true
+	if bound {
+		var publication ReadSet
+		publication.Init(s, owner.Named(), nil)
+		defer publication.Retire()
+		publication.Bind(&output)
+	}
+	output.origin = owner.Named()
+	_, prev, generation := snapshotEmission(s.shardFor(owner.Named()), owner.Named())
+	proposal := prepareEmission(&output, prev, nil, nil)
+	targets := s.prepareReplacement(prev, proposal, nil)
+	_, found := targets.region.position(id)
+	assert.Equal(t, found, false)
+
+	admitted := make(chan struct{})
+	go func() {
+		defer close(admitted)
+		var reads ReadSet
+		reads.Init(s, manifest.NamedResource{}, nil)
+		defer reads.Retire()
+		reads.Admit(raw, source, manifest.NamedResource{})
+	}()
+	<-admitted
+	assert.Equal(t, s.GetDeclaration(id), raw.Obj)
+	assert.Equal(t, proposal.Reads.Valid(), true)
+	result := s.commitReplacement(prev, proposal, generation, &targets)
+	assert.FatalIf(t, result != publicationRetry, "stale omission publication returned %v, want retry", result)
+	assert.Equal(t, s.GetDeclaration(id), raw.Obj)
+
+	s.RecordEmitted(owner.Named(), &output, nil)
+	assert.Equal(t, output.accepted, true)
+	assert.Equal(t, s.SourceAdmission(id, source), false)
+	assert.Equal(t, s.GetDeclaration(id), nil)
+	assert.Equal(t, s.shardFor(id).cells[id].retired, true)
 }
 
 func TestGetDeclaration_PreparedIdentityLifecycle(t *testing.T) {
@@ -242,4 +312,189 @@ func TestGetDeclaration_PreparedIdentityLifecycle(t *testing.T) {
 			assert.Equal(t, s.GetDeclaration(id), nil)
 		})
 	}
+}
+
+type independentCoverageCase struct {
+	name                               string
+	source                             manifest.NamedResource
+	admit, explicit, provisional, want bool
+	republishAuthored                  bool
+	bareCover, bareIndependent         bool
+	bound, bareSelf                    bool
+}
+
+func TestSourceAdmission_IndependentCoverage(t *testing.T) {
+	t.Parallel()
+	otherSource := (&manifest.GitRepository{Name: "other", Namespace: "apps"}).Named()
+	for _, tc := range []independentCoverageCase{
+		{name: "publication preserves support", admit: true, want: true},
+		{name: "omission permits first admission", want: true},
+		{name: "inherited namespace permits first admission", bareCover: true, bareIndependent: true, want: true},
+		{name: "exact coverage preserves inherited declaration", admit: true, bareIndependent: true, want: true},
+		{name: "inherited omission from direct proposal", admit: true, bareCover: true},
+		{name: "inherited omission from bound proposal", admit: true, bareCover: true, bound: true},
+		{
+			name:  "bare authored support clears provisional bootstrap",
+			admit: true, provisional: true, bareIndependent: true, want: true,
+		},
+		{name: "bare self-owner preserves support", admit: true, bareIndependent: true, bareSelf: true, want: true},
+		{name: "explicit declaration takes precedence", admit: true, explicit: true},
+		{name: "omitted explicit declaration prevents admission", explicit: true},
+		{name: "provisional bootstrap loses support", admit: true, provisional: true},
+		{name: "other checkout loses published support", admit: true, source: otherSource, republishAuthored: true},
+		{name: "other checkout prevents first admission", source: otherSource},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testIndependentCoverage(t, &tc)
+		})
+	}
+}
+
+func testIndependentCoverage(t *testing.T, tc *independentCoverageCase) {
+	t.Helper()
+	s := New()
+	authoredSource := manifest.BootstrapSourceID
+	source := cmp.Or(tc.source, authoredSource)
+	owner := &manifest.Kustomization{
+		Name: "supplier", Namespace: "apps", Path: "supplier",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: source.Kind, Name: source.Name, Namespace: source.Namespace,
+		},
+	}
+	raw := emissionChild("child", "raw")
+	id := raw.Obj.Named()
+	s.AddObject(owner)
+	s.SetArtifact(authoredSource, &SourceArtifact{Key: "authored", Content: "head"})
+	s.SetArtifact(source, &SourceArtifact{Key: "checkout", Content: "head"})
+	records, different := tc.discoveryRecords(id, owner.Named(), source)
+	inheritedOmission := different.Obj != nil
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
+	switch {
+	case inheritedOmission:
+		bare := id
+		bare.Namespace = ""
+		_, hasBareCell := s.shardFor(bare).cells[bare]
+		assert.Equal(t, hasBareCell, false)
+		assert.Equal(t, len(s.Productions(id, nil)), 1)
+	case tc.bareIndependent:
+		want := 2
+		if tc.provisional {
+			want++
+		}
+		assert.Equal(t, len(s.Productions(id, nil)), want)
+	default:
+		assert.Equal(t, RawDeclarationAuthority(s.index.Load(), id, false), true)
+	}
+	assert.Equal(t, s.SourceAdmission(id, source), true)
+	admit := func(declaration Child, source manifest.NamedResource) {
+		declaration.SourceSupport = source
+		var reads ReadSet
+		reads.Init(s, manifest.NamedResource{}, nil)
+		defer reads.Retire()
+		reads.Admit(declaration, source, manifest.NamedResource{})
+	}
+	if tc.admit {
+		admit(raw, source)
+		assert.Equal(t, s.GetDeclaration(id), raw.Obj)
+	}
+	if inheritedOmission {
+		admit(different, source)
+		assert.Equal(t, s.GetDeclaration(different.Obj.Named()), different.Obj)
+	}
+
+	_, _, output := s.GetEmission(owner.Named())
+	defer output.Finish()
+	output.Complete = true
+	if tc.bound {
+		var publication ReadSet
+		publication.Init(s, owner.Named(), nil)
+		defer publication.Retire()
+		publication.Bind(&output)
+	}
+	s.RecordEmitted(owner.Named(), &output, nil)
+	assert.Equal(t, output.accepted, true)
+	assert.Equal(t, s.SourceAdmission(id, source), tc.want)
+	assert.Equal(t, s.SourceAdmission(id, authoredSource), tc.want || source != authoredSource)
+	var wantDeclaration manifest.BaseManifest
+	if tc.want {
+		wantDeclaration = raw.Obj
+	}
+	if tc.admit {
+		assert.Equal(t, s.shardFor(id).cells[id].retired, !tc.want)
+		assert.Equal(t, s.GetDeclaration(id), wantDeclaration)
+	}
+	if inheritedOmission {
+		assert.Equal(t, s.GetDeclaration(different.Obj.Named()), different.Obj)
+		assert.Equal(t, s.SourceAdmission(different.Obj.Named(), source), true)
+		assert.Equal(t, s.shardFor(different.Obj.Named()).cells[different.Obj.Named()].retired, false)
+	}
+	admit(raw, source)
+	assert.Equal(t, s.GetDeclaration(id), wantDeclaration)
+	if tc.republishAuthored {
+		admit(raw, authoredSource)
+		assert.Equal(t, s.GetDeclaration(id), raw.Obj)
+		assert.Equal(t, s.SourceAdmission(id, authoredSource), true)
+		assert.Equal(t, s.SourceAdmission(id, source), false)
+	}
+	if tc.explicit {
+		effective := emissionChild("child", "emitted")
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{effective}, Complete: true}, nil)
+		assert.Equal(t, s.GetDeclaration(id), effective.Obj)
+	}
+}
+
+func (tc *independentCoverageCase) discoveryRecords(
+	id, owner, source manifest.NamedResource,
+) (map[manifest.NamedResource]manifest.DiscoveryRecord, Child) {
+	covered := manifest.Production{
+		Owner:    owner,
+		Source:   source,
+		Authored: id,
+		Path:     "supplier/child.yaml",
+		File:     "supplier/child.yaml",
+	}
+	independent := manifest.Production{
+		Source: manifest.BootstrapSourceID, Authored: id, Path: covered.Path, File: covered.File,
+	}
+	if tc.explicit {
+		covered.Declaration = id
+	}
+	bare := id
+	bare.Namespace = ""
+	coverID, independentID := id, id
+	if tc.bareCover || tc.bareIndependent {
+		covered.Authored, independent.Authored = bare, bare
+	}
+	if tc.bareIndependent {
+		independentID = bare
+	}
+	if tc.bareSelf {
+		independent.Owner = bare
+	}
+	if tc.bareCover {
+		coverID = bare
+	}
+	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
+		coverID: {Productions: []manifest.Production{covered}},
+	}
+	if tc.provisional {
+		record := records[id]
+		record.Productions = append(record.Productions, manifest.Production{Source: source})
+		records[id] = record
+	}
+	var different Child
+	if tc.bareCover && !tc.bareIndependent {
+		different = emissionChild("child", "different file")
+		different.Obj = different.Obj.WithNamespace("other")
+		different.Doc["metadata"].(map[string]any)["namespace"] = "other"
+		records[different.Obj.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{
+			Source: source, Authored: bare, Path: "other/child.yaml", File: "other/child.yaml",
+		}}}
+	} else if !tc.provisional || tc.bareIndependent {
+		record := records[independentID]
+		record.Productions = append(record.Productions, independent)
+		records[independentID] = record
+	}
+	return records, different
 }

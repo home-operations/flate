@@ -54,11 +54,13 @@ func (s *Store) RecordEmitted(
 			proposal.revision = generation + 1
 		}
 		s.prepareSourcePaths(proposal, prev)
-		var result publicationResult
+		result := publicationRejected
 		if state.stable {
 			result = s.commitStable(slot, prev, proposal, generation)
-		} else {
-			result = s.commitReplacement(id, prev, proposal, generation)
+		} else if proposal.Reads.Valid() {
+			var storage [4]regionState
+			targets := s.prepareReplacement(prev, proposal, storage[:])
+			result = s.commitReplacement(prev, proposal, generation, &targets)
 		}
 		switch result {
 		case publicationAccepted:
@@ -108,7 +110,7 @@ func (s *Store) prepareChildren(children *[]Child, index *manifest.DiscoveryInde
 				admission{
 					child:       child,
 					composed:    composed,
-					independent: rawDeclarationAuthority(index, child.Obj.Named(), false),
+					independent: RawDeclarationAuthority(index, child.Obj.Named(), false),
 				},
 			)
 		}

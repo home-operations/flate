@@ -1,12 +1,22 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/selection"
+	"github.com/home-operations/flate/internal/engine/source"
+	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/helmchart"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -226,5 +236,61 @@ func TestEntrySourceObject_DeclarationContent(t *testing.T) {
 			assert.Diff(t, content(doc), content(child.Doc))
 			assert.Equal(t, content(doc).Exact != "", true)
 		})
+	}
+}
+
+func TestRun_ChartInputRequiresCoveringEmission(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.Abs("../../../testdata/partial-snapshots/repo")
+	assert.NoError(t, err)
+	st := store.New()
+	cfg := testConfig(t, Config{
+		Path: filepath.Join(root, "cluster"), RepoRoot: root,
+		Store: st, SelfURLs: []string{"https://example.test/partial.git"},
+		Selection: selection.Request{Changed: true}, Changes: new(change.Set),
+	})
+	result, err := Run(t.Context(), cfg)
+	assert.NoError(t, err)
+	t.Cleanup(result.Close)
+	st.SetDiscoveryIndex(result.Index)
+
+	sync := (&manifest.GitRepository{Name: "sync", Namespace: "apps"}).Named()
+	assert.Equal(t, st.GetDeclaration(sync) != nil, true)
+	assert.Equal(t, st.GetArtifact(sync, store.ArtifactContent) != nil, true)
+
+	repository := &manifest.HelmRepository{Name: "charts", Namespace: "apps", URL: "https://charts.example.invalid"}
+	id := repository.Named()
+	record, found := result.Index.Lookup(id)
+	assert.FatalIf(t, !found, "repository missing from discovery index")
+	owner := testutil.KustomizationID("apps", "apps")
+	assert.Equal(t, slices.Contains(testutil.Owners(record.Productions), owner), true)
+	assert.Equal(t, st.GetDeclaration(id), nil)
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent), nil)
+
+	chart := &manifest.HelmChartSource{
+		Name: "demo", Namespace: "apps",
+		Chart: "demo", Version: "0.1.0",
+		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: id.Kind, Name: id.Name},
+	}
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	fetcher := helmchart.New(nil, helmchart.Config{Cache: cfg.Cache, Network: network, Concurrency: 2})
+	for _, published := range []bool{false, true} {
+		if published {
+			st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+			st.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: repository}}, Complete: true}, nil)
+			assert.Equal(t, st.GetDeclaration(id) == repository, true)
+		}
+		var reads store.ReadSet
+		reads.Init(st, chart.Named(), nil)
+		prepared, fetchErr := fetcher.Fetch(t.Context(), chart, &reads, &cache.Policy{})
+		reads.Retire()
+		if published {
+			assert.NoError(t, fetchErr)
+			assert.Equal(t, prepared.Fetch != nil, true)
+		} else {
+			assert.Equal(t, errors.Is(fetchErr, manifest.ErrObjectNotFound), true)
+			assert.Equal(t, prepared.Fetch == nil, true)
+		}
 	}
 }

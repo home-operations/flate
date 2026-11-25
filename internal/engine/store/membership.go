@@ -151,6 +151,7 @@ type regionState struct {
 	cell                                objectCell
 	live, static, direct, visible, seed bool
 	independent, supportsProducer       bool
+	retiresSource                       bool
 	producerGeneration                  uint64
 	owner                               *producerSlot
 	source                              sourceBinding
@@ -237,14 +238,11 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if cell.static == nil || cell.operand && cell.retired {
 		return false
 	}
-	r, ok := s.index.Load().Lookup(id)
-	if !ok {
-		return true
-	}
-	if cell.retired && (bootstrapSeed(r.Productions) || cell.classified) {
+	r, indexed := s.index.Load().Lookup(id)
+	if cell.retired && (cell.classified || bootstrapSeed(r.Productions)) {
 		return false
 	}
-	if cell.classified {
+	if !indexed || cell.classified {
 		return true
 	}
 	return s.staticProductionLocked(id, support, &r)

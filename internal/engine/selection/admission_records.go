@@ -772,9 +772,9 @@ func (c *admissionClosure) classifyAuthoredDeclaration(
 	occurrence, located := c.occurrence(id)
 	root := c.rootEvidence(id)
 	acquire := c.states[id].requested && c.bootstrapPrerequisite(id)
-	eagerAuthored := c.decision.Output(manifest.NamedResource{}) && root.Admitted &&
-		located && !root.Owner.ReportHidden()
-	if root.Owner != (manifest.NamedResource{}) && !acquire && !eagerAuthored {
+	authored := root.Admitted && located && !root.Owner.ReportHidden() &&
+		store.RawDeclarationAuthority(c.facts.SelectionIndex(), id, false)
+	if root.Owner != (manifest.NamedResource{}) && !acquire && !authored {
 		evidence.owner = root.Owner
 		return
 	}

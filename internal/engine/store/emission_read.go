@@ -42,16 +42,25 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	return new(view).declaration()
 }
 
-// Discovery preserves a distinct authored File only for unchanged builder output;
-// raw self evidence MUST NOT override another builder's transformed declaration.
-func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedResource, classified bool) bool {
+// RawDeclarationAuthority reports whether the indexed file can supply the declaration.
+// Raw self evidence MUST NOT override another builder's transformed declaration.
+func RawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedResource, classified bool) bool {
 	record, _ := index.Lookup(id)
-	self := record.BuilderOwner == (manifest.NamedResource{}) || record.BuilderOwner == id ||
-		record.Authored == id && record.File != "" && record.Builder != "" && record.File != record.Builder
-	return self && (classified || len(record.Productions) == 0) ||
-		slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
-			return p.Owner == (manifest.NamedResource{}) || self && p.Owner == id
-		})
+	return rawDeclarationAuthority(&record, id, manifest.NamedResource{}, classified)
+}
+
+func rawDeclarationAuthority(
+	record *manifest.DiscoveryRecord,
+	id, source manifest.NamedResource,
+	classified bool,
+) bool {
+	self := rawSelf(record, id)
+	if source == (manifest.NamedResource{}) && self && (classified || len(record.Productions) == 0) {
+		return true
+	}
+	return slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+		return rawProductionAuthority(&p, id, source, self)
+	})
 }
 
 // GetEmission borrows valid accepted inventory and binds an attempt to its current input.
@@ -300,6 +309,8 @@ type productionResult struct {
 	source        manifest.NamedResource
 	open          bool
 	qualified     bool
+	sourceSupport bool
+	provisional   bool
 	retiredStatic bool
 	hideEvidence  bool
 	reference     *Declaration
@@ -361,17 +372,16 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		index = s.index.Load()
 	}
 	var evidence, bare []manifest.Production
-	provisional := false
 	if index != nil {
-		evidence = index.Records[id].Productions
-		provisional = bootstrapSeed(evidence)
-		if id.Namespace != "" {
+		record := index.Records[id]
+		bareRecord := bareDiscoveryRecord(index, id)
+		evidence, bare = record.Productions, bareRecord.Productions
+		support := s.classifySourceSupport(id, result.source, &record, &bareRecord)
+		result.provisional, result.sourceSupport = support.provisional, support.retained
+		if reads != nil && result.captureTarget && len(bare) != 0 {
 			key := id
 			key.Namespace = ""
-			bare = index.Records[key].Productions
-			if reads != nil && result.captureTarget && len(bare) != 0 {
-				reads.GetObject(key)
-			}
+			reads.GetObject(key)
 		}
 	}
 	if result.incoming != nil {
@@ -381,7 +391,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	result.out = evidence
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	result.classifyTarget(new(sh.cells[id]), provisional)
+	result.classifyTarget(new(sh.cells[id]))
 	for i := range evidence {
 		if result.incoming == nil {
 			result.addVisibleProduction(s, id, &evidence[i], reads)
@@ -389,7 +399,15 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 			result.add(&evidence[i])
 		}
 	}
-	s.addBareProductions(id, result, reads, [2][]manifest.Production{evidence, bare})
+	s.visitBareProductions(
+		id,
+		[2][]manifest.Production{evidence, bare},
+		result.incoming != nil,
+		func(p *manifest.Production) bool {
+			result.addVisibleProduction(s, id, p, reads)
+			return true
+		},
+	)
 	if result.facts {
 		result.captureReferenceLocked(sh, id)
 	}
@@ -403,10 +421,10 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	result.finishProductions()
 }
 
-func (r *productionResult) classifyTarget(cell *objectCell, provisional bool) {
+func (r *productionResult) classifyTarget(cell *objectCell) {
 	r.qualified = cell.static != nil &&
 		(cell.classified && cell.binding != nil && cell.binding.Ref.NamedResource == r.source ||
-			provisional && r.source == manifest.BootstrapSourceID)
+			r.provisional && r.source == manifest.BootstrapSourceID)
 	if r.qualified && cell.retired {
 		r.open = false
 	}
@@ -414,7 +432,7 @@ func (r *productionResult) classifyTarget(cell *objectCell, provisional bool) {
 		return
 	}
 	hidden := cell.hidden && cell.reference == nil
-	r.retiredStatic = hidden || cell.static != nil && cell.retired && (provisional || cell.classified)
+	r.retiredStatic = hidden || cell.static != nil && cell.retired && (r.provisional || cell.classified)
 	// Retiring source-bound bytes MUST leave other producers' predictions eligible.
 	r.hideEvidence = hidden && (!cell.retired || !cell.classified || cell.binding == nil)
 }
@@ -453,23 +471,6 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	s.lockAll()
 	s.installDiscoveryCoverageLocked(index, coverage)
 	s.unlockAll()
-}
-
-// Bootstrap promotion alone supplies no independent authority against accepted output.
-func bootstrapSeed(productions []manifest.Production) bool {
-	if slices.ContainsFunc(productions, func(p manifest.Production) bool {
-		return p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
-			p.Source == manifest.BootstrapSourceID && p.Path == "" && p.File == ""
-	}) {
-		return !slices.ContainsFunc(productions, func(p manifest.Production) bool {
-			return p.Owner == (manifest.NamedResource{}) &&
-				(p.Source != manifest.BootstrapSourceID || p.Path != "" || p.File != "")
-		})
-	}
-	return len(productions) > 0 && !slices.ContainsFunc(productions, func(p manifest.Production) bool {
-		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) ||
-			p.Source != manifest.BootstrapSourceID
-	})
 }
 
 func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSet) {
@@ -530,8 +531,8 @@ func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.N
 		}
 		record := footprint{
 			id: id, record: r,
-			independent: rawDeclarationAuthority(index, id, false),
-			classified:  rawDeclarationAuthority(index, id, true),
+			independent: rawDeclarationAuthority(&r, id, manifest.NamedResource{}, false),
+			classified:  rawDeclarationAuthority(&r, id, manifest.NamedResource{}, true),
 		}
 		s.addDiscoveryCoverage(index, coverage, &record)
 	}
@@ -676,47 +677,42 @@ func (c *objectCell) addBoundProductions(result *productionResult, generated *Ch
 	}
 }
 
-func (s *Store) addBareProductions(
+func (s *Store) visitBareProductions(
 	id manifest.NamedResource,
-	result *productionResult,
-	reads *ReadSet,
 	productions [2][]manifest.Production,
+	incoming bool,
+	yield func(*manifest.Production) bool,
 ) {
 	evidence, bare := productions[0], productions[1]
 	sameFamily := func(a, b manifest.Production) bool {
 		return a.Source == b.Source &&
-			(result.incoming != nil || a.Path == "" || a.File == b.File && a.Authored == b.Authored)
+			(incoming || a.Path == "" || a.File == b.File && a.Authored == b.Authored)
 	}
 	var first *manifest.Production
-	{
-		pValues4 := bare
-		for i := range pValues4 {
-			p := pValues4[i]
-			if bareProductionExcluded(new(p), id) {
-				continue
-			}
-			matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
-				return sameFamily(e, p) && sameProductionContext(s.coverage, new(e), new(p))
-			})
-			if len(evidence) == 0 {
-				matches = first == nil ||
-					sameFamily(*first, p) && sameProductionContext(s.coverage, new(*first), new(p))
-			}
-			if !matches {
-				matches = slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
-					return e.Path != "" && e.Authored.Namespace == "" && sameFamily(e, p) &&
-						s.coverage[e.Owner] == nil &&
-						(len(evidence) == 0 && sameFamily(*first, e) || slices.ContainsFunc(evidence, func(d manifest.Production) bool {
-							return sameFamily(d, e)
-						}))
-				})
-			}
-			if matches {
-				if first == nil {
-					first = &bare[i]
-				}
-				result.addVisibleProduction(s, id, &bare[i], reads)
-			}
+	for i := range bare {
+		p := &bare[i]
+		if bareProductionExcluded(p, id) {
+			continue
+		}
+		matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
+			return sameFamily(e, *p) && sameProductionContext(s.coverage, new(e), p)
+		})
+		if len(evidence) == 0 {
+			matches = first == nil ||
+				sameFamily(*first, *p) && sameProductionContext(s.coverage, first, p)
+		}
+		if !matches && !slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
+			return e.Path != "" && e.Authored.Namespace == "" && sameFamily(e, *p) &&
+				s.coverage[e.Owner] == nil &&
+				(len(evidence) == 0 && sameFamily(*first, e) || slices.ContainsFunc(evidence, func(d manifest.Production) bool {
+					return sameFamily(d, e)
+				}))
+		}) {
+			continue
+		}
+		first = cmp.Or(first, p)
+		if !yield(p) {
+			return
 		}
 	}
 }
@@ -733,9 +729,10 @@ func (r *productionResult) addVisibleProduction(
 		if reads != nil {
 			reads.sample(id, c.slot, accepted, r.watch)
 		}
-		omitted = accepted.shadows(binding)
-		if omitted && r.source != (manifest.NamedResource{}) && !r.qualified && binding.source == r.source {
-			r.open = false
+		coverage := accepted.productionCoverage(p, binding, r.source, r.sourceSupport)
+		omitted = coverage != coverageNone
+		if coverage == coverageRetired && r.source != (manifest.NamedResource{}) {
+			r.open = r.open && r.qualified
 		}
 		otherDeclaration := p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
 		if c.slot.hidden.Load() || omitted && (!r.retainOmitted || otherDeclaration) {

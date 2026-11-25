@@ -1,0 +1,5 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: charts, namespace: apps}
+spec:
+  url: https://charts.example.invalid

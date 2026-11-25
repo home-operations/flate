@@ -18,14 +18,17 @@ func (s *Store) ListProductionCandidates(
 	}
 	sh := s.shardForKind(kind)
 	sh.mu.RLock()
-	out := sh.productionCandidatesLocked(group, kind, index, prospective)
+	key := kindID{group, kind}
+	bucket := sh.byName[key]
+	out := sh.productionCandidatesLocked(key, &bucket, index, prospective)
 	sh.mu.RUnlock()
 	slices.SortFunc(out, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	return out
 }
 
 func (sh *shard) productionCandidatesLocked(
-	group, kind string,
+	kind kindID,
+	bucket *objectBucket,
 	index *manifest.DiscoveryIndex,
 	prospective map[manifest.NamedResource]bool,
 ) []manifest.BaseManifest {
@@ -33,8 +36,7 @@ func (sh *shard) productionCandidatesLocked(
 		return nil
 	}
 	var out []manifest.BaseManifest
-	for name := range sh.byName[kindID{group, kind}].names {
-		id := manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name}
+	bucket.visitIdentities(kind, func(id manifest.NamedResource) {
 		bare := id
 		bare.Namespace = ""
 		indexed := prospective[id] || prospective[bare]
@@ -51,12 +53,12 @@ func (sh *shard) productionCandidatesLocked(
 		if !indexed && !slices.ContainsFunc(sh.members[id], func(m membership) bool {
 			return !m.declaration && m.slot.id != id && m.slot.visible.Load()
 		}) {
-			continue
+			return
 		}
 		if obj := sh.objectLocked(id); obj != nil {
 			out = append(out, obj)
 		}
-	}
+	})
 	return out
 }
 
@@ -74,8 +76,9 @@ func (r *ReadSet) ListProductionCandidates(
 	input := r.input(key)
 	sh := r.store.shardFor(key)
 	sh.mu.RLock()
-	objects := sh.productionCandidatesLocked(group, kind, index, prospective)
-	generation := sh.byName[kindID{group, kind}].generation
+	bucketKey := kindID{group, kind}
+	bucket := sh.byName[bucketKey]
+	objects := sh.productionCandidatesLocked(bucketKey, &bucket, index, prospective)
 	for _, object := range objects {
 		id := object.Named()
 		for _, m := range sh.members[id] {
@@ -85,7 +88,7 @@ func (r *ReadSet) ListProductionCandidates(
 		}
 	}
 	sh.mu.RUnlock()
-	r.observe(input, bucketFacet, generation)
+	r.observe(input, bucketFacet, bucket.generation)
 	r.activateProducers()
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	missing := len(objects)

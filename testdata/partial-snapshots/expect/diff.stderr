@@ -1,0 +1,13 @@
+
+  ✗  orig snapshot: ConfigMap  apps/required  not found
+         orig snapshot: required by HelmRelease apps/infra, HelmRelease apps/nested, HelmRelease apps/infra, HelmRelease apps/nested, apps/charts, apps/apps
+
+  ✗  current snapshot: ConfigMap  apps/required  not found
+         current snapshot: required by HelmRelease apps/infra, HelmRelease apps/nested, HelmRelease apps/infra, HelmRelease apps/nested, apps/charts, apps/apps
+
+  ⚠ warnings (3)
+    [DiffSuppressed] HelmRelease apps/infra: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/infra: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted; current: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/infra: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted)
+    [DiffSuppressed] HelmRelease apps/nested: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/nested: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted; current: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/nested: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted)
+    [DiffSuppressed] Kustomization apps/apps: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: ConfigMap/apps/required: not found; supply a readable document; current: dependencies failed: ConfigMap/apps/required: not found; supply a readable document)
+
+  ✗ 2 failed · 12 blocked

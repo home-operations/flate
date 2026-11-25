@@ -374,26 +374,36 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index)).Admitted)
 		})
 	})
-	if rf.loader.documents.compact && !rf.loader.documents.eager &&
-		selection.Root(
-			selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index),
-		).Admitted {
-		{
-			pValues := r.Productions
-			for pIndex := range pValues {
-				p := pValues[pIndex]
-				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) &&
-					p.Declaration == (manifest.NamedResource{}) &&
-					p.Authored != (manifest.NamedResource{}) {
-					p.Owner = manifest.NamedResource{}
-					if !slices.Contains(r.Productions, p) {
-						r.Productions = append(r.Productions, p)
-					}
-				}
-			}
-		}
+	if rf.loader.documents.compact && !rf.loader.documents.eager {
+		rf.retainBootstrapOrigins(id, r)
 	}
 	slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
+}
+
+func (rf *readerFinalizer) retainBootstrapOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	admitted := false
+	for i := range r.Productions {
+		p := r.Productions[i]
+		if p.Owner == (manifest.NamedResource{}) || p.Materializer(id) != (manifest.NamedResource{}) ||
+			p.Declaration != (manifest.NamedResource{}) || p.Authored == (manifest.NamedResource{}) {
+			continue
+		}
+		// Self-sources MUST bootstrap before their readers can publish them.
+		if !p.Owner.ReportHidden() && p.Source != id && !rf.loader.Options.Session.RequestsNamedRoot(id) {
+			continue
+		}
+		if !admitted {
+			root := selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index)
+			admitted = selection.Root(root).Admitted
+			if !admitted {
+				return
+			}
+		}
+		p.Owner = manifest.NamedResource{}
+		if !slices.Contains(r.Productions, p) {
+			r.Productions = append(r.Productions, p)
+		}
+	}
 }
 
 func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifest.DiscoveryRecord) {

@@ -430,3 +430,68 @@ func TestLoader_CompactPinnedDeclaration(t *testing.T) {
 	l.refreshIndexParents(root)
 	assert.Equal(t, l.Index.Records[id].Pinned, true)
 }
+
+func TestLoader_CompactSourceAuthority(t *testing.T) {
+	t.Parallel()
+	id := (&manifest.GitRepository{Name: "cluster", Namespace: "apps"}).Named()
+	for _, tc := range []struct {
+		name                                   string
+		root                                   manifest.NamedResource
+		hiddenOwner, selfSource, wantAuthority bool
+	}{
+		{name: "covered"},
+		{name: "hidden owner", hiddenOwner: true, wantAuthority: true},
+		{name: "self source", selfSource: true, wantAuthority: true},
+		{name: "named root", root: id, wantAuthority: true},
+		{name: "kind-only root", root: manifest.NamedResource{Group: id.Group, Kind: id.Kind}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+				Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+					"source.yaml": {
+						Data: []byte(
+							"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/cluster.git}\n",
+						),
+					},
+				},
+			})
+			l := New(st)
+			l.SourceRoot = root
+			request := selection.Request{Changed: true}
+			if tc.root != (manifest.NamedResource{}) {
+				request.Roots = []manifest.NamedResource{tc.root}
+			}
+			configureSelection(t, l, request)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			record, found := l.Index.Lookup(id)
+			assert.FatalIf(t, !found, "source file missing from index")
+			owner := testutil.KustomizationID("apps", "sync")
+			if tc.hiddenOwner {
+				owner = manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).
+					Named()
+			}
+			source := manifest.BootstrapSourceID
+			if tc.selfSource {
+				source = id
+			}
+			coverage := manifest.Production{
+				Owner:    owner,
+				Authored: id,
+				Source:   source,
+				Path:     record.Path,
+				File:     record.File,
+			}
+			record.Productions = []manifest.Production{coverage}
+			l.Index.Records[id] = record
+			rf := readerFinalizer{loader: l}
+			rf.compactOrigins(id, &record)
+			l.Index.Records[id] = record
+			assert.Equal(t, slices.Contains(record.Productions, coverage), true)
+			assert.Equal(t, store.RawDeclarationAuthority(l.Index, id, false), tc.wantAuthority)
+		})
+	}
+}

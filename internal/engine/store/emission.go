@@ -253,15 +253,99 @@ func (c *contributor) unambiguousSource() manifest.NamedResource {
 	return binding.source
 }
 
-func (c *contributor) covers(record *footprint, emission *Emission, source manifest.NamedResource) bool {
-	if c == nil || len(emission.shadowed) == 0 {
-		return false
+// An explicit output declaration retains precedence over an independently authored file.
+func productionRetiresSource(p *manifest.Production, sourceSupport bool) bool {
+	return !sourceSupport || p.Declaration != (manifest.NamedResource{})
+}
+
+type indexedSourceSupport struct {
+	provisional, retained bool
+}
+
+func bareDiscoveryRecord(index *manifest.DiscoveryIndex, id manifest.NamedResource) manifest.DiscoveryRecord {
+	if index == nil || id.Namespace == "" {
+		return manifest.DiscoveryRecord{}
 	}
-	return slices.ContainsFunc(record.record.Productions, func(p manifest.Production) bool {
-		binding := c.binding(p.Source)
-		return p.Owner == emission.origin && binding != nil &&
-			(source == (manifest.NamedResource{}) || binding.source == source) && emission.shadows(binding)
+	id.Namespace = ""
+	return index.Records[id]
+}
+
+func rawSelf(record *manifest.DiscoveryRecord, id manifest.NamedResource) bool {
+	return record.BuilderOwner == (manifest.NamedResource{}) || record.BuilderOwner == id ||
+		record.Authored == id && record.File != "" && record.Builder != "" && record.File != record.Builder
+}
+
+func rawProductionAuthority(p *manifest.Production, id, source manifest.NamedResource, self bool) bool {
+	sourceEligible := source == (manifest.NamedResource{}) || p.Source == source && !provisionalBootstrap(p)
+	ownerEligible := p.Owner == (manifest.NamedResource{}) || self && p.Owner == id
+	return sourceEligible && ownerEligible
+}
+
+func (s *Store) classifySourceSupport(
+	id, source manifest.NamedResource,
+	record, bare *manifest.DiscoveryRecord,
+) indexedSourceSupport {
+	provisional := bootstrapSeed(record.Productions)
+	retained := source != (manifest.NamedResource{}) && rawDeclarationAuthority(record, id, source, false)
+	if len(bare.Productions) != 0 && (provisional || !retained && source != (manifest.NamedResource{})) {
+		key := id
+		key.Namespace = ""
+		self := rawSelf(bare, key)
+		s.visitBareProductions(
+			id,
+			[2][]manifest.Production{record.Productions, bare.Productions},
+			false,
+			func(p *manifest.Production) bool {
+				provisional = provisional && p.Owner != (manifest.NamedResource{})
+				retained = retained ||
+					source != (manifest.NamedResource{}) && rawProductionAuthority(p, key, source, self)
+				return provisional || !retained && source != (manifest.NamedResource{})
+			},
+		)
+	}
+	return indexedSourceSupport{provisional: provisional, retained: !provisional && retained}
+}
+
+// Bootstrap promotion alone supplies no independent authority against accepted output.
+func bootstrapSeed(productions []manifest.Production) bool {
+	if slices.ContainsFunc(productions, func(p manifest.Production) bool { return provisionalBootstrap(&p) }) {
+		return !slices.ContainsFunc(productions, func(p manifest.Production) bool {
+			return p.Owner == (manifest.NamedResource{}) &&
+				(p.Source != manifest.BootstrapSourceID || p.Path != "" || p.File != "")
+		})
+	}
+	return len(productions) > 0 && !slices.ContainsFunc(productions, func(p manifest.Production) bool {
+		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) ||
+			p.Source != manifest.BootstrapSourceID
 	})
+}
+
+func provisionalBootstrap(p *manifest.Production) bool {
+	return p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
+		p.Source == manifest.BootstrapSourceID && p.Path == "" && p.File == ""
+}
+
+type coverageState uint8
+
+const (
+	coverageNone coverageState = iota
+	coverageShadowed
+	coverageRetired
+)
+
+func (e *Emission) productionCoverage(
+	p *manifest.Production,
+	binding *sourceBinding,
+	source manifest.NamedResource,
+	sourceSupport bool,
+) coverageState {
+	if !e.shadows(binding) {
+		return coverageNone
+	}
+	if source == (manifest.NamedResource{}) || binding.source == source && productionRetiresSource(p, sourceSupport) {
+		return coverageRetired
+	}
+	return coverageShadowed
 }
 
 func (s *Store) discoveryBinding(

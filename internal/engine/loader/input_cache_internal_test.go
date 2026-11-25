@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/kustomize/kustomizeinput"
 	"github.com/home-operations/flate/internal/engine/selection"
@@ -775,19 +776,29 @@ func TestInputCache_DeferredPublicationPreservesOffsets(t *testing.T) {
 	t.Parallel()
 	body, err := manifest.EncodeRender([]manifest.DocOccurrence{{Document: map[string]any{"kind": "ConfigMap"}}})
 	assert.NoError(t, err)
+	refs := []manifest.Reference{{Use: "source"}}
+	referencerole.Restore(&refs[0], referencerole.BindSource|referencerole.ReadSourceTree)
 	original := &cachedInput{
 		Name: "object.yaml", Digest: "observed",
-		Objects:    []cachedOccurrence{{Offset: 23, Size: len(body), payload: &inputPayload{data: body}}},
+		Objects: []cachedOccurrence{{
+			Offset: 23, Size: len(body), payload: &inputPayload{data: body},
+			Facts: cachedOccurrenceFacts{Refs: refs},
+		}},
 		Projection: &cachedProjection{Offset: 17, Size: 2, payload: &inputPayload{data: []byte("{}")}},
 	}
 	saved, known, err := cacheInput(original.Name, original.Digest, &document{deferred: original})
 	assert.NoError(t, err)
 	assert.Equal(t, known, true)
 	frame := inputFrame{Files: []cachedInput{saved}}
-	_, err = frame.prepare(t.Context())
-	assert.NoError(t, err)
+	encoded := encodeInputFrame(t, &frame)
 	assert.Equal(t, frame.Files[0].Projection.Offset, int64(0))
 	assert.Equal(t, frame.Files[0].Objects[0].Offset, int64(2))
 	assert.Equal(t, original.Projection.Offset, int64(17))
 	assert.Equal(t, original.Objects[0].Offset, int64(23))
+	restored, err := readInputFrame(t.Context(), fstest.MapFS{"content": {Data: encoded}})
+	assert.NoError(t, err)
+	facts := &restored.Files[0].Objects[0].Facts
+	assert.Equal(t, facts.SourceRoles == nil, true)
+	assert.Equal(t, facts.Refs[0].BindsSource(), true)
+	assert.Equal(t, facts.Refs[0].ReadsSourceTree(), true)
 }

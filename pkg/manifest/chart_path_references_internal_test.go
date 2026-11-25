@@ -31,6 +31,8 @@ func TestReferences_ChartPaths(t *testing.T) {
 			}
 			refs := slices.Collect(References(obj, ReferenceRelations))
 			assert.Equal(t, refs[0].ChartPath, tc.want)
+			assert.Equal(t, refs[0].BindsSource(), true)
+			assert.Equal(t, refs[0].ReadsSourceTree(), tc.want != "")
 			assert.Equal(t, obj.Chart, tc.name)
 		})
 	}

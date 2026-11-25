@@ -179,7 +179,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		want            []Reference
 	}{
 		{"kustomization", "effective", k, []Reference{
-			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true, bindsSource: true, readsSourceTree: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true, sourceRoles: bindsSource | readsSourceTree},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: new("true")},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
@@ -188,7 +188,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 4, Content: true},
 		}},
 		{"helmrelease", "effective", hr, []Reference{
-			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", RequiresDeclaration: true, Use: "chart", Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", RequiresDeclaration: true, Use: "chart", Content: true, sourceRoles: bindsSource},
 			{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},
@@ -542,12 +542,11 @@ func TestReferences_Views(t *testing.T) {
 		NamespaceDefault: true,
 	}
 	bootstrap := Reference{
-		NamedResource:   BootstrapSourceID,
-		bindsSource:     true,
-		readsSourceTree: true,
-		Gate:            GateInputs | GateArtifacts,
-		ArtifactStages:  GateInputs | GateArtifacts,
-		Artifact:        true,
+		NamedResource:  BootstrapSourceID,
+		sourceRoles:    bindsSource | readsSourceTree,
+		Gate:           GateInputs | GateArtifacts,
+		ArtifactStages: GateInputs | GateArtifacts,
+		Artifact:       true,
 	}
 	for _, tc := range []struct {
 		name string

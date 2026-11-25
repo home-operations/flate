@@ -127,12 +127,12 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 		Namespace:   "effective",
 		Name:        "source",
 		Use:         "source",
-		bindsSource: true,
+		sourceRoles: bindsSource,
 		Content:     true,
 	}
 	if testCaseInput.files {
 		source.Files = files
-		source.readsSourceTree = true
+		source.sourceRoles |= readsSourceTree
 	}
 	if testCaseInput.chart {
 		source.ChartPath = "./charts/demo"
@@ -161,7 +161,7 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 				Name:                "chart",
 				RequiresDeclaration: true,
 				Use:                 "chart",
-				bindsSource:         true,
+				sourceRoles:         bindsSource,
 				Content:             true,
 			},
 		}, want...)

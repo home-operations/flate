@@ -15,6 +15,7 @@ import (
 	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
@@ -97,6 +98,7 @@ type cachedOccurrenceFacts struct {
 	Collection         bool                      `json:"Collection,omitempty"`
 	Reverse            []manifest.NamedResource  `json:"Reverse,omitempty"`
 	Refs               []manifest.Reference      `json:"Refs,omitempty"`
+	SourceRoles        []referencerole.Roles     `json:"SourceRoles,omitempty"` // Wire bytes follow Refs order.
 	TemplateInputs     []manifest.TemplateInput  `json:"TemplateInputs,omitempty"`
 	Roots              []string                  `json:"Roots,omitempty"`
 	Targets            []manifest.ProducerTarget `json:"Targets,omitempty"`

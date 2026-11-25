@@ -60,17 +60,21 @@ func (h HelmChart) UsesSourceValuesFiles() bool {
 type chartSourceInputs struct {
 	path  string
 	files []string
+	roles sourceRoles
 }
 
 func (h *HelmChart) sourceInputs(files []string) chartSourceInputs {
+	inputs := chartSourceInputs{roles: bindsSource}
 	if !h.Source.KindInfo().IsSource() {
-		return chartSourceInputs{}
+		return inputs
 	}
-	if !h.UsesSourceValuesFiles() {
+	sourceValues := h.UsesSourceValuesFiles()
+	if !sourceValues {
 		files = nil
 	}
+	inputs.files = files
 	if !h.hasSourceChartPath() || h.Name == "" || strings.HasPrefix(h.Name, "/") || strings.IndexByte(h.Name, 0) >= 0 {
-		return chartSourceInputs{files: files}
+		return inputs
 	}
 	// Reference iteration MUST validate without allocating a normalized path.
 	depth := 0
@@ -83,10 +87,14 @@ func (h *HelmChart) sourceInputs(files []string) chartSourceInputs {
 			depth++
 		}
 		if depth < 0 {
-			return chartSourceInputs{files: files}
+			return inputs
 		}
 	}
-	return chartSourceInputs{path: h.Name, files: files}
+	inputs.path = h.Name
+	if sourceValues {
+		inputs.roles |= readsSourceTree
+	}
+	return inputs
 }
 
 // RepoFullName returns the source name prefixed by its namespace when present.
@@ -475,11 +483,10 @@ func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
 				NamespaceDefault: h.Chart.Source.Namespace == "",
 				NamedResource:    backing.Source,
 				Use:              sourceKey,
-				bindsSource:      true,
 				Content:          true,
 				Files:            files,
 				ChartPath:        chartPath,
-				readsSourceTree:  chartPath != "" && backing.UsesSourceValuesFiles(),
+				sourceRoles:      inputs.roles,
 				Gate:             stage,
 				Artifact:         artifact,
 				ChartSource:      artifact,
@@ -505,7 +512,9 @@ func (h *HelmRelease) declaredChartReference(source, declared NamedResource) Ref
 		stage |= GateInputs
 	}
 	namespaceDefault := h.HelmReleaseSpec.Chart != nil
+	var roles sourceRoles
 	if h.ChartRef != nil {
+		roles = bindsSource
 		namespaceDefault = h.ChartRef.Namespace == ""
 	} else if h.HelmReleaseSpec.Chart != nil && h.HelmReleaseSpec.Chart.Spec.SourceRef != nil {
 		namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
@@ -514,7 +523,7 @@ func (h *HelmRelease) declaredChartReference(source, declared NamedResource) Ref
 		NamespaceDefault:    namespaceDefault,
 		NamedResource:       declared,
 		Use:                 chartKey,
-		bindsSource:         h.ChartRef != nil,
+		sourceRoles:         roles,
 		Content:             true,
 		Gate:                stage,
 		Artifact:            artifact,

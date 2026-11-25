@@ -90,7 +90,9 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Diff(t, slices.Collect(SourceRoots(object)), []string{"clusters"})
 			assert.Equal(t, len(slices.Collect(RenderRoots(object))), 0)
 			if diff := cmp.Diff(
-				[]Reference{{NamedResource: application.Source, Use: "source", Content: true, bindsSource: true}},
+				[]Reference{{
+					NamedResource: application.Source, Use: "source", Content: true, sourceRoles: bindsSource,
+				}},
 				slices.Collect(References(object, ReferenceRelations)),
 				cmp.AllowUnexported(Reference{}),
 			); diff != "" {

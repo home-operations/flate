@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"slices"
 
+	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -55,6 +56,9 @@ func readInputFrame(ctx context.Context, generation fs.FS) (*inputFrame, error) 
 			return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid visit reference")
 		}
 	}
+	if restoreErr := frame.restoreReferenceRoles(); restoreErr != nil {
+		return nil, restoreErr
+	}
 	frame.frame = content
 	var declarations []byte
 	if frame.DeclarationBytes != 0 {
@@ -85,6 +89,27 @@ func readInputFrame(ctx context.Context, generation fs.FS) (*inputFrame, error) 
 		*reference.payload = payload
 	}
 	return &frame, nil
+}
+
+func (f *inputFrame) restoreReferenceRoles() error {
+	for i := range f.Files {
+		objects := f.Files[i].Objects
+		for j := range objects {
+			facts := &objects[j].Facts
+			roles := facts.SourceRoles
+			facts.SourceRoles = nil
+			if len(roles) == 0 {
+				continue
+			}
+			if len(roles) != len(facts.Refs) {
+				return manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid reference roles")
+			}
+			for k, role := range roles {
+				referencerole.Restore(&facts.Refs[k], role)
+			}
+		}
+	}
+	return nil
 }
 
 func (f *inputFrame) prepare(ctx context.Context) (*cache.Frame, error) {
@@ -124,7 +149,40 @@ func (f *inputFrame) prepare(ctx context.Context) (*cache.Frame, error) {
 			f.DeclarationBytes += *reference.size
 		}
 	}
-	return cache.NewFrame("loader-inputs", f, payload.Bytes())
+	return f.encode(payload.Bytes())
+}
+
+func (f *inputFrame) encode(payload []byte) (*cache.Frame, error) {
+	for i := range f.Files {
+		objects := f.Files[i].Objects
+		for j := range objects {
+			facts := &objects[j].Facts
+			facts.SourceRoles = encodeReferenceRoles(facts.Refs)
+		}
+	}
+	frame, err := cache.NewFrame("loader-inputs", f, payload)
+	for i := range f.Files {
+		objects := f.Files[i].Objects
+		for j := range objects {
+			objects[j].Facts.SourceRoles = nil
+		}
+	}
+	return frame, err
+}
+
+func encodeReferenceRoles(refs []manifest.Reference) []referencerole.Roles {
+	var roles []referencerole.Roles
+	for i := range refs {
+		role := referencerole.Capture(&refs[i])
+		if role == 0 {
+			continue
+		}
+		if roles == nil {
+			roles = make([]referencerole.Roles, len(refs))
+		}
+		roles[i] = role
+	}
+	return roles
 }
 
 func (f *inputFrame) indexVisits() {

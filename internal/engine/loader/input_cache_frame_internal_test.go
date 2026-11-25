@@ -20,6 +20,7 @@ import (
 	kustomizetypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/kustomize/krusty"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -313,6 +314,48 @@ func TestInputFrame_LazyPayload(t *testing.T) {
 	}
 }
 
+func TestInputFrame_ReferenceRoles(t *testing.T) {
+	t.Parallel()
+	refs := []manifest.Reference{{Use: "valuesFrom"}, {Use: "chart"}, {Use: "source"}}
+	referencerole.Restore(&refs[1], referencerole.BindSource)
+	referencerole.Restore(&refs[2], referencerole.BindSource|referencerole.ReadSourceTree)
+	roleFree := []manifest.Reference{
+		{Use: "valuesFrom"},
+		{Use: "artifact", ArtifactOnly: true},
+	}
+	doc := document{objects: []parsedObject{
+		{fact: &authoredOccurrence{facts: &occurrenceFacts{refs: refs}}},
+		{fact: &authoredOccurrence{facts: &occurrenceFacts{refs: roleFree}}},
+	}}
+	saved, known, err := cacheInput("object.yaml", "digest", &doc)
+	assert.NoError(t, err)
+	assert.FatalIf(t, !known, "input was not cached")
+	encoded := encodeInputFrame(t, &inputFrame{Files: []cachedInput{saved}})
+	assert.Equal(t, bytes.Count(encoded, []byte(`"SourceRoles":`)), 1)
+	owner, err := cache.New(t.Context(), "")
+	assert.NoError(t, err)
+	defer func() { assert.NoError(t, owner.Close()) }()
+	generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: "frame"}, &cache.Policy{},
+		func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
+			_, writeErr := out.Write(encoded)
+			return cache.ProducerResult{}, writeErr
+		})
+	assert.NoError(t, err)
+	restored, err := readInputFrame(t.Context(), generation)
+	assert.NoError(t, err)
+	for occurrence, want := range [][]manifest.Reference{refs, roleFree} {
+		facts := &restored.Files[0].Objects[occurrence].Facts
+		assert.Equal(t, facts.SourceRoles == nil, true)
+		got := facts.Refs
+		assert.FatalIf(t, len(got) != len(want), "got %d references, want %d", len(got), len(want))
+		for i := range want {
+			assert.Equal(t, got[i].Use, want[i].Use)
+			assert.Equal(t, got[i].BindsSource(), want[i].BindsSource())
+			assert.Equal(t, got[i].ReadsSourceTree(), want[i].ReadsSourceTree())
+		}
+	}
+}
+
 func TestInputFrame_RejectsInvalidIndex(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -326,6 +369,10 @@ func TestInputFrame_RejectsInvalidIndex(t *testing.T) {
 		{name: "negative-declaration-size", index: `{"Files":[{"DeclarationSize":-1}]}`},
 		{name: "declaration-past-block", index: `{"Files":[{"DeclarationOffset":1,"DeclarationSize":1}]}`},
 		{name: "declaration-exceeds-block", index: `{"Files":[{"DeclarationSize":1}]}`},
+		{name: "short-source-roles", index: `{"Files":[{"Name":"object.yaml","Digest":"digest","Objects":[
+			{"Facts":{"Refs":[{"Use":"chart"},{"Use":"source"}],"SourceRoles":"AQ=="}}]}]}`},
+		{name: "long-source-roles", index: `{"Files":[{"Name":"object.yaml","Digest":"digest","Objects":[
+			{"Facts":{"Refs":[{"Use":"chart"}],"SourceRoles":"AQM="}}]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

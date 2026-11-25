@@ -9,6 +9,8 @@ import (
 	meta "github.com/fluxcd/pkg/apis/meta"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/home-operations/flate/internal/core/referencerole"
 )
 
 // LocalObjectReference is a name-only reference to a same-namespace
@@ -156,6 +158,13 @@ const (
 	ReferenceAll
 )
 
+type sourceRoles = referencerole.Roles
+
+const (
+	bindsSource     = referencerole.BindSource
+	readsSourceTree = referencerole.ReadSourceTree
+)
+
 // Reference contains transient facts for one authored dependency or resolved source.
 // Retained references MUST be cloned; iteration borrows immutable manifest fields.
 type Reference struct {
@@ -190,9 +199,8 @@ type Reference struct {
 	// NamespaceDefault records a namespace inherited from the consumer.
 	NamespaceDefault bool
 	// Acquisition leaves unknown input proof to the source acquisition policy.
-	Acquisition     bool
-	bindsSource     bool
-	readsSourceTree bool
+	Acquisition bool
+	sourceRoles //nolint:embeddedstructfieldcheck // Share the trailing boolean padding to keep references compact.
 }
 
 // Clone owns the mutable containers borrowed by a reference.
@@ -234,12 +242,12 @@ func (r Reference) IsSource() bool {
 
 // BindsSource excludes a producer's generated chart from its backing inputs.
 func (r Reference) BindsSource() bool {
-	return r.bindsSource || r.artifactTreeInput()
+	return r.sourceRoles&bindsSource != 0 || r.artifactTreeInput()
 }
 
 // ReadsSourceTree permits bootstrap aliases for references that read files inside a source tree.
 func (r Reference) ReadsSourceTree() bool {
-	return r.readsSourceTree || r.artifactTreeInput()
+	return r.sourceRoles&readsSourceTree != 0 || r.artifactTreeInput()
 }
 
 func (r Reference) artifactTreeInput() bool {

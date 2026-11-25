@@ -43,7 +43,7 @@ func (g *GitRepository) Composition() ArtifactComposition {
 				},
 				Use: "include", Position: i, Content: true, Gate: GateArtifacts,
 				ArtifactStages: GateArtifacts, NamespaceDefault: true,
-				Files: []string{from}, Subtree: true, bindsSource: true,
+				Files: []string{from}, Subtree: true, sourceRoles: bindsSource,
 			},
 			FromPath: from, ToPath: include.GetToPath(),
 		}

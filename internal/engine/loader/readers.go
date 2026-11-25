@@ -411,29 +411,31 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 }
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
-	kind := id.KindInfo()
-	compactParent := rf.loader.documents.compact && !rf.loader.documents.eager && kind.Parent
-	if compactParent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
-		r.Parent == (manifest.NamedResource{}) &&
-		!selection.Root(
-			selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index),
-		).Admitted {
-		var owner manifest.NamedResource
-		multiple := false
-		{
-			pValues2 := r.Productions
-			for pIndex2 := range pValues2 {
-				p := pValues2[pIndex2]
-				if parent := p.Materializer(id); parent != (manifest.NamedResource{}) {
-					multiple = multiple || owner != (manifest.NamedResource{}) && owner != parent
-					owner = parent
-				}
-			}
-		}
-		if !multiple && owner != id {
-			r.Parent = owner
+	l := rf.loader
+	if !l.documents.compact || l.documents.eager || !id.KindInfo().Parent {
+		return
+	}
+	if r.Parent != (manifest.NamedResource{}) || selection.Root(l.roots.get(id).view()).Independent {
+		return
+	}
+	if !l.locations[id].requiresBuild {
+		evidence := selection.CaptureRoot(l.RootEvidence(id, nil), l.Store, l.Index)
+		if selection.Root(evidence).Admitted {
+			return
 		}
 	}
+	var owner manifest.NamedResource
+	for i := range r.Productions {
+		parent := r.Productions[i].Materializer(id)
+		if parent == (manifest.NamedResource{}) || parent == id {
+			continue
+		}
+		if owner != (manifest.NamedResource{}) && owner != parent {
+			return
+		}
+		owner = parent
+	}
+	r.Parent = owner
 }
 
 func (rf *readerFinalizer) setRecordInputs(id manifest.NamedResource, r *manifest.DiscoveryRecord) {

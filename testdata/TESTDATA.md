@@ -62,6 +62,8 @@ The expected streams follow the authored resources and the output format.
 | `custom-bootstrap-source/diff` | Report the version edit without an external-source warning on either snapshot. |
 
 `bootstrap-namespace-patch/` covers the nested ConfigMap change from issue #1626.
+It compares the full ConfigMap builds in the parent and bootstrap layouts.
+Only the ionfury case checks out the repository with a missing integration input.
 The `bootstrap-local-artifact/` scenario covers the local ArtifactGenerator from the same issue.
 Both scenarios run twice through `cli.Run` with two workers and a private cache.
 
@@ -69,6 +71,10 @@ Both scenarios run twice through `cli.Run` with two workers and a private cache.
 | --- | --- |
 | `bootstrap-namespace-patch/patched` | Show the complete nested ConfigMap diff after a Namespace patch. |
 | `bootstrap-namespace-patch/unpatched` | Show the same diff without the patch. |
+| `bootstrap-namespace-patch/parent-patched` | Select the parent builder that imports the bundles and the patched bootstrap. |
+| `bootstrap-namespace-patch/parent-unpatched` | Select the same parent builder with an unpatched bootstrap. |
+| `bootstrap-namespace-patch/no-parent-cluster` | Select the cluster directory when the patched bootstrap builder imports the bundles. |
+| `bootstrap-namespace-patch/ionfury-integration` | Skip the unchanged integration entry in a scoped diff. Show the live version edit in the root diff and report the missing input in a direct integration build. |
 | `bootstrap-source-declaration/mirror-url` | Render the checkout and OCI workloads. Report the source interval edit under its parent when the Git URL differs from the checkout remote. |
 | `bootstrap-sibling-sources/ssh-origin` | Render each HelmRepository from its sibling cluster and the workload from a separate Git source. Render one edited workload in changed-only mode. |
 | `bootstrap-local-artifact/local-generator` | Omit external source warnings before any change. Show the generated ConfigMap diff after an input change. |

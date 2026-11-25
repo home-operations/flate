@@ -3,6 +3,7 @@ package loader
 import (
 	"fmt"
 	"iter"
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -368,4 +370,274 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 			assert.Equal(t, authored, false)
 		})
 	}
+}
+
+func TestAdmission_ProjectedBootstrapOwnership(t *testing.T) {
+	t.Parallel()
+	const cluster = "clusters/primary"
+	const peer = "clusters/peer"
+	const bootstrap = cluster + "/bootstrap/owner.yaml"
+	const changed = "workload/value.yaml"
+	source := (&manifest.GitRepository{Name: "fleet", Namespace: "apps"}).Named()
+	owner := testutil.KustomizationID("apps", "primary")
+	native := manifest.NewEntryKustomization(manifest.BootstrapSourceID, cluster, manifest.NamedResource{}).Named()
+	for _, entry := range []string{cluster, "."} {
+		t.Run(entry, func(t *testing.T) {
+			t.Parallel()
+			for _, patched := range []bool{false, true} {
+				root := t.TempDir()
+				child := "  sourceRef: {kind: GitRepository, name: fleet}\n"
+				inputs := fstest.MapFS{
+					cluster + "/kustomization.yaml": {Data: []byte("resources: [bootstrap, ../../bundle]\n")},
+					cluster + "/bootstrap/kustomization.yaml": {
+						Data: []byte("resources: [owner.yaml, namespace.yaml]\n"),
+					},
+					bootstrap: {
+						Data: []byte(testutil.KustomizationYAML("primary", "apps", "  path: ./"+cluster+"\n"+child)),
+					},
+					cluster + "/bootstrap/namespace.yaml": {
+						Data: []byte("apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n"),
+					},
+					"bundle/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
+					"bundle/child.yaml": {
+						Data: []byte(testutil.KustomizationYAML("application", "apps", "  path: ./workload\n"+child)),
+					},
+					"workload/kustomization.yaml": {Data: []byte("resources: [value.yaml]\n")},
+					changed: {
+						Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: value}\n"),
+					},
+					peer + "/kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+					peer + "/owner.yaml": {
+						Data: []byte(testutil.KustomizationYAML("peer", "apps", "  path: ./"+peer+"\n"+child)),
+					},
+				}
+				if patched {
+					input := inputs[cluster+"/bootstrap/kustomization.yaml"]
+					input.Data = append(input.Data, []byte(`patches:
+- target: {kind: Namespace, name: apps}
+  patch: |-
+    - op: add
+      path: /metadata/labels
+      value: {example: patched}
+`)...)
+				}
+				st := store.New()
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+					Provider: store.ProviderInput, LocalPath: root, FS: inputs,
+				})
+				st.SetArtifact(source, &store.SourceArtifact{
+					Provider: store.ProviderAlias, LocalRoot: root, LocalPath: t.TempDir(), FS: inputs,
+				})
+				l := New(st)
+				l.SourceRoot = root
+				configureSelection(t, l, selection.Request{Changed: true})
+				l.Options.Changes = detectChanges(t, []string{changed}, []string{changed})
+
+				_, err := l.Load(t.Context(), filepath.Join(root, entry), manifest.NamedResource{}, nil)
+				assert.NoError(t, err)
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+				record, indexed := l.Index.Lookup(owner)
+				assert.Equal(t, indexed, true)
+				assert.Equal(t, record.Authored, owner)
+				assert.Equal(t, l.locations[owner].Identity, owner)
+				assert.Equal(t, record.Builder, "")
+				assert.Equal(t, st.GetDeclaration(owner), manifest.BaseManifest(nil))
+				want := manifest.NamedResource{}
+				if patched {
+					want = native
+					assert.Equal(t, slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+						return p.Owner == native && p.Source == manifest.BootstrapSourceID && p.File == bootstrap
+					}), true)
+				}
+				assert.Equal(t, record.Parent, want)
+				var reads store.ReadSet
+				reads.Init(st, manifest.NamedResource{}, nil)
+				reads.RequireMaterializer(owner)
+				proposal, err := prepareSelection(
+					t.Context(),
+					t,
+					l,
+					selection.PrepareRequest{Invocation: true, Reads: &reads},
+				)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Needed, native), patched)
+				peerEntry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, peer, manifest.NamedResource{}).
+					Named()
+				assert.Equal(t, slices.Contains(proposal.Needed, peerEntry), false)
+				proposal.Retire()
+				reads.Retire()
+
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+				frozen, indexed := l.Index.Lookup(owner)
+				assert.Equal(t, indexed, true)
+				assert.Equal(t, frozen.Parent, want)
+				l.Retire()
+			}
+		})
+	}
+}
+
+func TestAdmission_PendingSelfClaimSupply(t *testing.T) {
+	t.Parallel()
+	const left = "roots/left"
+	const right = "roots/left/nested"
+	const peer = "roots/peer"
+	for _, tc := range []struct {
+		name        string
+		packages    map[string]string
+		parent      string
+		productions []string
+		selfClaim   bool
+	}{
+		{name: "inactive self claim"},
+		{
+			name: "self claim alone for its effective identity",
+			packages: map[string]string{
+				left: "resources: [../../shared]\nnamespace: elsewhere\n",
+			},
+			selfClaim: true,
+		},
+		{
+			name: "one supplier", packages: map[string]string{left: "resources: [../../shared]\n"},
+			parent: left, productions: []string{left}, selfClaim: true,
+		},
+		{
+			name: "competing peer roots",
+			packages: map[string]string{
+				left: "resources: [../../shared]\n",
+				peer: "resources: [../../shared]\n",
+			},
+			productions: []string{left, peer}, selfClaim: true,
+		},
+		{
+			name: "competing nested roots",
+			packages: map[string]string{
+				left:  "resources: [../../shared]\n",
+				right: "resources: [../../../shared]\n",
+			},
+			productions: []string{left, right}, selfClaim: true,
+		},
+		{
+			name: "real nested import",
+			packages: map[string]string{
+				left:  "resources: [nested]\n",
+				right: "resources: [../../../shared]\n",
+			},
+			parent: left, productions: []string{left}, selfClaim: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := pendingSelfClaimLoader(t, tc.packages)
+			owner := testutil.KustomizationID("apps", "self")
+			source := (&manifest.GitRepository{Name: "fleet", Namespace: "apps"}).Named()
+			record, indexed := l.Index.Lookup(owner)
+			assert.Equal(t, indexed, true)
+			assert.Equal(t, record.Authored, owner)
+			assert.Equal(t, l.locations[owner].Identity, owner)
+			assert.Equal(t, l.locations[owner].requiresBuild, tc.selfClaim)
+			assert.Equal(t, record.Builder, "")
+			assert.Equal(t, slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+				return p.Owner == owner && p.Source == source && p.Authored == owner
+			}), tc.selfClaim)
+			var suppliers []string
+			for i := range record.Productions {
+				p := &record.Productions[i]
+				if p.Owner == (manifest.NamedResource{}) || p.Owner == owner {
+					continue
+				}
+				assert.Equal(t, p.Source, manifest.BootstrapSourceID)
+				assert.Equal(t, p.Authored, owner)
+				assert.Equal(t, p.File, "shared/owner.yaml")
+				suppliers = append(suppliers, p.Owner.Name)
+			}
+			slices.Sort(suppliers)
+			assert.Diff(t, suppliers, tc.productions)
+			var parent manifest.NamedResource
+			if tc.parent != "" {
+				parent = manifest.NewEntryKustomization(
+					manifest.BootstrapSourceID, tc.parent, manifest.NamedResource{},
+				).Named()
+			}
+			assert.Equal(t, record.Parent, parent)
+		})
+	}
+}
+
+func TestAdmission_FrozenSelfClaimSupply(t *testing.T) {
+	t.Parallel()
+	const baseRoot = "roots/base"
+	const headRoot = "roots/head"
+	base := pendingSelfClaimLoader(t, map[string]string{baseRoot: "resources: [../../shared]\n"})
+	head := pendingSelfClaimLoader(t, map[string]string{headRoot: "resources: [../../shared]\n"})
+	assert.NoError(t, base.FinalizeIndex(t.Context(), base.SourceRoot, true))
+	assert.NoError(t, head.FinalizeIndex(t.Context(), head.SourceRoot, true))
+
+	owner := testutil.KustomizationID("apps", "self")
+	before, baseIndexed := base.Index.Lookup(owner)
+	after, headIndexed := head.Index.Lookup(owner)
+	assert.Equal(t, baseIndexed, true)
+	assert.Equal(t, headIndexed, true)
+	assert.Equal(t, before.Authored, after.Authored)
+	assert.Equal(t, before.Parent, manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID, baseRoot, manifest.NamedResource{},
+	).Named())
+	assert.Equal(t, after.Parent, manifest.NewEntryKustomization(
+		manifest.BootstrapSourceID, headRoot, manifest.NamedResource{},
+	).Named())
+}
+
+func pendingSelfClaimLoader(t *testing.T, packages map[string]string) *Loader {
+	t.Helper()
+	root := t.TempDir()
+	owner := testutil.KustomizationID("apps", "self")
+	source := (&manifest.GitRepository{Name: "fleet", Namespace: "apps"}).Named()
+	inputs := fstest.MapFS{
+		"claim/kustomization.yaml": {Data: []byte("resources: [../shared]\n")},
+		"shared/kustomization.yaml": {Data: []byte(`resources: [owner.yaml, namespace.yaml]
+patches:
+- target: {kind: Namespace, name: apps}
+  patch: |-
+    - op: add
+      path: /metadata/labels
+      value: {example: patched}
+`)},
+		"shared/namespace.yaml": {
+			Data: []byte("apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n"),
+		},
+		"shared/owner.yaml": {
+			Data: []byte(testutil.KustomizationYAML(
+				"self", "apps", "  path: ./claim\n  sourceRef: {kind: GitRepository, name: fleet}\n",
+			) + `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: fleet, namespace: apps}
+spec: {url: https://github.com/example/fleet.git}
+`),
+		},
+	}
+	for dir, kustomization := range packages {
+		inputs[dir+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte(kustomization)}
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+		Provider: store.ProviderInput, LocalPath: root, FS: inputs,
+	})
+	st.SetArtifact(source, &store.SourceArtifact{
+		Provider: store.ProviderAlias, LocalRoot: root, LocalPath: root, FS: inputs,
+	})
+	l := New(st)
+	t.Cleanup(l.Retire)
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	_, err = l.Load(t.Context(), filepath.Join(root, "claim"), owner, nil)
+	assert.NoError(t, err)
+	for _, dir := range slices.Sorted(maps.Keys(packages)) {
+		_, err = l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	return l
 }

@@ -12,6 +12,10 @@ func TestE2E_BootstrapDiff(t *testing.T) {
 	for _, tc := range []struct{ scenario, name string }{
 		{"bootstrap-namespace-patch", "patched"},
 		{"bootstrap-namespace-patch", "unpatched"},
+		{"bootstrap-namespace-patch", "parent-patched"},
+		{"bootstrap-namespace-patch", "parent-unpatched"},
+		{"bootstrap-namespace-patch", "no-parent-cluster"},
+		{"bootstrap-namespace-patch", "ionfury-integration"},
 		{"bootstrap-local-artifact", "local-generator"},
 		{"bootstrap-source-declaration", "mirror-url"},
 		{"bootstrap-sibling-sources", "ssh-origin"},

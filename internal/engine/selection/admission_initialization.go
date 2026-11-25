@@ -188,9 +188,7 @@ func (c *admissionClosure) finishStart(
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) {
 	if c.context.NativeEntry && c.session.request.Matches(manifest.NamedResource{}) {
-		entry, _ := filepath.Rel(c.context.Root, c.context.EntryPath)
-		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(entry), manifest.NamedResource{}).
-			Named()
+		owner := c.nativeEntryID()
 		if object := c.object(owner); object != nil && c.affected(owner, object) {
 			c.add(owner, admissionRole{needed: true, ordinary: true})
 		}

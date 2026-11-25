@@ -1,0 +1,7 @@
+
+  ⚠ warnings (3)
+    [UnrelatedFailure] orig snapshot: ConfigMap flux-system/cluster-vars: not found; required by
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/platform, ResourceSet.fluxcd.controlplane.io/flux-system/cluster-resources
+    [UnrelatedFailure] current snapshot: ConfigMap flux-system/cluster-vars: not found; required by
+      Kustomization.kustomize.toolkit.fluxcd.io/flux-system/platform, ResourceSet.fluxcd.controlplane.io/flux-system/cluster-resources
+    [DiffSuppressed] Kustomization flux-system/platform: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: ConfigMap/flux-system/cluster-vars: not found; supply a readable document; current: dependencies failed: ConfigMap/flux-system/cluster-vars: not found; supply a readable document)

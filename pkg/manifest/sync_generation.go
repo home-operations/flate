@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"slices"
+	"regexp"
 	"strings"
 	"time"
 
@@ -172,42 +172,44 @@ func syncSourceSpec(sync *operatorv1.Sync) map[string]any {
 	return spec
 }
 
-// The manifests in Flux Operator v0.63.0 determine the offline range match.
-//
-//nolint:gochecknoglobals // The pinned versions are immutable.
-var syncDistributionV1 = []*semver.Version{
-	semver.MustParse("2.10.1"), semver.MustParse("2.10.0"),
-	semver.MustParse("2.9.6"), semver.MustParse("2.9.5"), semver.MustParse("2.9.4"),
-	semver.MustParse("2.9.3"), semver.MustParse("2.9.2"), semver.MustParse("2.9.1"), semver.MustParse("2.9.0"),
-	semver.MustParse("2.8.8"), semver.MustParse("2.8.7"), semver.MustParse("2.8.6"), semver.MustParse("2.8.5"),
-	semver.MustParse("2.8.3"), semver.MustParse("2.8.2"), semver.MustParse("2.8.1"), semver.MustParse("2.8.0"),
-	semver.MustParse("2.7.5"), semver.MustParse("2.7.4"), semver.MustParse("2.7.3"),
-	semver.MustParse("2.7.2"), semver.MustParse("2.7.1"), semver.MustParse("2.7.0"),
-	semver.MustParse("2.6.4"), semver.MustParse("2.6.3"), semver.MustParse("2.6.2"),
-	semver.MustParse("2.6.1"), semver.MustParse("2.6.0"),
-}
-
-//nolint:gochecknoglobals // All sync sources share the pinned API boundary.
+//nolint:gochecknoglobals // OCIRepository and Bucket share this API boundary.
 var syncRepositoryV1 = semver.MustParse("2.6.0")
+
+var syncVersionNumbers = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 func syncSourceVersion(kind, version string) (string, error) {
 	if kind == KindGitRepository || version == "" {
 		return "v1", nil
 	}
-	// The operator resolves a distribution range before choosing the API version.
 	version, _, _ = strings.Cut(version, "@")
-	if parsed, err := semver.NewVersion(version); err == nil {
-		if parsed.Prerelease() == "" && !parsed.LessThan(syncRepositoryV1) {
-			return "v1", nil
-		}
-		return "v1beta2", nil
-	}
 	constraint, err := semver.NewConstraint(version)
 	if err != nil {
 		return "", NewError(ErrInput, fmt.Errorf("invalid Flux distribution version %q: %w", version, err), "")
 	}
-	if slices.ContainsFunc(syncDistributionV1, constraint.Check) {
+	matches := func(candidate *semver.Version) bool {
+		return !candidate.LessThan(syncRepositoryV1) && constraint.Check(candidate)
+	}
+	if matches(syncRepositoryV1) {
 		return "v1", nil
+	}
+
+	// A comparison can change truth at a bound or the next patch, minor, or major boundary.
+	for _, number := range syncVersionNumbers.FindAllString(version, -1) {
+		bound, err := semver.NewVersion(number)
+		if err != nil {
+			continue
+		}
+		major, minor, patch := bound.Major(), bound.Minor(), bound.Patch()
+		switch {
+		case matches(bound):
+			return "v1", nil
+		case matches(semver.New(major, minor, patch+1, "", "")):
+			return "v1", nil
+		case matches(semver.New(major, minor+1, 0, "", "")):
+			return "v1", nil
+		case matches(semver.New(major+1, 0, 0, "", "")):
+			return "v1", nil
+		}
 	}
 	return "v1beta2", nil
 }

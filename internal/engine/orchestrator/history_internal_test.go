@@ -784,7 +784,11 @@ data: {VALUE: rendered}
 	reads.Init(warm.store, owner, nil)
 	prepared, err := kustomize.Prepare(
 		warm.store.GetObject(owner).(*manifest.Kustomization),
-		resolveHistoryInputs(warm.store.GetObject(owner), values.NewStoreProvider(&reads), warm.cfg.missing),
+		resolveHistoryInputs(
+			warm.store.GetObject(owner),
+			values.NewStoreProvider(&reads, reads.ID()),
+			warm.cfg.missing,
+		),
 	)
 	assert.NoError(t, err)
 	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)

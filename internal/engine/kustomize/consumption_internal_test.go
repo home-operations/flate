@@ -66,7 +66,7 @@ func TestShape_AllDocumentFailures(t *testing.T) {
 				}
 				base.PrepareDocuments(prepared, docs)
 				shape := PrepareShape(&RenderRequest{
-					Spec: prepared, SubstitutionActive: values.ResolvedSubstitutionActive(inputs),
+					Spec: prepared, UncertainSubstitutionInputs: values.UncertainSubstitutionInputs(inputs),
 					UnreadableSubstitutions: values.UnreadableSubstitutions(ks, inputs),
 				}, docs)
 				return docs, shape.Apply(t.Context(), ShapeOptions{})
@@ -165,9 +165,9 @@ func TestShape_ConsumedUnreadable(t *testing.T) {
 			}}}
 			shape := PrepareShape(
 				&RenderRequest{
-					Spec:                    prepared,
-					SubstitutionActive:      values.ResolvedSubstitutionActive(inputs),
-					UnreadableSubstitutions: unreadable,
+					Spec:                        prepared,
+					UncertainSubstitutionInputs: values.UncertainSubstitutionInputs(inputs),
+					UnreadableSubstitutions:     unreadable,
 				},
 				docs,
 			)
@@ -215,12 +215,12 @@ func TestShape_UnknownNamesActivate(t *testing.T) {
 			prepared, err := Prepare(ks, inputs)
 			assert.NoError(t, err)
 			assert.Equal(t, len(prepared.PostBuild.Substitute), 0)
-			uncertain := values.ResolvedSubstitutionActive(inputs)
+			uncertain := values.UncertainSubstitutionInputs(inputs)
 			assert.Equal(t, uncertain, true)
 			docs := []manifest.DocOccurrence{{Document: map[string]any{"value": tc.expression}}}
 			inactive := PrepareShape(&RenderRequest{Spec: prepared}, docs)
 			shape := PrepareShape(
-				&RenderRequest{Spec: prepared, SubstitutionActive: uncertain},
+				&RenderRequest{Spec: prepared, UncertainSubstitutionInputs: uncertain},
 				docs,
 			)
 			assert.Equal(t, manifest.Fingerprint(inactive.Content()) == manifest.Fingerprint(shape.Content()), false)

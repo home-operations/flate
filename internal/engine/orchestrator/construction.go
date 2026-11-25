@@ -88,7 +88,7 @@ func (d *constructionDispatcher) Dispatch(
 	reconcile := d.controllers.ReconcileNode
 	if d.local[id] {
 		object := d.controller.Store.GetObject(id)
-		if object == nil || len(object.Composition().Includes) == 0 {
+		if object == nil || !object.Composition().Composed() {
 			if err := d.controller.Construct(ctx, id); err != nil {
 				d.controller.Store.UpdateFailure(id, err)
 			}

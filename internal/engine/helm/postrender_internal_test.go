@@ -104,8 +104,8 @@ func TestKustomizePostRenderer_RecoversKustomizePanic(t *testing.T) {
 	)
 }
 
+//nolint:paralleltest // The test holds the process-wide build mutex.
 func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
-	t.Parallel()
 	pr := newPostRenderer([]helmv2.PostRenderer{{
 		Kustomize: &helmv2.Kustomize{
 			Patches: []kustomize.Patch{{

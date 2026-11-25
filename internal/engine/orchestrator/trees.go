@@ -59,14 +59,11 @@ func RenderTrees(
 	trees []Tree,
 	cfg Config, //nolint:gocritic // Invocation setup owns its configuration snapshot.
 ) (*Invocation, error) {
-	if err := ValidateTrees(trees); err != nil {
+	r := &Invocation{Config: &cfg}
+	err := r.Render(ctx, trees)
+	if r.budget == nil {
 		return nil, err
 	}
-	r, err := NewInvocation(ctx, cfg)
-	if err != nil {
-		return r, err
-	}
-	err = r.Render(ctx, trees)
 	return r, err
 }
 
@@ -93,10 +90,20 @@ func NewInvocation(
 	ctx context.Context,
 	cfg Config, //nolint:gocritic // Invocation setup owns its configuration snapshot.
 ) (*Invocation, error) {
-	if err := snapshotSubstitutions(&cfg); err != nil {
-		return nil, err
+	r := &Invocation{Config: &cfg}
+	r.err = r.initialize(ctx)
+	if r.budget == nil {
+		return nil, r.err
 	}
-	r := &Invocation{Config: &cfg, budget: task.NewBounded(cfg.Concurrency)}
+	return r, r.err
+}
+
+func (r *Invocation) initialize(ctx context.Context) error {
+	cfg := r.Config
+	if err := snapshotSubstitutions(cfg); err != nil {
+		return err
+	}
+	r.budget = task.NewBounded(cfg.Concurrency)
 	if cfg.Network == nil {
 		cfg.Network = new(source.Network)
 		r.releaseNetwork = cfg.Network.Close
@@ -105,15 +112,13 @@ func NewInvocation(
 	if _, err := sourcegit.NewClient(
 		sourcegit.ClientConfig{Transports: cfg.GitTransports, Network: cfg.Network},
 	); err != nil {
-		r.err = err
-		return r, err
+		return err
 	}
 	if cfg.Cache == nil {
 		var err error
 		cfg.Cache, err = sourcecache.New(ctx, cfg.CacheDir)
 		if err != nil {
-			r.err = err
-			return r, err
+			return err
 		}
 		r.releaseCache = cfg.Cache.Close
 	}
@@ -130,11 +135,20 @@ func NewInvocation(
 		cfg.HelmClient = helm.NewClient(cfg.Cache, cfg.chartFetcher)
 	}
 	cfg.projections = new(manifest.ProducerProjections)
-	return r, nil
+	return nil
 }
 
 // Render MUST drain tasks and callbacks before return while retaining data until Close.
 func (r *Invocation) Render(ctx context.Context, trees []Tree) (err error) {
+	if r.err = ValidateTrees(trees); r.err != nil {
+		return r.err
+	}
+	if r.budget == nil {
+		if r.err = r.initialize(ctx); r.err != nil {
+			return r.err
+		}
+	}
+
 	inputs := source.NewHTTPInputs(r.Config.Cache, r.Config.Network, r.budget)
 	defer func() {
 		for _, result := range r.results {
@@ -153,9 +167,6 @@ func (r *Invocation) Render(ctx context.Context, trees []Tree) (err error) {
 		r.Results = slices.Clone(r.results)
 		r.err = err
 	}()
-	if validationErr := ValidateTrees(trees); validationErr != nil {
-		return validationErr
-	}
 	trees, err = r.prepareTrees(ctx, trees, &inputs)
 	if err != nil {
 		r.results = failedTrees(trees, err)

@@ -70,7 +70,7 @@ func (d *Session) refreshConstructionInput() *store.SourceArtifact {
 		input.SameMaterial(d.cfg.Input, material) || input.SameMaterial(d.bootstrapInput, material) {
 		return d.bootstrapInput
 	}
-	if binding.object != nil && len(binding.object.Composition().Includes) != 0 &&
+	if binding.object != nil && binding.object.Composition().Composed() &&
 		input.Content != "" && input.Reads.Valid() {
 		return d.bootstrapInput
 	}
@@ -92,7 +92,7 @@ func (d *Session) bootstrapDeclaration(ctx context.Context, input *store.SourceA
 	group := &entrySourceGroup{required: true}
 	if supplied := d.cfg.Store.GetDeclaration(id); supplied != nil {
 		group.entry = true
-		if len(supplied.Composition().Includes) == 0 {
+		if !supplied.Composition().Composed() {
 			return group, nil
 		}
 		group.object = supplied
@@ -138,7 +138,7 @@ func (d *Session) retainBootstrapProbe(ctx context.Context, group *entrySourceGr
 	if group.object == nil {
 		return nil
 	}
-	if len(group.object.Composition().Includes) != 0 {
+	if group.object.Composition().Composed() {
 		if err := d.bootstrapIncludes(ctx, index, group.object); err != nil {
 			return err
 		}

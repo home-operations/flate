@@ -17,12 +17,19 @@ import (
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
+
+	"github.com/home-operations/flate/internal/engine/source/safepath"
 )
 
 // Capture MUST retain immutable bytes until all chart consumers finish.
 type Capture struct {
 	Files   []*archive.BufferedFile
 	Archive []byte
+}
+
+// Empty MUST distinguish absent content from a present, zero-byte archive.
+func (c Capture) Empty() bool {
+	return c.Files == nil && c.Archive == nil
 }
 
 // Dependency MUST retain the effective name and artifact-relative origin with its bytes.
@@ -56,13 +63,11 @@ func (c Capture) Load() (*chart.Chart, error) {
 	return loader.LoadArchive(bytes.NewReader(c.Archive))
 }
 
-// Options MUST retain the artifact-relative location and its owner's path boundary.
-// Filesystem calls make Options escape as an aggregate; visitors MUST stay separate to keep their state on the stack.
+// Options escape as an aggregate through filesystem calls. Visitors MUST stay separate to keep their state on the stack.
 type Options struct {
-	Name     string
-	Archive  bool
-	Validate func(string) error
-	Parent   []*archive.BufferedFile
+	Name    string
+	Archive bool
+	Parent  []*archive.BufferedFile
 }
 
 // Describe retains partial dependency coordinates when reconciliation must report a read failure.
@@ -105,30 +110,31 @@ func Describe(
 		return d, false, nil
 	}
 	d.Dependencies = missingDependencies(d.Chart)
-	return d.complete(ctx, input, options)
+	err = d.captureDependencies(ctx, input, options.Name)
+	return d, false, err
 }
 
 // Complete MUST recapture sibling bytes while retaining the parent's immutable selection.
-func (d *Description) Complete(ctx context.Context, input fs.FS, options Options) (Description, bool, error) {
+func (d *Description) Complete(ctx context.Context, input fs.FS, parent string) (Description, error) {
 	completed := *d
 	completed.Dependencies = slices.Clone(d.Dependencies)
-	return completed.complete(ctx, input, options)
+	err := completed.captureDependencies(ctx, input, parent)
+	return completed, err
 }
 
-func (d *Description) complete(ctx context.Context, input fs.FS, options Options) (Description, bool, error) {
+func (d *Description) captureDependencies(ctx context.Context, input fs.FS, parent string) error {
 	var firstError error
 	for i := range d.Dependencies {
 		dep := &d.Dependencies[i]
 		if dep.Remote() {
 			continue
 		}
-		dep.Capture = Capture{}
-		captureErr := dep.captureLocal(ctx, input, options)
+		captureErr := dep.captureLocal(ctx, input, parent)
 		if firstError == nil {
 			firstError = captureErr
 		}
 	}
-	return *d, false, firstError
+	return firstError
 }
 
 func isMetadata(name string) bool {
@@ -192,8 +198,8 @@ func missingDependencies(loaded *chart.Chart) []Dependency {
 	return dependencies
 }
 
-func (d *Dependency) captureLocal(ctx context.Context, input fs.FS, options Options) error {
-	parent := options.Name
+func (d *Dependency) captureLocal(ctx context.Context, input fs.FS, parent string) error {
+	d.Path, d.Capture = "", Capture{}
 	dep := &d.Declaration
 	local := path.Join(parent, "charts", dep.Name)
 	if dep.Repository != "" {
@@ -203,13 +209,13 @@ func (d *Dependency) captureLocal(ctx context.Context, input fs.FS, options Opti
 		}
 		local = path.Join(parent, u.Host, u.Path)
 	}
-	d.Path = local
 	dependencyError := func(err error) error {
 		return fmt.Errorf("dependency %s (%s): %w", d.Name, dep.Repository, err)
 	}
-	if err := options.Validate(local); err != nil {
+	if _, err := safepath.ArchiveName(local); err != nil {
 		return dependencyError(err)
 	}
+	d.Path = local
 	// Flux archives omit symlinks. Inspect entries before any lookup can follow a link.
 	for dir, remaining := ".", local; remaining != "" && remaining != "."; {
 		part, rest, _ := strings.Cut(remaining, "/")

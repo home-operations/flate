@@ -87,8 +87,9 @@ type ArtifactGeneratorCopy struct {
 }
 
 type artifactGeneratorDecode struct {
-	spec ArtifactGeneratorSpec
-	err  error
+	kind, apiVersion string
+	spec             ArtifactGeneratorSpec
+	err              error
 	// Only the canonical sources list supplies indexed declarations.
 	sources []ArtifactGeneratorSource
 }
@@ -119,8 +120,9 @@ func decodeArtifactGeneratorSpec(fields map[string]any) *artifactGeneratorDecode
 }
 
 func (r *RawObject) initArtifactGeneratorSpec() *RawObject {
-	if r.isArtifactGenerator() {
+	if r.Named().IsArtifactGenerator() {
 		r.generator = decodeArtifactGeneratorSpec(r.Spec)
+		r.generator.kind, r.generator.apiVersion = r.Kind, r.APIVersion
 	}
 	return r
 }

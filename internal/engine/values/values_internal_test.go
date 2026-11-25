@@ -180,7 +180,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 			Namespace:  cm.Namespace,
 		},
 	)
-	provider := NewStoreProvider(st)
+	provider := NewStoreProvider(st, manifest.NamedResource{})
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
@@ -213,7 +213,7 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 				Namespace:  "default",
 				ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}},
 			}
-			expandValuesForTest(t, hr, NewStoreProvider(st), nil)
+			expandValuesForTest(t, hr, NewStoreProvider(st, manifest.NamedResource{}), nil)
 			{
 				got := hr.Values["replicaCount"]
 				assert.ErrorIf(t, fmt.Sprint(got) != "3", "replicaCount = %v, want 3", got)
@@ -238,7 +238,11 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 					Namespace:  "default",
 					ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}},
 				}
-				err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st), nil), nil)
+				err := ExpandValueReferences(
+					hr,
+					resolveInputsForTest(hr, NewStoreProvider(st, manifest.NamedResource{}), nil),
+					nil,
+				)
 
 				assert.FatalIf(
 					t,
@@ -578,7 +582,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 			Namespace:  cm.Namespace,
 		},
 	)
-	provider := NewStoreProvider(st)
+	provider := NewStoreProvider(st, manifest.NamedResource{})
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 
@@ -735,7 +739,7 @@ func TestStoreProvider_LookupReadability(t *testing.T) {
 				manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"},
 				nil,
 			)
-			provider := NewStoreProvider(&reads)
+			provider := NewStoreProvider(&reads, reads.ID())
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.name}
 			input := provider.Lookup(id)
 			unreadable := input.Data == nil || !input.Data.HasKeys()
@@ -792,7 +796,7 @@ func testExpandValueReferencesMissingReferencesCase(
 			},
 		},
 	}
-	err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st), nil), nil)
+	err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st, manifest.NamedResource{}), nil), nil)
 	if (*testCaseInput.optional) && testCaseInput.tc.kind != "Deployment" && testCaseInput.tc.want != nil {
 		assert.NoError(t, err)
 		assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})

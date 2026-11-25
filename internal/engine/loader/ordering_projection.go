@@ -170,9 +170,8 @@ func (l *Loader) scopeCanTransform(scope *scopeContribution, owner *manifest.Kus
 	if scope.recipe&(scopeUnknownRecipe|scopeTransformingRecipe) != 0 {
 		return true
 	}
-	substitution := owner.PostBuild != nil &&
-		(len(owner.PostBuild.SubstituteFrom) != 0 || values.ProjectionSubstitutionActive(owner))
-	if !substitution {
+	uncertain := owner.PostBuild != nil && len(owner.PostBuild.SubstituteFrom) != 0
+	if !values.SubstitutionActive(owner, uncertain) {
 		return false
 	}
 	for i := range scope.visits {

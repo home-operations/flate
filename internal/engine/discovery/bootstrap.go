@@ -379,7 +379,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution, projectedFro
 
 func (d *Session) bindBootstrapArtifact(candidate *entryResolution) {
 	d.cfg.Input = candidate.artifact
-	if len(candidate.object.Composition().Includes) == 0 {
+	if !candidate.object.Composition().Composed() {
 		return
 	}
 	if artifact := d.sourceMaterial(manifest.BootstrapSourceID, candidate.artifact); artifact != nil {
@@ -431,7 +431,7 @@ func (a *Admission) Input() *store.SourceArtifact {
 	if material, ok := a.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok &&
 		material.Reads.Valid() &&
 		(material.SameMaterial(selected.artifact, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ||
-			len(selected.object.Composition().Includes) != 0) {
+			selected.object.Composition().Composed()) {
 		return material
 	}
 	return selected.artifact
@@ -617,7 +617,7 @@ func (a *Admission) resolve(
 			view = a.Input()
 		}
 		if view.Available() && gittree.PolicyKey(inputprojection.Authored(view).FS) == gittree.DefaultSourcePolicyKey &&
-			composition.Ignore == "" && len(composition.Includes) == 0 {
+			composition.Ignore == "" && !composition.Composed() {
 			candidate.provider, candidate.artifact = store.ProviderInput, view
 			return candidate, ctx.Err()
 		}
@@ -722,7 +722,7 @@ func (a *Admission) entrySourceView(
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
 	mode := gittree.Source
-	if len(composition.Includes) != 0 {
+	if composition.Composed() {
 		mode, ignore = gittree.Checkout, ""
 	}
 	provider, otherProvider := store.ProviderAlias, store.ProviderInput

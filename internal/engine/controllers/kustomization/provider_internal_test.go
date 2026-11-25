@@ -89,7 +89,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			st.AddObject(tc.late)
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads)
+			provider := values.NewStoreProvider(&execution.run.Reads, execution.run.Reads.ID())
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
 			assert.FatalIf(t, provider.Lookup(external.Named()).Data != tc.late.(manifest.Data) ||
 				provider.Lookup(other.Named()).Data != other.(manifest.Data) ||
@@ -102,7 +102,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			)
 
 			{
-				valueResult, err := values.NewStoreProvider(st).
+				valueResult, err := values.NewStoreProvider(st, manifest.NamedResource{}).
 					Lookup(external.Named()).Data.
 					Value("VALUE")
 				got := valueResult.Value

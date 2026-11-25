@@ -9,7 +9,6 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/helm/chartinput"
 	"github.com/home-operations/flate/internal/engine/selection"
-	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 )
 
@@ -57,10 +56,6 @@ func chartFiles(
 	var templates [][]byte
 	description, parentMissing, _ := chartinput.Describe(ctx, input.fs, chartinput.Options{
 		Name: input.name,
-		Validate: func(name string) error {
-			_, err := safepath.ArchiveName(name)
-			return err
-		},
 	}, func(file string, _ fs.FileInfo, data []byte) {
 		names.names = append(names.names, path.Join(chartPath, file))
 		if readTemplates && (strings.HasPrefix(file, "templates/") || strings.Contains(file, "/templates/")) {
@@ -114,10 +109,10 @@ func (r *chartReaders) addDependencies(
 			r.remote = true
 			continue
 		}
-		if _, err := safepath.ArchiveName(dependency.Path); err != nil {
+		if dependency.Path == "" {
 			continue
 		}
-		if dependency.Capture.Files == nil && dependency.Capture.Archive == nil {
+		if dependency.Capture.Empty() {
 			r.missing = append(r.missing, coordinate(dependency.Path))
 			continue
 		}

@@ -265,7 +265,7 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	c := New(store.New(), nil)
 	c.Configure(Options{Session: f, Index: index, Loader: fLoader})
 	execution := gateExecution(c, consumerObj.Named())
-	input := values.NewStoreProvider(&execution.Reads).
+	input := values.NewStoreProvider(&execution.Reads, execution.Reads.ID()).
 		Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
 
 	assert.FatalIf(
@@ -374,7 +374,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	}
 	execution := gateExecution(c, consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
-	input := values.NewStoreProvider(&execution.Reads).Lookup(target)
+	input := values.NewStoreProvider(&execution.Reads, execution.Reads.ID()).Lookup(target)
 	assert.FatalIf(t, !input.Generated || input.Offline || len(input.Materializers) != 1,
 		"runtime declaration evidence=%+v", input)
 	assert.FatalIf(t, input.Data != nil, "%s", "declaration fabricated data")
@@ -470,7 +470,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 	}
 
 	c.Reads.Init(c.Store, ks.Named(), nil)
-	inputs, admissionErr1 := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads))
+	inputs, admissionErr1 := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads, c.Reads.ID()))
 
 	assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 
@@ -572,7 +572,7 @@ func testSubstitutionAvailabilityObservesMaterializersCase(
 		assert.FatalIf(t, len(deps) != 0, "data became authored readiness gate: %v", deps)
 	}
 
-	input := values.NewStoreProvider(&execution.Reads).Lookup(id)
+	input := values.NewStoreProvider(&execution.Reads, execution.Reads.ID()).Lookup(id)
 	w := depwait.Waiter{
 		Store: &execution.Reads, Parent: (*testCaseInput.consumer),
 		Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret}),

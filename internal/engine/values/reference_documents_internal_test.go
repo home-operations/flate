@@ -46,7 +46,11 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 						{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional},
 					},
 				}
-				err := ExpandValueReferences(hr, resolveInputsForTest(hr, NewStoreProvider(st), nil), &Cache{})
+				err := ExpandValueReferences(
+					hr,
+					resolveInputsForTest(hr, NewStoreProvider(st, manifest.NamedResource{}), nil),
+					&Cache{},
+				)
 
 				assert.FatalIf(
 					t,

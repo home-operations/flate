@@ -9,6 +9,9 @@ type ArtifactComposition struct {
 	Ignore   string
 }
 
+// Composed reports whether the artifact includes other sources.
+func (c ArtifactComposition) Composed() bool { return len(c.Includes) != 0 }
+
 // ArtifactInclude MUST bind its selected content through the declared Reference.
 type ArtifactInclude struct {
 	Reference Reference

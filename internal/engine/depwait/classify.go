@@ -162,7 +162,7 @@ func (w *Waiter) artifactOnlyReady(dep *manifest.DependencyRef, declarationSatis
 	if !dep.ArtifactOnly || !declarationSatisfied {
 		return false
 	}
-	_, readable := w.Store.ReadableSourceArtifact(dep.NamedResource)
+	_, readable := w.Store.ReadableSourceArtifact(dep.NamedResource, store.ArtifactContent)
 	return readable
 }
 
@@ -173,7 +173,7 @@ func (w *Waiter) classifyAbsent(
 ) (Classification, []manifest.NamedResource) {
 	id := dep.NamedResource
 	if dep.Artifact && !dep.RequiresDeclaration {
-		if artifact, _ := w.Store.ReadableSourceArtifact(id); artifact != nil {
+		if artifact, _ := w.Store.ReadableSourceArtifact(id, store.ArtifactContent); artifact != nil {
 			return w.artifactReady(dep, level), nil
 		}
 	}
@@ -249,7 +249,7 @@ func (w *Waiter) artifactReady(dep *manifest.DependencyRef, level manifest.Drain
 	if descriptor, ok := obj.(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
 	}
-	artifact, readable := w.Store.ReadableSourceArtifact(id)
+	artifact, readable := w.Store.ReadableSourceArtifact(id, store.ArtifactContent)
 	if readable {
 		return Classification{Kind: schedule.Terminal}
 	}

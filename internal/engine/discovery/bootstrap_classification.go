@@ -515,7 +515,7 @@ func (a *Admission) Provider(
 	}
 	artifact, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	resolution, accepted := a.resolvedSources.snapshot()[id]
-	composes := resolution.object != nil && len(resolution.object.Composition().Includes) != 0
+	composes := resolution.object != nil && resolution.object.Composition().Composed()
 	if artifact.Available() && (!composes || artifact.Extent == store.ExtentComposed) {
 		return artifact.Provider
 	}

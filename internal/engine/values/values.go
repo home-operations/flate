@@ -45,13 +45,9 @@ type StoreProvider struct {
 	inputs []capturedInput
 }
 
-// NewStoreProvider returns one execution's captured values and availability evidence.
-func NewStoreProvider(s dataReader) *StoreProvider {
-	p := &StoreProvider{s: s}
-	if owner, ok := s.(interface{ ID() manifest.NamedResource }); ok {
-		p.owner = owner.ID()
-	}
-	return p
+// NewStoreProvider binds lookups to the supplied consumer identity.
+func NewStoreProvider(s dataReader, owner manifest.NamedResource) *StoreProvider {
+	return &StoreProvider{s: s, owner: owner}
 }
 
 type capturedInput struct {
@@ -62,9 +58,13 @@ type capturedInput struct {
 // Lookup captures a values object and its materializers once for expansion and diagnostics.
 func (p *StoreProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 	i := sort.Search(len(p.inputs), func(i int) bool { return p.inputs[i].id.Name >= id.Name })
-	for i < len(p.inputs) && p.inputs[i].id.Name == id.Name {
-		if p.inputs[i].id == id {
-			return p.inputs[i].input
+	for i < len(p.inputs) {
+		entry := &p.inputs[i]
+		if entry.id == id {
+			return entry.input
+		}
+		if entry.id.Name != id.Name {
+			break
 		}
 		i++
 	}

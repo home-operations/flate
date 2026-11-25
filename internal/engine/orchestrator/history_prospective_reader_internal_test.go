@@ -700,7 +700,7 @@ spec:
 		prepared, localErr := helm.Prepare(
 			hr,
 			helm.NewSources(reads, nil).Declaration,
-			resolveHistoryInputs(hr, values.NewStoreProvider(reads), warm.cfg.missing),
+			resolveHistoryInputs(hr, values.NewStoreProvider(reads, reads.ID()), warm.cfg.missing),
 			warm.hrc.Helm.ValuesCache(),
 		)
 		assert.NoError(t, localErr)

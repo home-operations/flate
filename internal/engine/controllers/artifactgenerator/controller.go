@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/engine/schedule"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
+	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -41,7 +42,7 @@ type execution struct {
 
 // Owns reports whether id belongs to the ArtifactGenerator controller.
 func (*Controller) Owns(id manifest.NamedResource) bool {
-	return id.Group == manifest.SourceExtensionsDomain && id.Kind == manifest.KindArtifactGenerator
+	return id.IsArtifactGenerator()
 }
 
 // ReconcileNode returns the captured assessment of ArtifactGenerator evaluation.
@@ -115,7 +116,10 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	localEvaluation := c.generatorInputs(raw, &spec)
+	localEvaluation, err := c.generatorInputs(raw, &spec)
+	if err != nil {
+		return err
+	}
 	content := struct {
 		Generator manifest.NamedResource
 		Spec      manifest.ArtifactGeneratorSpec
@@ -187,7 +191,7 @@ func validateGenerator(
 	return raw, nil
 }
 
-func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.ArtifactGeneratorSpec) evaluation {
+func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.ArtifactGeneratorSpec) (evaluation, error) {
 	localEvaluation := evaluation{
 		inputs: make(map[string]fs.FS, len(spec.Sources)),
 		maxAge: cache.Forever,
@@ -196,7 +200,10 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.Arti
 	for ref := range manifest.References(raw, manifest.ReferenceRelations) {
 		alias := spec.Sources[ref.Position].Alias
 		read := store.ArtifactContent | selections[alias]
-		artifact := c.run.Reads.GetArtifact(ref.NamedResource, read).(*store.SourceArtifact) //nolint:errcheck // Required source dependencies resolve source artifacts before reconciliation.
+		artifact, readable := c.run.Reads.ReadableSourceArtifact(ref.NamedResource, read)
+		if !readable {
+			return evaluation{}, &depwait.BlockedError{Deps: []manifest.NamedResource{ref.NamedResource}}
+		}
 		if read&store.ArtifactOrigin != 0 && artifact.Metadata["org.opencontainers.image.revision"] == "" {
 			read |= store.ArtifactRevision
 			c.run.Reads.GetArtifact(ref.NamedResource, read)
@@ -210,7 +217,7 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.Arti
 			localEvaluation.maxAge = 0
 		}
 	}
-	return localEvaluation
+	return localEvaluation, nil
 }
 
 func generatorReadSelections(spec *manifest.ArtifactGeneratorSpec) map[string]store.ArtifactRead {

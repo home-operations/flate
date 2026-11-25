@@ -210,13 +210,21 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	})
 	first := gateExecution(c, canonical.Named())
 	_ = first.Reads.GetObject(canonical.Named())
-	_, admissionErr1 := first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads))
+	_, admissionErr1 := first.DataInputs(
+		t.Context(),
+		canonical,
+		values.NewStoreProvider(&first.Reads, first.Reads.ID()),
+	)
 	assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 	assert.FatalIf(t, first.Reads.Valid(), "%v", "promotion did not invalidate the captured declaration")
 	second := gateExecution(c, canonical.Named())
 	got, _ := second.Reads.Get[*manifest.Kustomization](canonical.Named())
 	assert.Equal(t, got, fresh)
-	inputs, admissionErr2 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads))
+	inputs, admissionErr2 := second.DataInputs(
+		t.Context(),
+		got,
+		values.NewStoreProvider(&second.Reads, second.Reads.ID()),
+	)
 	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, len(inputs), 1)
 	assert.Equal(t, inputs[0].NamedResource, replacement.Named())
@@ -292,7 +300,11 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			inputs, admissionErr3 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads))
+			inputs, admissionErr3 := second.DataInputs(
+				t.Context(),
+				got,
+				values.NewStoreProvider(&second.Reads, second.Reads.ID()),
+			)
 			assert.FatalIf(t, admissionErr3 != nil, "%v", admissionErr3)
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Name, "current")

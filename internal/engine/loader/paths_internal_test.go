@@ -126,7 +126,10 @@ func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
 				}
 				reader.inputs[id] = store.ReferenceFacts{Data: data, Original: data, Declared: true}
 			}
-			resolution := substitutionResolution{loader: l, provider: values.NewStoreProvider(reader)}
+			resolution := substitutionResolution{
+				loader:   l,
+				provider: values.NewStoreProvider(reader, manifest.NamedResource{}),
+			}
 			_, known := resolution.resolveValue(t.Context(), owner.Named(), "${VALUE}")
 			assert.Equal(t, known, false)
 			assert.Equal(t, resolution.needsInputs, !tc.encrypted)
@@ -549,15 +552,20 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 }
 
 type effectiveInputCase struct {
-	name, expression, postbuild string
-	packageBody, operand, patch string
-	known, same                 bool
+	name, expression, postbuild, extraReference string
+	packageBody, operand, patch                 string
+	known, same, unreadable                     bool
 }
 
 func effectiveInputCases() []effectiveInputCase {
 	return []effectiveInputCase{
 		{name: "unused", expression: "${OTHER}", known: true, same: true},
+		{
+			name: "unsupported reference", expression: "${OTHER}", known: true, same: true,
+			extraReference: ", {kind: Deployment, name: ignored}",
+		},
 		{name: "used", expression: "${CHANGED}", known: true},
+		{name: "unreadable keys", expression: "${NAME:=fallback}", unreadable: true},
 		{
 			name: "Flux patch", expression: "${OTHER}", known: true,
 			patch: `[{"op":"replace","path":"/data/value","value":"${CHANGED}"}]`,
@@ -649,13 +657,21 @@ func (c *effectiveInputCase) files(side int) fstest.MapFS {
 	if tc.name == "invalid names" {
 		data = "{bad-name: invalid, OTHER: same}"
 	}
+	name := "payload"
+	if tc.unreadable {
+		data = []string{
+			"ENC[AES256_GCM,data:old,iv:x,tag:y,type:str]",
+			"ENC[AES256_GCM,data:new,iv:x,tag:y,type:str]",
+		}[side]
+		name = "'" + tc.expression + "'"
+	}
 	packageBody := "resources: [payload.yaml]\n" + tc.packageBody
 	if tc.name == "unproved transform" {
 		packageBody += "namePrefix: projected-\n"
 	}
 	declaration := "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n" +
 		"metadata: {name: reader, namespace: apps}\nspec:\n path: ./app\n" +
-		" postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]" + tc.postbuild + "}\n"
+		" postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}" + tc.extraReference + "]" + tc.postbuild + "}\n"
 	if tc.patch != "" {
 		declaration += " patches:\n - target: {kind: ConfigMap, name: payload}\n   patch: '" + tc.patch + "'\n"
 	}
@@ -668,7 +684,7 @@ func (c *effectiveInputCase) files(side int) fstest.MapFS {
 			"metadata: {name: settings, namespace: apps}\ndata: " + data + "\n")},
 		"app/kustomization.yaml": {Data: []byte(packageBody)},
 		"app/payload.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
-			"metadata: {name: payload, namespace: apps, annotations: {value: '" + tc.expression + "'}}\n" +
+			"metadata: {name: " + name + ", namespace: apps, annotations: {value: '" + tc.expression + "'}}\n" +
 			"data: {value: '" + tc.expression + "', prefix: '$'}\n")},
 		"app/x.txt": {Data: []byte(tc.operand)},
 	}

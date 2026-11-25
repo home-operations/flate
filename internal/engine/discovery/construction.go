@@ -48,7 +48,7 @@ func (d *Session) sourceMaterial(id manifest.NamedResource, selected *store.Sour
 		}
 		return artifact
 	}
-	if object := d.cfg.Store.GetObject(id); object != nil && len(object.Composition().Includes) != 0 &&
+	if object := d.cfg.Store.GetObject(id); object != nil && object.Composition().Composed() &&
 		artifact.ComposedFrom.SameMaterial(
 			selected,
 			store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin,

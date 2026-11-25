@@ -102,7 +102,7 @@ func (s *Store) prepareChildren(children *[]Child, index *manifest.DiscoveryInde
 		child := (*children)[childIndex]
 		if child.Obj != nil {
 			child.policy = child.Policy(child.Obj.Named())
-			composed := len(child.Obj.Composition().Includes) != 0
+			composed := child.Obj.Composition().Composed()
 			prepared = append(
 				prepared,
 				admission{

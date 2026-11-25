@@ -74,7 +74,7 @@ func TestAwaitData_AllDependencyFailures(t *testing.T) {
 				var e Execution
 				e.Init(New(st, task.NewBounded(2)), owner.Named())
 				defer e.Close()
-				inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads))
+				inputs, err := e.DataInputs(t.Context(), owner, values.NewStoreProvider(&e.Reads, e.Reads.ID()))
 				assert.NoError(t, err)
 				assert.Equal(t, len(inputs), len(tc.names))
 				for i, producers := range tc.producers {

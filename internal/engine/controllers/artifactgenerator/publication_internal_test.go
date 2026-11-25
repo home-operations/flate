@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
@@ -64,6 +65,11 @@ func TestArtifactGenerator_ManagedPublication(t *testing.T) {
 		c := New(st, task.NewBounded(2), nil)
 		fixture := generatorForTest(t, nil)
 		raw := fixture.object
+		id := raw.Named()
+		assert.Equal(t, c.Owns(id), true)
+		foreign := id
+		foreign.Group = "foreign.example"
+		assert.Equal(t, c.Owns(foreign), false)
 		st.AddObject(raw, fixture.document)
 		ex := &execution{Controller: c}
 		ex.run.Init(c.Controller, raw.Named())
@@ -89,6 +95,64 @@ func TestArtifactGenerator_ManagedPublication(t *testing.T) {
 			assert.Equal(t, got.Content, payloads[i].Content)
 		}
 	})
+}
+
+func TestArtifactGenerator_StaleSourceAfterGate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		filesystem fs.FS
+	}{
+		{name: "stale source", filesystem: fstest.MapFS{}},
+		{name: "descriptor without filesystem"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			fixture := generatorForTest(t, nil)
+			raw := fixture.object
+			source := &manifest.GitRepository{Name: "repo", Namespace: "apps"}
+			credential := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
+			st.AddObject(raw, fixture.document)
+			st.AddObject(source)
+			st.AddObject(credential)
+
+			var sourceReads store.ReadSet
+			sourceReads.Init(st, source.Named(), nil)
+			t.Cleanup(sourceReads.Retire)
+			sourceReads.GetObject(credential.Named())
+			st.SetArtifact(
+				source.Named(),
+				&store.SourceArtifact{Content: "input", FS: tc.filesystem, Reads: &sourceReads},
+			)
+			controller := New(st, task.NewBounded(2), nil)
+			ex := &execution{Controller: controller}
+			ex.run.Init(controller.Controller, raw.Named())
+			t.Cleanup(ex.run.Close)
+			_, readable := ex.run.Reads.ReadableSourceArtifact(source.Named(), store.ArtifactContent)
+			assert.Equal(t, readable, tc.filesystem != nil)
+
+			if tc.filesystem != nil {
+				updated := *credential
+				updated.Data = map[string]any{"value": "updated"}
+				controller.Tasks.Go(
+					t.Context(),
+					"replace source input",
+					func(context.Context) { st.AddObject(&updated) },
+				)
+				controller.Tasks.BlockTillDone()
+				assert.Equal(t, sourceReads.Valid(), false)
+			}
+
+			spec, err := raw.ArtifactGeneratorSpec()
+			assert.NoError(t, err)
+			_, err = ex.generatorInputs(raw, &spec)
+			blocked, ok := errors.AsType[*depwait.BlockedError](err)
+			assert.FatalIf(t, !ok, "expected a blocked dependency, got %v", err)
+			assert.Diff(t, blocked.Deps, []manifest.NamedResource{source.Named()})
+			assert.Equal(t, ex.run.Reads.Valid(), tc.filesystem == nil)
+		})
+	}
 }
 
 func testManagedPublication(t *testing.T, owner *cache.Cache, input fs.FS, skip string) {

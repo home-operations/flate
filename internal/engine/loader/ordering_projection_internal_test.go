@@ -147,6 +147,7 @@ func TestIndexTransformingProducers_Eligibility(t *testing.T) {
 			name: "always substitutes default", builder: plain, metadata: "name: '${NAME:=reader}'",
 			postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, want: true,
 		},
+		{name: "no post-build", builder: plain, metadata: "name: " + varName},
 		{name: "inactive substitution", builder: plain, metadata: "name: " + varName, postBuild: &kustomizev1.PostBuild{}},
 		{name: "substitution in data", builder: plain, metadata: "name: reader", data: "data: {value: " + varName + "}\n", postBuild: inline},
 		{
@@ -204,7 +205,7 @@ func TestIndexTransformingProducers_Eligibility(t *testing.T) {
 			neighbor := graphVisit{root: root, dir: "other", owner: other.Named()}
 			l.recordScopeVisits(&neighbor, l.scopeWalk(&neighbor), false, false)
 			l.scopes.contributions[1].active = true
-			if tc.postBuild != nil {
+			if tc.postBuild != nil || tc.metadata != "" {
 				readTransformingResource(t, &l.documents, filepath.Join(root, "producer", "reader.yaml"), !tc.parsed)
 			}
 

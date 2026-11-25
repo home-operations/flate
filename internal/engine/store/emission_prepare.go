@@ -180,13 +180,15 @@ func semanticEqual(a, b Child) bool {
 		if !manifest.MapEqualExcept(am, bm, func(key string) bool { return key == "labels" }) {
 			return false
 		}
-		al, _ := am["labels"].(map[string]any)
-		bl, _ := bm["labels"].(map[string]any)
-		if !manifest.MapEqualExcept(al, bl, manifest.IsOwnershipLabel) {
+		if !manifest.LabelsEqual(nil, nil, [2]map[string]any{a.Doc, b.Doc}, manifest.IsOwnershipLabel) {
 			return false
 		}
 	}
 	return true
+}
+
+type annotatedManifest interface {
+	GetAnnotations() map[string]string
 }
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
@@ -194,9 +196,8 @@ func semanticObjectsEqual(a, b Child) bool {
 	if manifest.Equal(a.Obj, b.Obj) {
 		return true
 	}
-	type annotated interface{ GetAnnotations() map[string]string }
-	am, aok := a.Obj.(annotated)
-	bm, bok := b.Obj.(annotated)
+	am, aok := a.Obj.(annotatedManifest)
+	bm, bok := b.Obj.(annotatedManifest)
 	if !aok || !bok {
 		return false
 	}

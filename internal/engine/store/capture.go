@@ -377,9 +377,9 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 	return details.artifact
 }
 
-// ReadableSourceArtifact captures source content. A descriptor can exist without a file system.
-func (r *ReadSet) ReadableSourceArtifact(id manifest.NamedResource) (*SourceArtifact, bool) {
-	artifact, _ := r.GetArtifact(id, ArtifactContent).(*SourceArtifact)
+// ReadableSourceArtifact can return a descriptor without a file system.
+func (r *ReadSet) ReadableSourceArtifact(id manifest.NamedResource, read ArtifactRead) (*SourceArtifact, bool) {
+	artifact, _ := r.GetArtifact(id, read).(*SourceArtifact)
 	return artifact, artifact != nil && artifact.FS != nil
 }
 

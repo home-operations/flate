@@ -14,6 +14,53 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestSemanticObjectsEqual_AnnotationStorage(t *testing.T) {
+	t.Parallel()
+	ownerKey := (&manifest.Kustomization{}).EmissionPolicy().OwnerKeys[0]
+	for _, tc := range []struct {
+		name  string
+		a, b  manifest.BaseManifest
+		equal bool
+	}{
+		{
+			name: "matching stored annotations",
+			a:    &manifest.Kustomization{Name: "shared", Annotations: map[string]string{"flag": "value"}},
+			b: &manifest.Kustomization{
+				Name: "shared", Labels: map[string]string{ownerKey: "owner"},
+				Annotations: map[string]string{"flag": "value"},
+			},
+			equal: true,
+		},
+		{
+			name: "different stored annotations",
+			a:    &manifest.Kustomization{Name: "shared", Annotations: map[string]string{"flag": "value"}},
+			b: &manifest.Kustomization{
+				Name: "shared", Labels: map[string]string{ownerKey: "owner"},
+				Annotations: map[string]string{"flag": "different"},
+			},
+		},
+		{
+			name: "supported empty annotations",
+			a:    &manifest.Kustomization{Name: "shared"},
+			b: &manifest.Kustomization{
+				Name: "shared", Labels: map[string]string{ownerKey: "owner"}, Annotations: map[string]string{},
+			},
+			equal: true,
+		},
+		{
+			name: "unsupported annotations",
+			a:    &manifest.ResourceSet{Name: "shared"},
+			b:    &manifest.ResourceSet{Name: "shared", Labels: map[string]string{ownerKey: "owner"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, semanticObjectsEqual(Child{Obj: tc.a}, Child{Obj: tc.b}), tc.equal)
+			assert.Equal(t, semanticObjectsEqual(Child{Obj: tc.b}, Child{Obj: tc.a}), tc.equal)
+		})
+	}
+}
+
 func TestRecordEmitted_ContributionContext(t *testing.T) {
 	t.Parallel()
 

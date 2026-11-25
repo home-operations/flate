@@ -709,22 +709,8 @@ func (d *Session) renderPreparation(
 	}
 	ks := frame.owner
 	sourceID := ks.EffectiveSourceID()
-	provider := values.NewStoreProvider(&frame.support)
-	var inputs []values.Result
-	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
-		if keyed, data := ref.DataInput(); data && !keyed {
-			inputs = append(
-				inputs,
-				values.Resolve(
-					&values.ResolveRequest{
-						Reference:  ref,
-						Facts:      provider.Lookup(ref.NamedResource),
-						Permission: d.loader.Options.Missing,
-					},
-				),
-			)
-		}
-	}
+	provider := values.NewStoreProvider(&frame.support, frame.support.ID())
+	inputs := slices.Collect(values.SubstitutionInputs(ks, provider, d.loader.Options.Missing))
 	for i := range inputs {
 		if err := inputs[i].MaterialError(); err != nil {
 			frame.err, frame.complete = err, true

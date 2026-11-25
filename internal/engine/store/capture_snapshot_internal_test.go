@@ -20,7 +20,7 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	st.SetArtifact(source.Named(), artifact)
 	var before, current ReadSet
 	before.Init(st, ownerID("consumer"), nil)
-	captured, readable := before.ReadableSourceArtifact(source.Named())
+	captured, readable := before.ReadableSourceArtifact(source.Named(), ArtifactContent)
 	assert.Equal(t, captured, artifact)
 	assert.Equal(t, readable, true)
 	current.Init(st, ownerID("consumer"), nil)

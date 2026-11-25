@@ -447,7 +447,7 @@ func (s *Store) commitObjectUpdate(
 	index *manifest.DiscoveryIndex,
 ) publicationResult {
 	u := *update
-	u.composed = len(u.obj.Composition().Includes) != 0
+	u.composed = u.obj.Composition().Composed()
 	sh.mu.Lock()
 	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
 		u.support != nil && !u.support.productionCurrent() {

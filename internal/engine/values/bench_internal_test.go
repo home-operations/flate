@@ -297,7 +297,7 @@ func BenchmarkStoreProvider_Lookup(b *testing.B) {
 			var reads store.ReadSet
 			reads.Init(st, manifest.NamedResource{}, nil)
 			defer reads.Close()
-			provider := NewStoreProvider(&reads)
+			provider := NewStoreProvider(&reads, reads.ID())
 			for _, id := range ids {
 				provider.Lookup(id)
 			}

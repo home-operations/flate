@@ -80,6 +80,18 @@ func TestResolveLocal_CompositionCheckout(t *testing.T) {
 	_, err = ResolveLocal(canceled, localLocation(t, root), []*manifest.GitRepository{source}, LocalOptions{})
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 	assert.Diff(t, gitCompositionSnapshot(t, root), before)
+
+	ignoreOnly := *source
+	ignoreOnly.Include = nil
+	artifacts, err = ResolveLocal(
+		t.Context(), localLocation(t, root), []*manifest.GitRepository{&ignoreOnly}, LocalOptions{},
+	)
+	assert.NoError(t, err)
+	artifact = artifacts[ignoreOnly.Named()]
+	assert.FatalIf(t, artifact == nil, "ignore-only checkout not acquired")
+	_, err = fs.ReadFile(artifact.FS, "hidden.yaml")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	assert.Diff(t, gitCompositionSnapshot(t, root), before)
 }
 
 type gitCompositionNode struct {

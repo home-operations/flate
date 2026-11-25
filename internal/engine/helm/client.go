@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/engine/source"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/source/helmchart"
-	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/values"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -174,9 +173,8 @@ func (c *Client) describeCaptured(
 ) (chartDescription, error) {
 	if !auto && loaded.captured.files != nil {
 		options := chartinput.Options{
-			Name:     loaded.location,
-			Parent:   loaded.captured.files,
-			Validate: validateDependencyPath,
+			Name:   loaded.location,
+			Parent: loaded.captured.files,
 		}
 		description, _, err := chartinput.Describe(ctx, input, options, nil)
 		if err != nil {
@@ -375,9 +373,4 @@ func chartLoadError(location, root string, err error) error {
 		location = filepath.Join(root, filepath.FromSlash(location))
 	}
 	return fmt.Errorf("load chart %s: %w", location, err)
-}
-
-func validateDependencyPath(name string) error {
-	_, err := safepath.ArchiveName(name)
-	return err
 }

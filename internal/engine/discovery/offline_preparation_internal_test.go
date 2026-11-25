@@ -173,14 +173,27 @@ func TestPrepareLookupPackage_ChangedReadSupport(t *testing.T) {
 
 func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"unreadable", "readable failure", "malformed readable", "canceled"} {
-		t.Run(state, func(t *testing.T) {
+	unreadable := map[string]any{"TOKEN": "ENC[AES256_GCM,data:secret,iv:x,tag:y,type:str]"}
+	malformed := map[string]any{"TOKEN": "!!!"}
+	for _, tc := range []struct {
+		name, earlierInput string
+		data, stringData   map[string]any
+	}{
+		{name: "unreadable", stringData: unreadable},
+		{name: "readable failure", stringData: map[string]any{"TOKEN": "["}},
+		{name: "malformed readable", data: malformed},
+		{name: "malformed after absent", data: malformed, earlierInput: "{kind: ConfigMap, name: absent}, "},
+		{name: "canceled", stringData: unreadable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
+			inputs := tc.earlierInput + "{kind: Secret, name: settings}"
 			testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML(
 				"parent",
 				"apps",
-				"  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: Secret, name: settings}]}\n",
+				"  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"+
+					"  postBuild: {substituteFrom: ["+inputs+"]}\n",
 			))
 			testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [healthy.yaml, child.yaml]\n")
 			testutil.WriteFile(
@@ -196,16 +209,9 @@ func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 				testutil.KustomizationYAML("child", "apps", "  path: ${TOKEN}\n"),
 			)
 			st := store.New()
-			value := "ENC[AES256_GCM,data:secret,iv:x,tag:y,type:str]"
-			if state == "readable failure" {
-				value = "["
-			}
-			secret := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"TOKEN": value}}
-			if state == "malformed readable" {
-				secret.StringData = nil
-				secret.Data = map[string]any{"TOKEN": "!!!"}
-			}
-			st.AddObject(secret)
+			st.AddObject(
+				&manifest.Secret{Name: "settings", Namespace: "apps", Data: tc.data, StringData: tc.stringData},
+			)
 			l := loader.New(st)
 			configureSelection(t, l, selection.Request{Changed: true})
 			session, err := beginTest(t.Context(), Config{
@@ -221,20 +227,24 @@ func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "flux", manifest.NamedResource{})
 			st.RecordEmitted(entry.Named(), &store.Emission{Children: []store.Child{declaration}, Complete: true}, nil)
 			st.AddObject(declaration.Obj, declaration.Doc)
+			owner := declaration.Obj.(*manifest.Kustomization)
+			if tc.name == "malformed after absent" {
+				assert.Equal(t, session.canPrepare(owner), true)
+			}
 			ctx := t.Context()
-			if state == "canceled" {
+			if tc.name == "canceled" {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
 			_, err = session.Advance(ctx, &selection.AdmissionResult{Needed: []manifest.NamedResource{child}})
-			switch state {
+			switch tc.name {
 			case "unreadable":
 				assert.NoError(t, err)
 				assert.Equal(t, st.GetDeclaration(child) == nil, true)
 				frame, prepareErr := session.prepareDocuments(
 					ctx,
-					declaration.Obj.(*manifest.Kustomization),
+					owner,
 					session.cfg.Input,
 					nil,
 				)
@@ -245,19 +255,22 @@ func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 				assert.Equal(t, frame.receipt == nil, true)
 				assert.NoError(
 					t,
-					session.prepareProducer(ctx, declaration.Obj.(*manifest.Kustomization), session.cfg.Input, nil),
+					session.prepareProducer(ctx, owner, session.cfg.Input, nil),
 				)
 				assert.Equal(t, frame.registered, false)
-			case "readable failure", "malformed readable":
+			case "readable failure", "malformed readable", "malformed after absent":
 				if err == nil {
 					err = session.prepareProducer(
 						ctx,
-						declaration.Obj.(*manifest.Kustomization),
+						owner,
 						session.cfg.Input,
 						nil,
 					)
 				}
 				assert.FatalIf(t, err == nil, "readable render failure disappeared")
+				if tc.name == "malformed after absent" {
+					assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				}
 			case "canceled":
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 			}
@@ -299,6 +312,7 @@ func TestAdvance_RestrictedLookupWaitsForSubstitution(t *testing.T) {
 		}},
 	}
 	st.AddObject(owner)
+	assert.Equal(t, session.canPrepare(owner), false)
 	assert.NoError(t, session.prepareLookupPackage(t.Context(), owner, session.cfg.Input, nil))
 	scope := l.RootEvidence(owner.Named(), nil).EntryScope
 	assert.FatalIf(t, scope == nil || scope.Current(), "scope prepared before substitution input")
@@ -306,7 +320,27 @@ func TestAdvance_RestrictedLookupWaitsForSubstitution(t *testing.T) {
 	_, indexed := l.Index.Lookup(child)
 	assert.Equal(t, indexed, false)
 
-	st.AddObject(&manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"CHILD": "rendered"}})
+	settings := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"CHILD": "rendered"}}
+	production := manifest.Production{Owner: owner.Named(), Source: manifest.BootstrapSourceID}
+	index := l.Index
+	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		owner.Named(): {Authored: owner.Named(), Declaration: owner},
+		settings.Named(): {
+			Productions:   []manifest.Production{production},
+			ReferenceData: []manifest.ReferenceData{{Production: production, OfflineData: settings}},
+		},
+	}}
+	assert.Equal(t, st.ReferenceFacts(settings.Named(), nil, owner.Named()).Data, nil)
+	assert.Equal(t, session.canPrepare(owner), true)
+	other := new(*owner)
+	other.Name = "other"
+	assert.Equal(t, session.canPrepare(other), false)
+	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
+	assert.Equal(t, session.canPrepare(owner), false)
+	l.Index = index
+
+	st.AddObject(settings)
+	assert.Equal(t, session.canPrepare(owner), true)
 	progressed, err := session.Advance(t.Context(), &selection.AdmissionResult{})
 	assert.NoError(t, err)
 	assert.Equal(t, progressed, true)

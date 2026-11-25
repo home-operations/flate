@@ -1,6 +1,7 @@
 package values
 
 import (
+	"slices"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -9,6 +10,43 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type trackingSubstitutionProvider struct {
+	lookedUp []string
+}
+
+func (p *trackingSubstitutionProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
+	p.lookedUp = append(p.lookedUp, id.Name)
+	input := &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": id.Name}}
+	return store.ReferenceFacts{Data: input, Original: input}
+}
+
+func TestSubstitutionInputs_RepeatedReferences(t *testing.T) {
+	t.Parallel()
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{
+		SubstituteFrom: []kustomizev1.SubstituteReference{
+			{Kind: manifest.KindConfigMap, Name: "first"},
+			{Kind: manifest.KindConfigMap, Name: "second"},
+			{Kind: manifest.KindConfigMap, Name: "first"},
+		},
+	}}
+	provider := &trackingSubstitutionProvider{}
+	inputs := slices.Collect(SubstitutionInputs(ks, provider, nil))
+	assert.Diff(t, provider.lookedUp, []string{"first", "second", "first"})
+	assert.Equal(t, len(inputs), 3)
+	for i := range inputs {
+		assert.Equal(t, inputs[i].Position(), i)
+	}
+	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, inputs))
+	assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"VALUE": "first"})
+
+	provider.lookedUp = nil
+	SubstitutionInputs(ks, provider, nil)(func(result Result) bool {
+		assert.Equal(t, result.Position(), 0)
+		return false
+	})
+	assert.Diff(t, provider.lookedUp, []string{"first"})
+}
 
 func TestExpandPostBuildSubstituteReference_UnreadablePrecedence(t *testing.T) {
 	t.Parallel()

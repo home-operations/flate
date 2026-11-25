@@ -194,10 +194,10 @@ func bootstrapAcquisition(reads *store.ReadSet, id manifest.NamedResource) bool 
 	if !id.KindInfo().IsSource() || reads.GetObject(id) == nil {
 		return false
 	}
-	artifact, readable := reads.ReadableSourceArtifact(id)
+	artifact, readable := reads.ReadableSourceArtifact(id, store.ArtifactContent)
 	if !readable {
 		return false
 	}
-	input, found := reads.ReadableSourceArtifact(manifest.BootstrapSourceID)
+	input, found := reads.ReadableSourceArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	return found && artifact == input && artifact.Reads.Valid()
 }

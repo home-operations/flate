@@ -182,6 +182,80 @@ func TestAdmission_OrderingKeepsDeclarationStable(t *testing.T) {
 	assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
 }
 
+func TestAdmission_DeclarationStabilityUsesRemappedProduction(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := (&manifest.Kustomization{Name: "owner", Namespace: "apps"}).Named()
+	authored := (&manifest.ConfigMap{Name: "authored", Namespace: "raw"}).Named()
+	effective := (&manifest.ConfigMap{Name: "effective", Namespace: "apps"}).Named()
+	root := t.TempDir()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	changes := detectChanges(t, nil, []string{"unrelated.yaml"})
+	facts := &solverFacts{
+		store: st, changes: changes, context: SourceContext{Root: root},
+		index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			authored: {Authored: authored, File: "package/authored.yaml"},
+			owner:    {Authored: owner, File: "owner.yaml"},
+		}},
+		occurrences: map[manifest.NamedResource]OccurrenceFacts{
+			authored: {
+				Declaration: OccurrenceID{Source: root, File: "package/authored.yaml"},
+				Identity:    authored, Authored: authored, CatalogKnown: true, RequiresBuild: true,
+			},
+		},
+	}
+	c := solverClosure(t, st, facts)
+	c.context = facts.context
+	c.proposal.Request.Changes = changes
+	c.states[effective] = admissionState{
+		productionsKnown: true,
+		productions: []manifest.Production{{
+			Owner: owner, Declaration: authored, Authored: authored, Source: manifest.BootstrapSourceID,
+			File: "package/authored.yaml",
+		}},
+	}
+	assert.Equal(t, c.compareDeclarationFile(effective, owner, &manifest.DiscoveryRecord{}, false),
+		declarationStability{stable: true, known: true})
+
+	unclaimed := &manifest.DiscoveryRecord{Parent: owner}
+	assert.Equal(t, c.compareDeclarationFile(authored, owner, unclaimed, false), declarationStability{})
+
+	other := owner
+	other.Name = "foreign"
+	facts.index.Records[other] = manifest.DiscoveryRecord{Authored: other, File: "foreign.yaml"}
+	located := facts.occurrences[authored]
+	located.RequiresBuild = false
+	facts.occurrences[authored] = located
+	assert.Equal(t, c.compareDeclarationFile(authored, owner, unclaimed, false),
+		declarationStability{stable: true, known: true})
+	assert.Equal(t, c.compareDeclarationFile(authored, other, unclaimed, false), declarationStability{})
+
+	hidden := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+	second := owner
+	second.Name = "second"
+	for _, tc := range []struct {
+		name   string
+		owners []manifest.NamedResource
+		want   manifest.NamedResource
+	}{
+		{"first visible", []manifest.NamedResource{hidden, owner, second}, owner},
+		{"last hidden", []manifest.NamedResource{hidden, manifest.BootstrapSourceID}, manifest.BootstrapSourceID},
+		{"fallback", []manifest.NamedResource{{}, effective}, second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			productions := make([]manifest.Production, 0, len(tc.owners))
+			for _, id := range tc.owners {
+				productions = append(productions, manifest.Production{Owner: id})
+			}
+			closure := admissionClosure{states: map[manifest.NamedResource]admissionState{
+				effective: {productionsKnown: true, productions: productions},
+			}}
+			assert.Equal(t, closure.declarationProductionOwner(effective, second), tc.want)
+		})
+	}
+}
+
 func sourceCaptureCount(reads *store.ReadSet) int {
 	count := 0
 	for id := range reads.Inputs() {
@@ -247,15 +321,24 @@ func TestAdmission_ContentPathsSettleBeforeReach(t *testing.T) {
 func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, file string
-		changed    bool
-		mixed      bool
+		name, file  string
+		readRoots   int
+		readerEdges uint64
+		changed     bool
+		mixed       bool
+		materialize bool
+		pinned      bool
 	}{
-		{name: "declared subtree", file: "apps/owner/new.yaml", changed: true},
-		{name: "observed external input", file: "shared/input.yaml", changed: true},
-		{name: "unobserved external descendant", file: "shared/nested/unrelated.yaml"},
-		{name: "distinct direct and ancestor readers", file: "shared/nested/unrelated.yaml", mixed: true},
-		{name: "exact ancestor reader is excluded", file: "apps/owner/new.yaml", mixed: true, changed: true},
+		{name: "declared subtree", file: "apps/owner/new.yaml", readRoots: 1, changed: true},
+		{name: "observed external input", file: "shared/input.yaml", readerEdges: 3, changed: true},
+		{name: "pinned unpaired input", file: "shared/input.yaml", readerEdges: 2, pinned: true},
+		{name: "indexed producer", file: "shared/input.yaml", readerEdges: 3, changed: true, materialize: true},
+		{name: "unobserved external descendant", file: "shared/nested/unrelated.yaml", readRoots: 1},
+		{
+			name: "distinct direct and ancestor readers", file: "shared/nested/unrelated.yaml",
+			readRoots: 1, readerEdges: 3, mixed: true,
+		},
+		{name: "exact ancestor reader is excluded", file: "apps/owner/new.yaml", readRoots: 1, mixed: true, changed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -265,14 +348,26 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 				manifest.BootstrapSourceID,
 				&store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}},
 			)
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps/owner"}
+			var owner manifest.BaseManifest = &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps/owner"}
+			var want []Demand
+			if tc.materialize {
+				owner = &manifest.RawObject{
+					APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
+					Kind:       manifest.KindArtifactGenerator, Name: "owner", Namespace: "apps",
+				}
+				want = []Demand{{Identity: owner.Named(), Materialize: true}}
+			}
 			st.AddObject(owner)
-			reader := manifest.FileReader{Reader: owner.Named(), Source: manifest.BootstrapSourceID}
+			reader := manifest.FileReader{
+				Reader:      owner.Named(),
+				Source:      manifest.BootstrapSourceID,
+				Materialize: tc.materialize,
+			}
 			facts := &solverFacts{
 				store: st, changes: detectChanges(t, []string{tc.file}, []string{tc.file}),
 				context: SourceContext{Root: root},
 				index: manifest.DiscoveryIndex{
-					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{owner.Named(): {}},
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{owner.Named(): {Pinned: tc.pinned}},
 					Readers: map[string][]manifest.FileReader{
 						"apps/owner": {reader}, "shared": {reader}, "shared/input.yaml": {reader},
 					},
@@ -303,12 +398,14 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 			c.facts = counted
 			c.context = facts.context
 			c.proposal.Request.Changes = facts.changes
+			c.proposal.Request.construction = tc.materialize
+			c.proposal.preparation = new(Preparation)
+			t.Cleanup(c.proposal.preparation.Retire)
+			source := c.boundSource(reader.Source)
+			assert.Equal(t, source.Paired, false)
+			assert.Equal(t, c.fileChanged(source, tc.file).changed, true)
 			assert.Equal(t, c.changedClaim(&reader, tc.file, false), tc.changed)
-			expectedRoots := 1
-			if tc.file == "shared/input.yaml" {
-				expectedRoots = 0
-			}
-			assert.Equal(t, counted.rootPaths[owner.Named()], expectedRoots)
+			assert.Equal(t, counted.rootPaths[owner.Named()], tc.readRoots)
 			var reads store.ReadSet
 			reads.Init(st, owner.Named(), nil)
 			t.Cleanup(reads.Close)
@@ -316,9 +413,10 @@ func TestAdmission_DirectoryReadersRespectContentRoots(t *testing.T) {
 			reads.SetWork(&work)
 			c.objects = &reads
 			c.seedChangedReaders(tc.file)
-			assert.Equal(t, c.states[owner.Named()].seed, tc.changed)
-			if tc.file == "shared/input.yaml" || tc.mixed && !tc.changed {
-				assert.Equal(t, work.Scope().Admission().Counts.ReaderEdges, uint64(3))
+			assert.Equal(t, c.states[owner.Named()].seed, tc.changed && !tc.materialize)
+			assert.Diff(t, c.proposal.demands, want)
+			if tc.readerEdges != 0 {
+				assert.Equal(t, work.Scope().Admission().Counts.ReaderEdges, tc.readerEdges)
 			}
 			if tc.mixed {
 				assert.Equal(t, c.states[direct].seed, true)

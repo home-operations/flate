@@ -25,5 +25,11 @@ func Label(opts LabelOptions) (string, string) {
 	if opts.Mode == Direct {
 		return filepath.Join(opts.Root, ".flate-base", key), key
 	}
-	return filepath.Join(filepath.Dir(opts.Root), ".flate-sources", key, opts.Source.Namespace, opts.Source.Name), key
+	const sourceDir = ".flate-sources"
+	parts := [...]string{filepath.Dir(opts.Root), sourceDir, key, opts.Source.Namespace, opts.Source.Name}
+	if parts[0] == string(filepath.Separator) {
+		// Avoid allocating a cleanup buffer for the doubled separator after the root.
+		parts[0], parts[1] = "", string(filepath.Separator)+sourceDir
+	}
+	return filepath.Join(parts[:]...), key
 }

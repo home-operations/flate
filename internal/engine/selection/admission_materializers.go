@@ -672,15 +672,7 @@ func (c *admissionClosure) materializerOwners(consumer manifest.NamedResource) i
 		if !yield(record.Parent) || !yield(record.BuilderOwner) {
 			return
 		}
-		{
-			productionValues := c.productions(consumer)
-			for productionIndex := range productionValues {
-				production := productionValues[productionIndex]
-				if !yield(production.Materializer(consumer)) {
-					return
-				}
-			}
-		}
+		c.localMaterializers(consumer)(yield)
 	}
 }
 

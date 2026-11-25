@@ -3,6 +3,7 @@ package selection
 import (
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -64,15 +65,6 @@ func (c *admissionClosure) qualifySelectionProduction(
 		return
 	}
 	c.requestProducer(id, production)
-	object := c.object(owner)
-	if object == nil {
-		if occurrence, located := c.occurrence(owner); located {
-			object = occurrence.Catalog
-		}
-	}
-	if object != nil {
-		c.acquire(Demand{Identity: owner, Witness: object})
-	}
 }
 
 func (c *admissionClosure) admitMatchedMaterializer(
@@ -140,15 +132,11 @@ func (c *admissionClosure) qualifyLookupInputs() {
 	for i := range c.proposal.Request.LookupSources {
 		source := &c.proposal.Request.LookupSources[i]
 		if source.Materializer != (manifest.NamedResource{}) {
-			c.demandMaterialization(source.Materializer)
+			c.prepareMaterializer(source.Materializer, change.Comparison{}, true)
 			continue
 		}
-		productions := c.productions(source.Source)
-		for j := range productions {
-			owner := productions[j].Materializer(source.Source)
-			if owner != (manifest.NamedResource{}) && owner != source.Source {
-				c.demandMaterialization(owner)
-			}
+		for owner := range c.localMaterializers(source.Source) {
+			c.prepareMaterializer(owner, change.Comparison{}, true)
 		}
 	}
 	if c.scopes.scopes != nil && !c.context.Frozen {

@@ -2,6 +2,7 @@ package selection
 
 import (
 	"iter"
+	"slices"
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -75,4 +76,59 @@ func Declarations(documents []store.Child) iter.Seq[store.Child] {
 			}
 		}
 	}
+}
+
+func (c *admissionClosure) producedDeclarationStability(
+	id, owner manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	file *declarationFile,
+) declarationStability {
+	declared := c.record(file.declaration)
+	if declared.File == "" || declared.File == declared.Builder {
+		return declarationStability{}
+	}
+	ownerRecord := c.record(owner)
+	ownerFile := ownerRecord.File
+	if authored, located := c.catalogOccurrence(owner); located {
+		ownerFile = c.fileCoordinate(authored.Declaration)
+	}
+	ownerKnown := ownerRecord.File != ownerRecord.Builder || c.objects.GetDeclaration(owner) != nil ||
+		c.declarationEvidence(owner).accepted
+	if !ownerKnown {
+		return declarationStability{}
+	}
+	stable := !c.fileChanged(c.boundSource(c.source(owner)), ownerFile).changed &&
+		!slices.ContainsFunc(c.productions(owner), c.changedProduction)
+	// A remapped declaration derives its owner from the qualified production.
+	if stable && file.requiresClaim {
+		stable = claimContains(c.facts.SelectionIndex(), file.coordinate, id, &RootCoveringOwner{
+			Identity: owner, Source: file.source, Input: file.input,
+		})
+	}
+	c.checkDeclarationReferences(owner, &stable)
+	c.checkDeclarationFiles(file.source, &stable, &declared, record)
+	if parent := ownerRecord.Parent; stable &&
+		(parent != (manifest.NamedResource{}) && parent != owner && !parent.ReportHidden()) {
+		state := c.states[id]
+		if state.comparingDeclaration {
+			return declarationStability{stable: false, known: true}
+		}
+		state.comparingDeclaration = true
+		c.states[id] = state
+		stable = c.unchangedDeclaration(owner, parent, c.object(owner))
+		state = c.states[id]
+		state.comparingDeclaration = false
+		c.states[id] = state
+	}
+	if stable {
+		return declarationStability{stable: true, known: true}
+	}
+	return declarationStability{}
+}
+
+type declarationFile struct {
+	coordinate          string
+	source, declaration manifest.NamedResource
+	input               *store.SourceArtifact
+	requiresClaim       bool
 }

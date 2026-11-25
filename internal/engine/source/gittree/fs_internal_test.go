@@ -394,6 +394,16 @@ func testNewEntryPolicyOwnershipLabels(t *testing.T) {
 			"content",
 		},
 		{
+			"filesystem root",
+			LabelOptions{
+				Root:   string(filepath.Separator),
+				Key:    key,
+				Source: manifest.NamedResource{Namespace: "flux-system", Name: "cluster"},
+			},
+			string(filepath.Separator) + filepath.Join(".flate-sources", key, "flux-system", "cluster"),
+			key,
+		},
+		{
 			"alias",
 			LabelOptions{
 				Root:    root,

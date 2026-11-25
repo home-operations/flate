@@ -93,6 +93,12 @@ func (c *admissionClosure) declarationSource(id manifest.NamedResource) string {
 }
 
 func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResource {
+	return c.sourceForOccurrence(id, nil)
+}
+
+func (c *admissionClosure) sourceForOccurrence(
+	id manifest.NamedResource, occurrence *OccurrenceFacts,
+) manifest.NamedResource {
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	if record.Builder != "" && (c.incoming(id).Obj == nil || record.BuilderOwner == c.owner) {
 		for i := range record.Productions {
@@ -102,7 +108,12 @@ func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResou
 			}
 		}
 	}
-	occurrence, located := c.catalogOccurrence(id)
+	known := occurrence != nil
+	if !known {
+		var current OccurrenceFacts
+		current, known = c.catalogOccurrence(id)
+		occurrence = &current
+	}
 	{
 		pValues := c.productions(id)
 		for pIndex := range pValues {
@@ -110,15 +121,15 @@ func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResou
 			if p.Source == (manifest.NamedResource{}) {
 				continue
 			}
-			if located {
-				_, input, _ := c.delta(p.Source)
-				if input == nil ||
-					input.LocalPath != occurrence.Declaration.Source &&
-						input.OriginPath(input.LocalPath) != occurrence.Declaration.Source {
-					continue
-				}
+			if !known {
+				return p.Source
 			}
-			return p.Source
+			evidence := c.boundSource(p.Source)
+			origin := occurrence.Declaration.Source
+			matches := evidence.Input != nil && (evidence.Input.LocalPath == origin || evidence.Origin == origin)
+			if matches {
+				return p.Source
+			}
 		}
 	}
 	return manifest.BootstrapSourceID
@@ -291,7 +302,7 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
 		return true
 	}
-	if stability := c.declarationStable(id, owner, &record); stability.known {
+	if stability := c.compareDeclarationFile(id, owner, &record, false); stability.known {
 		return stability.stable
 	}
 	if c.context.SideKnown && record.Authored != id {
@@ -549,11 +560,12 @@ func (c *admissionClosure) mergeHistoricalProductions(
 
 func (c *admissionClosure) declarationOwner(
 	id, owner manifest.NamedResource,
-	record *manifest.DiscoveryRecord,
+	parent manifest.NamedResource,
+	occurrence *OccurrenceFacts,
 ) (manifest.NamedResource, bool) {
+	located := occurrence.CatalogKnown
 	declaration := id
-	_, located := c.catalogOccurrence(id)
-	owned := owner == manifest.Resolve(record.Parent, "", id.Namespace)
+	owned := owner == manifest.Resolve(parent, "", id.Namespace)
 	if !located {
 		declaration = manifest.NamedResource{}
 	}
@@ -580,7 +592,13 @@ func (c *admissionClosure) declarationOwner(
 			declaration = origin
 		}
 	}
-	return declaration, owned
+	if !owned {
+		return declaration, false
+	}
+	if declaration != id {
+		*occurrence, located = c.catalogOccurrence(declaration)
+	}
+	return declaration, located
 }
 
 func (c *admissionClosure) checkDeclarationReferences(owner manifest.NamedResource, stable *bool) {
@@ -617,51 +635,62 @@ func (c *admissionClosure) checkDeclarationFiles(
 
 type declarationStability struct{ stable, known bool }
 
-func (c *admissionClosure) declarationStable(
+func (c *admissionClosure) compareDeclarationFile(
 	id, owner manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
+	materializer bool,
 ) declarationStability {
-	declaration, owned := c.declarationOwner(id, owner, record)
-	ownerRecord := c.record(owner)
-	ownerFile := ownerRecord.File
-	if occurrence, located := c.catalogOccurrence(owner); located {
-		ownerFile = c.fileCoordinate(filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File))
+	declaration := id
+	occurrence, known := c.catalogOccurrence(id)
+	if materializer && occurrence.Declaration.File == "" {
+		return declarationStability{}
 	}
-	declared := c.record(declaration)
-	if occurrence, located := c.catalogOccurrence(
-		declaration,
-	); located && owner != (manifest.NamedResource{}) && owned && declared.File != "" &&
-		declared.File != declared.Builder {
-		source := c.source(declaration)
-		delta, input, _ := c.delta(source)
-		ownerKnown := ownerRecord.File != ownerRecord.Builder || c.objects.GetDeclaration(owner) != nil ||
-			c.declarationEvidence(owner).accepted
-		stable := ownerKnown && delta != nil && input != nil && input.FS != nil &&
-			input.Reads.Valid() &&
-			input.OriginPath(input.LocalPath) == occurrence.Declaration.Source &&
-			!c.fileChanged(source, declared.File) &&
-			!c.fileChanged(c.source(owner), ownerFile) &&
-			!slices.ContainsFunc(c.productions(owner), c.changedProduction)
-		c.checkDeclarationReferences(owner, &stable)
-		c.checkDeclarationFiles(source, &stable, &declared, record)
-		if parent := ownerRecord.Parent; stable &&
-			(parent != (manifest.NamedResource{}) && parent != owner && !parent.ReportHidden()) {
-			state := c.states[id]
-			if state.comparingDeclaration {
-				return declarationStability{stable: false, known: true}
-			}
-			state.comparingDeclaration = true
-			c.states[id] = state
-			stable = c.unchangedDeclaration(owner, parent, c.object(owner))
-			state = c.states[id]
-			state.comparingDeclaration = false
-			c.states[id] = state
-		}
-		if stable {
-			return declarationStability{stable: true, known: true}
-		}
+	rawDeclaration := occurrence.Located && !occurrence.RequiresBuild &&
+		record.Authored == id && record.Builder == ""
+	direct := materializer && rawDeclaration
+	if materializer && !direct {
+		owner = c.declarationProductionOwner(id, record.Parent)
 	}
-	return declarationStability{}
+	if !direct {
+		occurrence.CatalogKnown = known
+		declaration, known = c.declarationOwner(id, owner, record.Parent, &occurrence)
+	}
+	if !known {
+		return declarationStability{}
+	}
+
+	var indexed string
+	if materializer {
+		indexed = record.File
+	}
+	source := c.sourceForOccurrence(declaration, &occurrence)
+	evidence := c.boundSource(source)
+	input := evidence.Input
+	if !evidence.comparisonAvailable(indexed != "") {
+		return declarationStability{}
+	}
+	origin := occurrence.Declaration.Source == evidence.Origin
+	local := direct && occurrence.Declaration.Source == input.LocalPath
+	if !origin && !local {
+		return declarationStability{}
+	}
+	coordinate := indexed
+	if !direct {
+		coordinate = c.fileCoordinate(occurrence.Declaration)
+	}
+	comparison := c.fileChanged(evidence, cmp.Or(indexed, coordinate))
+	if !comparison.supportsDeclaration(indexed, occurrence.Declaration.File) {
+		return declarationStability{}
+	}
+	if direct {
+		stable := store.RawDeclarationAuthority(c.facts.SelectionIndex(), id, false)
+		return declarationStability{stable: stable, known: stable}
+	}
+
+	return c.producedDeclarationStability(id, owner, record, &declarationFile{
+		coordinate: coordinate, source: source, declaration: declaration, input: input,
+		requiresClaim: occurrence.RequiresBuild && declaration == id,
+	})
 }
 
 // Declaration authority MUST precede the choice of a preparation owner.
@@ -751,16 +780,11 @@ func (c *admissionClosure) acceptedDeclaration(id, owner manifest.NamedResource,
 }
 
 func (c *admissionClosure) declarationProductionOwner(id, owner manifest.NamedResource) manifest.NamedResource {
-	productions := c.productions(id)
-	for i := range productions {
-		production := &productions[i]
-		materializer := production.Materializer(id)
-		if materializer != (manifest.NamedResource{}) && materializer != id {
-			owner = materializer
-			if !owner.ReportHidden() {
-				break
-			}
+	for materializer := range c.localMaterializers(id) {
+		if !materializer.ReportHidden() {
+			return materializer
 		}
+		owner = materializer
 	}
 	return owner
 }

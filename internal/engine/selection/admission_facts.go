@@ -166,7 +166,12 @@ func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {
 	return false
 }
 
-func (c *admissionClosure) fileCoordinate(file string) string {
+func (c *admissionClosure) fileCoordinate(declaration OccurrenceID) string {
+	file := filepath.FromSlash(declaration.File)
+	if declaration.Source == c.context.Root && filepath.IsLocal(file) {
+		return filepath.ToSlash(filepath.Clean(file))
+	}
+	file = filepath.Join(declaration.Source, file)
 	if relative, err := filepath.Rel(c.context.Root, file); err == nil && filepath.IsLocal(relative) {
 		return filepath.ToSlash(relative)
 	}

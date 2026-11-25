@@ -3,6 +3,7 @@ package selection
 import (
 	"cmp"
 	"io/fs"
+	"iter"
 	"path"
 	"slices"
 	"strings"
@@ -46,16 +47,30 @@ func (c *admissionClosure) boundSource(source manifest.NamedResource) *SourceFac
 	return &facts
 }
 
-func (c *admissionClosure) fileChanged(source manifest.NamedResource, file string) bool {
-	evidence := c.boundSource(source)
+type fileComparison struct {
+	path    string
+	changed bool
+}
+
+func (f fileComparison) supportsDeclaration(indexed, authored string) bool {
+	if f.changed {
+		return false
+	}
+	if indexed == "" {
+		return true
+	}
+	return f.path == authored
+}
+
+func (c *admissionClosure) fileChanged(evidence *SourceFacts, file string) fileComparison {
 	if evidence.Paired && evidence.Input != nil {
-		var known bool
-		file, known = evidence.Input.SourcePath(c.context.Root, file)
-		if !known {
-			return false
+		var mapped bool
+		file, mapped = evidence.Input.SourcePath(c.context.Root, file)
+		if !mapped {
+			return fileComparison{}
 		}
 	}
-	return evidence.Delta.Contains(file)
+	return fileComparison{path: file, changed: evidence.Delta.Contains(file)}
 }
 
 func (c *admissionClosure) inputsChanged(source manifest.NamedResource, inputs []string) bool {
@@ -444,11 +459,11 @@ func (c *admissionClosure) generatedRead(
 			return delta.ComparePaths(resolved.matches)
 		}
 	}
-	return c.compareGeneratedRead(source, compare)
+	return c.compareGeneratedRead(source, compare, false)
 }
 
 func (c *admissionClosure) compareGeneratedRead(
-	source manifest.NamedResource, compare func(*change.Set) change.Comparison,
+	source manifest.NamedResource, compare func(*change.Set) change.Comparison, prepare bool,
 ) (change.Comparison, bool) {
 	if source == manifest.BootstrapSourceID || !source.KindInfo().SourceArtifact ||
 		!c.context.SideKnown || !c.proposal.Request.Changes.Paired() {
@@ -468,17 +483,20 @@ func (c *admissionClosure) compareGeneratedRead(
 	if evidence.Declaration != evidence.Declarations[c.context.Side] {
 		comparison = change.Comparison{}
 	}
-	if generated {
+	if generated && !prepare {
 		return comparison, true
 	}
-	productions := c.productions(source)
-	for i := range productions {
-		owner := productions[i].Materializer(source)
-		if owner != (manifest.NamedResource{}) && owner != source && !owner.KindInfo().Structural {
-			return comparison, true
+	for owner, owed := range c.generatedSourceOwners(source) {
+		generated = true
+		if !prepare {
+			break
 		}
+		c.prepareMaterializer(owner, comparison, owed)
 	}
-	return change.Comparison{}, false
+	if !generated {
+		return change.Comparison{}, false
+	}
+	return comparison, true
 }
 
 func (c *admissionClosure) resolveReadPaths(
@@ -572,34 +590,41 @@ func (c *admissionClosure) generatedKustomizeRead(
 		})
 		comparison.Known = comparison.Changed || reads.complete
 		return comparison
-	})
+	}, false)
 }
 
 func (c *admissionClosure) initialSourceChanged(source manifest.NamedResource) bool {
-	comparison, generated := c.generatedRead(source, nil)
-	if !generated {
-		return true
-	}
-	if !comparison.Known {
-		c.requireSourceMaterializers(source)
-	}
-	return comparison.Changed
+	comparison, generated := c.compareGeneratedRead(source, nil, c.proposal.Request.construction)
+	return !generated || comparison.Changed
 }
 
-func (c *admissionClosure) requireSourceMaterializers(source manifest.NamedResource) {
-	if !c.proposal.Request.construction {
-		return
+func (c *admissionClosure) generatedSourceOwners(
+	source manifest.NamedResource,
+) iter.Seq2[manifest.NamedResource, bool] {
+	return func(yield func(manifest.NamedResource, bool) bool) {
+		peer := c.proposal.Request.Changes.PendingSourceOwner(source, c.context.Side)
+		eligible := func(owner manifest.NamedResource) bool {
+			return owner.Name != "" && !owner.KindInfo().Structural
+		}
+		if peer != source && eligible(peer) && !yield(peer, true) {
+			return
+		}
+		for owner := range c.localMaterializers(source) {
+			if owner != peer && eligible(owner) && !yield(owner, false) {
+				return
+			}
+		}
 	}
-	peerOwner := c.proposal.Request.Changes.PendingSourceOwner(source, c.context.Side)
-	if peerOwner.Name != "" && peerOwner != source && !peerOwner.KindInfo().Structural {
-		c.demandMaterialization(peerOwner)
-	}
-	productions := c.productions(source)
-	for i := range productions {
-		owner := productions[i].Materializer(source)
-		local := owner.Name != "" && owner != source && !owner.KindInfo().Structural
-		if local && owner != peerOwner && c.states[owner].changed {
-			c.demandMaterialization(owner)
+}
+
+func (c *admissionClosure) localMaterializers(target manifest.NamedResource) iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		productions := c.productions(target)
+		for i := range productions {
+			owner := productions[i].Materializer(target)
+			if owner != (manifest.NamedResource{}) && owner != target && !yield(owner) {
+				return
+			}
 		}
 	}
 }

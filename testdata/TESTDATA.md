@@ -759,6 +759,10 @@ Both sequence replays start with empty caches.
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal` | changed only emitted kustomization path literal. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-kustomization-path-literal-root` | changed only emitted kustomization path literal root. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/changed-only-emitted-helmrelease-chart-templated` | A generated release reads its chart values and a sibling library. | Reset before each invocation. |
+| `helm-dependencies/changed-only-mounted-helmrelease-chart-templated-values` | A Git chart values edit reaches a release from a mounted ResourceSet. Full builds compare both revisions before the changed-only diff. | Two cold replays at concurrency 2. Reset before each invocation. |
+| `helm-dependencies/changed-only-mounted-helmrelease-chart-templated-template` | A Git chart template edit reaches a release from a mounted ResourceSet. Full builds compare both revisions before the changed-only diff. | Two cold replays at concurrency 2. Reset before each invocation. |
+| `helm-dependencies/changed-only-mounted-helmrelease-chart-templated-library` | A local library template edit reaches a release from a mounted ResourceSet. Full builds compare both revisions before the changed-only diff. | Two cold replays at concurrency 2. Reset before each invocation. |
+| `helm-dependencies/changed-only-mounted-helmrelease-chart-templated-unrelated` | An unrelated Git chart edit renders no release from the mounted ResourceSet. Full builds compare both revisions before the changed-only diff. | Two cold replays at concurrency 2. Reset before each invocation. |
 | `helm-dependencies/changed-only-render-emitted-dependency` | changed only render emitted dependency. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/ready-expr--helm-release` | ready expr  helm release. | Reuse within sequence; reset on replay. |
 | `helm-oci/helm-missingoci-source` | helm missingoci source. | Reuse within sequence; reset on replay. |

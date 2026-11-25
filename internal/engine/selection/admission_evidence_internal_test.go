@@ -268,20 +268,264 @@ func TestAdmission_ChangedReadSettlesWithPendingSource(t *testing.T) {
 
 func TestAdmission_DemandsPendingMaterializer(t *testing.T) {
 	t.Parallel()
+	cases := []materializerCase{
+		{name: "base", side: manifest.TreeBase, local: true},
+		{
+			name: "base-only output change", side: manifest.TreeHead, local: true, peer: true,
+			pair: [2]fstest.MapFS{{"removed.yaml": {}}, {}},
+		},
+		{
+			name: "head-only output change", side: manifest.TreeBase, local: true, peer: true,
+			pair: [2]fstest.MapFS{{}, {"added.yaml": {}}},
+		},
+		{
+			name: "unrelated input", side: manifest.TreeHead, local: true, peer: true,
+			pair: [2]fstest.MapFS{{}, {}},
+		},
+		{name: "head", side: manifest.TreeHead, local: true},
+		{name: "peer", side: manifest.TreeHead, peer: true},
+		{name: "same owner", side: manifest.TreeHead, local: true, peer: true},
+		{name: "unrelated owner", side: manifest.TreeHead, peer: true, otherOwner: true},
+		{name: "structural owner", side: manifest.TreeHead, local: true, peer: true, structural: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, tc.run)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		supplied bool
+	}{
+		{name: "explicit lookup with supplied owner", supplied: true},
+		{name: "explicit lookup with structural production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			closure := solverClosure(t, st, &solverFacts{store: st})
+			closure.session.request = Request{Roots: []manifest.NamedResource{
+				(&manifest.HelmRelease{Name: "selected", Namespace: "apps"}).Named(),
+			}}
+			closure.proposal.preparation = new(Preparation)
+			t.Cleanup(closure.proposal.preparation.Retire)
+			source := (&manifest.ExternalArtifact{Name: "package", Namespace: "apps"}).Named()
+			owner := (&manifest.Kustomization{Name: "package-owner", Namespace: "apps"}).Named()
+			lookup := LookupSource{Source: source}
+			if tc.supplied {
+				lookup.Materializer = owner
+			}
+			closure.proposal.Request.LookupSources = []LookupSource{lookup}
+			closure.states[source] = admissionState{
+				productionsKnown: true,
+				productions:      []manifest.Production{{Owner: owner}},
+			}
+			counted := &materializerStatusReads{Store: st, owner: owner}
+			closure.objects = counted
+			closure.qualifySelectionProducers()
+			assert.Diff(t, closure.proposal.demands, []Demand{{Identity: owner, Materialize: true}})
+			assert.Equal(t, counted.reads, 1)
+		})
+	}
+
+	t.Run("owner evidence", testMaterializerOwnerEvidence)
+}
+
+type materializerCase struct {
+	name                    string
+	side                    manifest.TreeSide
+	local, peer, structural bool
+	otherOwner              bool
+	pair                    [2]fstest.MapFS
+}
+
+func (tc materializerCase) run(t *testing.T) {
+	t.Parallel()
 	st := store.New()
-	generator := &manifest.RawObject{
+	var owner manifest.BaseManifest = &manifest.RawObject{
 		APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
 		Kind:       manifest.KindArtifactGenerator, Name: "generator", Namespace: "apps",
 	}
-	id := generator.Named()
-	st.AddObject(generator)
-	facts := &solverFacts{store: st}
+	if tc.structural {
+		owner = &manifest.Kustomization{Name: "builder", Namespace: "apps"}
+	}
+	id := owner.Named()
+	st.AddObject(owner)
+	facts := &solverFacts{
+		store: st, sources: map[manifest.NamedResource]SourceFacts{},
+		occurrences: make(map[manifest.NamedResource]OccurrenceFacts),
+	}
 	closure := solverClosure(t, st, facts)
+	facts.context.Side, facts.context.SideKnown = tc.side, true
+	closure.context = facts.context
 	closure.proposal.preparation = &Preparation{}
 	defer closure.proposal.preparation.Retire()
-	closure.demandMaterialization(id)
-	assert.Diff(t, slices.Collect(closure.proposal.Demands()), []Demand{{Identity: id, Materialize: true}})
-	assert.Equal(t, closure.role(id).ordinary, true)
+	closure.proposal.Request.construction = true
+	artifact := &manifest.ExternalArtifact{Name: "package", Namespace: "apps"}
+	source := artifact.Named()
+	facts.sources[source] = SourceFacts{Paired: true}
+	closure.states[source] = admissionState{productionsKnown: true}
+	stores := [2]*store.Store{}
+	stores[tc.side], stores[1-tc.side] = st, store.New()
+	bootstrap := &store.SourceArtifact{FS: fstest.MapFS{}}
+	stores[manifest.TreeBase].SetArtifact(manifest.BootstrapSourceID, bootstrap)
+	stores[manifest.TreeHead].SetArtifact(manifest.BootstrapSourceID, bootstrap)
+	paired := tc.pair[0] != nil
+	if paired {
+		stores[manifest.TreeHead].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+			FS: fstest.MapFS{"outside.yaml": {}},
+		})
+		st.AddObject(artifact)
+		st.SetArtifact(source, &store.SourceArtifact{FS: tc.pair[tc.side]})
+	}
+	if tc.peer {
+		peer := stores[1-tc.side]
+		peer.AddObject(owner)
+		files := tc.pair[1-tc.side]
+		peer.RecordEmitted(id, &store.Emission{Complete: true, Children: []store.Child{{Obj: artifact}}},
+			map[manifest.NamedResource]*store.SourceArtifact{source: {FS: files}})
+	}
+	switch {
+	case tc.local:
+		closure.states[source] = admissionState{
+			productionsKnown: true,
+			productions: []manifest.Production{
+				{Owner: id, Declaration: id, Source: manifest.BootstrapSourceID},
+			},
+		}
+	case tc.otherOwner:
+		root := t.TempDir()
+		closure.context.Root, facts.context.Root = root, root
+		production, _ := unrelatedMaterializer(facts, stores, tc.side, source)
+		closure.states[source] = admissionState{
+			productionsKnown: true, productions: []manifest.Production{production},
+		}
+	}
+	changes, err := change.Qualify(
+		t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{},
+	)
+	assert.NoError(t, err)
+	if tc.peer && !paired {
+		assert.Equal(t, changes.PendingSourceOwner(source, tc.side), id)
+	}
+	facts.changes = changes
+	closure.proposal.Request.Changes = changes
+	if tc.otherOwner {
+		var owners []manifest.NamedResource
+		var required []bool
+		for materializer, owed := range closure.generatedSourceOwners(source) {
+			owners = append(owners, materializer)
+			required = append(required, owed)
+		}
+		assert.Diff(t, owners, []manifest.NamedResource{id, closure.states[source].productions[0].Owner})
+		assert.Diff(t, required, []bool{true, false})
+	}
+	counted := &materializerStatusReads{Store: st, owner: id}
+	closure.objects = counted
+	consumer := (&manifest.Kustomization{Name: "consumer", Namespace: "apps"}).Named()
+	facts.occurrences[consumer] = OccurrenceFacts{
+		Identity: consumer, CatalogKnown: true, Refs: []manifest.Reference{{NamedResource: source}},
+	}
+	closure.identities = []admissionIdentity{{id: consumer}}
+	closure.states[consumer] = admissionState{listed: true}
+	changed := len(tc.pair[0])+len(tc.pair[1]) != 0
+	prepare := !tc.structural && (!paired || changed)
+	var want []Demand
+	if prepare {
+		want = []Demand{{Identity: id, Materialize: true}}
+	}
+	closure.demandPendingSources()
+	assert.Diff(t, slices.Collect(closure.proposal.Demands()), want)
+	assert.Equal(t, counted.reads, len(want))
+	assert.Equal(t, closure.role(id).ordinary, prepare)
+
+	assert.Equal(t, closure.initialSourceChanged(source), changed)
+	assert.Diff(t, slices.Collect(closure.proposal.Demands()), want)
+	assert.Equal(t, counted.reads, len(want))
+	if tc.peer && !tc.structural && !paired {
+		closure.proposal = &Admission{
+			Request: closure.proposal.Request, preparation: closure.proposal.preparation,
+		}
+		closure.resetDemand()
+		assert.Equal(t, closure.initialSourceChanged(source), false)
+		assert.Diff(t, closure.proposal.demands, want)
+		assert.Equal(t, counted.reads, 2)
+		assert.Equal(t, closure.initialSourceChanged(source), false)
+		assert.Diff(t, closure.proposal.demands, want)
+		assert.Equal(t, counted.reads, 2)
+
+		st.RecordEmitted(id, &store.Emission{Complete: true, Children: []store.Child{{Obj: artifact}}},
+			map[manifest.NamedResource]*store.SourceArtifact{source: {FS: fstest.MapFS{}}})
+		settled, err := change.Qualify(
+			t.Context(), changes, change.SourcePair{Stores: stores}, manifest.WorkScope{},
+		)
+		assert.NoError(t, err)
+		facts.changes = settled
+		closure.proposal.Request.Changes = settled
+		closure.proposal.demands = nil
+		closure.resetDemand()
+		assert.Equal(t, closure.initialSourceChanged(source), false)
+		assert.Equal(t, len(closure.proposal.demands), 0)
+		assert.Equal(t, counted.reads, 2)
+	}
+}
+
+func unrelatedMaterializer(
+	facts *solverFacts, stores [2]*store.Store, side manifest.TreeSide, output manifest.NamedResource,
+) (manifest.Production, *manifest.GitRepository) {
+	other := &manifest.RawObject{
+		APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
+		Kind:       manifest.KindArtifactGenerator, Name: "unrelated", Namespace: "apps",
+		Spec: map[string]any{
+			"sources": []any{map[string]any{
+				"alias": "repo", "kind": manifest.KindGitRepository, "name": "input",
+			}},
+			"artifacts": []any{map[string]any{
+				"name": output.Name,
+				"copy": []any{map[string]any{"from": "@repo/payload", "to": "@artifact/"}},
+			}},
+		},
+	}
+	otherID := other.Named()
+	repository := &manifest.GitRepository{Name: "input", Namespace: "apps"}
+	inputID := repository.Named()
+	input := &store.SourceArtifact{FS: fstest.MapFS{"payload/unchanged.yaml": {}}}
+	facts.sources[inputID] = SourceFacts{Paired: true}
+	for i, st := range stores {
+		files := fstest.MapFS{"unrelated.yaml": {}}
+		if manifest.TreeSide(i) == side {
+			files["outside.yaml"] = &fstest.MapFile{}
+		}
+		st.AddObject(other)
+		st.AddObject(repository)
+		st.SetArtifact(inputID, input)
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: files, LocalPath: facts.context.Root})
+	}
+	facts.sources[manifest.BootstrapSourceID] = SourceFacts{Paired: true}
+	facts.index = manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		otherID: {Authored: otherID, File: "unrelated.yaml", Declaration: other, StaticOutput: true},
+	}}
+	facts.occurrences = map[manifest.NamedResource]OccurrenceFacts{
+		otherID: {
+			Declaration: OccurrenceID{Source: facts.context.Root, File: "unrelated.yaml"},
+			Identity:    otherID, Authored: otherID, Object: other, CatalogKnown: true, Located: true,
+			Refs: slices.Collect(manifest.References(other, manifest.ReferenceRelations)),
+		},
+	}
+	return manifest.Production{Owner: otherID, Declaration: otherID, Source: manifest.BootstrapSourceID}, repository
+}
+
+type materializerStatusReads struct {
+	*store.Store
+
+	owner manifest.NamedResource
+	reads int
+}
+
+func (r *materializerStatusReads) GetStatus(id manifest.NamedResource) (store.StatusInfo, bool) {
+	if id == r.owner {
+		r.reads++
+	}
+	return r.Store.GetStatus(id)
 }
 
 func TestAdmission_GeneratedKustomizeReadsSettleAcrossSnapshots(t *testing.T) {

@@ -1,0 +1,11 @@
+--- ConfigMap flux-system/app
++++ ConfigMap flux-system/app
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   library: before
+-  template: before
++  template: after
+   value: before
+ kind: ConfigMap
+ metadata:

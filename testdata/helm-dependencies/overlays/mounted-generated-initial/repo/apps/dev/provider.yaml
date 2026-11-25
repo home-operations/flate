@@ -1,0 +1,9 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: app
+  namespace: flux-system
+  labels: {fixture.test/apps: generated}
+spec:
+  type: Static
+  defaultValues: {name: app}

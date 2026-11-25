@@ -590,16 +590,17 @@ func (c *admissionClosure) requireSourceMaterializers(source manifest.NamedResou
 	if !c.proposal.Request.construction {
 		return
 	}
-	peerOwner := c.proposal.Request.Changes.PendingSourceOwner(source, c.context.Side)
-	if peerOwner.Name != "" && peerOwner != source && !peerOwner.KindInfo().Structural {
-		c.demandMaterialization(peerOwner)
+	demand := func(owner manifest.NamedResource) {
+		if owner.Name != "" && owner != source && !owner.KindInfo().Structural {
+			c.demandMaterialization(owner)
+		}
 	}
+	peerOwner := c.proposal.Request.Changes.PendingSourceOwner(source, c.context.Side)
+	demand(peerOwner)
 	productions := c.productions(source)
 	for i := range productions {
-		owner := productions[i].Materializer(source)
-		local := owner.Name != "" && owner != source && !owner.KindInfo().Structural
-		if local && owner != peerOwner && c.states[owner].changed {
-			c.demandMaterialization(owner)
+		if owner := productions[i].Materializer(source); owner != peerOwner {
+			demand(owner)
 		}
 	}
 }

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -31,14 +33,17 @@ func (p *generatorPublication) render(
 	requests []request,
 ) error {
 	var targets namespaceTargets
-	var docs []manifest.DocOccurrence
 	var payloads []*store.SourceArtifact
 	if p.policies != nil {
 		targets = collectNamespaceTargets(requests)
 		total := len(targets.ordered) + len(requests)
-		docs = make([]manifest.DocOccurrence, len(targets.ordered), total)
 		payloads = make([]*store.SourceArtifact, len(targets.ordered), total)
+	} else if len(requests) > 1 {
+		p.desired = make([]store.Child, 0, len(requests))
+		p.documents = make([]manifest.DocOccurrence, 0, len(requests))
 	}
+	docs := make([]manifest.DocOccurrence, len(targets.ordered), len(targets.ordered)+len(requests))
+	prototype := p.raw.ExternalArtifact(metav1.ObjectMeta{Annotations: p.spec.CommonMetadata.Annotations})
 	for i := range requests {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
@@ -46,33 +51,35 @@ func (p *generatorPublication) render(
 		req := &requests[i]
 		req.work.Scope = p.execution.run.Reads.Work().Scope()
 		captureMetadata := targets.first[req.Namespace.Name] == req
-		doc, payload, err := p.prepare(ctx, req, captureMetadata)
+		doc, payload, err := p.prepare(ctx, req, captureMetadata, prototype)
 		if err != nil {
 			return err
 		}
+		ordinal := len(docs)
+		docs = append(docs, manifest.DocOccurrence{Document: doc, Ordinal: ordinal})
 		if p.policies == nil {
-			if err := p.publish(ctx, []manifest.DocOccurrence{{Document: doc, Ordinal: i}},
+			if err := p.publish(ctx, docs[ordinal:ordinal+1:ordinal+1],
 				[]*store.SourceArtifact{payload}, false); err != nil {
 				return err
 			}
 		} else {
-			docs = append(docs, manifest.DocOccurrence{Document: doc, Ordinal: len(docs)})
 			payloads = append(payloads, payload)
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
-	if p.policies != nil {
-		if err := p.prepareNamespaces(ctx, docs, targets, requests); err != nil {
-			return manifest.NewError(manifest.ErrInput, err, "")
-		}
+	if p.policies == nil {
+		return p.publish(ctx, nil, nil, true)
+	}
+	if err := p.prepareNamespaces(ctx, docs, targets, requests); err != nil {
+		return manifest.NewError(manifest.ErrInput, err, "")
 	}
 	return p.publish(ctx, docs, payloads, true)
 }
 
 func (p *generatorPublication) prepare(
-	ctx context.Context, req *request, captureMetadata bool,
+	ctx context.Context, req *request, captureMetadata bool, prototype *manifest.ExternalArtifact,
 ) (map[string]any, *store.SourceArtifact, error) {
 	payload, inputs, err := p.generatedSource(ctx, req, captureMetadata)
 	if err != nil {
@@ -82,7 +89,7 @@ func (p *generatorPublication) prepare(
 		}
 		req.stagedMetadataError = readErr
 	}
-	doc, err := p.generatedDocument(req)
+	doc, err := p.generatedDocument(req, prototype)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,21 +99,17 @@ func (p *generatorPublication) prepare(
 	return doc, payload, nil
 }
 
-func (p *generatorPublication) generatedDocument(req *request) (map[string]any, error) {
+func (p *generatorPublication) generatedDocument(
+	req *request, prototype *manifest.ExternalArtifact,
+) (map[string]any, error) {
 	labels := maps.Clone(p.spec.CommonMetadata.Labels)
 	if labels == nil {
 		labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
 	}
 	maps.Copy(labels, req.Captures)
 	labels = ownGeneratorLabels(labels, p.uid)
-	declaration := p.raw.ExternalArtifact(
-		metav1.ObjectMeta{
-			Name:        req.Identity.Name,
-			Namespace:   req.Identity.Namespace,
-			Labels:      labels,
-			Annotations: p.spec.CommonMetadata.Annotations,
-		},
-	)
+	declaration := *prototype
+	declaration.Name, declaration.Namespace, declaration.Labels = req.Identity.Name, req.Identity.Namespace, labels
 	return declaration.RenderDocument()
 }
 
@@ -128,16 +131,25 @@ func (p *generatorPublication) publish(
 		firstOrdinal := docs[0].Ordinal
 		for i := range parsed.Children {
 			child := &parsed.Children[i]
-			if payload := sources[child.Ordinal-firstOrdinal]; payload != nil {
-				id := child.Obj.Named()
-				payload.Key = id.NamespacedName()
-				payloads[id] = payload
+			payload := sources[child.Ordinal-firstOrdinal]
+			if payload == nil {
+				continue
 			}
+			id := child.Obj.Named()
+			// Reads use payload.FS, so the virtual coordinate has no host directory.
+			label, _ := gittree.Label(gittree.LabelOptions{Root: "/", Key: payload.Digest, Source: id})
+			payload.LocalPath, payload.Key = label, id.NamespacedName()
+			payloads[id] = payload
 		}
 		p.attempt.Children, p.attempt.Manifests = parsed.Children, parsed.Visible
-		if !complete {
-			p.desired = append(p.desired, parsed.Children...)
-			p.documents = append(p.documents, parsed.Visible...)
+	}
+	if !complete && len(docs) != 0 {
+		if p.desired == nil {
+			p.desired = slices.Clip(p.attempt.Children)
+			p.documents = slices.Clip(p.attempt.Manifests)
+		} else {
+			p.desired = append(p.desired, p.attempt.Children...)
+			p.documents = append(p.documents, p.attempt.Manifests...)
 		}
 	}
 	if complete && len(docs) == 0 {

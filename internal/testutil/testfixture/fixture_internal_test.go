@@ -382,7 +382,12 @@ func TestFixture_GitFaultsAndFileOperations(t *testing.T) {
 
 func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"unknown field", "unknown overlay", "escape", "duplicate id", "both operations", "missing expectation", "cache policy", "submodule escape", "submodule commit", "submodule overlay", "registry overlay", "registry chart escape", "registry missing files", "registry missing sentinel", "registry source escape"} {
+	for _, name := range []string{
+		"unknown field", "unknown overlay", "unknown edit commit", "overlay and commit", "escape",
+		"duplicate id", "both operations", "missing expectation", "cache policy", "submodule escape",
+		"submodule commit", "submodule overlay", "registry overlay", "registry chart escape",
+		"registry missing files", "registry missing sentinel", "registry source escape",
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := fixtureSource(t, "reset")
@@ -397,6 +402,12 @@ func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 				data = []byte(strings.Replace(string(data), `"source":`, `"unknown":true,"source":`, 1))
 			case "unknown overlay":
 				s.Cases[0].Steps[0].Edit.Overlay = "missing"
+			case "unknown edit commit":
+				s.Cases[0].Steps[0].Edit = &operation{Commit: "missing"}
+				diagnostic = "edit edit: unknown commit \"missing\""
+			case "overlay and commit":
+				s.Cases[0].Steps[0].Edit.Commit = "head"
+				diagnostic = "edit edit: setup operation requires exactly one action"
 			case "escape":
 				s.Cases[0].Setup = []operation{{Delete: "../outside"}}
 			case "duplicate id":

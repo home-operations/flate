@@ -79,7 +79,9 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 	if status.Outcome() == store.OutcomeFailed {
 		return store.Child{}, false
 	}
-	if object != nil {
+	// A dependent authored declaration MUST be accepted by its owner before preparation.
+	if object != nil && (!c.isFileIndexed(owner) || Root(*c.capturedRoot(owner)).InitialIndependent ||
+		c.declarationEvidence(owner).accepted) {
 		return store.Child{Obj: object}, true
 	}
 	record, _ := c.facts.SelectionIndex().Lookup(owner)

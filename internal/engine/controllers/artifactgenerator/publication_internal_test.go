@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -81,19 +82,32 @@ func TestArtifactGenerator_ManagedPublication(t *testing.T) {
 		first["metadata"].(map[string]any)["Namespace"] = "other"
 		second, err := (&manifest.ExternalArtifact{Name: "two", Namespace: "tenant"}).RenderDocument()
 		assert.NoError(t, err)
-		docs := []manifest.DocOccurrence{{Document: first, Ordinal: 1}, {Document: second, Ordinal: 2}}
+		third, err := (&manifest.ExternalArtifact{Name: "one", Namespace: "tenant"}).RenderDocument()
+		assert.NoError(t, err)
+		docs := []manifest.DocOccurrence{
+			{Document: first, Ordinal: 1}, {Document: second, Ordinal: 2}, {Document: third, Ordinal: 3},
+		}
+		const digest = "shared-digest"
 		payloads := []*store.SourceArtifact{
-			{Content: "first", FS: fstest.MapFS{}},
-			{Content: "second", FS: fstest.MapFS{}},
+			{Content: "first", Digest: digest, FS: fstest.MapFS{}},
+			{Content: "second", Digest: digest, FS: fstest.MapFS{}},
+			{Content: "first", Digest: digest, FS: fstest.MapFS{}},
 		}
 		assert.NoError(t, p.publish(t.Context(), docs, payloads, true))
-		for i, id := range []manifest.NamedResource{managedArtifact("one", "apps"), managedArtifact("two", "tenant")} {
+		for i, id := range []manifest.NamedResource{
+			managedArtifact("one", "apps"), managedArtifact("two", "tenant"), managedArtifact("one", "tenant"),
+		} {
 			assert.Equal(t, p.attempt.Children[i].Obj.Named(), id)
 			got, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			assert.FatalIf(t, !ok, "no payload for %v", id)
 			assert.Equal(t, got.Key, id.NamespacedName())
 			assert.Equal(t, got.Content, payloads[i].Content)
+			assert.Equal(t, got.Digest, digest)
+			wantPath, _ := gittree.Label(gittree.LabelOptions{Root: "/", Key: digest, Source: id})
+			assert.Equal(t, got.LocalPath, wantPath)
 		}
+		assert.Equal(t, payloads[0].LocalPath == payloads[2].LocalPath, false)
+		assert.Equal(t, payloads[0].Key == payloads[2].Key, false)
 	})
 }
 

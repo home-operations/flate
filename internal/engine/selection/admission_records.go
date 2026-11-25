@@ -552,7 +552,7 @@ func (c *admissionClosure) declarationOwner(
 	record *manifest.DiscoveryRecord,
 ) (manifest.NamedResource, bool) {
 	declaration := id
-	_, located := c.catalogOccurrence(id)
+	_, located := c.occurrence(id)
 	owned := owner == manifest.Resolve(record.Parent, "", id.Namespace)
 	if !located {
 		declaration = manifest.NamedResource{}

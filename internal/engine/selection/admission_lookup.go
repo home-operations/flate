@@ -64,15 +64,6 @@ func (c *admissionClosure) qualifySelectionProduction(
 		return
 	}
 	c.requestProducer(id, production)
-	object := c.object(owner)
-	if object == nil {
-		if occurrence, located := c.occurrence(owner); located {
-			object = occurrence.Catalog
-		}
-	}
-	if object != nil {
-		c.acquire(Demand{Identity: owner, Witness: object})
-	}
 }
 
 func (c *admissionClosure) admitMatchedMaterializer(

@@ -268,20 +268,89 @@ func TestAdmission_ChangedReadSettlesWithPendingSource(t *testing.T) {
 
 func TestAdmission_DemandsPendingMaterializer(t *testing.T) {
 	t.Parallel()
-	st := store.New()
-	generator := &manifest.RawObject{
-		APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
-		Kind:       manifest.KindArtifactGenerator, Name: "generator", Namespace: "apps",
+	for _, tc := range []struct {
+		name                    string
+		side                    manifest.TreeSide
+		local, peer, structural bool
+	}{
+		{name: "base", side: manifest.TreeBase, local: true},
+		{name: "head", side: manifest.TreeHead, local: true},
+		{name: "peer", side: manifest.TreeHead, peer: true},
+		{name: "same owner", side: manifest.TreeHead, local: true, peer: true},
+		{name: "structural owner", side: manifest.TreeHead, local: true, peer: true, structural: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			var owner manifest.BaseManifest = &manifest.RawObject{
+				APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
+				Kind:       manifest.KindArtifactGenerator, Name: "generator", Namespace: "apps",
+			}
+			if tc.structural {
+				owner = &manifest.Kustomization{Name: "builder", Namespace: "apps"}
+			}
+			id := owner.Named()
+			st.AddObject(owner)
+			closure := solverClosure(t, st, &solverFacts{store: st})
+			closure.context.Side, closure.context.SideKnown = tc.side, true
+			closure.proposal.preparation = &Preparation{}
+			defer closure.proposal.preparation.Retire()
+			closure.proposal.Request.Changes = &change.Set{}
+			closure.proposal.Request.construction = true
+			artifact := &manifest.ExternalArtifact{Name: "package", Namespace: "apps"}
+			source := artifact.Named()
+			closure.states[source] = admissionState{productionsKnown: true}
+			if tc.local {
+				closure.states[source] = admissionState{
+					productionsKnown: true,
+					productions: []manifest.Production{
+						{Owner: id, Declaration: id, Source: manifest.BootstrapSourceID},
+					},
+				}
+			}
+			if tc.peer {
+				stores := [2]*store.Store{}
+				stores[tc.side], stores[1-tc.side] = st, store.New()
+				for _, snapshot := range stores {
+					snapshot.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
+				}
+				peer := stores[1-tc.side]
+				peer.AddObject(owner)
+				peer.RecordEmitted(id, &store.Emission{Complete: true, Children: []store.Child{{Obj: artifact}}},
+					map[manifest.NamedResource]*store.SourceArtifact{source: {FS: fstest.MapFS{}}})
+				changes, err := change.Qualify(
+					t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{},
+				)
+				assert.NoError(t, err)
+				assert.Equal(t, changes.PendingSourceOwner(source, tc.side), id)
+				closure.proposal.Request.Changes = changes
+			}
+			counted := &materializerStatusReads{Store: st, owner: id}
+			closure.objects = counted
+			closure.requireSourceMaterializers(source)
+			var want []Demand
+			if !tc.structural {
+				want = []Demand{{Identity: id, Materialize: true}}
+			}
+			assert.Diff(t, slices.Collect(closure.proposal.Demands()), want)
+			assert.Equal(t, counted.reads, len(want))
+			assert.Equal(t, closure.role(id).ordinary, !tc.structural)
+		})
 	}
-	id := generator.Named()
-	st.AddObject(generator)
-	facts := &solverFacts{store: st}
-	closure := solverClosure(t, st, facts)
-	closure.proposal.preparation = &Preparation{}
-	defer closure.proposal.preparation.Retire()
-	closure.demandMaterialization(id)
-	assert.Diff(t, slices.Collect(closure.proposal.Demands()), []Demand{{Identity: id, Materialize: true}})
-	assert.Equal(t, closure.role(id).ordinary, true)
+}
+
+type materializerStatusReads struct {
+	*store.Store
+
+	owner manifest.NamedResource
+	reads int
+}
+
+func (r *materializerStatusReads) GetStatus(id manifest.NamedResource) (store.StatusInfo, bool) {
+	if id == r.owner {
+		r.reads++
+	}
+	return r.Store.GetStatus(id)
 }
 
 func TestAdmission_GeneratedKustomizeReadsSettleAcrossSnapshots(t *testing.T) {

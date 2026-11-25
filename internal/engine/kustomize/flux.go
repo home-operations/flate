@@ -431,8 +431,7 @@ func (r *renderRequest) buildDocuments(
 			)
 		}
 		built := manifest.NewError(manifest.ErrFlux, cause, message)
-		// Kustomize API v0.21.2 resmap/reswrangler.go Append returns an untyped formatted duplicate-ID error.
-		if !strings.Contains(cleanedAbsErr.Error(), "already registered id") {
+		if !isDuplicateIDError(cleanedAbsErr) {
 			return nil, built
 		}
 
@@ -468,6 +467,11 @@ func (r *renderRequest) buildDocuments(
 		return nil, cleanedAbsErr
 	}
 	return docs, nil
+}
+
+func isDuplicateIDError(err error) bool {
+	// Kustomize's resWrangler.Append returns an untyped duplicate-ID error.
+	return strings.Contains(err.Error(), "already registered id")
 }
 
 func normalizeRenderedLabels(rm resmap.ResMap) error {

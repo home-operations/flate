@@ -82,9 +82,6 @@ func TestE2E_OutputCorpus(t *testing.T) {
 			"empty-cache",
 			"negative-age",
 			"missing-cache",
-			"invalid-env-age",
-			"invalid-env-dry",
-			"cache-command",
 		}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

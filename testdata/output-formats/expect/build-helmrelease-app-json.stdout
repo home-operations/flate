@@ -3,7 +3,7 @@
     "apiVersion": "v1",
     "data": {
       "api": "false",
-      "kube": "v1.37.2",
+      "kube": "v<KUBE_VERSION_DEFAULT>",
       "value": "before"
     },
     "kind": "ConfigMap",

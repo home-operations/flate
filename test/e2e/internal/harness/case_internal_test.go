@@ -4,11 +4,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/cli"
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/testfixture"
@@ -35,14 +35,13 @@ func TestCase_PersistenceExpectations(t *testing.T) {
 
 func TestConcurrencyDefault_ExpectationToken(t *testing.T) {
 	t.Parallel()
-	fixture := &testfixture.Fixture{}
 	for _, input := range []string{"<CONCURRENCY_DEFAULT>", "default <CONCURRENCY_DEFAULT>\n", "<CONCURRENCY_DEFAULT> <CONCURRENCY_DEFAULT>"} {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
-			want := strings.ReplaceAll(input, "<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*4))
-			if got := fixture.Resolve(t, input, ""); got != want {
-				t.Fatalf("want %q, got %q", want, got)
-			}
+			want := strings.ReplaceAll(input, "<CONCURRENCY_DEFAULT>", strconv.Itoa(cli.DefaultConcurrency()))
+			got, err := resolveDependencyTokens("help.stdout", input)
+			assert.NoError(t, err)
+			assert.Equal(t, got, want)
 			if got := testDuration([]string{"build", "--help"}, input); got != input {
 				t.Fatalf("actual help changed: %q", got)
 			}

@@ -187,159 +187,7 @@ tr.folded { display: none; }
 }
 @media (max-width: 420px) { .brand { display: none; } }
 
-/* Background */ .bg.light { background-color: #f7f7f7; }
-/* PreWrapper */ .chroma.light { background-color: #f7f7f7; -webkit-text-size-adjust: none; }
-/* Error */ .chroma.light .err { color: #f6f8fa; background-color: #82071e }
-/* LineLink */ .chroma.light .lnlinks { outline: none; text-decoration: none; color: inherit }
-/* LineTableTD */ .chroma.light .lntd { vertical-align: top; padding: 0; margin: 0; border: 0; }
-/* LineTable */ .chroma.light .lntable { border-spacing: 0; padding: 0; margin: 0; border: 0; }
-/* LineHighlight */ .chroma.light .hl { background-color: #dedede }
-/* LineNumbersTable */ .chroma.light .lnt { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #7f7f7f }
-/* LineNumbers */ .chroma.light .ln { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #7f7f7f }
-/* Line */ .chroma.light .line { display: flex; }
-/* Keyword */ .chroma.light .k { color: #cf222e }
-/* KeywordConstant */ .chroma.light .kc { color: #cf222e }
-/* KeywordDeclaration */ .chroma.light .kd { color: #cf222e }
-/* KeywordNamespace */ .chroma.light .kn { color: #cf222e }
-/* KeywordPseudo */ .chroma.light .kp { color: #cf222e }
-/* KeywordReserved */ .chroma.light .kr { color: #cf222e }
-/* KeywordType */ .chroma.light .kt { color: #cf222e }
-/* NameAttribute */ .chroma.light .na { color: #1f2328 }
-/* NameClass */ .chroma.light .nc { color: #1f2328 }
-/* NameConstant */ .chroma.light .no { color: #0550ae }
-/* NameDecorator */ .chroma.light .nd { color: #0550ae }
-/* NameEntity */ .chroma.light .ni { color: #6639ba }
-/* NameLabel */ .chroma.light .nl { color: #990000; font-weight: bold }
-/* NameNamespace */ .chroma.light .nn { color: #24292e }
-/* NameOther */ .chroma.light .nx { color: #1f2328 }
-/* NameTag */ .chroma.light .nt { color: #0550ae }
-/* NameBuiltin */ .chroma.light .nb { color: #6639ba }
-/* NameBuiltinPseudo */ .chroma.light .bp { color: #6a737d }
-/* NameVariable */ .chroma.light .nv { color: #953800 }
-/* NameVariableClass */ .chroma.light .vc { color: #953800 }
-/* NameVariableGlobal */ .chroma.light .vg { color: #953800 }
-/* NameVariableInstance */ .chroma.light .vi { color: #953800 }
-/* NameVariableMagic */ .chroma.light .vm { color: #953800 }
-/* NameFunction */ .chroma.light .nf { color: #6639ba }
-/* NameFunctionMagic */ .chroma.light .fm { color: #6639ba }
-/* LiteralString */ .chroma.light .s { color: #0a3069 }
-/* LiteralStringAffix */ .chroma.light .sa { color: #0a3069 }
-/* LiteralStringBacktick */ .chroma.light .sb { color: #0a3069 }
-/* LiteralStringChar */ .chroma.light .sc { color: #0a3069 }
-/* LiteralStringDelimiter */ .chroma.light .dl { color: #0a3069 }
-/* LiteralStringDoc */ .chroma.light .sd { color: #0a3069 }
-/* LiteralStringDouble */ .chroma.light .s2 { color: #0a3069 }
-/* LiteralStringEscape */ .chroma.light .se { color: #0a3069 }
-/* LiteralStringHeredoc */ .chroma.light .sh { color: #0a3069 }
-/* LiteralStringInterpol */ .chroma.light .si { color: #0a3069 }
-/* LiteralStringOther */ .chroma.light .sx { color: #0a3069 }
-/* LiteralStringRegex */ .chroma.light .sr { color: #0a3069 }
-/* LiteralStringSingle */ .chroma.light .s1 { color: #0a3069 }
-/* LiteralStringSymbol */ .chroma.light .ss { color: #032f62 }
-/* LiteralNumber */ .chroma.light .m { color: #0550ae }
-/* LiteralNumberBin */ .chroma.light .mb { color: #0550ae }
-/* LiteralNumberFloat */ .chroma.light .mf { color: #0550ae }
-/* LiteralNumberHex */ .chroma.light .mh { color: #0550ae }
-/* LiteralNumberInteger */ .chroma.light .mi { color: #0550ae }
-/* LiteralNumberIntegerLong */ .chroma.light .il { color: #0550ae }
-/* LiteralNumberOct */ .chroma.light .mo { color: #0550ae }
-/* Operator */ .chroma.light .o { color: #0550ae }
-/* OperatorWord */ .chroma.light .ow { color: #0550ae }
-/* OperatorReserved */ .chroma.light .or { color: #0550ae }
-/* Punctuation */ .chroma.light .p { color: #1f2328 }
-/* Comment */ .chroma.light .c { color: #57606a }
-/* CommentHashbang */ .chroma.light .ch { color: #57606a }
-/* CommentMultiline */ .chroma.light .cm { color: #57606a }
-/* CommentSingle */ .chroma.light .c1 { color: #57606a }
-/* CommentSpecial */ .chroma.light .cs { color: #57606a }
-/* CommentPreproc */ .chroma.light .cp { color: #57606a }
-/* CommentPreprocFile */ .chroma.light .cpf { color: #57606a }
-/* GenericDeleted */ .chroma.light .gd { color: #82071e; background-color: #ffebe9 }
-/* GenericEmph */ .chroma.light .ge { color: #1f2328 }
-/* GenericInserted */ .chroma.light .gi { color: #116329; background-color: #dafbe1 }
-/* GenericOutput */ .chroma.light .go { color: #1f2328 }
-/* GenericUnderline */ .chroma.light .gl { text-decoration: underline }
-/* TextWhitespace */ .chroma.light .w { color: #ffffff }
-
-/* Background */ .bg.dark { color: #e6edf3; background-color: #0d1117; }
-/* PreWrapper */ .chroma.dark { color: #e6edf3; background-color: #0d1117; -webkit-text-size-adjust: none; }
-/* Error */ .chroma.dark .err { color: #f85149 }
-/* LineLink */ .chroma.dark .lnlinks { outline: none; text-decoration: none; color: inherit }
-/* LineTableTD */ .chroma.dark .lntd { vertical-align: top; padding: 0; margin: 0; border: 0; }
-/* LineTable */ .chroma.dark .lntable { border-spacing: 0; padding: 0; margin: 0; border: 0; }
-/* LineHighlight */ .chroma.dark .hl { background-color: #6e7681 }
-/* LineNumbersTable */ .chroma.dark .lnt { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #737679 }
-/* LineNumbers */ .chroma.dark .ln { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #6e7681 }
-/* Line */ .chroma.dark .line { display: flex; }
-/* Keyword */ .chroma.dark .k { color: #ff7b72 }
-/* KeywordConstant */ .chroma.dark .kc { color: #79c0ff }
-/* KeywordDeclaration */ .chroma.dark .kd { color: #ff7b72 }
-/* KeywordNamespace */ .chroma.dark .kn { color: #ff7b72 }
-/* KeywordPseudo */ .chroma.dark .kp { color: #79c0ff }
-/* KeywordReserved */ .chroma.dark .kr { color: #ff7b72 }
-/* KeywordType */ .chroma.dark .kt { color: #ff7b72 }
-/* NameClass */ .chroma.dark .nc { color: #f0883e; font-weight: bold }
-/* NameConstant */ .chroma.dark .no { color: #79c0ff; font-weight: bold }
-/* NameDecorator */ .chroma.dark .nd { color: #d2a8ff; font-weight: bold }
-/* NameEntity */ .chroma.dark .ni { color: #ffa657 }
-/* NameException */ .chroma.dark .ne { color: #f0883e; font-weight: bold }
-/* NameLabel */ .chroma.dark .nl { color: #79c0ff; font-weight: bold }
-/* NameNamespace */ .chroma.dark .nn { color: #ff7b72 }
-/* NameProperty */ .chroma.dark .py { color: #79c0ff }
-/* NameTag */ .chroma.dark .nt { color: #7ee787 }
-/* NameVariable */ .chroma.dark .nv { color: #79c0ff }
-/* NameVariableClass */ .chroma.dark .vc { color: #79c0ff }
-/* NameVariableGlobal */ .chroma.dark .vg { color: #79c0ff }
-/* NameVariableInstance */ .chroma.dark .vi { color: #79c0ff }
-/* NameVariableMagic */ .chroma.dark .vm { color: #79c0ff }
-/* NameFunction */ .chroma.dark .nf { color: #d2a8ff; font-weight: bold }
-/* NameFunctionMagic */ .chroma.dark .fm { color: #d2a8ff; font-weight: bold }
-/* Literal */ .chroma.dark .l { color: #a5d6ff }
-/* LiteralDate */ .chroma.dark .ld { color: #79c0ff }
-/* LiteralString */ .chroma.dark .s { color: #a5d6ff }
-/* LiteralStringAffix */ .chroma.dark .sa { color: #79c0ff }
-/* LiteralStringBacktick */ .chroma.dark .sb { color: #a5d6ff }
-/* LiteralStringChar */ .chroma.dark .sc { color: #a5d6ff }
-/* LiteralStringDelimiter */ .chroma.dark .dl { color: #79c0ff }
-/* LiteralStringDoc */ .chroma.dark .sd { color: #a5d6ff }
-/* LiteralStringDouble */ .chroma.dark .s2 { color: #a5d6ff }
-/* LiteralStringEscape */ .chroma.dark .se { color: #79c0ff }
-/* LiteralStringHeredoc */ .chroma.dark .sh { color: #79c0ff }
-/* LiteralStringInterpol */ .chroma.dark .si { color: #a5d6ff }
-/* LiteralStringOther */ .chroma.dark .sx { color: #a5d6ff }
-/* LiteralStringRegex */ .chroma.dark .sr { color: #79c0ff }
-/* LiteralStringSingle */ .chroma.dark .s1 { color: #a5d6ff }
-/* LiteralStringSymbol */ .chroma.dark .ss { color: #a5d6ff }
-/* LiteralNumber */ .chroma.dark .m { color: #a5d6ff }
-/* LiteralNumberBin */ .chroma.dark .mb { color: #a5d6ff }
-/* LiteralNumberFloat */ .chroma.dark .mf { color: #a5d6ff }
-/* LiteralNumberHex */ .chroma.dark .mh { color: #a5d6ff }
-/* LiteralNumberInteger */ .chroma.dark .mi { color: #a5d6ff }
-/* LiteralNumberIntegerLong */ .chroma.dark .il { color: #a5d6ff }
-/* LiteralNumberOct */ .chroma.dark .mo { color: #a5d6ff }
-/* Operator */ .chroma.dark .o { color: #ff7b72; font-weight: bold }
-/* OperatorWord */ .chroma.dark .ow { color: #ff7b72; font-weight: bold }
-/* OperatorReserved */ .chroma.dark .or { color: #ff7b72; font-weight: bold }
-/* Comment */ .chroma.dark .c { color: #8b949e; font-style: italic }
-/* CommentHashbang */ .chroma.dark .ch { color: #8b949e; font-style: italic }
-/* CommentMultiline */ .chroma.dark .cm { color: #8b949e; font-style: italic }
-/* CommentSingle */ .chroma.dark .c1 { color: #8b949e; font-style: italic }
-/* CommentSpecial */ .chroma.dark .cs { color: #8b949e; font-weight: bold; font-style: italic }
-/* CommentPreproc */ .chroma.dark .cp { color: #8b949e; font-weight: bold; font-style: italic }
-/* CommentPreprocFile */ .chroma.dark .cpf { color: #8b949e; font-weight: bold; font-style: italic }
-/* GenericDeleted */ .chroma.dark .gd { color: #ffa198; background-color: #490202 }
-/* GenericEmph */ .chroma.dark .ge { font-style: italic }
-/* GenericError */ .chroma.dark .gr { color: #ffa198 }
-/* GenericHeading */ .chroma.dark .gh { color: #79c0ff; font-weight: bold }
-/* GenericInserted */ .chroma.dark .gi { color: #56d364; background-color: #0f5323 }
-/* GenericOutput */ .chroma.dark .go { color: #8b949e }
-/* GenericPrompt */ .chroma.dark .gp { color: #8b949e }
-/* GenericStrong */ .chroma.dark .gs { font-weight: bold }
-/* GenericSubheading */ .chroma.dark .gu { color: #79c0ff }
-/* GenericTraceback */ .chroma.dark .gt { color: #ff7b72 }
-/* GenericUnderline */ .chroma.dark .gl { text-decoration: underline }
-/* TextWhitespace */ .chroma.dark .w { color: #6e7681 }
-
+<CHROMA_CSS>
 </style>
 </head>
 <body class="chroma light">
@@ -385,64 +233,64 @@ tr.folded { display: none; }
       <div class="side-wrap">
         <table class="view side"><colgroup><col class="cn"><col class="cl"><col class="cn"><col class="cr"></colgroup><tbody><tr class="hunk" data-fold="r0-g0"><td colspan="4"><button type="button" class="expander">&#8597; Expand 1 lines</button></td></tr><tr class="folded" data-fold="r0-g0">
             <td class="diff-lineno diff-ctx">1</td>
-            <td class="diff-code diff-ctx"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"apiVersion: v1"]></td>
             <td class="diff-lineno diff-ctx">1</td>
-            <td class="diff-code diff-ctx"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"apiVersion: v1"]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">2</td>
-            <td class="diff-code diff-ctx"><span class="l">data:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"data:"]></td>
             <td class="diff-lineno diff-ctx">2</td>
-            <td class="diff-code diff-ctx"><span class="l">data:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"data:"]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">3</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;false&#34;</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  api: \"false\""]></td>
             <td class="diff-lineno diff-ctx">3</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;false&#34;</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  api: \"false\""]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">4</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">kube</span><span class="p">:</span><span class="w"> </span><span class="l">v1.37.2</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  kube: v<KUBE_VERSION_DEFAULT>"]></td>
             <td class="diff-lineno diff-ctx">4</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">kube</span><span class="p">:</span><span class="w"> </span><span class="l">v1.37.2</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  kube: v<KUBE_VERSION_DEFAULT>"]></td>
           </tr><tr>
             <td class="diff-lineno diff-del">5</td>
-            <td class="diff-code diff-del"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+            <td class="diff-code diff-del"><CHROMA_LINE:[9,15,"  value: before"]></td>
             <td class="diff-lineno diff-add">5</td>
-            <td class="diff-code diff-add"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+            <td class="diff-code diff-add"><CHROMA_LINE:[9,14,"  value: after"]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">6</td>
-            <td class="diff-code diff-ctx"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"kind: ConfigMap"]></td>
             <td class="diff-lineno diff-ctx">6</td>
-            <td class="diff-code diff-ctx"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"kind: ConfigMap"]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">7</td>
-            <td class="diff-code diff-ctx"><span class="l">metadata:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"metadata:"]></td>
             <td class="diff-lineno diff-ctx">7</td>
-            <td class="diff-code diff-ctx"><span class="l">metadata:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"metadata:"]></td>
           </tr><tr>
             <td class="diff-lineno diff-ctx">8</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">labels:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  labels:"]></td>
             <td class="diff-lineno diff-ctx">8</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">labels:</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  labels:"]></td>
           </tr><tr class="hunk" data-fold="r0-g1"><td colspan="4"><button type="button" class="expander">&#8597; Expand 5 lines</button></td></tr><tr class="folded" data-fold="r0-g1">
             <td class="diff-lineno diff-ctx">9</td>
-            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/name: app"]></td>
             <td class="diff-lineno diff-ctx">9</td>
-            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/name: app"]></td>
           </tr><tr class="folded" data-fold="r0-g1">
             <td class="diff-lineno diff-ctx">10</td>
-            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/namespace: apps"]></td>
             <td class="diff-lineno diff-ctx">10</td>
-            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/namespace: apps"]></td>
           </tr><tr class="folded" data-fold="r0-g1">
             <td class="diff-lineno diff-ctx">11</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">installed</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  name: installed"]></td>
             <td class="diff-lineno diff-ctx">11</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">installed</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  name: installed"]></td>
           </tr><tr class="folded" data-fold="r0-g1">
             <td class="diff-lineno diff-ctx">12</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">workloads</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  namespace: workloads"]></td>
             <td class="diff-lineno diff-ctx">12</td>
-            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">workloads</span></td>
+            <td class="diff-code diff-ctx"><CHROMA_LINE:[0,0,"  namespace: workloads"]></td>
           </tr><tr class="folded" data-fold="r0-g1">
             <td class="diff-lineno diff-ctx">13</td>
             <td class="diff-code diff-ctx"></td>
@@ -455,55 +303,55 @@ tr.folded { display: none; }
       <table class="view unified"><colgroup><col class="cn"><col class="cn"><col></colgroup><tbody><tr class="hunk" data-fold="r0-g0"><td colspan="3"><button type="button" class="expander">&#8597; Expand 1 lines</button></td></tr><tr class="row-ctx folded" data-fold="r0-g0">
           <td class="diff-lineno">1</td>
           <td class="diff-lineno">1</td>
-          <td class="diff-code"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"apiVersion: v1"]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">2</td>
           <td class="diff-lineno">2</td>
-          <td class="diff-code"><span class="l">data:</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"data:"]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">3</td>
           <td class="diff-lineno">3</td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;false&#34;</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"  api: \"false\""]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">4</td>
           <td class="diff-lineno">4</td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">kube</span><span class="p">:</span><span class="w"> </span><span class="l">v1.37.2</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"  kube: v<KUBE_VERSION_DEFAULT>"]></td>
         </tr><tr class="row-del">
           <td class="diff-lineno">5</td>
           <td class="diff-lineno"></td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+          <td class="diff-code"><CHROMA_LINE:[9,15,"  value: before"]></td>
         </tr><tr class="row-add">
           <td class="diff-lineno"></td>
           <td class="diff-lineno">5</td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+          <td class="diff-code"><CHROMA_LINE:[9,14,"  value: after"]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">6</td>
           <td class="diff-lineno">6</td>
-          <td class="diff-code"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"kind: ConfigMap"]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">7</td>
           <td class="diff-lineno">7</td>
-          <td class="diff-code"><span class="l">metadata:</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"metadata:"]></td>
         </tr><tr class="row-ctx">
           <td class="diff-lineno">8</td>
           <td class="diff-lineno">8</td>
-          <td class="diff-code"><span class="w">  </span><span class="l">labels:</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"  labels:"]></td>
         </tr><tr class="hunk" data-fold="r0-g1"><td colspan="3"><button type="button" class="expander">&#8597; Expand 5 lines</button></td></tr><tr class="row-ctx folded" data-fold="r0-g1">
           <td class="diff-lineno">9</td>
           <td class="diff-lineno">9</td>
-          <td class="diff-code"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/name: app"]></td>
         </tr><tr class="row-ctx folded" data-fold="r0-g1">
           <td class="diff-lineno">10</td>
           <td class="diff-lineno">10</td>
-          <td class="diff-code"><span class="w">    </span><span class="nt">helm.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"    helm.toolkit.fluxcd.io/namespace: apps"]></td>
         </tr><tr class="row-ctx folded" data-fold="r0-g1">
           <td class="diff-lineno">11</td>
           <td class="diff-lineno">11</td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">installed</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"  name: installed"]></td>
         </tr><tr class="row-ctx folded" data-fold="r0-g1">
           <td class="diff-lineno">12</td>
           <td class="diff-lineno">12</td>
-          <td class="diff-code"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">workloads</span></td>
+          <td class="diff-code"><CHROMA_LINE:[0,0,"  namespace: workloads"]></td>
         </tr><tr class="row-ctx folded" data-fold="r0-g1">
           <td class="diff-lineno">13</td>
           <td class="diff-lineno">13</td>

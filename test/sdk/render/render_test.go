@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/home-operations/flate/internal/testutil/assert"
 )
 
@@ -13,6 +15,18 @@ func TestExternalModule_Render(t *testing.T) {
 	t.Parallel()
 	root, err := filepath.Abs("../../..")
 	assert.NoError(t, err)
+	goMod := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(goMod)
+	if err != nil {
+		t.Fatalf("read repository go.mod: %v", err)
+	}
+	parsed, err := modfile.Parse(goMod, data, nil)
+	if err != nil {
+		t.Fatalf("parse repository go.mod: %v", err)
+	}
+	if parsed.Go == nil {
+		t.Fatal("repository go.mod has no Go directive")
+	}
 	module := t.TempDir()
 	fixture, err := os.ReadFile("testdata/client_test.go")
 	assert.NoError(t, err)
@@ -22,7 +36,9 @@ func TestExternalModule_Render(t *testing.T) {
 		os.WriteFile(
 			filepath.Join(module, "go.mod"),
 			[]byte(
-				"module sdkfixture\n\ngo 1.27.0\n\nrequire github.com/home-operations/flate v0.0.0\n\nreplace github.com/home-operations/flate => "+root+"\n",
+				"module sdkfixture\n\ngo "+parsed.Go.Version+
+					"\n\nrequire github.com/home-operations/flate v0.0.0"+
+					"\n\nreplace github.com/home-operations/flate => "+root+"\n",
 			),
 			0o644,
 		),

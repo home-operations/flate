@@ -67,7 +67,7 @@ func TestRenderHTML_Changed(t *testing.T) {
 	var keyClass string
 	for token := tokens(); token != chroma.EOF; token = tokens() {
 		if token.Value == "replicas" {
-			keyClass = chroma.StandardTypes[token.Type]
+			keyClass = classFor(token.Type)
 			break
 		}
 	}
@@ -83,6 +83,13 @@ func TestRenderHTML_Changed(t *testing.T) {
 		)
 	}
 	keySpan := `<span class="` + keyClass + `">replicas</span>`
+	// Control token boundaries so the complete-line assertion depends only on flate's markup.
+	splice := Highlighter{lexer: chroma.MustNewLexer(&chroma.Config{Name: "splice"}, func() chroma.Rules {
+		return chroma.Rules{"root": {
+			{Pattern: `  replicas: `, Type: chroma.NameTag},
+			{Pattern: `.+`, Type: chroma.LiteralString},
+		}}
+	})}
 	for _, tc := range []struct {
 		kind, line, change string
 	}{
@@ -96,6 +103,11 @@ func TestRenderHTML_Changed(t *testing.T) {
 			cell, _, closed := strings.Cut(after, "</td>")
 			assert.FatalIf(t, !closed, "unclosed %s cell", tc.kind)
 			const changeStart = len("  replicas: keep  ")
+			want := `<span class="` + classFor(chroma.NameTag) + `">  replicas: </span>` +
+				`<span class="` + classFor(chroma.LiteralString) + `">keep  <span class="wd">` +
+				tc.change + `</span> end &lt;yaml&gt;</span>`
+			got := splice.Emit(tc.line+" <yaml>\n", changeStart, changeStart+len(tc.change))
+			assert.Equal(t, string(got), want)
 			assert.Equal(t, cell, string(highlighter.Emit(tc.line, changeStart, changeStart+len(tc.change))))
 			assert.ErrorIf(t, !strings.Contains(cell, keySpan), "%s cell missing YAML key span %q", tc.kind, keySpan)
 

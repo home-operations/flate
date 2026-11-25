@@ -76,6 +76,11 @@ type commonFlags struct {
 	helm helm.Options
 }
 
+// DefaultConcurrency keeps the CLI and its help fixtures on the same host default.
+func DefaultConcurrency() int {
+	return runtime.NumCPU() * defaultConcurrencyPerCPU
+}
+
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.path, pathKey, "p", ".", "Read Flux manifests from this directory")
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "", "Compare with a baseline directory (exclusive with --base)")
@@ -119,7 +124,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.IntVar(
 		&f.concurrency,
 		"concurrency",
-		runtime.NumCPU()*defaultConcurrencyPerCPU,
+		DefaultConcurrency(),
 		"Limit parallel reconciles (0 means unbounded)",
 	)
 	// Shallow clone is the dominant speedup for GitRepository sources that

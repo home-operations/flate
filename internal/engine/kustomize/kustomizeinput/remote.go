@@ -23,7 +23,7 @@ type GitBase struct {
 
 var gitUsername = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9-]*)@`)
 
-// ParseGitBase follows kustomize/api v0.21.2 internal/git.NewRepoSpecFromURL;
+// ParseGitBase follows kustomize/api internal/git.NewRepoSpecFromURL;
 // Go's internal visibility requires adapting its grammar at this seam.
 func ParseGitBase(raw string) (GitBase, bool) {
 	if filepath.IsAbs(raw) {

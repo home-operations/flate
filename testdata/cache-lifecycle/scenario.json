@@ -267,98 +267,6 @@
       ]
     },
     {
-      "name": "invalid-env-age",
-      "description": "invalid env age.",
-      "setup": [
-        {
-          "commit": "base"
-        }
-      ],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "invalid-env-age",
-          "invoke": {
-            "argv": [
-              "cache",
-              "gc"
-            ],
-            "expect": {
-              "stdout": "expect/invalid-env-age.stdout",
-              "stderr": "expect/invalid-env-age.stderr",
-              "code": 1
-            },
-            "env": {
-              "FLATE_MAX_AGE": "bad-value"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "invalid-env-dry",
-      "description": "invalid env dry.",
-      "setup": [
-        {
-          "commit": "base"
-        }
-      ],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "invalid-env-dry",
-          "invoke": {
-            "argv": [
-              "cache",
-              "gc"
-            ],
-            "expect": {
-              "stdout": "expect/invalid-env-dry.stdout",
-              "stderr": "expect/invalid-env-dry.stderr",
-              "code": 1
-            },
-            "env": {
-              "FLATE_DRY_RUN": "bad-value"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "cache-command",
-      "description": "cache command.",
-      "setup": [
-        {
-          "commit": "base"
-        }
-      ],
-      "env": {},
-      "cache": {
-        "repeat": "reset"
-      },
-      "steps": [
-        {
-          "id": "cache-command",
-          "invoke": {
-            "argv": [
-              "cache"
-            ],
-            "expect": {
-              "stdout": "expect/cache-command.stdout",
-              "stderr": "expect/cache-command.stderr",
-              "code": 0
-            }
-          }
-        }
-      ]
-    },
-    {
       "name": "source-prime-and-warm",
       "description": "source prime and warm",
       "setup": [
@@ -431,20 +339,6 @@
   ],
   "files": [
     {
-      "path": "expect/cache-command.stderr",
-      "cases": [
-        "cache-command"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
-      "path": "expect/cache-command.stdout",
-      "cases": [
-        "cache-command"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
       "path": "expect/gc-absent.stderr",
       "cases": [
         "empty-cache"
@@ -515,34 +409,6 @@
       "purpose": "Complete stream expectation."
     },
     {
-      "path": "expect/invalid-env-age.stderr",
-      "cases": [
-        "invalid-env-age"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
-      "path": "expect/invalid-env-age.stdout",
-      "cases": [
-        "invalid-env-age"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
-      "path": "expect/invalid-env-dry.stderr",
-      "cases": [
-        "invalid-env-dry"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
-      "path": "expect/invalid-env-dry.stdout",
-      "cases": [
-        "invalid-env-dry"
-      ],
-      "purpose": "Complete stream expectation."
-    },
-    {
       "path": "expect/missing-cache.stderr",
       "cases": [
         "missing-cache"
@@ -575,10 +441,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -587,10 +450,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -599,10 +459,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -611,10 +468,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -623,10 +477,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -635,10 +486,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -647,10 +495,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },
@@ -659,10 +504,7 @@
       "cases": [
         "empty-cache",
         "negative-age",
-        "missing-cache",
-        "invalid-env-age",
-        "invalid-env-dry",
-        "cache-command"
+        "missing-cache"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
     },

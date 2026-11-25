@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -20,10 +19,7 @@ import (
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 )
 
-const (
-	inputsDirectory          = "inputs"
-	defaultConcurrencyPerCPU = 4
-)
+const inputsDirectory = "inputs"
 
 // Fixture isolates materialized state from the immutable disk scenario.
 type Fixture struct {
@@ -300,7 +296,6 @@ func (f *Fixture) Resolve(tb testing.TB, value, cache string) string {
 	tb.Helper()
 	reason := sourcecache.RenderPersistenceDisabledReason()
 	value = strings.NewReplacer("@@repo@@", f.Repo, "@@baseline@@", filepath.Join(f.root, "baseline"), "@@inputs@@", f.Inputs, "@@cache@@", cache,
-		"<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*defaultConcurrencyPerCPU),
 		"<PERSISTENCE_REASON>", reason).
 		Replace(value)
 	branch := "${1}"

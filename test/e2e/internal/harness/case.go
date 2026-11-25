@@ -129,8 +129,8 @@ func (c *Case) Want(t *testing.T) []Result {
 			want,
 			Result{
 				Step:   step.ID,
-				Stdout: f.Read(t, inv.Expect.Stdout, cachePath),
-				Stderr: f.Read(t, inv.Expect.Stderr, cachePath),
+				Stdout: readExpectation(t, f, inv.Expect.Stdout, cachePath),
+				Stderr: readExpectation(t, f, inv.Expect.Stderr, cachePath),
 				Code:   *inv.Expect.Code,
 			},
 		)

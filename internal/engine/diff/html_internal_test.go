@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/lexers"
+	xhtml "golang.org/x/net/html"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -35,11 +38,11 @@ func TestRenderHTML_Changed(t *testing.T) {
 	t.Parallel()
 	from := htmlDoc(
 		t,
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"2\"\n  level: info\n",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: keep  red end\n  level: info\n",
 	)
 	to := htmlDoc(
 		t,
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"3\"\n  level: info\n",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: keep  blue end\n  level: info\n",
 	)
 	for _, d := range []*Doc{&from, &to} {
 		d.Manifest["metadata"].(map[string]any)["name"] = "web<resource>"
@@ -54,6 +57,62 @@ func TestRenderHTML_Changed(t *testing.T) {
 	assert.FatalIf(t, len(warnings) != 0, "HTML renderer constructed presentation warnings: %+v", warnings)
 	out := string(raw)
 
+	highlighter, css, err := NewHighlighter()
+	assert.NoError(t, err)
+	assert.ErrorIf(t, !strings.Contains(out, css), "HTML is missing the generated stylesheet")
+
+	yamlLexer := chroma.Coalesce(lexers.Get("yaml"))
+	tokens, err := yamlLexer.Tokenise(nil, "  replicas: keep  red end")
+	assert.NoError(t, err)
+	var keyClass string
+	for token := tokens(); token != chroma.EOF; token = tokens() {
+		if token.Value == "replicas" {
+			keyClass = chroma.StandardTypes[token.Type]
+			break
+		}
+	}
+	assert.FatalIf(t, keyClass == "", "Chroma generated no syntax class for the replicas key")
+	for _, theme := range []string{"light", "dark"} {
+		selector := ".chroma." + theme + " ." + keyClass
+		_, rule, _ := strings.Cut(out, selector)
+		assert.ErrorIf(
+			t,
+			!strings.HasPrefix(strings.TrimSpace(rule), "{"),
+			"HTML is missing the CSS rule for %s",
+			selector,
+		)
+	}
+	keySpan := `<span class="` + keyClass + `">replicas</span>`
+	for _, tc := range []struct {
+		kind, line, change string
+	}{
+		{"del", "  replicas: keep  red end", "red"},
+		{"add", "  replicas: keep  blue end", "blue"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			_, after, found := strings.Cut(out, `<td class="diff-code diff-`+tc.kind+`">`)
+			assert.FatalIf(t, !found, "missing %s cell", tc.kind)
+			cell, _, closed := strings.Cut(after, "</td>")
+			assert.FatalIf(t, !closed, "unclosed %s cell", tc.kind)
+			const changeStart = len("  replicas: keep  ")
+			assert.Equal(t, cell, string(highlighter.Emit(tc.line, changeStart, changeStart+len(tc.change))))
+			assert.ErrorIf(t, !strings.Contains(cell, keySpan), "%s cell missing YAML key span %q", tc.kind, keySpan)
+
+			var visible strings.Builder
+			tokens := xhtml.NewTokenizer(strings.NewReader(cell))
+			for token := tokens.Next(); token != xhtml.ErrorToken; token = tokens.Next() {
+				if token == xhtml.TextToken {
+					visible.Write(tokens.Text())
+				}
+			}
+			assert.Equal(t, visible.String(), tc.line)
+			mark := `<span class="wd">` + tc.change + `</span>`
+			assert.ErrorIf(t, !strings.Contains(cell, mark), "%s cell missing changed word %q", tc.kind, tc.change)
+			assert.Equal(t, strings.Count(cell, `<span class="wd">`), 1)
+		})
+	}
+
 	for _, want := range []string{
 		"<!doctype html>",
 		`<table class="view side">`,    // side-by-side view present
@@ -62,17 +121,16 @@ func TestRenderHTML_Changed(t *testing.T) {
 		`id="theme-btn"`,               // light/dark toggle
 		`class="tree-leaf"`,            // sidebar navigation tree
 		`id="filter"`,                  // sidebar resource filter box
-		`class="wd"`,                   // word-level intra-line highlight (the "2"→"3" change)
-		"body.chroma.dark",             // dark-theme variables present
-		".chroma.dark .nt",             // dark chroma token rule (dual-theme highlighting)
-		`<span class="nt">`,            // chroma YAML key token → highlighting present
-		".chroma.light .nt",            // light token rule is scoped so colors actually apply
-		"status status-changed",        // changed chip
-		`class="diff-code diff-del"`,   // removed line cell (side view)
-		`class="diff-code diff-add"`,   // added line cell
-		"1 changed",                    // summary count
-		"ConfigMap apps/web",           // per-resource title
-		"HelmRelease apps/web",         // parent attribution
+		"body.chroma.dark",
+		"body.chroma.light",
+		".chroma.dark .",
+		".chroma.light .",
+		"status status-changed",      // changed chip
+		`class="diff-code diff-del"`, // removed line cell (side view)
+		`class="diff-code diff-add"`, // added line cell
+		"1 changed",                  // summary count
+		"ConfigMap apps/web",         // per-resource title
+		"HelmRelease apps/web",       // parent attribution
 		"&lt;resource&gt;", "&lt;parent&gt;", "apps/&lt;path&gt;", "&lt;yaml&gt;",
 		// Column widths must live on <col>: the tables are table-layout:fixed,
 		// whose column sizing comes from the first row — usually a colspan

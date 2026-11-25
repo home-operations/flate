@@ -16,7 +16,7 @@ Flags:
       --enable-dns[=true|false]                      Enable DNS lookups in Helm templates [env: FLATE_ENABLE_DNS]
       --git-depth int                                Set Git fetch depth (0 means full history) [env: FLATE_GIT_DEPTH] (default 1)
   -h, --help[=true|false]                            help for hr
-      --kube-version string                          Set the cluster Kubernetes version for Helm [env: FLATE_KUBE_VERSION] (default "1.37.2")
+      --kube-version string                          Set the cluster Kubernetes version for Helm [env: FLATE_KUBE_VERSION] (default "<KUBE_VERSION_DEFAULT>")
   -n, --namespace string                             Select resources in this namespace [env: FLATE_NAMESPACE]
       --only-kinds strings                           Include only output kinds (comma-separated values) [env: FLATE_ONLY_KINDS]
   -o, --output string                                Emit: yaml, json [env: FLATE_OUTPUT] (default "yaml")

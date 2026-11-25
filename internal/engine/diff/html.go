@@ -98,18 +98,47 @@ type sRow struct {
 	Left, Right cell
 }
 
-// highlighter renders single YAML lines to syntax-highlighted HTML spans
+// Highlighter renders single YAML lines to syntax-highlighted HTML spans
 // (chroma, class-based). The matching stylesheet — both the light (github) and
 // dark (github-dark) variants, scoped under .chroma.light / .chroma.dark — is
 // emitted once into the document <style>; the spans themselves are
 // theme-agnostic. Highlighting is per-line so it maps 1:1 onto the diff line
 // indices; block-scalar bodies lose cross-line context, immaterial for review.
-type highlighter struct {
+type Highlighter struct {
 	lexer chroma.Lexer
 }
 
+// NewHighlighter returns the YAML highlighter and its light and dark stylesheets.
+func NewHighlighter() (*Highlighter, string, error) {
+	lexer := lexers.Get("yaml")
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	lexer = chroma.Coalesce(lexer)
+	light := styles.Get("github")
+	dark := styles.Get("github-dark")
+	// WithModeClasses scopes the wrapper class and WriteCSS rules by the style's
+	// mode (.chroma.light / .chroma.dark) — the light/dark scoping diff.html.tmpl
+	// toggles. chroma made it opt-in in v2.27.0 (implicitly on before); without it
+	// both stylesheets collapse onto a single unscoped .chroma.
+	fmtr := chromahtml.New(
+		chromahtml.WithClasses(true),
+		chromahtml.WithModeClasses(true),
+		chromahtml.PreventSurroundingPre(true),
+	)
+	var css bytes.Buffer
+	if err := fmtr.WriteCSS(&css, light); err != nil {
+		return nil, "", fmt.Errorf("chroma css (light): %w", err)
+	}
+	css.WriteByte('\n')
+	if err := fmtr.WriteCSS(&css, dark); err != nil {
+		return nil, "", fmt.Errorf("chroma css (dark): %w", err)
+	}
+	return &Highlighter{lexer: lexer}, css.String(), nil
+}
+
 func (e encoder) html(changes []lineChange) error {
-	hl, css, err := newHighlighter()
+	hl, css, err := NewHighlighter()
 	if err != nil {
 		return err
 	}
@@ -164,7 +193,7 @@ func buildTree(res []htmlResource) []treeParent {
 // trimmed before/between/after the hunks are emitted as collapsed rows behind
 // an expander so the whole file can be revealed in place — see unifiedRows /
 // sideRows.
-func buildHTMLResource(p *lineChange, hl *highlighter) htmlResource {
+func buildHTMLResource(p *lineChange, hl *Highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	highlighted := highlightPair(a, b, groups, hl)
@@ -299,7 +328,7 @@ func sideRows(ah, bh []template.HTML, groups [][]difflib.OpCode) []sRow {
 	return rows
 }
 
-func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) highlightedPair {
+func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *Highlighter) highlightedPair {
 	ah, bh := hl.lines(a), hl.lines(b)
 	for _, group := range groups {
 		for _, op := range group {
@@ -311,10 +340,10 @@ func highlightPair(a, b []string, groups [][]difflib.OpCode, hl *highlighter) hi
 				spans := runeDiffRange(strings.TrimRight(a[ai], "\n"), strings.TrimRight(b[bj], "\n"))
 
 				if spans.origHigh > spans.origLow {
-					ah[ai] = hl.emit(a[ai], spans.origLow, spans.origHigh)
+					ah[ai] = hl.Emit(a[ai], spans.origLow, spans.origHigh)
 				}
 				if spans.currentHigh > spans.currentLow {
-					bh[bj] = hl.emit(b[bj], spans.currentLow, spans.currentHigh)
+					bh[bj] = hl.Emit(b[bj], spans.currentLow, spans.currentHigh)
 				}
 			}
 		}
@@ -341,12 +370,12 @@ func runeDiffRange(a, b string) runeRanges {
 	return runeRanges{origLow: p, origHigh: len(ar) - s, currentLow: p, currentHigh: len(br) - s}
 }
 
-// emit renders one YAML line to class-based highlighted HTML, walking chroma's
+// Emit renders one YAML line to class-based highlighted HTML, walking chroma's
 // token stream directly (rather than its formatter) so a word-level highlight
 // can be spliced mid-token: when hi > lo, the rune range [lo,hi) is wrapped in
 // <span class="wd">. Token classes mirror chroma's WithClasses output
 // (StandardTypes) so they match the embedded stylesheet.
-func (h *highlighter) emit(s string, lo, hi int) template.HTML {
+func (h *Highlighter) Emit(s string, lo, hi int) template.HTML {
 	s = strings.TrimRight(s, "\n")
 	it, err := h.lexer.Tokenise(nil, s)
 	if err != nil {
@@ -399,38 +428,10 @@ func classFor(tt chroma.TokenType) string {
 	return ""
 }
 
-func newHighlighter() (*highlighter, string, error) {
-	lexer := lexers.Get("yaml")
-	if lexer == nil {
-		lexer = lexers.Fallback
-	}
-	lexer = chroma.Coalesce(lexer)
-	light := styles.Get("github")
-	dark := styles.Get("github-dark")
-	// WithModeClasses scopes the wrapper class and WriteCSS rules by the style's
-	// mode (.chroma.light / .chroma.dark) — the light/dark scoping diff.html.tmpl
-	// toggles. chroma made it opt-in in v2.27.0 (implicitly on before); without it
-	// both stylesheets collapse onto a single unscoped .chroma.
-	fmtr := chromahtml.New(
-		chromahtml.WithClasses(true),
-		chromahtml.WithModeClasses(true),
-		chromahtml.PreventSurroundingPre(true),
-	)
-	var css bytes.Buffer
-	if err := fmtr.WriteCSS(&css, light); err != nil {
-		return nil, "", fmt.Errorf("chroma css (light): %w", err)
-	}
-	css.WriteByte('\n')
-	if err := fmtr.WriteCSS(&css, dark); err != nil {
-		return nil, "", fmt.Errorf("chroma css (dark): %w", err)
-	}
-	return &highlighter{lexer: lexer}, css.String(), nil
-}
-
-func (h *highlighter) lines(src []string) []template.HTML {
+func (h *Highlighter) lines(src []string) []template.HTML {
 	out := make([]template.HTML, len(src))
 	for i, s := range src {
-		out[i] = h.emit(s, 0, 0)
+		out[i] = h.Emit(s, 0, 0)
 	}
 	return out
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -161,5 +162,45 @@ func TestEnv_RemovedOptionsIgnored(t *testing.T) {
 		code,
 		stdout,
 		stderr,
+	)
+}
+
+//nolint:paralleltest // t.Setenv changes the process environment.
+func TestRun_InvalidEnvFlag(t *testing.T) {
+	for _, tc := range []struct{ route, env, value string }{
+		{"build ks", "FLATE_ALLOW_MISSING_KINDS", "\""},
+		{"build ks", "FLATE_CONCURRENCY", "bad-value"},
+		{"build ks", "FLATE_DISABLE_CHART_DIGEST_TRACKING", "bad-value"},
+		{"build ks", "FLATE_ENABLE_DNS", "bad-value"},
+		{"build ks", "FLATE_GIT_DEPTH", "bad-value"},
+		{"build ks", "FLATE_NO_PROGRESS", "bad-value"},
+		{"build ks", "FLATE_ONLY_KINDS", "\""},
+		{"build ks", "FLATE_RESTRICT_EGRESS", "bad-value"},
+		{"build ks", "FLATE_SKIP_KINDS", "\""},
+		{"build ks", "FLATE_STRICT_SUBSTITUTIONS", "bad-value"},
+		{"diff images", "FLATE_INCLUDE_REMOVED", "bad-value"},
+		{"cache gc", "FLATE_DRY_RUN", "bad-value"},
+		{"cache gc", "FLATE_MAX_AGE", "bad-value"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			assertInvalidEnvFlag(t, tc.route, tc.env, tc.value)
+		})
+	}
+}
+
+func assertInvalidEnvFlag(t *testing.T, route, env, value string) {
+	t.Helper()
+	t.Setenv(env, value)
+	result := runCLI(t, strings.Fields(route)...)
+	assert.Equal(t, result.code, 1)
+	assert.Equal(t, result.stdout, "")
+	prefix := "flate error: invalid " + env + " " + strconv.Quote(value) + ": "
+	cause, ok := strings.CutPrefix(result.stderr, prefix)
+	assert.ErrorIf(
+		t,
+		!ok || strings.TrimSpace(cause) == "",
+		"want %q and a parse error, got %q",
+		prefix,
+		result.stderr,
 	)
 }

@@ -107,7 +107,7 @@ func assertDuplicateReport(t *testing.T, root, want string) {
 		)
 		assert.ErrorIf(
 			t,
-			!strings.Contains(err.Error(), "already registered id"),
+			!isDuplicateIDError(err),
 			"expected the raw duplicate-id error:\n%s",
 			err,
 		)
@@ -357,7 +357,7 @@ func TestDuplicateID_FileLoadFailures(t *testing.T) {
 	kustomizestate.BuildMutex.Unlock()
 	// The parent MUST fail independently of best-effort attribution.
 	assert.FatalIf(t, err == nil, "%s", "expected the original aggregate failure")
-	assert.ErrorIf(t, !strings.Contains(err.Error(), "already registered id"), "lost duplicate cause: %v", err)
+	assert.ErrorIf(t, !isDuplicateIDError(err), "lost duplicate cause: %v", err)
 	got := duplicateProducers(counting, "/apps", "apps", kus)
 	assert.Equal(t, got, "  duplicate resource(s) produced by multiple accumulated paths:\n"+
 		"    ConfigMap.v1.[noGrp]/dup.[noNs]\n      - ./apps/one.yaml\n      - ./apps/two.yaml")

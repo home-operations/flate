@@ -112,7 +112,7 @@ func TestAdvance_ProducerDemandRejectsChangedAuthority(t *testing.T) {
 				assert.Equal(t, d.prepared[owner.Named()] == nil, true)
 			} else {
 				assert.Equal(t, observed.changed.Load(), true)
-				assert.Equal(t, d.prepared[owner.Named()].registered, false)
+				assert.Equal(t, d.prepared[owner.Named()].publication == loader.BuiltRegistered, false)
 			}
 		})
 	}

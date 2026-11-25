@@ -95,3 +95,8 @@ func TestE2E_DependencyInputs_AllFailures(t *testing.T) {
 	runSubstitutionCases(t, "dependency-report-all-inputs",
 		"full-build", "changed-only", "failed-current", "failed-orig")
 }
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_SubstitutionProducerCommentEdit(t *testing.T) {
+	runSubstitutionCases(t, "issue-1680-advance-loop", "comment-edit")
+}

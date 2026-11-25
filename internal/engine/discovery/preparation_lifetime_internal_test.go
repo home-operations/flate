@@ -75,6 +75,55 @@ func TestPrepareDocuments_ReplacementRetiresSupport(t *testing.T) {
 	assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), owner.Named()), true)
 }
 
+func TestRetireSupport_ReleasesInventoryCapture(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	source := &store.SourceArtifact{LocalPath: t.TempDir(), Provider: store.ProviderInput}
+	st.SetArtifact(manifest.BootstrapSourceID, source)
+	frame := &declarationPreparation{
+		owner:       &manifest.Kustomization{Name: "owner", Namespace: "apps"},
+		publication: loader.BuiltInventory,
+	}
+	frame.captureSupport(st, manifest.BootstrapSourceID)
+	assert.Equal(
+		t,
+		frame.support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent),
+		store.Artifact(source),
+	)
+	frame.retireSupport(st)
+	assert.Equal(t, frame.support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), nil)
+}
+
+func TestPreparePlannedPackages_CountsInactiveInventory(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{
+		"apps/kustomization.yaml":   "resources: []\n",
+		"apps/disabled.yaml":        testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n"),
+		"target/kustomization.yaml": "resources: [cm.yaml]\n",
+		"target/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: inventory}\n",
+	})
+	st := store.New()
+	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), Provider: store.ProviderInput}
+	st.SetArtifact(manifest.BootstrapSourceID, source)
+	d := newDiscoverer(&Config{
+		Store: st, Input: source, Path: root, Trees: testTrees(t), PrepareDocuments: base.PrepareDocuments,
+	})
+	t.Cleanup(d.Close)
+	d.loader.SourceRoot = root
+	_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "target", manifest.NamedResource{})
+	d.entryPackages = []*plannedPackage{
+		{render: declarationRender{owner: owner, source: source}, register: true},
+	}
+	available, err := d.preparePlannedPackages(t.Context())
+	assert.NoError(t, err)
+	frame := d.prepared[owner.Named()]
+	assert.FatalIf(t, frame == nil, "planned package has no preparation")
+	assert.Equal(t, frame.publication, loader.BuiltInventory)
+	assert.Equal(t, available, true)
+}
+
 func TestPrepareDocuments_ImplicitSourceIgnore(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -198,12 +247,12 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 			prepared, err := d.prepareDocuments(t.Context(), owner, source, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, prepared.complete, true)
-			assert.Equal(t, prepared.registered, false)
+			assert.Equal(t, prepared.publication == loader.BuiltRegistered, false)
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			switch route {
 			case "producer":
-				err = d.prepareProducer(ctx, owner, source, nil)
+				_, err = d.prepareProducer(ctx, owner, source, nil)
 			case "pending producer":
 				var registered bool
 				registered, err = d.preparePendingProducer(ctx, owner, nil)
@@ -219,7 +268,7 @@ func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
 				assert.Equal(t, q.changed, false)
 			}
 			assert.Equal(t, errors.Is(err, context.Canceled), true)
-			assert.Equal(t, prepared.registered, false)
+			assert.Equal(t, prepared.publication == loader.BuiltRegistered, false)
 			assert.Equal(t, d.prepared[owner.Named()], prepared)
 			assert.Equal(t, d.binding.Failure, failure)
 			d.Close()
@@ -261,7 +310,8 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 		loader: l,
 	}
 	defer d.Close()
-	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
+	_, preparationErr := d.prepareProducer(t.Context(), owner, source, nil)
+	assert.NoError(t, preparationErr)
 	initial := d.prepared[owner.Named()]
 	assert.Equal(t, kustomize.RenderInputs(initial.receipt)["cm.yaml"], true)
 	assert.NoError(t, d.acceptPrepared(t.Context()))
@@ -290,7 +340,8 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 	replacement := *source
 	replacement.URL = "https://fixture.invalid/current"
 	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
-	assert.NoError(t, d.prepareProducer(t.Context(), owner, &replacement, nil))
+	_, preparationErr2 := d.prepareProducer(t.Context(), owner, &replacement, nil)
+	assert.NoError(t, preparationErr2)
 	prepared := d.prepared[owner.Named()]
 	assert.Equal(t, prepared != initial, true)
 	assert.Equal(t, prepared.support.Valid(), true)
@@ -305,7 +356,13 @@ func TestAcceptPrepared_RetiredSupport(t *testing.T) {
 	changed.Content = "replacement"
 	st.SetArtifact(manifest.BootstrapSourceID, &changed)
 	assert.Equal(t, prepared.support.Valid(), false)
+	assert.Equal(t, prepared.complete, true)
+	assert.Equal(t, prepared.publication, loader.BuiltRegistered)
+	assert.NoError(t, prepared.err)
+	prepared.warnings = []manifest.Warning{{Resource: owner.Named(), Category: manifest.WarnMissingCRD}}
+	warnings := st.Warnings()
 	assert.NoError(t, d.acceptPrepared(t.Context()))
+	assert.Diff(t, st.Warnings(), warnings)
 	afterProvenance, err := fixture.owner.ProducersForPaths(t.Context(), sources)
 	assert.NoError(t, err)
 	assert.Diff(t, afterProvenance, provenance)

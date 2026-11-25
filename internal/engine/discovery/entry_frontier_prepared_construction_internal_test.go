@@ -101,7 +101,8 @@ func TestEntryFrontier_ParentDependencyNamespace(t *testing.T) {
 			d.loader.SourceRoot = f.cfg.Input.LocalPath
 			assert.NoError(t, d.loadManifestsTest(t.Context(), f.cfg.Input.LocalPath, false))
 			assertConstructionHasNoOutput(t, f.cfg.Store, parent)
-			assert.NoError(t, d.prepareProducer(t.Context(), parent, f.cfg.Input, nil))
+			_, preparationErr := d.prepareProducer(t.Context(), parent, f.cfg.Input, nil)
+			assert.NoError(t, preparationErr)
 			prepared := d.prepared[parent.Named()]
 			assert.FatalIf(t, len(prepared.children) != 1, "prepared children=%+v", prepared.children)
 			child := prepared.children[0].Obj.(*manifest.Kustomization)
@@ -226,7 +227,8 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	f.assertSubstitutions(t)
 	assert.Equal(t, f.cfg.Store.GetObject(testutil.KustomizationID("apps", "applier")), nil)
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
-	assert.NoError(t, d.prepareProducer(t.Context(), f.parent, f.cfg.Input, nil))
+	_, preparationErr := d.prepareProducer(t.Context(), f.parent, f.cfg.Input, nil)
+	assert.NoError(t, preparationErr)
 	prepared := d.prepared[f.parent.Named()]
 	wantChildren := 1
 	if f.dependencies {
@@ -234,7 +236,8 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	}
 	assert.Equal(t, len(prepared.children), wantChildren)
 	assert.Equal(t, prepared.receipt != nil, true)
-	assert.NoError(t, d.prepareProducer(t.Context(), f.parent, f.cfg.Input, nil))
+	_, preparationErr2 := d.prepareProducer(t.Context(), f.parent, f.cfg.Input, nil)
+	assert.NoError(t, preparationErr2)
 	assert.Equal(t, d.prepared[f.parent.Named()].receipt, prepared.receipt)
 	var reads store.ReadSet
 	reads.Init(f.cfg.Store, manifest.BootstrapSourceID, nil)

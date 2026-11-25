@@ -14,11 +14,11 @@ func (l *Loader) EntryScope(owner manifest.NamedResource) *selection.EntryScope 
 }
 
 // SetEntryScope runs during serial construction. Readers borrow its immutable snapshot.
-func (l *Loader) SetEntryScope(owner manifest.NamedResource, scope *selection.EntryScope) {
+func (l *Loader) SetEntryScope(owner manifest.NamedResource, scope *selection.EntryScope) bool {
 	current := l.entryScopes.Load()
 	previous := current.Scope(owner)
 	if previous == scope || previous.Same(scope) {
-		return
+		return false
 	}
 	if scope != nil && scope.Preparation != nil {
 		reads := &store.ReadSet{}
@@ -47,9 +47,10 @@ func (l *Loader) SetEntryScope(owner manifest.NamedResource, scope *selection.En
 	}
 	if len(next) == 0 {
 		l.entryScopes.Store(nil)
-		return
+		return true
 	}
 	l.entryScopes.Store(&next)
+	return true
 }
 
 func retireEntryScopes(scopes *selection.EntryScopes) {

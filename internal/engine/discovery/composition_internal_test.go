@@ -699,7 +699,8 @@ spec:
 			assert.Equal(t, groups[rawSource], (*entrySourceGroup)(nil))
 			parent := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
 			st.AddObject(parent)
-			assert.NoError(t, d.prepareProducer(t.Context(), parent, bootstrap, nil))
+			_, preparationErr := d.prepareProducer(t.Context(), parent, bootstrap, nil)
+			assert.NoError(t, preparationErr)
 			evidence = selection.CaptureRoot(d.loader.RootEvidence(including, nil), d.loader.Store, d.loader.Index)
 			assert.Equal(t, evidence.Record.Builder != "", true)
 			groups = map[manifest.NamedResource]*entrySourceGroup{}

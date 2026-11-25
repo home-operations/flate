@@ -161,14 +161,12 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 				return r
 			}
 			old, incoming := support("old"), support("incoming")
-			assert.NoError(
-				t,
-				l.RegisterBuilt(
-					t.Context(),
-					BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: old},
-					nil,
-				),
+			_, registrationErr := l.RegisterBuilt(
+				t.Context(),
+				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: old},
+				nil,
 			)
+			assert.NoError(t, registrationErr)
 			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./next"}
 			if boundary == "entry" {
 				cancel()
@@ -178,7 +176,7 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 					st.AddObject(child)
 				}
 			}
-			err := l.RegisterBuilt(
+			_, err := l.RegisterBuilt(
 				ctx,
 				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: incoming},
 				[]store.Child{{Obj: child}},

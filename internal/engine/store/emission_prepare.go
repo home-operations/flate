@@ -145,6 +145,11 @@ func (a Child) sameDeclaration(b Child) bool {
 	if a.Origin != b.Origin || a.Generated != b.Generated || a.VisibleGeneration != b.VisibleGeneration {
 		return false
 	}
+	return SameDeclarationContent(&a, &b)
+}
+
+// SameDeclarationContent compares immutable object, document, and ordered warning payloads.
+func SameDeclarationContent(a, b *Child) bool {
 	return manifest.Equal(a.Obj, b.Obj) && manifest.ValueEqual(a.Doc, b.Doc) && warningsEqual(a.Warnings, b.Warnings)
 }
 

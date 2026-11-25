@@ -1,0 +1,325 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "579b05f68cd16a80dca8c95b4f1b06f5f6ae3c6b",
+    "paths": [
+      "internal/engine/discovery/discard_pinned_working_tree_files.go"
+    ],
+    "reductions": "Keep the reported cross-directory ConfigMap and namespace transformation. Use a local Git-backed chart."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "comment-edit",
+      "directory": "overlays/comment-edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "comment-edit",
+      "description": "A child comment edit leaves output unchanged.",
+      "setup": [
+        {
+          "commit": "baseline"
+        },
+        {
+          "overlay": "comment-edit"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/test.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/test.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "revision-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--strict-substitutions",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--path-orig",
+              "@@baseline@@/kubernetes/flux/cluster"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/charts/demo/Chart.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/demo/app/ks.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/demo/app/manifests/helmrelease.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/demo/app/manifests/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/demo/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/components/vars/cluster-settings.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/components/vars/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "repo/kubernetes/flux/cluster/ks.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Offline resource or chart from the reduced layout."
+    },
+    {
+      "path": "overlays/comment-edit/repo/kubernetes/apps/demo/app/manifests/kustomization.yaml",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "Comment-only edit under the child application path."
+    },
+    {
+      "path": "expect/test.stdout",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "The root, child and HelmRelease all pass."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "The two Kustomizations and the local chart emit four resources."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "The comment produces no resource diff."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "comment-edit"
+      ],
+      "purpose": "The build can report the render persistence status."
+    }
+  ]
+}

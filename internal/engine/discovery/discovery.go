@@ -280,17 +280,17 @@ type declarationRender struct {
 type declarationPreparation struct {
 	declarationRender
 
-	complete   bool
-	err        error
-	work       *manifest.RenderWork
-	registered bool
-	lookup     lookupMode
-	lookupErr  error
-	support    store.ReadSet
+	complete    bool
+	err         error
+	work        *manifest.RenderWork
+	publication loader.BuiltPublication
+	lookup      lookupMode
+	lookupErr   error
+	support     store.ReadSet
 }
 
 func (p *declarationPreparation) canSupply(execution manifest.BaseManifest, reads *store.ReadSet) bool {
-	if p == nil || !p.complete || !p.registered {
+	if p == nil || !p.complete || p.publication == loader.BuiltRejected {
 		return false
 	}
 	return p.support.Valid() && reads.Matches(&p.support) && manifest.Equal(p.owner, execution)
@@ -464,9 +464,9 @@ func (d *Session) prepareStandaloneEntry(
 			return false, err
 		}
 	}
-	ks, err := d.bindEntry(ctx, repoRoot)
-	if err != nil {
-		return false, err
+	ks, bindErr := d.bindEntry(ctx, repoRoot)
+	if bindErr != nil {
+		return false, bindErr
 	}
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
@@ -481,11 +481,8 @@ func (d *Session) prepareStandaloneEntry(
 	if d.cfg.Trees == nil || sourceID == nil || !d.canPrepare(ks) {
 		return false, nil
 	}
-	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered && previous.err == nil &&
-		previous.matches(ks, sourceID, nil) {
-		return d.entryState.changed, nil
-	}
-	if err := d.prepareProducer(ctx, ks, sourceID, nil); err != nil {
+	prepared, err := d.prepareProducer(ctx, ks, sourceID, nil)
+	if err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
@@ -500,7 +497,7 @@ func (d *Session) prepareStandaloneEntry(
 		slog.Debug("discovery: declaration preparation deferred", "err", err)
 		return false, nil
 	}
-	return true, nil
+	return prepared || d.entryState.changed, nil
 }
 
 // Binding keeps actual ownership separate from the paired entry comparison coordinate.
@@ -738,10 +735,10 @@ func (d *Session) prepareProducer(
 	ks *manifest.Kustomization,
 	input *store.SourceArtifact,
 	guard *store.ReadSet,
-) error {
+) (bool, error) {
 	prepared, err := d.prepareDocuments(ctx, ks, input, guard)
 	if err != nil {
-		return err
+		return false, err
 	}
 	return d.registerProducer(ctx, prepared)
 }
@@ -758,25 +755,26 @@ func (d *Session) preparePackageInventory(
 
 func (d *Session) prepareEntryPackage(
 	ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact, guard *store.ReadSet,
-) error {
+) (bool, error) {
 	if !ks.Named().ReportHidden() {
 		return d.prepareProducer(ctx, ks, input, guard)
 	}
 	prepared, err := d.preparePackageInventory(ctx, ks, input, guard)
 	if err != nil {
-		return err
+		return false, err
 	}
 	return d.registerProducer(ctx, prepared)
 }
 
-func (d *Session) registerProducer(ctx context.Context, prepared *declarationPreparation) error {
+func (d *Session) registerProducer(ctx context.Context, prepared *declarationPreparation) (bool, error) {
 	if !prepared.complete {
-		return nil
+		return false, nil
 	}
+	previous := prepared.publication
 	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
 	root := filepath.Join(prepared.source.LocalPath, manifest.NormalizeClaimBase(prepared.owner.Path))
-	if err := d.loader.RegisterBuilt(
+	publication, err := d.loader.RegisterBuilt(
 		ctx,
 		loader.BuiltInput{
 			Root:             root,
@@ -787,21 +785,25 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 			PrepareDocuments: d.cfg.PrepareDocuments,
 		},
 		prepared.children,
-	); err != nil {
-		return err
+	)
+	prepared.publication = publication
+	if err != nil || publication == loader.BuiltRejected {
+		return false, err
 	}
-	prepared.registered = true
 	d.prepared[owner] = prepared
 	if prepared.err == nil && d.binding.Producer == owner {
 		d.binding.Failure = nil
 	}
-	return nil
+	return publication > previous, nil
 }
 
 func (d *Session) acceptPrepared(ctx context.Context) error {
 	for _, prepared := range d.prepared {
 		ks := prepared.owner
-		if !prepared.complete || !prepared.registered && prepared.lookup == noLookup || prepared.err != nil {
+		if !prepared.complete || !prepared.canAcceptRender() {
+			continue
+		}
+		if prepared.err != nil || !prepared.support.Valid() {
 			continue
 		}
 		input := prepared.source
@@ -815,7 +817,7 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 		}); err != nil {
 			return fmt.Errorf("discovery entry %q publish: %w", ks.Path, err)
 		}
-		if !prepared.registered {
+		if prepared.publication == loader.BuiltRejected {
 			continue
 		}
 		for warningIndex := range prepared.warnings {

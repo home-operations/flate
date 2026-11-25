@@ -485,14 +485,12 @@ func testPromoteOrphansNamespaceAdmissionCase(
 		support := new(store.ReadSet)
 		support.Init(st, manifest.NamedResource{}, nil)
 		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		assert.NoError(
-			t,
-			l.RegisterBuilt(
-				t.Context(),
-				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support},
-				batch,
-			),
+		_, registrationErr := l.RegisterBuilt(
+			t.Context(),
+			BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support},
+			batch,
 		)
+		assert.NoError(t, registrationErr)
 	}
 	assert.NoError(t, l.Admit(t.Context(), root))
 	bare := testutil.KustomizationID("", "bare")

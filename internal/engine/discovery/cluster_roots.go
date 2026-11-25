@@ -376,10 +376,11 @@ func (p *entryPlanner) followOutput(
 	if !ok || p.session.cfg.Trees == nil || !p.session.canPrepare(ks) {
 		return children, nil
 	}
-	if err := p.session.prepareProducer(ctx, ks, input, nil); err != nil {
+	if _, err := p.session.prepareProducer(ctx, ks, input, nil); err != nil {
 		return nil, err
 	}
-	if prepared := p.session.prepared[ks.Named()]; prepared != nil && prepared.complete {
+	prepared := p.session.prepared[ks.Named()]
+	if prepared != nil && prepared.inventoryReady() && prepared.support.Valid() {
 		return p.preparedOccurrences(input, visit.occurrence.Declaration, prepared.children), nil
 	}
 	return children, nil

@@ -1,0 +1,60 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: demo
+    kustomize.toolkit.fluxcd.io/namespace: demo
+  name: demo
+  namespace: demo
+spec:
+  chart:
+    spec:
+      chart: ./charts/demo
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  interval: 10m
+  values:
+    v: "2"
+---
+apiVersion: v1
+data:
+  GREETING: hello
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: cluster-settings
+  namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: cluster-apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: demo
+  namespace: demo
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/demo/app/manifests
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  targetNamespace: demo
+---
+apiVersion: v1
+data:
+  v: "2"
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: demo
+  name: demo
+  namespace: demo

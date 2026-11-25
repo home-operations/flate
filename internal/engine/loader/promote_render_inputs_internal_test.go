@@ -35,14 +35,15 @@ func TestRegisterBuilt_RenderInputs(t *testing.T) {
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			docs := builtObjectsForTest(t, strings.Replace(child, tc.before, tc.after, 1))
-			assert.NoError(t, l.RegisterBuilt(
+			_, registrationErr := l.RegisterBuilt(
 				t.Context(),
 				supportedBuiltInputForTest(
 					l,
 					&BuiltInput{Root: root, Owner: owner.Named(), Source: manifest.BootstrapSourceID},
 				),
 				docs,
-			))
+			)
+			assert.NoError(t, registrationErr)
 			record, ok := l.Index.Lookup(docs[0].Obj.Named())
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.File, tc.file)
@@ -82,11 +83,13 @@ func TestRegisterBuilt_CompleteEmptyReplacementRetiresOnlyItsOwner(t *testing.T)
 	replacement.Path = "./entry"
 	st.AddObject(replacement)
 	assert.Equal(t, incomplete.Support.Valid(), false)
-	assert.NoError(t, l.RegisterBuilt(t.Context(), incomplete, nil))
+	_, registrationErr := l.RegisterBuilt(t.Context(), incomplete, nil)
+	assert.NoError(t, registrationErr)
 	assert.Diff(t, l.Index.Records[pending.Named()].Productions, []manifest.Production{first, second})
 
 	complete := supportedBuiltInputForTest(l, &input)
-	assert.NoError(t, l.RegisterBuilt(t.Context(), complete, nil))
+	_, registrationErr2 := l.RegisterBuilt(t.Context(), complete, nil)
+	assert.NoError(t, registrationErr2)
 	assert.Diff(t, l.Index.Records[pending.Named()].Productions, []manifest.Production{second})
 }
 
@@ -108,7 +111,8 @@ func TestRegisterBuilt_EntryScopeSurvivesOrdinaryRegistration(t *testing.T) {
 	st.AddObject(owner)
 	input := BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: owner.Named()}
 	full := []store.Child{{Obj: child}}
-	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full))
+	_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full)
+	assert.NoError(t, registrationErr)
 	_, ok := l.Index.Lookup(child.Named())
 	assert.Equal(t, ok, true)
 
@@ -117,7 +121,8 @@ func TestRegisterBuilt_EntryScopeSurvivesOrdinaryRegistration(t *testing.T) {
 	l.SetEntryScope(owner.Named(), scope)
 	l.Store.Retire(prepared.Support)
 	assert.Equal(t, l.RootEvidence(owner.Named(), nil).EntryScope, scope)
-	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full))
+	_, registrationErr2 := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &input), full)
+	assert.NoError(t, registrationErr2)
 	_, ok = l.Index.Lookup(child.Named())
 	assert.Equal(t, ok, false)
 	assert.Equal(t, l.RootEvidence(owner.Named(), nil).EntryScope, scope)

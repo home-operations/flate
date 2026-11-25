@@ -10,7 +10,13 @@
   "repositories": [
     {
       "name": "repo",
-      "directory": "repo"
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://entry.fixture.invalid/repo.git"
+        }
+      ]
     },
     {
       "name": "remote",
@@ -19,6 +25,10 @@
         {
           "name": "origin",
           "url": "git://remote.fixture.invalid/source"
+        },
+        {
+          "name": "base",
+          "url": "file://@@repo@@/../remote"
         }
       ]
     }
@@ -42,9 +52,54 @@
       "refs": [
         "refs/heads/main"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "entry-with-bases",
+      "overlay": "remote-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "entry"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "remote-linked",
+      "overlay": "unrelated-link",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "remote"
+      ],
+      "refs": [
+        "refs/heads/linked"
+      ]
     }
   ],
-  "overlays": [],
+  "overlays": [
+    {
+      "name": "remote-base",
+      "directory": "overlays/remote-base"
+    },
+    {
+      "name": "unrelated-link",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/release-link",
+            "target": "tools/release.txt"
+          }
+        }
+      ]
+    },
+    {
+      "name": "revise-local",
+      "directory": "overlays/revise-local"
+    }
+  ],
   "cases": [
     {
       "name": "git-source",
@@ -89,6 +144,142 @@
           }
         }
       ]
+    },
+    {
+      "name": "remote-base-unrelated-symlink",
+      "description": "An unrelated link in a remote Git checkout leaves the requested base and a local edit renderable.",
+      "setup": [
+        {
+          "commit": "entry-with-bases"
+        },
+        {
+          "commit": "remote-linked"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "remote-base-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/clusters",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/remote-base-test.stdout",
+              "stderr": "expect/remote-git.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remote-base-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--skip-kinds=GitRepository,Kustomization",
+              "--path",
+              "@@repo@@/clusters",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/remote-base-before.stdout",
+              "stderr": "expect/remote-git.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-local",
+          "edit": {
+            "overlay": "revise-local"
+          }
+        },
+        {
+          "id": "remote-base-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--skip-kinds=GitRepository,Kustomization",
+              "--path",
+              "@@repo@@/clusters",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/remote-base-after.stdout",
+              "stderr": "expect/remote-git.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remote-base-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,Kustomization",
+              "--path",
+              "@@repo@@/clusters",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/remote-base-diff.stdout",
+              "stderr": "expect/remote-git.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "remote-base-warm-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "--output",
+              "diff",
+              "--skip-kinds=GitRepository,Kustomization",
+              "--path",
+              "@@repo@@/clusters",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/remote-base-diff.stdout",
+              "stderr": "expect/remote-git.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -109,14 +300,16 @@
     {
       "path": "remote/app/kustomization.yaml",
       "cases": [
-        "git-source"
+        "git-source",
+        "remote-base-unrelated-symlink"
       ],
       "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
     },
     {
       "path": "remote/app/cm.yaml",
       "cases": [
-        "git-source"
+        "git-source",
+        "remote-base-unrelated-symlink"
       ],
       "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
     },
@@ -130,9 +323,106 @@
     {
       "path": "expect/remote-git.stderr",
       "cases": [
-        "git-source"
+        "git-source",
+        "remote-base-unrelated-symlink"
       ],
       "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/remote-base/repo/clusters/sync.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Select both local consumers of the same remote base."
+    },
+    {
+      "path": "overlays/remote-base/repo/workloads/selected/kustomization.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Request the remote base beside the edited local input."
+    },
+    {
+      "path": "overlays/remote-base/repo/workloads/selected/local.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Supply the local ConfigMap before the edit."
+    },
+    {
+      "path": "overlays/remote-base/repo/workloads/unchanged/kustomization.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Render a distinct unchanged ConfigMap from another base in the same checkout."
+    },
+    {
+      "path": "remote/unchanged/kustomization.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Use a sibling package inside the remote checkout."
+    },
+    {
+      "path": "overlays/revise-local/repo/workloads/selected/local.yaml",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Change the referenced local ConfigMap."
+    },
+    {
+      "path": "remote/release-link",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Declare the link created before the fixture's linked commit."
+    },
+    {
+      "path": "remote/tools/release.txt",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Supply the target outside the requested app directory."
+    },
+    {
+      "path": "expect/remote-base-test.stdout",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/remote-base-before.stdout",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/remote-base-after.stdout",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/remote-base-diff.stdout",
+      "cases": [
+        "remote-base-unrelated-symlink"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ],
+  "tokens": [
+    {
+      "file": "repo/workloads/selected/kustomization.yaml",
+      "sentinel": "/__flate_fixture__/remote",
+      "value": "@@repo@@/../remote"
+    },
+    {
+      "file": "repo/workloads/unchanged/kustomization.yaml",
+      "sentinel": "/__flate_fixture__/remote",
+      "value": "@@repo@@/../remote"
     }
   ]
 }

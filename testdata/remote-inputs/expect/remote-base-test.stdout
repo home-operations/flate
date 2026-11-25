@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  apps/selected
+  ✓  Kustomization  apps/unchanged
+  ✓  GitRepository  apps/entry
+
+  ✓ 3 passed   <DUR>

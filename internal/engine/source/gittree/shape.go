@@ -83,7 +83,7 @@ func checkoutVisible(sparse []string, name string) bool {
 }
 
 func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
-	raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, changes: g.changes}
+	raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, worktree: g.worktree, changes: g.changes}
 	raw.newStorer = g.newStorer
 	links := tree.NewBuilder(raw)
 	for _, name := range names {

@@ -1,7 +1,9 @@
 package kustomize
 
 import (
+	"cmp"
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/storage/filesystem"
 
@@ -590,5 +593,224 @@ func testRenderNestedGitBasesAndIntervalsCase(
 			"upstream cycle error: %v",
 			err,
 		)
+	}
+}
+
+func TestRender_RemoteLinkPolicies(t *testing.T) {
+	t.Parallel()
+	const base = "apps/base"
+	const child = base + "/child"
+	const control = "resources: [cm.yaml]\n"
+	const generator = "apiVersion: builtin\nkind: ConfigMapGenerator\n" +
+		"metadata: {name: child}\noptions: {disableNameSuffixHash: true}\nliterals: [key=value]\n"
+	const transformer = "apiVersion: builtin\nkind: ValueAddTransformer\nmetadata: {name: loader}\n" +
+		"targets:\n  - fieldPath: data/loader\n    selector: {kind: ConfigMap}\n"
+	linkedControl := [2]string{child + "/kustomization.yaml", "../control.yaml"}
+	alternate := map[string]string{child + "/kustomization.yml": control}
+	multiple := map[string]string{
+		child + "/kustomization.yml": control,
+		child + "/Kustomization":     control,
+	}
+	generated := map[string]any{"key": "value"}
+	for _, fixture := range []struct {
+		name       string
+		entry      string
+		link       [2]string
+		files      map[string]string
+		data       map[string]any
+		generators bool
+		artifact   bool
+		cacheHit   bool
+		wantError  string
+		wantPath   string
+	}{
+		{
+			name: "unused-link", entry: child, link: [2]string{"unused", "missing"}, artifact: true, cacheHit: true,
+			files: map[string]string{child + "/kustomization.yaml": control},
+		},
+		{
+			name: "sole-resources", link: linkedControl, artifact: true,
+			wantError: "unable to find one of", wantPath: child,
+		},
+		{name: "alternate-control-resources", link: linkedControl, files: alternate, artifact: true},
+		{
+			name: "multiple-resources", link: linkedControl, files: multiple, artifact: true,
+			wantError: "Found multiple kustomization files", wantPath: child,
+		},
+		{
+			name: "sole-generators", link: linkedControl, generators: true, artifact: true,
+			wantError: "unable to find one of", wantPath: child,
+		},
+		{
+			name: "alternate-control-generators", link: linkedControl, files: alternate, generators: true, data: generated,
+		},
+		{
+			name: "multiple-generators", link: linkedControl, files: multiple, generators: true, artifact: true,
+			wantError: "Found multiple kustomization files", wantPath: child,
+		},
+		{
+			name: "cycle", link: linkedControl, artifact: true,
+			wantError: "cycle detected", wantPath: child + "/descendant",
+			files: map[string]string{
+				child + "/kustomization.yml":             "resources: [descendant]\n",
+				child + "/descendant/kustomization.yaml": "resources: [..]\n",
+			},
+		},
+		{
+			name: "duplicate", link: linkedControl, artifact: true,
+			wantError: "already registered id", wantPath: base + "/local",
+			files: map[string]string{
+				base + "/kustomization.yaml":       "resources: [child, local]\n",
+				child + "/kustomization.yml":       control,
+				child + "/cm.yaml":                 cmYAML("shared"),
+				base + "/local/kustomization.yaml": control,
+				base + "/local/cm.yaml":            cmYAML("shared"),
+			},
+		},
+		{
+			name: "canonical-child", artifact: true, data: map[string]any{"loader": "child"},
+			files: map[string]string{
+				child + "/kustomization.yaml": control + "transformers: [loader.yaml]\n",
+				child + "/loader.yaml":        transformer,
+			},
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			field, input := "resources", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n"
+			if fixture.generators {
+				field, input = "generators", generator
+			}
+			files := map[string]string{
+				base + "/kustomization.yaml": field + ": [child]\n",
+				base + "/control.yaml":       control,
+				child + "/cm.yaml":           input,
+			}
+			maps.Copy(files, fixture.files)
+			checkout := newRemoteLinkCheckout(t, files, fixture.link)
+			entry := cmp.Or(fixture.entry, base)
+			check := func(t *testing.T, cache *TreeCache, source *store.SourceArtifact, subpath string) {
+				t.Helper()
+				output, _, err := testutil.RenderMaps(Render(t.Context(), cache, RenderRequest{
+					Source: source, SubPath: subpath, Spec: &manifest.Kustomization{},
+				}, sourcecache.RetryConfig{}))
+				if fixture.wantError != "" {
+					assert.FatalIf(t, err == nil, "expected render failure")
+					assert.ErrorIf(t, !strings.Contains(err.Error(), fixture.wantError) ||
+						!strings.Contains(err.Error(), fixture.wantPath), "render failure: %v", err)
+					return
+				}
+				assert.NoError(t, err)
+				assert.FatalIf(t, len(output) != 1, "got %d rendered objects, want 1", len(output))
+				want := map[string]any{
+					"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "child"},
+				}
+				if fixture.data != nil {
+					want["data"] = fixture.data
+				}
+				assert.Diff(t, output[0], want)
+			}
+			t.Run("clone", func(t *testing.T) {
+				t.Parallel()
+				cache := newTestTreeCache(t, "")
+				fetch := remoteLinkFixtureFetcher(t)
+				cache.SetGitBaseFetcher(fetch)
+				url, ref := "file://"+checkout.dir, checkout.commit.String()
+				if fixture.cacheHit {
+					request := GitBaseRequest{URL: url, Ref: ref, Submodules: true}
+					first, err := fetch(t.Context(), request, sourcecache.RetryConfig{})
+					assert.NoError(t, err)
+					cached, err := fetch(t.Context(), request, sourcecache.RetryConfig{})
+					assert.NoError(t, err)
+					assert.FatalIf(t, first.Content == "", "fresh source content identity is empty")
+					assert.Equal(t, cached.Content, first.Content)
+					assert.Equal(t, cached.Key, first.Key)
+					assert.Diff(t, cached.Warnings, first.Warnings)
+				}
+				source := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {
+					Data: []byte("resources:\n  - " + url + "//" + entry + "?ref=" + ref + "\n"),
+				}}}
+				check(t, cache, source, ".")
+			})
+			if fixture.artifact {
+				t.Run("artifact", func(t *testing.T) {
+					t.Parallel()
+					input, content, err := gittree.New(t.Context(),
+						checkout.repo.Storer.(*filesystem.Storage).Filesystem(), checkout.commit,
+						gittree.ViewOptions{Mode: gittree.Source},
+					)
+					assert.NoError(t, err)
+					source := &store.SourceArtifact{Key: "root", FS: input, Content: content}
+					check(t, newTestTreeCache(t, ""), source, entry)
+				})
+			}
+		})
+	}
+}
+
+func TestRender_DuplicateID_RemoteControlView(t *testing.T) {
+	t.Parallel()
+	const control = "resources: [cm.yaml]\n"
+	cm := cmYAML("shared")
+	checkout := newRemoteLinkCheckout(t, map[string]string{
+		"apps/base/kustomization.yaml":      "resources: [child]\n",
+		"apps/base/control.yaml":            control,
+		"apps/base/child/kustomization.yml": control,
+		"apps/base/child/cm.yaml":           cm,
+	}, [2]string{"apps/base/child/kustomization.yaml", "../control.yaml"})
+	remote := "file://" + checkout.dir + "//apps/base?ref=" + checkout.commit.String()
+	cache := newTestTreeCache(t, "")
+	cache.SetGitBaseFetcher(remoteLinkFixtureFetcher(t))
+	source := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{
+		"kustomization.yaml":       {Data: []byte("resources:\n  - " + remote + "\n  - local\n")},
+		"local/kustomization.yaml": {Data: []byte(control)},
+		"local/cm.yaml":            {Data: []byte(cm)},
+	}}
+	_, _, err := Render(t.Context(), cache, RenderRequest{Source: source, Spec: &manifest.Kustomization{}},
+		sourcecache.RetryConfig{})
+	assert.FatalIf(t, err == nil || !isDuplicateIDError(err), "expected duplicate resource error: %v", err)
+	_, diagnostic, found := strings.Cut(
+		err.Error(),
+		"\n  duplicate resource(s) produced by multiple accumulated paths:\n",
+	)
+	assert.FatalIf(t, !found, "missing diagnostic attribution: %v", err)
+	lines := strings.Split(diagnostic, "\n")
+	assert.FatalIf(t, len(lines) != 4, "unexpected attribution: %s", diagnostic)
+	assert.Equal(t, lines[0], "    ConfigMap.v1.[noGrp]/shared.[noNs]")
+	assert.FatalIf(t, !strings.HasPrefix(lines[1], "      - ./.flate-remote-") ||
+		!strings.HasSuffix(lines[1], "/apps/base"), "missing remote producer: %s", diagnostic)
+	assert.Equal(t, lines[2], "      - ./local")
+	assert.Equal(t, lines[3], "select an individual overlay with -p")
+}
+
+type remoteLinkCheckout struct {
+	dir    string
+	repo   *git.Repository
+	commit plumbing.Hash
+}
+
+func newRemoteLinkCheckout(t *testing.T, files map[string]string, link [2]string) remoteLinkCheckout {
+	t.Helper()
+	dir := fakeWorktree(t, files)
+	if link[0] != "" {
+		assert.NoError(t, os.Symlink(link[1], filepath.Join(dir, link[0])))
+	}
+	repo := testutil.GitInit(t, dir)
+	commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
+		Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"},
+	})
+	return remoteLinkCheckout{dir: dir, repo: repo, commit: commit}
+}
+
+func remoteLinkFixtureFetcher(t *testing.T) GitBaseFetcher {
+	t.Helper()
+	sources := cachetest.New(t, t.TempDir(), sourcecache.New)
+	fetcher := &sourcegit.Fetcher{Network: networktest.New(t), Cache: sources}
+	return func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		input := &sourcegit.RemoteBaseRequest{
+			URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules,
+		}
+		policy := &sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry}
+		return fetcher.FetchRemoteBase(ctx, input, policy)
 	}
 }

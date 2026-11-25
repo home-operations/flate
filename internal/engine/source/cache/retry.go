@@ -71,10 +71,7 @@ func (c *Cache) acquire(
 	policy := *policyValue
 
 	key := *keyValue
-	if key.id == "" {
-		key.id = key.producer.identity()
-		policy.Work.Prepare(key.id, key.render)
-	}
+	key.prepare(policy.Work)
 	if key.id == "" {
 		return nil, "", &Error{
 			manifest.NewError(manifest.ErrInput, nil, "acquisition content cannot be fingerprinted"),

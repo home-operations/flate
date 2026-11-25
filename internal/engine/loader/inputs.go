@@ -23,14 +23,39 @@ type ParsedInputs struct {
 	compact bool
 }
 
+type parsedIdentity struct {
+	content string
+	view    *gittree.FS
+	input   *store.SourceArtifact
+}
+
+func (i parsedIdentity) matches(other parsedIdentity) bool {
+	if i.content != other.content || i.input != other.input {
+		return false
+	}
+	return i.view == other.view || i.content != "" && i.view.SameView(other.view)
+}
+
+type parsedBinding struct {
+	identity parsedIdentity
+	material store.ArtifactInput
+}
+
+func (b *parsedBinding) matches(other *parsedBinding, requireMaterial bool) bool {
+	if (requireMaterial || b.identity.content != "") && b.material != other.material {
+		return false
+	}
+	return b.identity.matches(other.identity)
+}
+
 type parsedSource struct {
 	parsedDocuments
 
 	cache    *inputCache
 	borrowed bool
 
-	input    any
-	binding  *store.ArtifactInput
+	// The binding keeps parsedSource within the inline map element limit.
+	binding  *parsedBinding
 	walks    factMap[physicalContext, physicalWalk]
 	loads    factMap[loadContext, loadFacts]
 	hydrated factMap[occurrenceID, store.Child]
@@ -115,25 +140,18 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 		l.facts = &ParsedInputs{sources: map[string]parsedSource{}}
 	}
 	root = new(l.documents).mountedRoot(root)
-	artifact := l.documents.artifacts[root]
-	var identity any
-	if artifact != nil {
-		identity = parsedInputIdentity(artifact)
-	}
-	binding := inputprojection.Authored(artifact).Input(store.ArtifactContent | store.ArtifactRevision)
-	if source, ok := l.facts.sources[root]; ok && source.input == identity && *source.binding == binding {
+	binding := parsedBindingFor(inputprojection.Authored(l.documents.artifacts[root]))
+	if source, ok := l.facts.sources[root]; ok && source.binding.matches(&binding, true) {
 		return source
 	}
-	sourceBinding := binding
 	source := parsedSource{
-		input:    identity,
-		binding:  &sourceBinding,
+		binding:  new(binding),
 		walks:    factMap[physicalContext, physicalWalk]{values: map[physicalContext]physicalWalk{}},
 		loads:    factMap[loadContext, loadFacts]{values: map[loadContext]loadFacts{}},
 		hydrated: factMap[occurrenceID, store.Child]{values: map[occurrenceID]store.Child{}},
 	}
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact == l.documents.compact {
-		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
+		if prior, ok := prepared.sources[root]; ok && prior.binding.matches(&binding, true) {
 			source.walks.previous, source.walks.imported = new(prior.walks), true
 			source.borrowed = true
 			source.loads.previous, source.loads.imported = new(prior.loads), true
@@ -195,8 +213,7 @@ func (s *parsedDocuments) lookup(file string) *parsedDocument {
 func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
 	input = inputprojection.Authored(input)
 	source, ok := p.sources[input.LocalPath]
-	return ok && source.input == parsedInputIdentity(input) &&
-		(!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
+	return ok && source.binding.matches(new(parsedBindingFor(input)), p.compact)
 }
 
 // StageProvisionalInput sets the physical reader before source policy is known.
@@ -235,8 +252,7 @@ func (l *Loader) BindProvisionalInput(after *store.SourceArtifact) {
 	l.documents.changed = slices.DeleteFunc(l.documents.changed, func(changed string) bool { return changed == root })
 	if l.facts != nil {
 		if source, present := l.facts.sources[root]; present {
-			source.input = parsedInputIdentity(after)
-			source.binding = new(after.Input(store.ArtifactContent | store.ArtifactRevision))
+			source.binding = new(parsedBindingFor(inputprojection.Authored(after)))
 			l.facts.sources[root] = source
 		}
 	}
@@ -254,12 +270,22 @@ func (l *Loader) inputWarning(warning manifest.Warning) {
 	l.provisionalWarnings = append(l.provisionalWarnings, warning)
 }
 
-func parsedInputIdentity(input *store.SourceArtifact) any {
-	input = inputprojection.Authored(input)
-	if view, ok := input.FS.(*gittree.FS); ok {
-		return view
+func parsedBindingFor(input *store.SourceArtifact) parsedBinding {
+	return parsedBinding{
+		identity: parsedInputIdentity(input),
+		material: input.Input(store.ArtifactContent | store.ArtifactRevision),
 	}
-	return input
+}
+
+func parsedInputIdentity(input *store.SourceArtifact) parsedIdentity {
+	input = inputprojection.Authored(input)
+	if input == nil {
+		return parsedIdentity{}
+	}
+	if view, ok := input.FS.(*gittree.FS); ok {
+		return parsedIdentity{content: input.Content, view: view}
+	}
+	return parsedIdentity{input: input}
 }
 
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
@@ -278,8 +304,7 @@ func (r documentReader) restore(file string) {
 	if !ok || artifact == nil {
 		return
 	}
-	if parsedInputIdentity(artifact) != source.input ||
-		r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
+	if !source.binding.matches(new(parsedBindingFor(artifact)), r.compact) {
 		return
 	}
 	if doc := source.lookup(file); doc != nil {
@@ -309,14 +334,9 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 		return nil
 	}
 	var observations []manifest.InputVisibility
-	//nolint:gocritic // The source map supplies immutable value snapshots.
 	for root, facts := range l.facts.sources {
-		artifact := inputprojection.Authored(l.documents.artifacts[root])
-		var identity any
-		if artifact != nil {
-			identity = parsedInputIdentity(artifact)
-		}
-		if facts.input != identity || *facts.binding != artifact.Input(store.ArtifactContent|store.ArtifactRevision) {
+		binding := parsedBindingFor(inputprojection.Authored(l.documents.artifacts[root]))
+		if !facts.binding.matches(&binding, true) {
 			continue
 		}
 		sources := []manifest.NamedResource{}
@@ -327,7 +347,7 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 			scopeValues := l.scopes.sources
 			for scopeIndex := range scopeValues {
 				scope := scopeValues[scopeIndex]
-				if !new(scope).matchesVisibility(root, sources, identity, new(facts)) {
+				if !new(scope).matchesVisibility(root, sources, &binding) {
 					continue
 				}
 				sources = append(sources, scope.id)
@@ -420,19 +440,12 @@ func (l *Loader) appendInputVisibility(observation *manifest.InputVisibility, ro
 func (s *sourceScope) matchesVisibility(
 	root string,
 	sources []manifest.NamedResource,
-	identity any,
-	factsValue *parsedSource,
+	binding *parsedBinding,
 ) bool {
-	scope := *s
-	facts := *factsValue
-	if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
+	if s.root != root || s.artifact == nil || slices.Contains(sources, s.id) {
 		return false
 	}
-	if parsedInputIdentity(scope.artifact) != identity ||
-		inputprojection.Authored(scope.artifact).Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
-		return false
-	}
-	return true
+	return binding.matches(new(parsedBindingFor(inputprojection.Authored(s.artifact))), true)
 }
 
 func appendSourceVisibilities(
@@ -587,8 +600,7 @@ func (l *Loader) snapshotSource(root string) parsedSource {
 		source.cache = new(*state)
 	}
 	if l.snapshot != nil && l.snapshot.compact == l.documents.compact {
-		if prior, ok := l.snapshot.sources[root]; ok && prior.input == source.input &&
-			*prior.binding == *source.binding {
+		if prior, ok := l.snapshot.sources[root]; ok && prior.binding.matches(source.binding, true) {
 			source.previous = new(prior.parsedDocuments)
 			for source.previous != nil && len(source.previous.documents) == 0 {
 				source.previous = source.previous.previous

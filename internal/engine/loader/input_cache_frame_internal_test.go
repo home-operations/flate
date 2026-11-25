@@ -16,13 +16,20 @@ import (
 	"testing/fstest"
 	"weak"
 
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 	"oras.land/oras-go/v2/errdef"
 	kustomizetypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/core/referencerole"
 	"github.com/home-operations/flate/internal/engine/kustomize/krusty"
+	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
+	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -82,7 +89,7 @@ metadata:
 	assert.Equal(t, walk(seed).unknownRecipe, true)
 	state := seed.inputCaches[root]
 	origin, url := state.input.OriginPath(root), state.input.URL
-	current, _ := cache.InputFrameIdentity(origin, url, nil)
+	current := cache.InputFrameLookup(origin, url)
 	policy := &cache.Policy{MaxAge: cache.Forever}
 	for _, version := range []int{4, 5} {
 		previous := publishPreviousInputFrame(t, seed, builder, version)
@@ -132,12 +139,7 @@ metadata:
 
 func publishPreviousInputFrame(t *testing.T, l *Loader, name string, version int) *inputFrame {
 	t.Helper()
-	owner, state := l.Options.Cache, l.inputCaches[l.SourceRoot]
-	origin, url := state.input.OriginPath(state.input.LocalPath), state.input.URL
-	previous := manifest.Fingerprint(struct {
-		Version             int
-		Domain, Origin, URL string
-	}{Version: version, Domain: "loader-inputs", Origin: origin, URL: url})
+	state := l.inputCaches[l.SourceRoot]
 	doc := l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, name))]
 	frame := &inputFrame{
 		Files: []cachedInput{{
@@ -158,22 +160,7 @@ func publishPreviousInputFrame(t *testing.T, l *Loader, name string, version int
 		frame.Walks = frame.Walks[walkIndex : walkIndex+1]
 		frame.Walks[0].UnknownRecipe = false
 	}
-	assert.NoError(t, state.certify(t.Context(), frame))
-	content, err := frame.prepare(t.Context())
-	assert.NoError(t, err)
-	_, identity := cache.InputFrameIdentity(origin, url, content)
-	binding := inputFrameContent{Origin: origin, URL: url, Content: identity}
-	publication, err := content.PreparePublication(t.Context(), cache.FramePublicationInput{
-		Owner: manifest.BootstrapSourceID, Content: binding, Complete: true,
-		Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
-	})
-	assert.NoError(t, err)
-	assert.NoError(t, cache.RecordInventory(t.Context(), owner, cache.AcceptedInventory[*cache.FramePublication]{
-		Key: previous, Acceptance: publication.Identity(), Content: publication,
-	}))
-	generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: previous, Render: cache.RenderAccepted},
-		&cache.Policy{MaxAge: cache.Forever}, nil)
-	assert.NoError(t, err)
+	generation, binding := publishVersionedInputFrame(t, l, frame, version)
 	var wire struct {
 		Files []map[string]json.RawMessage
 		Walks []map[string]json.RawMessage
@@ -197,6 +184,32 @@ func publishPreviousInputFrame(t *testing.T, l *Loader, name string, version int
 	restored, err := readInputFrame(t.Context(), generation)
 	assert.NoError(t, err)
 	return restored
+}
+
+func publishVersionedInputFrame(t *testing.T, l *Loader, frame *inputFrame, version int) (fs.FS, inputFrameContent) {
+	t.Helper()
+	owner, state := l.Options.Cache, l.inputCaches[l.SourceRoot]
+	origin, url := state.input.OriginPath(state.input.LocalPath), state.input.URL
+	previous := manifest.Fingerprint(struct {
+		Version             int
+		Domain, Origin, URL string
+	}{Version: version, Domain: "loader-inputs", Origin: origin, URL: url})
+	assert.NoError(t, state.certify(t.Context(), frame))
+	content, err := frame.prepare(t.Context())
+	assert.NoError(t, err)
+	binding := inputFrameContent{Origin: origin, URL: url, Content: content.ContentIdentity()}
+	publication, err := content.PreparePublication(t.Context(), cache.FramePublicationInput{
+		Owner: manifest.BootstrapSourceID, Content: binding, Complete: true,
+		Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, cache.RecordInventory(t.Context(), owner, cache.AcceptedInventory[*cache.FramePublication]{
+		Key: previous, Acceptance: publication.Identity(), Content: publication,
+	}))
+	generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: previous, Render: cache.RenderAccepted},
+		&cache.Policy{MaxAge: cache.Forever}, nil)
+	assert.NoError(t, err)
+	return generation, binding
 }
 
 func patchedInputResult(t *testing.T, l *Loader, files fstest.MapFS) string {
@@ -425,7 +438,7 @@ func TestFramePublication_UnavailableContent(t *testing.T) {
 	first := cachedFixtureLoader(t, root, files, owner)
 	assert.NoError(t, first.PersistInputs(t.Context()))
 	input := first.documents.artifacts[root]
-	lookup, _ := cache.InputFrameIdentity(input.OriginPath(root), input.URL, nil)
+	lookup := cache.InputFrameLookup(input.OriginPath(root), input.URL)
 	previous, previousDescriptor, _, err := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
 	var previousBytes []byte
 	if persistent {
@@ -615,4 +628,133 @@ func TestInputCache_FileDeclarations(t *testing.T) {
 			assert.Equal(t, pending.declarations == observation, true)
 		})
 	}
+}
+
+func TestInputCache_ReviewReboundSourceURL(t *testing.T) {
+	t.Parallel()
+	if reason := cache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skipf("render persistence disabled: %s", reason)
+	}
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	const file = "resource.yaml"
+	const staleFile = "stale.yaml"
+	testutil.WriteFile(t, root, file,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: item}\ndata: {value: '${COLOR}'}\n")
+	testutil.WriteFile(t, root, staleFile,
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stale}\ndata: {value: '${SIZE}'}\n")
+	commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
+		Author: &object.Signature{Name: "test", Email: "test@example.invalid"},
+	})
+	backing := repo.Storer.(*filesystem.Storage).Filesystem()
+	oldView, content, err := gittree.New(t.Context(), backing, commit, gittree.ViewOptions{Mode: gittree.Source})
+	assert.NoError(t, err)
+	newView, newContent, err := gittree.New(t.Context(), backing, commit, gittree.ViewOptions{Mode: gittree.Source})
+	assert.NoError(t, err)
+	assert.FatalIf(t, oldView == newView || content == "", "expected independent identified views")
+	assert.Equal(t, newContent, content)
+
+	owner, err := cache.New(t.Context(), t.TempDir())
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	t.Logf("render persistence enabled=%t", owner.CanPersistRenders())
+	assert.FatalIf(t, !owner.CanPersistRenders(), "persistence required")
+
+	oldInput := &store.SourceArtifact{
+		LocalPath: root, LocalRoot: root, Content: content, FS: oldView, URL: "https://old.example/repo",
+	}
+	newInput := oldInput.WithSourceView(newView)
+	newInput.URL = "https://new.example/repo"
+	oldLookup := cache.InputFrameLookup(oldInput.OriginPath(root), oldInput.URL)
+	newLookup := cache.InputFrameLookup(newInput.OriginPath(root), newInput.URL)
+	assert.FatalIf(t, oldLookup.Content == newLookup.Content, "expected distinct source lookups")
+
+	newLoader := func(t *testing.T, input *store.SourceArtifact, prepared *ParsedInputs) *Loader {
+		t.Helper()
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID, input)
+		l := New(st)
+		t.Cleanup(l.Close)
+		l.SourceRoot, l.Options.Cache, l.Options.ParsedInputs = root, owner, prepared
+		configureSelection(t, l, selection.Request{Changed: true})
+		l.documents.compact = true
+		l.mountSources()
+		return l
+	}
+	old := newLoader(t, oldInput, nil)
+	_, err = old.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, old.PersistInputs(t.Context()))
+	prepared := old.ParsedInputs()
+	assert.Equal(t, prepared.Matches(newInput), true)
+	source := prepared.sources[root]
+	assert.FatalIf(t, source.cache == nil, "expected saved state in the snapshot")
+	source.cache = nil
+	withoutState := &ParsedInputs{compact: prepared.compact, sources: map[string]parsedSource{root: source}}
+
+	seed := newLoader(t, newInput, nil)
+	_, err = seed.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	_, err = seed.projectionFile(t.Context(), newInput, file, true)
+	assert.NoError(t, err)
+	assert.NoError(t, seed.PersistInputs(t.Context()))
+
+	for _, tc := range []struct {
+		name     string
+		prepared *ParsedInputs
+		retained bool
+	}{
+		{name: "retained state", retained: true},
+		{name: "snapshot state", prepared: prepared},
+		{name: "snapshot without state", prepared: withoutState},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := newInput
+			if tc.retained {
+				input = oldInput
+			}
+			l := newLoader(t, input, tc.prepared)
+			if tc.retained {
+				assert.NoError(t, l.restoreCachedInputs(t.Context()))
+				assert.Equal(t, l.inputCaches[root].lookup.Content, oldLookup.Content)
+				l.Store.SetArtifact(manifest.BootstrapSourceID, newInput)
+				l.mountSources()
+			}
+			assert.NoError(t, l.restoreCachedInputs(t.Context()))
+			state := l.inputCaches[root]
+			assert.FatalIf(t, state == nil, "expected current saved state")
+			assert.Equal(t, state.input.URL, newInput.URL)
+			assert.Equal(t, state.lookup.Content, newLookup.Content)
+			evidence := state.files[inputCoordinate{name: file}]
+			assert.FatalIf(t, evidence.projection == nil, "expected projection from the new source frame")
+		})
+	}
+
+	t.Run("stale publication", func(t *testing.T) {
+		t.Parallel()
+		generation := func(key cache.BlobKey) string {
+			generation, _, _, readErr := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
+			assert.NoError(t, readErr)
+			data, readErr := fs.ReadFile(generation, cache.FileName(generation))
+			assert.NoError(t, readErr)
+			return manifest.Fingerprint(data)
+		}
+		oldGeneration, newGeneration := generation(oldLookup), generation(newLookup)
+		assert.FatalIf(t, oldGeneration == newGeneration, "expected distinct generations")
+
+		l := newLoader(t, oldInput, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
+		_, err = l.projectionFile(t.Context(), oldInput, staleFile, true)
+		assert.NoError(t, err)
+		l.Store.SetArtifact(manifest.BootstrapSourceID, newInput)
+		l.mountSources()
+		frame, err := l.cacheSourceInputs(l.inputCaches[root])
+		assert.NoError(t, err)
+		assert.FatalIf(t, frame == nil, "expected unpublished facts after the mount changed")
+		assert.NoError(t, l.PersistInputs(t.Context()))
+		assert.Equal(t, generation(oldLookup), oldGeneration)
+		assert.Equal(t, generation(newLookup), newGeneration)
+	})
 }

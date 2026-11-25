@@ -244,12 +244,7 @@ func (l *Loader) projectionFile(
 	location := filepath.Join(input.LocalPath, filepath.FromSlash(file))
 	known := l.packageProjectionKnown(location, true)
 	mounted := l.documents.artifacts[input.LocalPath]
-	shared := mounted != nil && parsedInputIdentity(mounted) == parsedInputIdentity(input) &&
-		mounted.Input(
-			store.ArtifactContent|store.ArtifactRevision,
-		) == input.Input(
-			store.ArtifactContent|store.ArtifactRevision,
-		)
+	shared := mounted != nil && new(parsedBindingFor(mounted)).matches(new(parsedBindingFor(input)), true)
 	var retained *projectionInputs
 	if shared {
 		l.documents.restore(location)

@@ -111,8 +111,7 @@ func TestFrame_ConcurrentIdentityPublication(t *testing.T) {
 				joined.Go(func() {
 					ready.Done()
 					<-start
-					_, identity := InputFrameIdentity("source", "url", opened)
-					assert.Equal(t, identity, frame.raw)
+					assert.Equal(t, opened.ContentIdentity(), frame.raw)
 					_, complete := opened.History(owner, "final")
 					assert.Equal(t, complete, accepted)
 					prepared, prepareErr := opened.PreparePublication(t.Context(), input)

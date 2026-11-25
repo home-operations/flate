@@ -528,7 +528,8 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 	t.Logf("render persistence reason=%q backing=disk", reason)
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, t.TempDir(), New)
-		key := BlobKey{Content: "render-metadata", Render: RenderAccepted}
+		const content = "render-metadata"
+		key := BlobKey{Content: content, Render: RenderAccepted}
 		_, _, id, err := c.Blob(
 			t.Context(),
 			key,
@@ -540,14 +541,17 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 		if !persistent {
 			_, known := c.entries.Load(id)
 			assert.Equal(t, known, false)
-			assert.Equal(t, id, key.Content.(string))
+			assert.Equal(t, id, content)
 			var recording manifest.WorkRecorder
 			accounting := manifest.AcquisitionWork{Scope: recording.Scope()}
-			metadata, metadataErr := c.RenderMetadata(t.Context(), key.Content.(string), id, &accounting)
-			assert.NoError(t, metadataErr)
-			assert.Equal(t, metadata.Enabled, false)
-			assert.Equal(t, metadata.Identity, "")
-			assert.Equal(t, len(metadata.Descriptor.Annotations), 0)
+			assert.NoError(t, RecordInventory(t.Context(), c, AcceptedInventory[inventoryContent]{
+				Key: content, Lookup: id, Work: &accounting,
+				Content: func(io.Writer) (int64, error) {
+					t.Fatal("disabled inventory wrote a payload")
+					return 0, nil
+				},
+			}))
+			assert.Equal(t, c.CanPersistRenders(), false)
 			assert.Equal(t, accounting.Lookup(id).Counts, manifest.WorkCounts{})
 			generation, _, _, lookupErr := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
 			assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
@@ -567,10 +571,9 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 		e.fs = input
 		var recording manifest.WorkRecorder
 		accounting := manifest.AcquisitionWork{Scope: recording.Scope()}
-		renderMetadataResult, err := c.RenderMetadata(t.Context(), key.Content.(string), id, &accounting)
-		descriptor, enabled := renderMetadataResult.Descriptor, renderMetadataResult.Enabled
+		request := acquireKey{producer: blobProducer{content: content, render: RenderAccepted}, id: id, render: true}
+		descriptor, err := c.renderMetadata(t.Context(), &request, &accounting)
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
 		assert.Equal(t, descriptor.Annotations["generation"], "first")
 		assert.Equal(t, accounting.Lookup(id).Counts, manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1})
 		started, publish := make(chan struct{}), make(chan struct{})
@@ -590,42 +593,22 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 			finished <- generationErr
 		}()
 		<-started
-		renderMetadataResult2, renderMetadataResult2Err := c.RenderMetadata(
-			t.Context(),
-			key.Content.(string),
-			id,
-			&accounting,
-		)
-		descriptor, enabled, err = renderMetadataResult2.Descriptor, renderMetadataResult2.Enabled, renderMetadataResult2Err
+		descriptor, err = c.renderMetadata(t.Context(), &request, &accounting)
 		close(publish)
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
 		assert.Equal(t, descriptor.Annotations["generation"], "first")
 		assert.NoError(t, <-finished)
 		current, _ := c.entries.Load(id)
 		head := current.(*entry)
 		assert.NoError(t, c.root.Chtimes(blobPath(head.stored.Digest), stamp, stamp))
-		renderMetadataResult3, renderMetadataResult3Err := c.RenderMetadata(
-			t.Context(),
-			key.Content.(string),
-			id,
-			&accounting,
-		)
-		descriptor, enabled, err = renderMetadataResult3.Descriptor, renderMetadataResult3.Enabled, renderMetadataResult3Err
+		descriptor, err = c.renderMetadata(t.Context(), &request, &accounting)
 		assert.NoError(t, err)
-		assert.Equal(t, enabled, true)
 		assert.Equal(t, descriptor.Annotations["generation"], "second")
 		assert.Equal(t, e.descriptor.Annotations["generation"], "first")
 		before, err := c.root.Stat(blobPath(head.stored.Digest))
 		assert.NoError(t, err)
 		time.Sleep(2 * accessInterval)
-		_, renderMetadataResult4Err := c.RenderMetadata(
-			t.Context(),
-			key.Content.(string),
-			id,
-			&accounting,
-		)
-		err = renderMetadataResult4Err
+		_, err = c.renderMetadata(t.Context(), &request, &accounting)
 		assert.NoError(t, err)
 		after, err := c.root.Stat(blobPath(head.stored.Digest))
 		assert.NoError(t, err)

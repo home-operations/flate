@@ -51,6 +51,32 @@ func buildIdentity(info *debug.BuildInfo) buildStamp {
 	return buildStamp{identity: manifest.Fingerprint(info.String())}
 }
 
+// RenderLookups retains cache identities within one renderer preparation.
+type RenderLookups struct {
+	content, pending, accepted string
+}
+
+func (l *RenderLookups) prepare(content string, phase RenderMode, key *acquireKey, work *manifest.AcquisitionWork) {
+	if l.content != content {
+		*l = RenderLookups{content: content}
+	}
+	lookup := &l.pending
+	if phase == RenderAccepted {
+		lookup = &l.accepted
+	}
+	key.id = *lookup
+	key.prepare(work)
+	*lookup = key.id
+}
+
+// Accepted returns the cache identity already prepared for publication.
+func (l *RenderLookups) Accepted(content string) string {
+	if l.content != content {
+		return ""
+	}
+	return l.accepted
+}
+
 type renderIdentity struct {
 	Format int
 	Phase  RenderMode

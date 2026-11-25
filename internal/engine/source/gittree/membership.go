@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,6 +25,10 @@ type membership struct {
 	extra     []string
 	ignored   map[string]struct{}
 	captured  bool
+}
+
+func (m *membership) matches(other *membership) bool {
+	return m.directory == other.directory && slices.Equal(m.extra, other.extra) && maps.Equal(m.ignored, other.ignored)
 }
 
 func sourceOrigin(previous *FS, mode ViewMode, commit plumbing.Hash) *FS {
@@ -102,6 +107,23 @@ func ExcludeDirectory(input *store.SourceArtifact, directory string) *store.Sour
 		selected.membership.extra = append(slices.Clone(selected.membership.extra), rel)
 	}
 	return input.WithSourceView(selected)
+}
+
+// SameView requires captured Git identity when comparing separate reader handles.
+func (g *FS) SameView(other *FS) bool {
+	if g == nil || other == nil || g.policyKey != other.policyKey || !g.membership.matches(&other.membership) {
+		return false
+	}
+	switch view := g.view.(type) {
+	case *gitView:
+		right, ok := other.view.(*gitView)
+		return ok && view.identity != "" && view.identity == right.identity
+	case *scopedView:
+		right, ok := other.view.(*scopedView)
+		return ok && view.path == right.path && view.parent.SameView(right.parent)
+	default:
+		return false
+	}
 }
 
 func (g *FS) excludes(name string) bool {

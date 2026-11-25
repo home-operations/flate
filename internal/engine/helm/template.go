@@ -2,6 +2,7 @@ package helm
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -492,7 +493,7 @@ func (r *templateRequest) render(
 			return nil, nil, encodeRenderErr
 		}
 		frame := renderFrame{
-			Key: r.key, Output: payload, Inputs: r.binding,
+			Key: r.key, Lookup: r.addresses.Accepted(r.key), Output: payload, Inputs: r.binding,
 			Header: renderHeader{
 				Analysis: r.loaded.analysis, chart: r.loaded.chart,
 				persist: c.cache.CanPersistRenders(),
@@ -579,12 +580,15 @@ func (r *templateRequest) validateRecord(
 	if err != nil || !validated.Valid {
 		return nil, nil, err
 	}
-	if !bindingMatches || record.receipt == nil || !manifest.ValueEqual(frame.Header.content, r.content) {
+	lookup := cmp.Or(r.addresses.Accepted(r.key), frame.Lookup)
+	if !bindingMatches || record.receipt == nil || frame.Lookup != lookup ||
+		!manifest.ValueEqual(frame.Header.content, r.content) {
 		fresh := *record
 		// A rebound receipt MUST NOT displace the durable generation for its original binding.
 		if validated.Rebound && raw.Stored != nil && raw.Binding != "" && fresh.accepted == nil {
 			fresh.accepted = new(raw)
 		}
+		frame.Lookup = lookup
 		frame.Header.content = r.release.Clone().Content(r.key, r.input.Omitted)
 		frame.Header.persist = r.client.cache.CanPersistRenders()
 		fresh.frame = frame

@@ -63,7 +63,7 @@ func TestTemplate_CurrentRenderAdmission(t *testing.T) {
 				return
 			}
 			frame := observed.Receipt.Value().(renderFrame)
-			assert.Equal(t, frame.Lookup, "")
+			assert.Equal(t, frame.Lookup != "", client.cache.CanPersistRenders())
 			accepted := false
 			if frame.Stored != nil {
 				_, accepted = frame.Stored.History(hr.Named(), frame.Header.content)

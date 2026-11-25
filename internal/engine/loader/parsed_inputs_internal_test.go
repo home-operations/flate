@@ -10,12 +10,16 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -102,6 +106,96 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		)
 	},
 	)
+}
+
+func TestParsedInputs_GitViewReplay(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	const file = "resource.yaml"
+	for _, dir := range []string{"left", "right"} {
+		testutil.WriteFile(t, root, dir+"/"+file, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+dir+"}\n")
+	}
+	testutil.WriteFile(t, root, "left/excluded/README", "excluded\n")
+	commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
+		Author: &object.Signature{Name: "test", Email: "test@example.invalid"},
+	})
+	backing := repo.Storer.(*filesystem.Storage).Filesystem()
+	first, content, err := gittree.New(t.Context(), backing, commit, gittree.ViewOptions{Mode: gittree.Source})
+	assert.NoError(t, err)
+	second, secondContent, err := gittree.New(t.Context(), backing, commit, gittree.ViewOptions{Mode: gittree.Source})
+	assert.NoError(t, err)
+	assert.FatalIf(t, first == second || content == "", "expected distinct Git handles with identified content")
+	assert.Equal(t, secondContent, content)
+	policy, _, err := gittree.New(
+		t.Context(),
+		backing,
+		commit,
+		gittree.ViewOptions{Mode: gittree.Source, Ignore: "absent"},
+	)
+	assert.NoError(t, err)
+
+	left, err := gittree.Sub(first, "left")
+	assert.NoError(t, err)
+	otherLeft, err := gittree.Sub(second, "left")
+	assert.NoError(t, err)
+	right, err := gittree.Sub(first, "right")
+	assert.NoError(t, err)
+	changedPolicy, err := gittree.Sub(policy, "left")
+	assert.NoError(t, err)
+	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, Content: content, FS: left}
+	filtered := gittree.ExcludeDirectory(input, filepath.Join(root, "excluded"))
+	_, err = fs.Stat(filtered.FS, "excluded/README")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	rebound := *input.WithSourceView(otherLeft)
+	rebound.Revision = "different-revision"
+	anonymous := *input
+	anonymous.Content = ""
+	for _, tc := range []struct {
+		name   string
+		first  *store.SourceArtifact
+		second *store.SourceArtifact
+		object string
+		opens  int64
+	}{
+		{name: "equivalent", first: input, second: input.WithSourceView(otherLeft), object: "left", opens: 1},
+		{name: "different scope", first: input, second: input.WithSourceView(right), object: "right", opens: 2},
+		{name: "different policy", first: input, second: input.WithSourceView(changedPolicy), object: "left", opens: 2},
+		{name: "excluded membership", first: input, second: filtered, object: "left", opens: 2},
+		{name: "changed material", first: input, second: &rebound, object: "left", opens: 2},
+		{name: "anonymous", first: &anonymous, second: anonymous.WithSourceView(otherLeft), object: "left", opens: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var opens atomic.Int64
+			read := func(artifact *store.SourceArtifact, prepared *ParsedInputs, want string) *Loader {
+				l := New(store.New())
+				t.Cleanup(l.Close)
+				l.documents = documentReader{
+					parsed:    prepared,
+					bootstrap: root,
+					cache:     map[string]document{},
+					artifacts: map[string]*store.SourceArtifact{root: artifact},
+					views: map[string]fs.FS{
+						root: parsedReadFS{FS: artifact.FS, reads: map[string]*atomic.Int64{file: &opens}},
+					},
+				}
+				objects, readErr := l.documents.fileObjects(
+					t.Context(),
+					filepath.Join(root, file),
+					manifest.ParseDocOptions{},
+				)
+				assert.NoError(t, readErr)
+				assert.FatalIf(t, len(objects) != 1 || objects[0].Obj == nil, "expected one object, got %v", objects)
+				assert.Equal(t, objects[0].Obj.Named().Name, want)
+				return l
+			}
+			planner := read(tc.first, nil, "left")
+			assert.Equal(t, opens.Load(), int64(1))
+			read(tc.second, planner.ParsedInputs(), tc.object)
+			assert.Equal(t, opens.Load(), tc.opens)
+		})
+	}
 }
 
 func TestParsedInputs_PhysicalReplayLifetime(t *testing.T) {

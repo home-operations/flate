@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -224,6 +225,96 @@ func TestProducersForPaths_Publication(t *testing.T) {
 type inventoryContent func(io.Writer) (int64, error)
 
 func (p inventoryContent) WriteTo(output io.Writer) (int64, error) { return p(output) }
+
+func TestRecordInventory_RenderAddresses(t *testing.T) {
+	t.Parallel()
+	if reason := RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	c := cachetest.New(t, t.TempDir(), New)
+	assert.FatalIf(t, !c.CanPersistRenders(), "%s", "disk cache must persist renders")
+	recorder := &manifest.WorkRecorder{}
+	work := recorder.Scope().RenderWork()
+	const content = "shared-render-input"
+	blob := BlobKey{Content: content, Render: RenderPending}
+	policy := Policy{Work: work.Pending(), HistoryWork: work.History()}
+	_, _, pendingLookup, err := c.Blob(t.Context(), blob, &policy, func(
+		_ context.Context, output ProducerInput,
+	) (ProducerResult, error) {
+		_, err := io.WriteString(output, "first")
+		return ProducerResult{}, err
+	})
+	assert.NoError(t, err)
+	pending := acquireKey{
+		producer: blobProducer{content: content, render: RenderPending},
+		id:       pendingLookup, lookupOnly: true, memoryOnly: true, render: true,
+	}
+	policy.MaxAge = Forever
+	hit, hitLookup, err := c.acquire(t.Context(), &pending, &policy, acquisitionCallbacks{})
+	assert.NoError(t, err)
+	assert.Equal(t, hitLookup, pendingLookup)
+	payload, err := fs.ReadFile(hit.fs, payloadName)
+	assert.NoError(t, err)
+	assert.Equal(t, string(payload), "first")
+
+	lookup := blobID(processIdentity, content, RenderAccepted)
+	rawPrepares := work.Scope.Record(manifest.WorkPreparation, lookup)
+	assert.Equal(t, rawPrepares.Counts.RawKeyPrepares, uint64(0))
+	inventory := AcceptedInventory[*strings.Reader]{
+		Key: content, Acceptance: "first", Content: strings.NewReader(string(payload)), Work: work.History(),
+	}
+	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
+	assert.Equal(t, rawPrepares.Counts.RawKeyPrepares, uint64(1))
+
+	lookups := RenderLookups{content: content, accepted: lookup}
+	reader, descriptor, acceptedLookup, err := c.Blob(
+		t.Context(),
+		BlobKey{Content: content, Render: RenderAccepted, Lookups: &lookups},
+		&Policy{MaxAge: Forever, Work: work.History()},
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, acceptedLookup, lookup)
+	assert.Equal(t, descriptor.Annotations[acceptedRenderAnnotation], "first")
+	accepted, err := fs.ReadFile(reader, payloadName)
+	assert.NoError(t, err)
+	assert.Equal(t, string(accepted), "first")
+	assert.Equal(t, rawPrepares.Counts.RawKeyPrepares, uint64(1))
+
+	inventory.Lookup = lookup
+	inventory.Acceptance, inventory.Content = "second", strings.NewReader("second")
+	assert.NoError(t, RecordInventory(t.Context(), c, inventory))
+	_, descriptor, _, err = c.Blob(
+		t.Context(),
+		BlobKey{Content: content, Render: RenderAccepted, Lookups: &lookups},
+		&Policy{MaxAge: Forever, Work: work.History()},
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, descriptor.Annotations[acceptedRenderAnnotation], "second")
+	assert.Equal(t, rawPrepares.Counts.RawKeyPrepares, uint64(1))
+}
+
+func TestRecordInventory_CanceledBeforeAddress(t *testing.T) {
+	t.Parallel()
+	if reason := RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	c := cachetest.New(t, t.TempDir(), New)
+	assert.Equal(t, c.CanPersistRenders(), true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	var recorder manifest.WorkRecorder
+	const content = "canceled-inventory"
+	work := recorder.Scope().RenderWork().History()
+	err := RecordInventory(ctx, c, AcceptedInventory[*strings.Reader]{
+		Key: content, Acceptance: "canceled", Content: strings.NewReader("unused"), Work: work,
+	})
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+	lookup := blobID(processIdentity, content, RenderAccepted)
+	assert.Equal(t, work.Scope.Record(manifest.WorkPreparation, lookup).Counts.RawKeyPrepares, uint64(0))
+}
 
 func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 	t.Parallel()

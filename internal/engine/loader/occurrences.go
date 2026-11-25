@@ -528,12 +528,8 @@ func (l *Loader) OccurrenceObject(
 	}
 	reader := l.documents
 	mounted := reader.artifacts[occurrence.Declaration.Source]
-	matching := input == nil || mounted != nil && parsedInputIdentity(input) == parsedInputIdentity(mounted) &&
-		input.Input(
-			store.ArtifactContent|store.ArtifactRevision,
-		) == mounted.Input(
-			store.ArtifactContent|store.ArtifactRevision,
-		)
+	matching := input == nil || mounted != nil &&
+		new(parsedBindingFor(input)).matches(new(parsedBindingFor(mounted)), true)
 	cached := !reader.compact && matching
 	if !cached {
 		reader.cache = nil

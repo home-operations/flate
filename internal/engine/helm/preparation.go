@@ -26,6 +26,7 @@ type Preparation struct {
 	capabilityErr error
 	key           string
 	binding       cache.RenderBinding[templatePolicy]
+	lookups       cache.RenderLookups
 	values        map[string]any
 }
 
@@ -67,9 +68,10 @@ func (p *Preparation) matchesValues(current map[string]any) bool {
 type templateRequest struct {
 	Preparation
 
-	input   RenderOptions
-	release *manifest.HelmRelease
-	content any
+	input     RenderOptions
+	release   *manifest.HelmRelease
+	content   any
+	addresses *cache.RenderLookups
 }
 
 func (c *Client) prepareTemplate(
@@ -77,13 +79,13 @@ func (c *Client) prepareTemplate(
 	hr *manifest.HelmRelease,
 	hrValues map[string]any,
 	input *RenderOptions,
-) (templateRequest, error) {
+) (*templateRequest, error) {
 	work := input.Work.Preparation()
 	opts := input.Options
 	if err := ctx.Err(); err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		return templateRequest{}, err
+		return nil, err
 	}
 	artifact := input.Sources.chartInput(hr)
 	previous := input.Preparation
@@ -107,7 +109,7 @@ func (c *Client) prepareTemplate(
 	if err != nil {
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
-		return templateRequest{}, err
+		return nil, err
 	}
 	if hr.TracksDigest() {
 		loaded.oci = &ociChartContent{
@@ -221,15 +223,20 @@ func (p *Preparation) bindSource(hr *manifest.HelmRelease, artifact *store.Sourc
 	p.complete = true
 }
 
-func (p *Preparation) request(hr *manifest.HelmRelease, input *RenderOptions) templateRequest {
+func (p *Preparation) request(hr *manifest.HelmRelease, input *RenderOptions) *templateRequest {
 	omitted := slices.Clone(input.Omitted)
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
 	omitted = slices.Compact(omitted)
 	current := *input
 	current.Omitted = omitted
-	return templateRequest{
+	request := &templateRequest{
 		Preparation: *p, input: current, release: hr, content: hr.Content(p.key, omitted),
 	}
+	request.addresses = &request.Preparation.lookups
+	if input.Preparation != nil {
+		request.addresses = &input.Preparation.lookups
+	}
+	return request
 }
 
 // PrepareChart MUST leave transport and cleanup ownership with the acquisition continuation.

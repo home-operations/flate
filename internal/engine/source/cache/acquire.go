@@ -66,6 +66,8 @@ type BlobKey struct {
 	Content any
 	// Render selects pending work or accepted history; zero denotes source content.
 	Render RenderMode
+	// Lookups belongs to one renderer preparation and must not be shared across concurrent calls.
+	Lookups *RenderLookups
 	// Validate checks a candidate against this caller's inputs under the acquisition lock.
 	// Streams belong to the callback; the callback never affects identity.
 	Validate func(context.Context, fs.FS) (bool, error)
@@ -140,9 +142,17 @@ type acquireKey struct {
 	required   []string
 	lookupOnly bool
 	accepted   string
+	lookups    *RenderLookups
 	memoryOnly bool
 	render     bool
 	policy     Policy
+}
+
+func (k *acquireKey) prepare(work *manifest.AcquisitionWork) {
+	if k.id == "" {
+		k.id = k.producer.identity()
+		work.Prepare(k.id, k.render)
+	}
 }
 
 type producerError struct {
@@ -243,8 +253,14 @@ func (c *Cache) Blob(
 		memoryOnly: key.Render == RenderPending,
 		render:     key.Render != 0,
 	}
-	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
-		request.accepted = key.Content.(string) //nolint:errcheck // RenderPending callers supply string content identities for accepted history.
+	if key.Render != 0 {
+		content := key.Content.(string) //nolint:errcheck // Rendered blobs require a string content identity.
+		if key.Lookups != nil {
+			key.Lookups.prepare(content, key.Render, &request, policy.Work)
+		}
+		if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
+			request.accepted, request.lookups = content, key.Lookups
+		}
 	}
 	var validate func(context.Context, *entry) (bool, error)
 	if key.Validate != nil {
@@ -294,78 +310,55 @@ func (k *BlobKey) observer() func(context.Context, *entry) (bool, error) {
 	}
 }
 
-// RenderMetadata returns the current descriptor and generation without opening the payload.
-// Enabled reports whether this owner can persist renders. A nonempty lookup
-// MUST identify Blob accepted history for this content; an empty lookup derives it.
-func (c *Cache) RenderMetadata(
+// Inventory lookup MUST validate the backing file without opening the payload.
+func (c *Cache) renderMetadata(
 	ctx context.Context,
-	content, lookup string,
+	key *acquireKey,
 	work *manifest.AcquisitionWork,
-) (RenderMetadata, error) {
-	enabled, err := c.renderEnabled(ctx, content)
-	if err != nil || !enabled {
-		return RenderMetadata{Enabled: enabled}, err
-	}
-	if errErr := ctx.Err(); errErr != nil {
-		return RenderMetadata{Enabled: true}, &Error{errErr}
-	}
-	var e *entry
-	var memory *manifest.WorkRecord
-	if lookup != "" {
-		if value, ok := c.entries.Load(lookup); ok {
-			current := value.(*entry) //nolint:errcheck // Cache.entries writers publish only *entry; corruption must panic.
-			if current.ready.Load() && time.Now().UnixNano()-current.touched.Load() < int64(accessInterval) {
-				e = current
-				memory = work.Lookup(lookup)
-				memory.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
-			}
+) (ocispec.Descriptor, error) {
+	if value, ok := c.entries.Load(key.id); ok {
+		current := value.(*entry) //nolint:errcheck // Cache.entries writers publish only *entry; corruption must panic.
+		if current.ready.Load() && time.Now().UnixNano()-current.touched.Load() < int64(accessInterval) {
+			memory := work.Lookup(key.id)
+			memory.Add(&manifest.WorkCounts{Attempts: 1, CacheService: 1})
+			descriptor, err := c.renderDescriptor(current)
+			memory.Finish(err)
+			return descriptor, err
 		}
 	}
-	if e == nil {
-		key := BlobKey{Content: content, Render: RenderAccepted}
-		request := acquireKey{
-			producer:   blobProducer{content: key.Content, render: key.Render},
-			lookupOnly: true,
-			render:     true,
-			policy:     Policy{MaxAge: Forever, Work: work},
-		}
-		if lookup == "" {
-			e, _, err = c.acquire(ctx, new(request), &Policy{MaxAge: Forever, Work: work}, acquisitionCallbacks{})
-		} else {
-			request.id = lookup
-			e, err = c.acquireOnce(ctx, &request, acquisitionCallbacks{})
-		}
-		if err == nil && !e.ready.Load() {
-			e.ready.Store(true)
-		}
-		if err != nil {
-			return RenderMetadata{Enabled: true}, err
-		}
+
+	request := *key
+	request.lookupOnly = true
+	request.policy = Policy{MaxAge: Forever, Work: work}
+	e, err := c.acquireOnce(ctx, &request, acquisitionCallbacks{})
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
-	metadata, err := c.renderDescriptor(e)
-	memory.Finish(err)
-	return metadata, err
+	if !e.ready.Load() {
+		e.ready.Store(true)
+	}
+	return c.renderDescriptor(e)
 }
 
-func (c *Cache) renderDescriptor(e *entry) (RenderMetadata, error) {
+func (c *Cache) renderDescriptor(e *entry) (ocispec.Descriptor, error) {
 	root := &c.blobRoots[slices.Index(blobAlgorithms[:], e.stored.Digest.Algorithm())]
 	current, temporary, err := root.current(c.root)
 	if err != nil {
-		return RenderMetadata{Enabled: true}, &Error{err}
+		return ocispec.Descriptor{}, &Error{err}
 	}
 	if temporary {
 		defer func() { _ = current.Close() }()
 	}
 	info, err := current.Stat(e.stored.Digest.Encoded())
 	if err != nil {
-		return RenderMetadata{Enabled: true}, &Error{err}
+		return ocispec.Descriptor{}, &Error{err}
 	}
 	if !info.Mode().IsRegular() {
-		return RenderMetadata{Enabled: true}, &Error{
+		return ocispec.Descriptor{}, &Error{
 			fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid),
 		}
 	}
-	return RenderMetadata{Descriptor: e.descriptor, Identity: e.stored.Digest.String(), Enabled: true}, nil
+	return e.descriptor, nil
 }
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
@@ -746,11 +739,4 @@ func (c *Cache) missingGeneration(key *acquireKey, e *entry) error {
 		c.entries.CompareAndDelete(key.id, e)
 	}
 	return &Error{errdef.ErrNotFound}
-}
-
-// RenderMetadata identifies the accepted generation without opening its payload.
-type RenderMetadata struct {
-	Descriptor ocispec.Descriptor
-	Identity   string
-	Enabled    bool
 }

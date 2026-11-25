@@ -114,35 +114,44 @@ func (l *Loader) restoreCachedInputs(ctx context.Context) error {
 	if !l.documents.compact || l.documents.eager || l.Options.Cache == nil || !l.Options.Cache.CanPersistRenders() {
 		return nil
 	}
-	maps.DeleteFunc(l.inputCaches, func(root string, state *inputCache) bool {
-		input := inputprojection.Authored(l.documents.artifacts[root])
-		return input == nil || parsedInputIdentity(input) != parsedInputIdentity(state.input) ||
-			input.Input(
-				store.ArtifactContent|store.ArtifactRevision,
-			) != inputprojection.Authored(state.input).Input(
-				store.ArtifactContent|store.ArtifactRevision,
-			)
+	maps.DeleteFunc(l.inputCaches, func(root string, _ *inputCache) bool {
+		return l.documents.artifacts[root] == nil
 	})
 	for _, root := range slices.Sorted(maps.Keys(l.documents.artifacts)) {
 		input := inputprojection.Authored(l.documents.artifacts[root])
-		view, ok := input.FS.(*gittree.FS)
-		if !ok || l.inputCaches[root] != nil {
+		if input == nil {
+			delete(l.inputCaches, root)
 			continue
 		}
-		if prepared := l.Options.ParsedInputs; prepared != nil && prepared.Matches(input) {
-			if state := prepared.sources[root].cache; state != nil {
+		view, ok := input.FS.(*gittree.FS)
+		if !ok {
+			delete(l.inputCaches, root)
+			continue
+		}
+		lookup := cache.InputFrameLookup(input.OriginPath(input.LocalPath), input.URL)
+		binding := parsedBindingFor(input)
+		if l.inputCaches[root].matches(&binding, &lookup) {
+			continue
+		}
+		delete(l.inputCaches, root)
+		if prepared := l.Options.ParsedInputs; prepared != nil {
+			if state := prepared.sources[root].cache; state.matches(&binding, &lookup) {
 				if l.inputCaches == nil {
 					l.inputCaches = map[string]*inputCache{}
 				}
 				l.inputCaches[root] = new(*state)
+				continue
 			}
-			continue
 		}
-		if err := l.restoreSourceInputs(ctx, input, view); err != nil {
+		if err := l.restoreSourceInputs(ctx, input, view, lookup); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *inputCache) matches(binding *parsedBinding, lookup *cache.BlobKey) bool {
+	return s != nil && s.lookup.Content == lookup.Content && binding.matches(new(parsedBindingFor(s.input)), true)
 }
 
 //nolint:gocritic // Readers share the map while deferred records remain immutable.
@@ -249,9 +258,13 @@ func (l *Loader) PersistInputs(ctx context.Context) error {
 }
 
 func (l *Loader) persistSourceInputs(ctx context.Context, state *inputCache) error {
-	input := state.input
-	mounted := l.documents.artifacts[input.LocalPath]
-	if mounted == nil || parsedInputIdentity(input) != parsedInputIdentity(mounted) {
+	input := inputprojection.Authored(l.documents.artifacts[state.input.LocalPath])
+	if input == nil {
+		return nil
+	}
+	origin := input.OriginPath(input.LocalPath)
+	lookup := cache.InputFrameLookup(origin, input.URL)
+	if !state.matches(new(parsedBindingFor(input)), &lookup) {
 		return nil
 	}
 	frame, err := l.cacheSourceInputs(state)
@@ -273,11 +286,10 @@ func (l *Loader) persistSourceInputs(ctx context.Context, state *inputCache) err
 	if content == nil {
 		return nil
 	}
-	_, contentKey := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, content)
 	publication, err := content.PreparePublication(ctx, cache.FramePublicationInput{
 		Owner: manifest.BootstrapSourceID,
 		Content: inputFrameContent{
-			Origin: input.OriginPath(input.LocalPath), URL: input.URL, Content: contentKey,
+			Origin: origin, URL: input.URL, Content: content.ContentIdentity(),
 		},
 		Complete: true,
 		Records:  maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
@@ -288,8 +300,8 @@ func (l *Loader) persistSourceInputs(ctx context.Context, state *inputCache) err
 	if publication == nil {
 		return nil
 	}
-	//nolint:errcheck // InputFrameIdentity returns a string lookup identity.
-	lookupKey := state.lookup.Content.(string)
+	//nolint:errcheck // InputFrameLookup returns a string lookup identity.
+	lookupKey := lookup.Content.(string)
 	err = cache.RecordInventory(ctx, l.Options.Cache, cache.AcceptedInventory[*cache.FramePublication]{
 		Key: lookupKey, Acceptance: publication.Identity(), Content: publication,
 	})
@@ -392,12 +404,13 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 	return saved, true, nil
 }
 
-func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArtifact, view *gittree.FS) error {
+func (l *Loader) restoreSourceInputs(
+	ctx context.Context, input *store.SourceArtifact, view *gittree.FS, lookup cache.BlobKey,
+) error {
 	observation, err := view.FreshInputs(ctx, nil, nil)
 	if err != nil {
 		return err
 	}
-	lookup, _ := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, nil)
 	state := &inputCache{
 		lookup:  lookup,
 		input:   input,
@@ -427,9 +440,8 @@ func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArt
 	if err != nil {
 		return err
 	}
-	_, contentKey := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, frame.frame)
 	if _, complete := frame.frame.History(manifest.BootstrapSourceID, inputFrameContent{
-		Origin: input.OriginPath(input.LocalPath), URL: input.URL, Content: contentKey,
+		Origin: input.OriginPath(input.LocalPath), URL: input.URL, Content: frame.frame.ContentIdentity(),
 	}); !complete {
 		return nil
 	}

@@ -146,7 +146,7 @@ func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	first := cachedFixtureLoader(t, root, files, owner)
 	assert.NoError(t, first.PersistInputs(t.Context()))
 	input := first.documents.artifacts[root]
-	lookup, _ := cache.InputFrameIdentity(input.OriginPath(root), input.URL, nil)
+	lookup := cache.InputFrameLookup(input.OriginPath(root), input.URL)
 	generation, _, _, readErr := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
 	if persistent {
 		assert.NoError(t, readErr)

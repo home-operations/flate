@@ -36,6 +36,30 @@ type Entry struct {
 	partitioned bool
 	roots       []int
 	target      string
+	packagePath string
+	builder     *string
+}
+
+type entryBuilderLookup struct {
+	input *store.SourceArtifact
+	path  string
+	file  string
+}
+
+type entryCoordinates struct {
+	packagePath string
+	partitioned bool
+}
+
+func (e *entryCoordinates) scanPath(requested string) string {
+	if e.isPartitioned() {
+		return cmp.Or(e.packagePath, requested)
+	}
+	return requested
+}
+
+func (e *entryCoordinates) isPartitioned() bool {
+	return e != nil && e.partitioned
 }
 
 type entryInputs struct {
@@ -363,9 +387,27 @@ func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan strin
 			entry.Path = scan
 		}
 		entry.partitioned = entry.Path != scan
+		if entry.target != "" {
+			entry.packagePath = entry.plannedBootstrapPath(coordinate, roots)
+		}
 		result = append(result, entry)
 	}
 	return result
+}
+
+func (e *Entry) plannedBootstrapPath(coordinate string, roots []clusterRoot) string {
+	file := nativeEntry(e.Input.FS, coordinate)
+	e.builder = &file
+	if file != "" {
+		return coordinate
+	}
+	for _, index := range e.roots {
+		root := &roots[index]
+		if root.packageBuild != nil && safepath.Contains(coordinate, root.Path) {
+			return root.Path
+		}
+	}
+	return ""
 }
 
 func (r *clusterRoot) partitionAnchors(input *store.SourceArtifact) []clusterRoot {
@@ -671,26 +713,31 @@ func (d *Session) requiresEntry() bool {
 	return d.aggregateRequiresBuild && d.hasEntryBuilder()
 }
 
+func (d *Session) entryScanPath() string {
+	return d.entryCoordinates.scanPath(d.cfg.Path)
+}
+
 func (d *Session) hasEntryBuilder() bool {
 	input := d.cfg.Input
 	if input == nil {
 		return false
 	}
-	if file, known := d.cachedEntryBuilder(input, d.cfg.Path); known {
+	root := d.entryScanPath()
+	if file, known := d.cachedEntryBuilder(input, root); known {
 		return file != ""
 	}
-	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, ""
-	relative, err := filepath.Rel(input.LocalPath, d.cfg.Path)
+	d.entryBuilder = entryBuilderLookup{input: input, path: root}
+	relative, err := filepath.Rel(input.LocalPath, root)
 	if err == nil {
-		d.entryBuilder = nativeEntry(input.FS, relative)
+		d.entryBuilder.file = nativeEntry(input.FS, relative)
 	}
-	return d.entryBuilder != ""
+	return d.entryBuilder.file != ""
 }
 
 func (d *Session) cachedEntryBuilder(input *store.SourceArtifact, absolute string) (string, bool) {
-	if d != nil && d.entryBuilderInput != nil && d.entryBuilderPath == absolute &&
-		input.SameMaterial(d.entryBuilderInput, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
-		return d.entryBuilder, true
+	if d != nil && d.entryBuilder.input != nil && d.entryBuilder.path == absolute &&
+		input.SameMaterial(d.entryBuilder.input, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) {
+		return d.entryBuilder.file, true
 	}
 	return "", false
 }

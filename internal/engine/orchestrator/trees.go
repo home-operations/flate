@@ -449,7 +449,11 @@ func (r *Invocation) qualifyReaders(ctx context.Context, i int) error {
 	if other != nil {
 		other.cfg.ExternalChanges = resolved
 		current.bindKustomizeInputs(ctx, other, resolved)
-		current.session.CompareEntryApplications(other.session, resolved, !r.Config.HeadOnly)
+		if err := current.session.CompareEntryApplications(
+			ctx, other.session, resolved, !r.Config.HeadOnly,
+		); err != nil {
+			return err
+		}
 	}
 	if current.cfg.ID.Side == manifest.TreeBase {
 		if err := r.prepareOrderingComparison(ctx, current, other); err != nil {

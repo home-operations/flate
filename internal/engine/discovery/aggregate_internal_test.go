@@ -295,7 +295,7 @@ func assertBootstrapSource(t *testing.T, entry *Entry, side string, generated bo
 
 func TestClusterEntries_CoalescesBootstrapEvidence(t *testing.T) {
 	t.Parallel()
-	input := &store.SourceArtifact{LocalPath: t.TempDir()}
+	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}}
 	roots := []clusterRoot{
 		{
 			Path:       "cluster",
@@ -303,9 +303,10 @@ func TestClusterEntries_CoalescesBootstrapEvidence(t *testing.T) {
 			qualifying: []selection.OccurrenceID{{Source: input.LocalPath}},
 		},
 		{
-			Path:       "cluster/sync",
-			anchors:    []bootstrapAnchor{{target: "cluster", source: manifest.BootstrapSourceID}},
-			qualifying: []selection.OccurrenceID{{Source: input.LocalPath}},
+			Path:         "cluster/sync",
+			packageBuild: &plannedPackage{},
+			anchors:      []bootstrapAnchor{{target: "cluster", source: manifest.BootstrapSourceID}},
+			qualifying:   []selection.OccurrenceID{{Source: input.LocalPath}},
 		},
 	}
 	operands := make([]manifest.NamedResource, 0, len(roots))
@@ -320,6 +321,7 @@ func TestClusterEntries_CoalescesBootstrapEvidence(t *testing.T) {
 	var prepared entryInputs
 	prepared.collectEntryOperands(&entries[0], roots, ".", false)
 	assert.Diff(t, prepared.publicOperands, operands)
+	assert.Equal(t, entries[0].packagePath, "cluster/sync")
 }
 
 func TestPlan_RequestedApplication(t *testing.T) {
@@ -663,7 +665,7 @@ func TestBindEntry_BuilderView(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a := Admission{input: aggregate, path: requested, entryDemand: tc.entryDemand, session: session}
-			entry, err := a.literalEntry(relative)
+			entry, err := a.literalEntry(requested, relative)
 			assert.NoError(t, err)
 			assert.Equal(t, entry != nil, tc.hasEntry)
 		})

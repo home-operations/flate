@@ -61,6 +61,45 @@ func TestLoader_PreferExistingPreparedSource(t *testing.T) {
 	assert.Diff(t, got, record)
 }
 
+func TestLoader_RetireBootstrapDeclaration(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := &manifest.GitRepository{Name: "flux-system", Namespace: "flux-system"}
+	id := source.Named()
+	file := filepath.Join(root, "source.yaml")
+	mounted := &store.SourceArtifact{
+		LocalPath: root, FS: os.DirFS(root), Provider: store.ProviderAlias, Content: "before",
+	}
+	st := store.New()
+	l := New(st)
+	l.SourceRoot, l.PreferExisting, l.Options.ConfiguredInput = root, true, mounted
+	l.mountSources()
+	st.AddObject(source)
+	st.SetArtifact(id, mounted)
+
+	assert.Equal(t, l.acceptObject(id), true)
+	assert.Equal(t, st.GetObject(id), manifest.BaseManifest(source))
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent), store.Artifact(mounted))
+	l.Index.Records[id] = manifest.DiscoveryRecord{Declaration: source, Path: file}
+	l.DiscardOccurrence(id)
+	_, indexed := l.Index.Lookup(id)
+	assert.Equal(t, indexed, false)
+	assert.Equal(t, st.GetObject(id), manifest.BaseManifest(source))
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent), store.Artifact(mounted))
+	l.mountSources()
+	assert.Equal(t, l.documents.artifacts[root], mounted)
+
+	replacement := *mounted
+	replacement.Content = "after"
+	st.SetArtifact(id, &replacement)
+	l.Index.Records[id] = manifest.DiscoveryRecord{Declaration: source, Path: file}
+	l.DiscardOccurrence(id)
+	_, indexed = l.Index.Lookup(id)
+	assert.Equal(t, indexed, false)
+	assert.Equal(t, st.GetObject(id), nil)
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent), nil)
+}
+
 func TestLoader_ProjectedEvidence(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

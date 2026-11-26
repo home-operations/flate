@@ -174,17 +174,22 @@ func (e *applicationEvidence) ownerAccepts(reads *store.ReadSet) (bool, bool) {
 }
 
 func (a *Admission) readApplication(
-	ctx context.Context,
-	st *store.Store,
-	reads *store.ReadSet,
-	evidence *applicationEvidence,
+	ctx context.Context, st *store.Store, reads *store.ReadSet, evidence *applicationEvidence,
 ) (bool, error) {
+	walk := qualificationWalk{admission: a, store: st, reads: reads}
+	return walk.readApplication(ctx, reads, evidence)
+}
+
+func (w *qualificationWalk) readApplication(
+	ctx context.Context, reads *store.ReadSet, evidence *applicationEvidence,
+) (bool, error) {
+	a := w.admission
 	application, valid := manifest.ApplicationFor(evidence.object)
 	if !valid {
 		return false, nil
 	}
 	evidence.application = application
-	resolved := a.applicationSource(st, reads, &application)
+	resolved := a.applicationSource(w.store, reads, &application)
 	if evidence.generatedSource != nil {
 		previous := a.resolvedSources.snapshot()[application.Source]
 		if resolved.object == nil {
@@ -222,7 +227,7 @@ func (a *Admission) readApplication(
 		}
 	}
 	evidence.source = resolved
-	return a.applicationReach(evidence), ctx.Err()
+	return a.applicationReach(evidence, w.inventoryPath()), ctx.Err()
 }
 
 func (q *entryQualification) published(st *store.Store, a *Admission) iter.Seq[manifest.BaseManifest] {
@@ -263,7 +268,8 @@ const (
 	qualificationSettled
 )
 
-func (q *entryQualification) advance(ctx context.Context, a *Admission, st *store.Store, reads *store.ReadSet) error {
+func (q *entryQualification) advance(ctx context.Context, walk *qualificationWalk) error {
+	a := walk.admission
 	q.proposal = nil
 	if q.waiting != nil {
 		if q.waiting.Valid() && q.arrivals == a.applications.Load() {
@@ -277,13 +283,8 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 	q.reach = nil
 	q.winners = nil
 	q.arrivals = a.applications.Load()
-	walk := qualificationWalk{
-		q:         q,
-		admission: a,
-		store:     st,
-		reads:     reads,
-		visits:    map[applicationRoute]qualificationVisit{},
-	}
+	walk.q = q
+	walk.visits = map[applicationRoute]qualificationVisit{}
 	if err := walk.advance(ctx, len(previous) != 0); err != nil {
 		return err
 	}
@@ -382,7 +383,7 @@ func (w *qualificationWalk) observe(ctx context.Context) error {
 			seen[object.Named()] = true
 			continue
 		}
-		matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
+		matched, err := w.readApplication(ctx, w.reads, evidence)
 		if err != nil {
 			return err
 		}
@@ -446,7 +447,7 @@ func (w *qualificationWalk) visit(ctx context.Context, evidence *applicationEvid
 	if reused, pending := w.matchReceipt(ctx, evidence, nil); reused || pending {
 		return reused, nil
 	}
-	matched, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
+	matched, err := w.readApplication(ctx, w.reads, evidence)
 	if err != nil {
 		return false, err
 	}
@@ -611,8 +612,27 @@ func (w *qualificationWalk) admitConstructed(ctx context.Context, evidence *appl
 }
 
 func (a *Admission) entryPath() string {
-	relative, _ := filepath.Rel(a.input.LocalPath, a.path)
+	return a.relativeInventoryPath(a.inventoryPath())
+}
+
+func (w *qualificationWalk) entryPath() string {
+	return w.admission.relativeInventoryPath(w.inventoryPath())
+}
+
+func (w *qualificationWalk) inventoryPath() string {
+	return cmp.Or(w.inventory, w.admission.inventoryPath())
+}
+
+func (a *Admission) relativeInventoryPath(inventory string) string {
+	relative, _ := filepath.Rel(a.input.LocalPath, inventory)
 	return filepath.ToSlash(relative)
+}
+
+func (a *Admission) inventoryPath() string {
+	if len(a.entryTargets) == 0 {
+		return a.entryCoordinates.scanPath(a.path)
+	}
+	return a.path
 }
 
 type qualificationBatch struct {
@@ -793,7 +813,7 @@ func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.Nam
 			return
 		}
 	}
-	if id == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
+	if id == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.entryPath(), manifest.NamedResource{}).
 		Named() {
 		return
 	}

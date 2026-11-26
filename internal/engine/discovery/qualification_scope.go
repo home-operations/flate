@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/core/kustpath"
 	"github.com/home-operations/flate/internal/engine/change"
+	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/kustomize/patch"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
@@ -18,6 +19,7 @@ import (
 
 type qualificationWalk struct {
 	namedProjection  bool
+	inventory        string
 	projectedTargets []entryTarget
 	q                *entryQualification
 	admission        *Admission
@@ -50,7 +52,7 @@ func (w *qualificationWalk) entryFrontier(ctx context.Context, input *store.Sour
 	return w.q.loader.EntryFrontier(ctx, input, path, w.applicationProjection)
 }
 
-func (a *Admission) applicationReach(evidence *applicationEvidence) bool {
+func (a *Admission) applicationReach(evidence *applicationEvidence, inventory string) bool {
 	evidence.reaches, evidence.descendant = nil, false
 	if evidence.object.Named().ReportHidden() {
 		return false
@@ -61,7 +63,7 @@ func (a *Admission) applicationReach(evidence *applicationEvidence) bool {
 	}
 	origin := a.entryOrigin(&evidence.application, material)
 	reach := entryReach{
-		entry: a.input.OriginPath(a.path), targets: a.entryTargets,
+		entry: a.input.OriginPath(inventory), targets: a.entryTargets,
 		packageReaches: a.generatedEntryPackageReaches,
 	}
 	if q := a.qualification; q != nil {
@@ -404,13 +406,20 @@ func (w *qualificationWalk) projectedRootReaches(root, source manifest.BaseManif
 }
 
 // CompareEntryApplications captures possible application changes from both declarations.
-func (d *Session) CompareEntryApplications(other *Session, changes *change.Set, renderPair bool) {
+func (d *Session) CompareEntryApplications(
+	ctx context.Context, other *Session, changes *change.Set, renderPair bool,
+) error {
 	if d == nil || other == nil || changes == nil {
-		return
+		return nil
 	}
 	named := slices.ContainsFunc(d.cfg.Selection.Roots, func(id manifest.NamedResource) bool { return id.Name != "" })
 	if !named && (!renderPair || !d.cfg.Selection.Changed || !d.cfg.Selection.Matches(manifest.NamedResource{})) {
-		return
+		return nil
+	}
+	if !named && d.splitEntryPackage(other) {
+		if err := d.compareEntryPackages(ctx, other); err != nil {
+			return err
+		}
 	}
 	local, peer := d.changedEntryApplications(changes), other.changedEntryApplications(changes)
 	applications := slices.Concat(local, peer)
@@ -422,7 +431,7 @@ func (d *Session) CompareEntryApplications(other *Session, changes *change.Set, 
 			d.loader.Options.Session.DeferEntryComparison()
 			other.loader.Options.Session.DeferEntryComparison()
 		}
-		return
+		return nil
 	}
 	for _, side := range []*Session{d, other} {
 		if a := side.entryAdmission; a != nil && len(applications)+len(a.changedApplications) != 0 {
@@ -430,6 +439,131 @@ func (d *Session) CompareEntryApplications(other *Session, changes *change.Set, 
 			a.publishEntry(nil, manifest.NamedResource{})
 		}
 	}
+	return nil
+}
+
+func (d *Session) splitEntryPackage(other *Session) bool {
+	left, right := d.entryCoordinates, other.entryCoordinates
+	return left != nil && right != nil && left.packagePath != "" && right.packagePath != "" &&
+		(left.packagePath != d.cfg.Path || right.packagePath != other.cfg.Path)
+}
+
+type entryInventoryProposal struct {
+	root    *manifest.Kustomization
+	binding Binding
+	frame   *declarationPreparation
+}
+
+func (d *Session) compareEntryPackages(ctx context.Context, other *Session) error {
+	sides := [2]*Session{d, other}
+	var proposals [2]entryInventoryProposal
+	defer func() {
+		for i := range proposals {
+			proposals[i].discard(sides[i].cfg.Store)
+		}
+	}()
+	for i, side := range sides {
+		proposal, err := side.captureEntryInventory(ctx)
+		proposals[i] = proposal
+		if err != nil {
+			return err
+		}
+	}
+	left, right := proposals[0].frame, proposals[1].frame
+	if left == nil || right == nil || left.sameEntryInventory(right) {
+		return nil
+	}
+	for i, side := range sides {
+		if err := side.installEntryInventory(ctx, &proposals[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Session) captureEntryInventory(ctx context.Context) (entryInventoryProposal, error) {
+	if d.cfg.Trees == nil {
+		return entryInventoryProposal{}, nil
+	}
+	root, binding, err := d.admission().captureBinding(ctx, d.cfg.Store, d.entryCoordinates.packagePath)
+	proposal := entryInventoryProposal{root: root, binding: binding}
+	if err != nil || root == nil || binding.Reads == nil {
+		return proposal, err
+	}
+	input, _ := kustomize.SourceInput(binding.Reads, root)
+	if !input.Available() || !input.Reads.Valid() {
+		return proposal, nil
+	}
+	frame, _ := d.preparePackageInventory(ctx, root, input, nil)
+	if frame != nil && frame.complete && binding.Reads.Valid() {
+		proposal.frame = frame
+	}
+	return proposal, ctx.Err()
+}
+
+func (p *entryInventoryProposal) discard(st *store.Store) {
+	binding := &p.binding
+	if binding.Reads != nil {
+		binding.Reads.ReleaseCapture()
+		st.Retire(binding.Reads)
+		if binding.qualification != nil {
+			binding.qualification.proposal = nil
+		}
+	}
+	if binding.support != nil {
+		binding.support.ReleaseCapture()
+	}
+}
+
+func (p *declarationPreparation) sameEntryInventory(other *declarationPreparation) bool {
+	if p.err != nil || other.err != nil || len(p.children) != len(other.children) {
+		return false
+	}
+	i := 0
+	for ; i < len(p.children); i++ {
+		left, right := &p.children[i], &other.children[i]
+		if left.Obj.Named() != right.Obj.Named() || !manifest.ValueEqual(left.Doc, right.Doc) {
+			break
+		}
+	}
+	if i == len(p.children) {
+		return true
+	}
+	documents := make(map[manifest.NamedResource][]map[string]any, len(other.children)-i)
+	for j := i; j < len(other.children); j++ {
+		child := &other.children[j]
+		id := child.Obj.Named()
+		documents[id] = append(documents[id], child.Doc)
+	}
+	for j := i; j < len(p.children); j++ {
+		child := &p.children[j]
+		id := child.Obj.Named()
+		docs := documents[id]
+		match := slices.IndexFunc(docs, func(doc map[string]any) bool { return manifest.ValueEqual(child.Doc, doc) })
+		if match == -1 {
+			return false
+		}
+		last := len(docs) - 1
+		docs[match] = docs[last]
+		documents[id] = docs[:last]
+	}
+	return true
+}
+
+func (d *Session) installEntryInventory(ctx context.Context, proposal *entryInventoryProposal) error {
+	binding := &proposal.binding
+	binding.Failure = proposal.frame.err
+	a := d.entryAdmission
+	a.publishEntry(binding.support, binding.Producer)
+	accepted, err := d.installBinding(ctx, proposal.root, binding)
+	binding.Reads = nil
+	if accepted {
+		d.entryDemand = true
+		binding.support = nil
+	} else {
+		a.publishEntry(nil, manifest.NamedResource{})
+	}
+	return err
 }
 
 func (d *Session) changedEntryApplications(changes *change.Set) []manifest.BaseManifest {

@@ -216,7 +216,8 @@ func (d *Session) preparePlannedPackages(ctx context.Context) (bool, error) {
 
 func (d *Session) retainPackage(pkg *plannedPackage) {
 	input, owner := d.cfg.Input, pkg.render.owner
-	if pkg.render.source != input || d.prepared[owner.Named()] != nil {
+	if !pkg.render.source.SameMaterial(input, store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ||
+		d.prepared[owner.Named()] != nil {
 		return
 	}
 	request, err := kustomize.NewRenderRequest(owner, nil, &kustomize.RenderRequestOptions{
@@ -233,6 +234,7 @@ func (d *Session) retainPackage(pkg *plannedPackage) {
 		complete:          true,
 		work:              d.preparationWork(owner, owner.EffectiveSourceID()).RenderWork(),
 	}
+	frame.source = input
 	frame.captureSupport(d.cfg.Store, owner.EffectiveSourceID())
 	if d.prepared == nil {
 		d.prepared = map[manifest.NamedResource]*declarationPreparation{}
@@ -331,9 +333,7 @@ func (d *Session) Close() {
 	d.entryPackagesToQualify = nil
 	d.generatorPackages = nil
 	d.publicOperands = nil
-	d.entryBuilderInput = nil
-	d.entryBuilderPath = ""
-	d.entryBuilder = ""
+	d.entryBuilder = entryBuilderLookup{}
 	d.pendingSources = nil
 	d.lookupSources = nil
 	d.sourceGroups = nil

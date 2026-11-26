@@ -438,12 +438,15 @@ func TestLoader_CompactSourceAuthority(t *testing.T) {
 		name                                   string
 		root                                   manifest.NamedResource
 		hiddenOwner, selfSource, wantAuthority bool
+		outside, transformed                   bool
 	}{
 		{name: "covered"},
 		{name: "hidden owner", hiddenOwner: true, wantAuthority: true},
 		{name: "self source", selfSource: true, wantAuthority: true},
 		{name: "named root", root: id, wantAuthority: true},
 		{name: "kind-only root", root: manifest.NamedResource{Group: id.Group, Kind: id.Kind}},
+		{name: "covered outside inventory", outside: true, wantAuthority: true},
+		{name: "transformed outside inventory", outside: true, transformed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -460,6 +463,10 @@ func TestLoader_CompactSourceAuthority(t *testing.T) {
 			})
 			l := New(st)
 			l.SourceRoot = root
+			if tc.outside {
+				l.EntryReachPath = root
+				l.setEntry(filepath.Join(root, "inventory"), "kustomization.yaml")
+			}
 			request := selection.Request{Changed: true}
 			if tc.root != (manifest.NamedResource{}) {
 				request.Roots = []manifest.NamedResource{tc.root}
@@ -467,6 +474,12 @@ func TestLoader_CompactSourceAuthority(t *testing.T) {
 			configureSelection(t, l, request)
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
+			if tc.outside {
+				entryContext := l.selectionContext()
+				assert.Equal(t, entryContext.EntryPath, root)
+				assert.Equal(t, entryContext.PlainEntry, true)
+				assert.Equal(t, entryContext.NativeEntry, false)
+			}
 			record, found := l.Index.Lookup(id)
 			assert.FatalIf(t, !found, "source file missing from index")
 			owner := testutil.KustomizationID("apps", "sync")
@@ -485,13 +498,85 @@ func TestLoader_CompactSourceAuthority(t *testing.T) {
 				Path:     record.Path,
 				File:     record.File,
 			}
+			if tc.transformed {
+				coverage.Declaration = owner
+			}
 			record.Productions = []manifest.Production{coverage}
 			l.Index.Records[id] = record
 			rf := readerFinalizer{loader: l}
+			rf.admitRecord(id, &record)
 			rf.compactOrigins(id, &record)
 			l.Index.Records[id] = record
 			assert.Equal(t, slices.Contains(record.Productions, coverage), true)
 			assert.Equal(t, store.RawDeclarationAuthority(l.Index, id, false), tc.wantAuthority)
+		})
+	}
+}
+
+func TestLoader_CompactOutsideInventoryCoverage(t *testing.T) {
+	t.Parallel()
+	const input = "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.test/cluster.git}\n"
+	const firstFile = "first/source.yaml"
+	id := (&manifest.GitRepository{Name: "cluster", Namespace: "apps"}).Named()
+	for _, tc := range []struct {
+		name, recordFile, authoredNamespace string
+		sameFile                            bool
+	}{
+		{name: "different files", recordFile: "second/source.yaml", authoredNamespace: "apps"},
+		{name: "same file", recordFile: firstFile, authoredNamespace: "other", sameFile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "inventory/first.yaml",
+				testutil.KustomizationYAML("first", "apps", "  path: ./first\n"))
+			if tc.sameFile {
+				testutil.WriteFile(t, root, "first/kustomization.yaml", "namespace: apps\nresources: [source.yaml]\n")
+				testutil.WriteFile(t, root, firstFile,
+					input+"---\n"+strings.Replace(input, "namespace: apps", "namespace: other", 1))
+			} else {
+				testutil.WriteFile(t, root, "inventory/second.yaml",
+					testutil.KustomizationYAML("second", "apps", "  path: ./second\n"))
+				testutil.WriteFile(t, root, firstFile, input)
+				testutil.WriteFile(t, root, tc.recordFile, input)
+			}
+
+			st := store.New()
+			admitForTest(st, root)
+			l := New(st)
+			l.SourceRoot, l.EntryReachPath = root, root
+			configureSelection(t, l, selection.Request{Changed: true})
+			_, err := l.Load(t.Context(), filepath.Join(root, "inventory"), manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+
+			record, ok := l.Index.Lookup(id)
+			assert.FatalIf(t, !ok, "source missing from the index")
+			assert.Equal(t, record.Path, filepath.Join(root, tc.recordFile))
+			authored := id
+			authored.Namespace = tc.authoredNamespace
+			assert.Equal(t, record.Authored, authored)
+			evidence := l.RootEvidence(id, nil)
+			assert.Equal(t, evidence.Scope.OutsideInventorySource(id), true)
+
+			mismatch := manifest.Production{
+				Owner: testutil.KustomizationID("apps", "first"), Authored: id,
+				Source: manifest.BootstrapSourceID, File: firstFile,
+			}
+			if tc.sameFile {
+				mismatch.Path = record.Path
+			}
+			assert.FatalIf(t, !slices.Contains(record.Productions, mismatch), "missing owned production: %+v", mismatch)
+			mismatch.Owner = manifest.NamedResource{}
+			assert.FatalIf(
+				t,
+				slices.Contains(record.Productions, mismatch),
+				"unexpected ownerless production: %+v",
+				mismatch,
+			)
+			assert.Equal(t, store.RawDeclarationAuthority(l.Index, id, false), true)
 		})
 	}
 }

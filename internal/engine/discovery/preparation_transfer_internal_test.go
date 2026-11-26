@@ -262,3 +262,73 @@ func TestResult_PlannedBootstrapPreparationTransfer(t *testing.T) {
 		})
 	}
 }
+
+func TestResult_BootstrapRecipeTransfer(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		same bool
+	}{
+		{name: "same material", same: true},
+		{name: "different material"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			const bootstrap = "entry/bootstrap"
+			const configMap = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: inventory}\n"
+			files := fstest.MapFS{
+				bootstrap + "/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+				bootstrap + "/cm.yaml":            {Data: []byte(configMap + "data: {version: old}\n")},
+			}
+			original := &store.SourceArtifact{
+				LocalPath: root, FS: files, Provider: store.ProviderInput, Content: "old",
+			}
+			cfg := testConfig(t, Config{Input: original, Path: filepath.Join(root, "entry"), Store: store.New()})
+			planner, err := BeginTest(t.Context(), cfg)
+			assert.NoError(t, err)
+			t.Cleanup(planner.Close)
+			owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, bootstrap, manifest.NamedResource{})
+			planned, err := planner.preparePackageInventory(t.Context(), owner, original, nil)
+			assert.NoError(t, err)
+			recipe := &plannedPackage{render: planned.declarationRender}
+			entry := &Entry{
+				Path: cfg.Path, Input: original, target: cfg.Path, packagePath: bootstrap,
+				prepared: &entryInputs{
+					input: *original, parsed: new(loader.ParsedInputs),
+					packages: []*plannedPackage{recipe},
+				},
+			}
+			current := *original
+			if !tc.same {
+				current.Content = "new"
+				current.FS = fstest.MapFS{
+					bootstrap + "/kustomization.yaml": files[bootstrap+"/kustomization.yaml"],
+					bootstrap + "/cm.yaml":            {Data: []byte(configMap + "data: {version: new}\n")},
+				}
+			}
+			cfg.Input, cfg.Entry, cfg.Store = &current, entry, store.New()
+			session, err := BeginTest(t.Context(), cfg)
+			assert.NoError(t, err)
+			t.Cleanup(session.Close)
+			assert.Equal(t, session.loader.Options.ParsedInputs == nil, true)
+			if !tc.same {
+				session.retainPackage(recipe)
+			}
+			ready, err := session.Load(t.Context())
+			assert.NoError(t, err)
+			assert.Equal(t, ready, true)
+			assert.Equal(t, session.prepared[owner.Named()] != nil, tc.same)
+			frame, err := session.preparePackageInventory(t.Context(), owner, &current, nil)
+			assert.NoError(t, err)
+			assert.FatalIf(t, frame == nil || !frame.complete, "inventory did not settle")
+			assert.Equal(t, frame.source, &current)
+			assert.Equal(t, manifest.ValueEqual(frame.children[0].Doc, planned.children[0].Doc), tc.same)
+			assert.Equal(t, cfg.Store.GetDeclaration(owner.Named()) == nil, true)
+			session.Close()
+			assert.Equal(t, session.prepared == nil, true)
+			assert.Equal(t, frame.owner == nil, true)
+			assert.Equal(t, frame.children == nil, true)
+		})
+	}
+}

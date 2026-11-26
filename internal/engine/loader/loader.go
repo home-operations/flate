@@ -59,6 +59,8 @@ type Loader struct {
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
 	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
+	// EntryReachPath keeps selection reach when the bootstrap inventory starts below it.
+	EntryReachPath string
 	// SourceProvider supplies the accepted decision to source comparisons and the detached catalog.
 	SourceProvider func(manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex) store.SourceProvider
 
@@ -445,7 +447,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	if artifact == nil || artifact.Provider != store.ProviderAlias {
 		return false
 	}
-	l.Store.DeleteObject(id)
+	l.retireFileDeclaration(id, artifact)
 	return true
 }
 

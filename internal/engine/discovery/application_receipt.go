@@ -104,7 +104,7 @@ func (w *qualificationWalk) reusePrevious(ctx context.Context, frontier manifest
 			return false, false
 		}
 	}
-	matched, err := a.readApplication(ctx, w.store, reads, &evidence)
+	matched, err := w.readApplication(ctx, reads, &evidence)
 	if err != nil || !matched || !reads.Valid() || len(evidence.reaches) != len(a.entryTargets) {
 		return false, false
 	}

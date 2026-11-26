@@ -381,23 +381,25 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 }
 
 func (rf *readerFinalizer) retainBootstrapOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
-	admitted := false
+	evidence := rf.loader.roots.get(id)
+	outside := evidence != nil && evidence.scope.OutsideInventorySource(id)
+	var checked, admitted bool
 	for i := range r.Productions {
 		p := r.Productions[i]
 		if p.Owner == (manifest.NamedResource{}) || p.Materializer(id) != (manifest.NamedResource{}) ||
 			p.Declaration != (manifest.NamedResource{}) || p.Authored == (manifest.NamedResource{}) {
 			continue
 		}
-		// Self-sources MUST bootstrap before their readers can publish them.
-		if !p.Owner.ReportHidden() && p.Source != id && !rf.loader.Options.Session.RequestsNamedRoot(id) {
+		physical := outside && p.Path == r.Path && p.Authored == r.Authored
+		if !physical && !p.Owner.ReportHidden() && p.Source != id && !rf.loader.Options.Session.RequestsNamedRoot(id) {
 			continue
 		}
-		if !admitted {
+		if !physical && !checked {
 			root := selection.CaptureRoot(rf.loader.RootEvidence(id, nil), rf.loader.Store, rf.loader.Index)
-			admitted = selection.Root(root).Admitted
-			if !admitted {
-				return
-			}
+			checked, admitted = true, selection.Root(root).Admitted
+		}
+		if !physical && !admitted {
+			continue
 		}
 		p.Owner = manifest.NamedResource{}
 		if !slices.Contains(r.Productions, p) {

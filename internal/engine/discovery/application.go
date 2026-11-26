@@ -310,16 +310,13 @@ func (a *Admission) EntryProducers() []manifest.NamedResource {
 	return slices.Clone(q.candidates)
 }
 
-func (a *Admission) qualifyEntry(
-	ctx context.Context,
-	st *store.Store,
-	reads *store.ReadSet,
-) error {
-	if reads == nil {
-		reads = &store.ReadSet{}
-		reads.Init(st, manifest.BootstrapSourceID, nil)
-		defer st.Retire(reads)
-		defer reads.ReleaseCapture()
+func (w *qualificationWalk) qualifyEntry(ctx context.Context) error {
+	a, st := w.admission, w.store
+	if w.reads == nil {
+		w.reads = &store.ReadSet{}
+		w.reads.Init(st, manifest.BootstrapSourceID, nil)
+		defer st.Retire(w.reads)
+		defer w.reads.ReleaseCapture()
 	}
 	if a.qualification == nil {
 		if a.loader == nil {
@@ -340,7 +337,7 @@ func (a *Admission) qualifyEntry(
 	if a.entryEvidence != nil {
 		a.qualification.previous = *a.entryEvidence
 	}
-	return a.qualification.advance(ctx, a, st, reads)
+	return a.qualification.advance(ctx, w)
 }
 
 func (a *Admission) cancelQualification() {
@@ -353,6 +350,16 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	if a == nil {
 		return nil, Binding{}, nil
 	}
+	root, binding, err := a.captureBinding(ctx, st, a.inventoryPath())
+	if binding.Reads != nil {
+		a.publishEntry(binding.support, binding.Producer)
+	}
+	return root, binding, err
+}
+
+func (a *Admission) captureBinding(
+	ctx context.Context, st *store.Store, inventory string,
+) (*manifest.Kustomization, Binding, error) {
 	if err := ctx.Err(); err != nil {
 		a.cancelQualification()
 		return nil, Binding{}, fmt.Errorf("context: %w", err)
@@ -365,7 +372,7 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	reads.Init(st, manifest.BootstrapSourceID, nil)
 	reads.GetObject(manifest.BootstrapSourceID)
 	reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	root, binding, err := a.proposeEntry(ctx, reads)
+	root, binding, err := a.proposeEntry(ctx, reads, inventory)
 	if err == nil && binding.Descendant != "" {
 		binding.documents, err = a.requestedDocuments(ctx, binding.Descendant, reads.WorkScope())
 	}
@@ -389,12 +396,14 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	binding.support = a.captureEntrySupport(reads, binding.Entry)
 	binding.qualification = a.qualification
 	a.qualification.proposal = reads
-	a.publishEntry(binding.support, binding.Producer)
 	return root, binding, nil
 }
 
-func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*manifest.Kustomization, Binding, error) {
-	if err := a.qualifyEntry(ctx, a.store, reads); err != nil {
+func (a *Admission) proposeEntry(
+	ctx context.Context, reads *store.ReadSet, inventory string,
+) (*manifest.Kustomization, Binding, error) {
+	walk := qualificationWalk{admission: a, inventory: inventory, store: a.store, reads: reads}
+	if err := walk.qualifyEntry(ctx); err != nil {
 		return nil, Binding{}, err
 	}
 	q := a.qualification
@@ -402,17 +411,20 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 	if q.awaitingProducer(named) || a.awaitingEntryDiscovery(q) {
 		return nil, Binding{}, nil
 	}
-	relative, _ := filepath.Rel(a.input.LocalPath, a.path)
-	relative = filepath.ToSlash(relative)
-	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{}).Named()
+	relative := a.relativeInventoryPath(inventory)
+	coordinate := relative
+	if inventory != a.path {
+		coordinate = a.requestedEntry.Path
+	}
+	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, coordinate, manifest.NamedResource{}).Named()
 	binding := Binding{Source: manifest.BootstrapSourceID, Key: key, Path: relative, Reads: reads}
 	var root *manifest.Kustomization
 	var err error
 	if len(q.matches) == 0 {
-		root, err = a.literalEntry(relative)
+		root, err = a.literalEntry(inventory, relative)
 	} else {
 		selected := &q.matches[0]
-		root = a.applicationEntry(ctx, reads, selected)
+		root = walk.applicationEntry(ctx, selected, relative)
 		binding.SupportOwner = selected.owner
 		if selected.descendant {
 			binding.Descendant = relative
@@ -481,12 +493,12 @@ func (a *Admission) captureConflictingApplications(reads *store.ReadSet) {
 }
 
 //nolint:nilnil // A directory without a builder supplies no literal entry.
-func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, error) {
+func (a *Admission) literalEntry(directory, relative string) (*manifest.Kustomization, error) {
 	input := a.Input()
 	if !a.entryDemand {
 		input = inputprojection.Authored(input)
 	}
-	file, known := a.session.cachedEntryBuilder(input, a.path)
+	file, known := a.session.cachedEntryBuilder(input, directory)
 	if !known {
 		file = nativeEntry(input.FS, relative)
 	}
@@ -499,20 +511,19 @@ func (a *Admission) literalEntry(relative string) (*manifest.Kustomization, erro
 	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{}), nil
 }
 
-func (a *Admission) applicationEntry(
+func (w *qualificationWalk) applicationEntry(
 	ctx context.Context,
-	reads *store.ReadSet,
 	selected *applicationEvidence,
+	relative string,
 ) *manifest.Kustomization {
-	relative, _ := filepath.Rel(a.input.LocalPath, a.path)
 	root := manifest.NewEntryKustomization(
 		manifest.BootstrapSourceID,
-		filepath.ToSlash(relative),
+		relative,
 		selected.object.Named(),
 	)
 	if candidate, ok := selected.object.(*manifest.Kustomization); ok {
-		if !reads.Preflight(candidate.Named()).DependencyCycle &&
-			(selected.visibleGeneration || a.reuseEntry(ctx, reads, selected, candidate)) {
+		if !w.reads.Preflight(candidate.Named()).DependencyCycle &&
+			(selected.visibleGeneration || w.reuseEntry(ctx, selected, candidate, relative)) {
 			root = candidate
 		}
 	}
@@ -520,18 +531,19 @@ func (a *Admission) applicationEntry(
 	return root
 }
 
-func (a *Admission) reuseEntry(
+func (w *qualificationWalk) reuseEntry(
 	ctx context.Context,
-	reads *store.ReadSet,
 	selected *applicationEvidence,
 	candidate *manifest.Kustomization,
+	relative string,
 ) bool {
+	a, reads := w.admission, w.reads
 	_, policy := reads.Lookup(candidate.Named())
 	if !policy.Root {
 		return false
 	}
 	if selected.owner == (manifest.NamedResource{}) ||
-		selected.owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, a.entryPath(), manifest.NamedResource{}).
+		selected.owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, relative, manifest.NamedResource{}).
 			Named() {
 		record, indexed := a.qualification.loader.Index.Lookup(candidate.Named())
 		direct := record.Builder == "" && record.Authored != candidate.Named() ||
@@ -570,10 +582,10 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 			a.publishEntry(nil, manifest.NamedResource{})
 		}
 	}()
-	reads, err := a.acceptEntryReads(ctx, &binding)
-	if err != nil || reads == nil {
+	if valid, err := a.acceptEntryReads(ctx, &binding); err != nil || !valid {
 		return Binding{}, err
 	}
+	reads := binding.Reads
 	q := a.qualification
 	usesPreviousReceipt := q != nil && binding.Entry != nil && binding.Entry.Receipt == q.previous.Receipt
 	if usesPreviousReceipt && (a.entryEvidence == nil || a.entryEvidence.Receipt != binding.Entry.Receipt) {
@@ -601,44 +613,43 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 	return binding, nil
 }
 
-//nolint:nilnil // A proposal can become stale without an error.
-func (a *Admission) acceptEntryReads(ctx context.Context, binding *Binding) (*store.ReadSet, error) {
+func (a *Admission) acceptEntryReads(ctx context.Context, binding *Binding) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		a.retireQualification()
-		return nil, err
+		return false, err
 	}
 	if binding.Reads == nil || !binding.Reads.Valid() {
 		if binding.Reads != nil {
 			binding.Reads.ReleaseCapture()
 			binding.Reads.Retire()
 		}
-		return nil, nil
+		return false, nil
 	}
 	q := a.qualification
 	if binding.qualification != nil && (q != binding.qualification || q.proposal != binding.Reads) {
-		return nil, nil
+		return false, nil
 	}
 	if q != nil && !a.applications.CompareAndSwap(q.arrivals, nil) {
-		return nil, nil
+		return false, nil
 	}
 	reads := binding.Reads
 	reads.Accept(store.AssessmentEntryBinding)
 	if !reads.Valid() {
 		reads.ReleaseCapture()
 		reads.Retire()
-		return nil, nil
+		return false, nil
 	}
 	if binding.Entry != nil && q != nil && q.trees != nil {
 		if err := q.trees.RecordEntry(ctx, binding.Entry.Receipt, reads); err != nil {
-			return nil, err
+			return false, err
 		}
 	}
 	if !reads.Valid() {
 		reads.ReleaseCapture()
 		reads.Retire()
-		return nil, nil
+		return false, nil
 	}
-	return reads, nil
+	return true, nil
 }
 
 func (w *qualificationWalk) ordinaryApplication(

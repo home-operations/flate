@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"hash/maphash"
 	"maps"
 
@@ -9,17 +10,27 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (l *Loader) entryScope() (string, bool) {
+	reach := cmp.Or(l.EntryReachPath, l.entryPath)
+	return reach, reach != l.entryPath
+}
+
 func (l *Loader) selectionContext() selection.SourceContext {
 	side, known := l.comparisonSide()
 	roots := l.scopeRoots
 	if l.scopes != nil {
 		roots = l.scopes.rootFacts
 	}
+	entry, split := l.entryScope()
+	kind := l.entry
+	if split && kind == entryKustomize {
+		kind = entryPlain
+	}
 	return selection.SourceContext{
 		Root:                  l.SourceRoot,
-		EntryPath:             l.entryPath,
-		NativeEntry:           l.entry == entryKustomize,
-		PlainEntry:            l.entry == entryPlain,
+		EntryPath:             entry,
+		NativeEntry:           kind == entryKustomize,
+		PlainEntry:            kind == entryPlain,
 		Frozen:                l.frozen,
 		SideKnown:             known,
 		Side:                  side,

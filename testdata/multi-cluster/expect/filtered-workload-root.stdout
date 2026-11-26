@@ -1,0 +1,59 @@
+[
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "apps",
+          "path": "clusters/main/payload"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "",
+        "name": "example",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "cluster": "main",
+            "version": "old"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "apps",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "example"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "cluster": "main",
+            "version": "new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "apps",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "example"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "clusters/main/flux",
+    "suppressed": []
+  },
+  {
+    "changes": [],
+    "cluster": "clusters/test/flux",
+    "suppressed": []
+  }
+]

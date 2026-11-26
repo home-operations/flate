@@ -183,6 +183,28 @@
       "refs": [
         "refs/heads/main"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "filtered-bootstrap",
+      "overlay": "filtered-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": []
+    },
+    {
+      "repository": "repo",
+      "name": "filtered-sync-builder",
+      "overlay": "filtered-sync-builder",
+      "author": "fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "filtered-bootstrap"
+      ],
+      "refs": []
     }
   ],
   "overlays": [
@@ -267,6 +289,22 @@
     {
       "name": "chart-sync-edit",
       "directory": "overlays/chart-sync-edit"
+    },
+    {
+      "name": "filtered-bootstrap",
+      "directory": "overlays/filtered-bootstrap"
+    },
+    {
+      "name": "filtered-bootstrap-edit",
+      "directory": "overlays/filtered-bootstrap-edit"
+    },
+    {
+      "name": "filtered-workload-edit",
+      "directory": "overlays/filtered-workload-edit"
+    },
+    {
+      "name": "filtered-sync-builder",
+      "directory": "overlays/filtered-sync-builder"
     }
   ],
   "cases": [
@@ -1681,6 +1719,343 @@
           }
         }
       ]
+    },
+    {
+      "name": "filtered-bootstrap",
+      "description": "Two cluster bootstraps mount different filters on the same checkout. The root build retains bootstrap inventory. Both diffs report the main cluster workload and bootstrap edits.",
+      "setup": [
+        {
+          "commit": "filtered-bootstrap"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-build.stdout",
+              "stderr": "expect/filtered-bootstrap-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "filtered-bootstrap-edit"
+          }
+        },
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-root.stdout",
+              "stderr": "expect/filtered-bootstrap-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/main/flux",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-scoped.stdout",
+              "stderr": "expect/filtered-bootstrap-scoped.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "filtered-workload-only",
+      "description": "A workload edit reaches the main cluster from the repository root and the sync path.",
+      "setup": [
+        {
+          "commit": "filtered-bootstrap"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "filtered-workload-edit"
+          }
+        },
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-workload-root.stdout",
+              "stderr": "expect/filtered-bootstrap-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/main/flux",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-workload-scoped.stdout",
+              "stderr": "expect/filtered-bootstrap-scoped.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "filtered-sync-builder",
+      "description": "The main cluster gains a sync builder. Both full builds retain the sibling cluster. Both diffs report the workload and namespace modifications.",
+      "setup": [
+        {
+          "commit": "filtered-bootstrap"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-build.stdout",
+              "stderr": "expect/filtered-bootstrap-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-main",
+          "edit": {
+            "overlay": "filtered-sync-builder"
+          }
+        },
+        {
+          "id": "head-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-sync-builder-build.stdout",
+              "stderr": "expect/filtered-bootstrap-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-root.stdout",
+              "stderr": "expect/filtered-bootstrap-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/main/flux",
+              "--base",
+              "@@commit:filtered-bootstrap@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-bootstrap-scoped.stdout",
+              "stderr": "expect/filtered-bootstrap-scoped.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "filtered-sync-builder-reverse",
+      "description": "The main cluster loses its sync builder. The diff reverses both document pairs at both scopes.",
+      "setup": [
+        {
+          "commit": "filtered-bootstrap"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "@@commit:filtered-sync-builder@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-sync-builder-reverse-root.stdout",
+              "stderr": "expect/filtered-bootstrap-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/main/flux",
+              "--base",
+              "@@commit:filtered-sync-builder@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/filtered-sync-builder-reverse-scoped.stdout",
+              "stderr": "expect/filtered-bootstrap-scoped.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -2995,6 +3370,258 @@
         "chart-sync-overlap"
       ],
       "purpose": "Record all output for the invocation."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/flux/apps.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/flux/flux-system/gotk-sync.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/flux/flux-system/kustomization.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/flux/flux-system/ns.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/payload/config.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/main/payload/kustomization.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/flux/apps.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/flux/flux-system/gotk-sync.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/flux/flux-system/kustomization.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/flux/flux-system/ns.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/payload/config.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap/repo/clusters/test/payload/kustomization.yaml",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Declare the bootstrap, its workload, or its source filter."
+    },
+    {
+      "path": "overlays/filtered-bootstrap-edit/repo/clusters/main/payload/config.yaml",
+      "cases": [
+        "filtered-bootstrap"
+      ],
+      "purpose": "Change the main cluster workload."
+    },
+    {
+      "path": "overlays/filtered-bootstrap-edit/repo/clusters/main/flux/flux-system/kustomization.yaml",
+      "cases": [
+        "filtered-bootstrap"
+      ],
+      "purpose": "Change the main cluster Namespace label through the bootstrap builder."
+    },
+    {
+      "path": "expect/filtered-bootstrap-build.stdout",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-sync-builder"
+      ],
+      "purpose": "Record the expected full inventory for both clusters."
+    },
+    {
+      "path": "expect/filtered-bootstrap-build.stderr",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-sync-builder"
+      ],
+      "purpose": "Record the complete stderr for the root build."
+    },
+    {
+      "path": "expect/filtered-bootstrap-root.stdout",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-sync-builder"
+      ],
+      "purpose": "Record the complete stdout for the root diff."
+    },
+    {
+      "path": "expect/filtered-bootstrap-root.stderr",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Record the complete stderr for the root diff."
+    },
+    {
+      "path": "expect/filtered-bootstrap-scoped.stdout",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-sync-builder"
+      ],
+      "purpose": "Record the complete stdout for the scoped diff."
+    },
+    {
+      "path": "expect/filtered-bootstrap-scoped.stderr",
+      "cases": [
+        "filtered-bootstrap",
+        "filtered-workload-only",
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Record the complete stderr for the scoped diff."
+    },
+    {
+      "path": "overlays/filtered-workload-edit/repo/clusters/main/payload/config.yaml",
+      "cases": [
+        "filtered-workload-only"
+      ],
+      "purpose": "Workload-only edit."
+    },
+    {
+      "path": "overlays/filtered-sync-builder/repo/clusters/main/flux/flux-system/kustomization.yaml",
+      "cases": [
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Edited sync-builder transition input."
+    },
+    {
+      "path": "overlays/filtered-sync-builder/repo/clusters/main/flux/kustomization.yaml",
+      "cases": [
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Edited sync-builder transition input."
+    },
+    {
+      "path": "overlays/filtered-sync-builder/repo/clusters/main/payload/config.yaml",
+      "cases": [
+        "filtered-sync-builder",
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Edited sync-builder transition input."
+    },
+    {
+      "path": "expect/filtered-workload-root.stdout",
+      "cases": [
+        "filtered-workload-only"
+      ],
+      "purpose": "Complete reviewed CLI output for the selected scope."
+    },
+    {
+      "path": "expect/filtered-workload-scoped.stdout",
+      "cases": [
+        "filtered-workload-only"
+      ],
+      "purpose": "Complete reviewed CLI output for the selected scope."
+    },
+    {
+      "path": "expect/filtered-sync-builder-build.stdout",
+      "cases": [
+        "filtered-sync-builder"
+      ],
+      "purpose": "Complete reviewed CLI output for the selected scope."
+    },
+    {
+      "path": "expect/filtered-sync-builder-reverse-root.stdout",
+      "cases": [
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Complete reviewed CLI output for the selected scope."
+    },
+    {
+      "path": "expect/filtered-sync-builder-reverse-scoped.stdout",
+      "cases": [
+        "filtered-sync-builder-reverse"
+      ],
+      "purpose": "Complete reviewed CLI output for the selected scope."
     }
   ]
 }

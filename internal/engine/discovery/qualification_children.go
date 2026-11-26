@@ -50,7 +50,7 @@ func (w *qualificationWalk) nativeContinuations(
 	candidates []applicationEvidence, root string, owner manifest.NamedResource,
 ) []applicationEvidence {
 	if root == "" ||
-		owner != manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
+		owner != manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.entryPath(), manifest.NamedResource{}).
 			Named() {
 		return candidates
 	}
@@ -136,12 +136,12 @@ func (w *qualificationWalk) matchChild(
 	if reused, pending := w.matchReceipt(ctx, evidence, nil); reused || pending {
 		return reused, nil
 	}
-	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
+	eligible, err := w.readApplication(ctx, w.reads, evidence)
 	if err != nil || !eligible {
 		return false, err
 	}
 	candidate, structural := evidence.object.(*manifest.Kustomization)
-	if batch.root != "" && structural && w.admission.reuseEntry(ctx, w.reads, evidence, candidate) {
+	if batch.root != "" && structural && w.reuseEntry(ctx, evidence, candidate, w.entryPath()) {
 		current, err := w.admitConstructed(ctx, evidence)
 		if err != nil || !current {
 			return false, err

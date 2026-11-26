@@ -23,7 +23,7 @@ require (
 	github.com/fluxcd/pkg/apis/meta v1.39.0
 	github.com/fluxcd/pkg/envsubst v1.10.0
 	github.com/fluxcd/pkg/kustomize v1.45.0
-	github.com/fluxcd/pkg/sourceignore v0.23.0
+	github.com/fluxcd/pkg/sourceignore v0.24.0
 	github.com/fluxcd/source-controller/api v1.10.2
 	github.com/fluxcd/source-watcher/api/v2 v2.3.1
 	github.com/go-git/go-billy/v6 v6.0.0-beta.1

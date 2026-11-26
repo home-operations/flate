@@ -15,7 +15,7 @@ import (
 
 func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 	t.Parallel()
-	for _, route := range []string{"pending", "declaration", "built", "renamed producer", "withdrawn", "renamed consumer", "available"} {
+	for _, route := range []string{"pending", "declaration", "dependent", "built", "renamed producer", "withdrawn", "renamed consumer", "available"} {
 		t.Run(route, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -24,6 +24,7 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 			current.Path = "transformed"
 			consumer := (&manifest.HelmRelease{Name: "application", Namespace: "apps"}).Named()
 			production := manifest.Production{Owner: raw.Named(), Source: manifest.BootstrapSourceID}
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			facts := &solverFacts{store: st, index: manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer: {Productions: []manifest.Production{production}},
@@ -45,6 +46,11 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 			case "declaration":
 				st.AddObject(current)
 				want = true
+			case "dependent":
+				st.AddObject(current)
+				facts.index.Records[raw.Named()] = manifest.DiscoveryRecord{
+					Path: "/checkout/factory.yaml", File: "factory.yaml", Authored: raw.Named(), Parent: parent.Named(),
+				}
 			case "built":
 				facts.index.Records[raw.Named()] = manifest.DiscoveryRecord{Builder: "native"}
 				facts.roots = map[manifest.NamedResource]RootEvidence{raw.Named(): {
@@ -84,8 +90,21 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, session.Snapshot() == snapshot, true)
+			if route == "dependent" {
+				st.AddObject(parent)
+				st.RecordEmitted(parent.Named(), &store.Emission{
+					Complete: true, Children: []store.Child{{Obj: current}},
+				}, nil)
+				assert.Equal(t, st.GetDeclaration(current.Named()) == current, true)
+			}
 			next, err := session.RefreshProducers(t.Context(), &frontierResult, request)
 			assert.NoError(t, err)
+			if route == "dependent" {
+				available := slices.Collect(next.Demands())
+				assert.FatalIf(t, len(available) != 1, "got %d producer demands, want 1", len(available))
+				assert.Equal(t, available[0].Identity, current.Named())
+				assert.Equal(t, available[0].Witness == current, true)
+			}
 			next.Retire()
 			if route == "declaration" {
 				assert.Equal(t, demands[0].Reads.Valid(), true)

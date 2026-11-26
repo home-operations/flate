@@ -2,6 +2,9 @@ package store
 
 import "github.com/home-operations/flate/pkg/manifest"
 
+// The inline registration and first block cover all three artifact facets.
+const minRegistrationBlock = 2
+
 func (r *ReadSet) input(id manifest.NamedResource) *Input {
 	if input := r.findInput(id); input != nil {
 		r.last = input
@@ -57,7 +60,8 @@ func (r *ReadSet) registration(input *Input, kind facet) *registration {
 	cell := &r.localRegistration
 	if r.localRegistered {
 		if len(r.spareRegistrations) == 0 {
-			r.spareRegistrations = make([]registration, max(1, allocationGrowthFactor*cap(r.spareRegistrations)))
+			size := max(minRegistrationBlock, allocationGrowthFactor*cap(r.spareRegistrations))
+			r.spareRegistrations = make([]registration, size)
 		}
 		i := len(r.spareRegistrations) - 1
 		cell = &r.spareRegistrations[i]

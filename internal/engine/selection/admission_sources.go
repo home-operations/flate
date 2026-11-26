@@ -84,6 +84,75 @@ func (c *admissionClosure) seedChangedReaders(file string) {
 	}
 }
 
+func (c *admissionClosure) prepareMaterializer(id manifest.NamedResource, comparison change.Comparison, required bool) {
+	if comparison.Known && !comparison.Changed {
+		return
+	}
+	state := c.states[id]
+	if state.materializationChecked {
+		return
+	}
+	if !comparison.Known && !required {
+		if c.materializerInputsUnchanged(id) {
+			return
+		}
+		state = c.states[id]
+	}
+	state.materializationChecked = true
+	c.states[id] = state
+	c.demandMaterialization(id)
+}
+
+func (c *admissionClosure) materializerInputsUnchanged(id manifest.NamedResource) bool {
+	record := c.record(id)
+	if !record.StaticOutput || record.File == "" || c.replace[id] || c.states[id].changed {
+		return false
+	}
+	object := c.object(id)
+	if object == nil || !c.materializerDeclarationUnchanged(id, object, &record) ||
+		c.affected(id, object) || !c.states[id].affectedKnown {
+		return false
+	}
+	for ref := range c.references(id, object) {
+		switch {
+		case ref.Ordering:
+		case ref.ReadsSourceTree():
+			// A copy-path miss alone cannot exclude readers behind the generated output.
+			evidence := c.boundSource(ref.NamedResource)
+			declared := ref.NamedResource == manifest.BootstrapSourceID || evidence.Declaration != nil
+			sameDeclaration := declared &&
+				manifest.Equal(evidence.Declarations[manifest.TreeBase], evidence.Declarations[manifest.TreeHead])
+			before, after := evidence.Snapshots[manifest.TreeBase], evidence.Snapshots[manifest.TreeHead]
+			sameTree := evidence.comparisonAvailable(true) && evidence.Delta.Len() == 0 &&
+				before.SameMaterial(after, store.ArtifactRevision|store.ArtifactOrigin)
+			if !sameDeclaration || !sameTree {
+				return false
+			}
+		default:
+			if comparison := c.outputChanged(id, &ref, object); !comparison.Known || comparison.Changed {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (c *admissionClosure) materializerDeclarationUnchanged(
+	id manifest.NamedResource, object manifest.BaseManifest, record *manifest.DiscoveryRecord,
+) bool {
+	if !c.compareDeclarationFile(id, manifest.NamedResource{}, record, true).stable {
+		return false
+	}
+	if c.declarationChanged(id, object).Changed {
+		return false
+	}
+	if object == c.catalogWitness(id) {
+		return true
+	}
+	comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object)
+	return comparison.Known && !comparison.Changed
+}
+
 func (c *admissionClosure) demandMaterialization(id manifest.NamedResource) {
 	status, _ := c.objects.GetStatus(id)
 	output, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
@@ -114,7 +183,7 @@ func (c *admissionClosure) seedChangedReader(reader *manifest.FileReader, file s
 	c.add(id, admissionRole{needed: true, ordinary: true})
 	if c.proposal.Request.construction && !id.KindInfo().Render &&
 		!c.facts.SelectionIndex().Records[id].StaticOutput {
-		c.demandMaterialization(id)
+		c.prepareMaterializer(id, change.Comparison{}, true)
 	}
 }
 
@@ -126,9 +195,10 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 	if delta == nil {
 		return false
 	}
-	record := c.record(reader.Reader)
-	changed := paired && c.fileChanged(reader.Source, file) || !paired && !record.Pinned && delta.Contains(file)
-	if !changed {
+	if !paired && c.record(reader.Reader).Pinned {
+		return false
+	}
+	if !c.fileChanged(evidence, file).changed {
 		return false
 	}
 	contentChanged := func(reader manifest.FileReader) bool {
@@ -442,9 +512,7 @@ func (c *admissionClosure) comparisonRecordChanged(
 		if indexed == "" {
 			return false
 		}
-		if located && indexed != c.fileCoordinate(
-			filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)),
-		) {
+		if located && indexed != c.fileCoordinate(occurrence.Declaration) {
 			return false
 		}
 		if !located && c.fileOwnersUnchanged(indexed, scope.source) {

@@ -398,14 +398,16 @@ func (s *scenario) validateCases(
 				return nil, err
 			}
 		}
-		if err := c.validateSteps(dir, overlays); err != nil {
+		if err := c.validateSteps(dir, overlays, commitRepos, repos); err != nil {
 			return nil, err
 		}
 	}
 	return names, nil
 }
 
-func (c *Case) validateSteps(dir string, overlays map[string]bool) error {
+func (c *Case) validateSteps(
+	dir string, overlays map[string]bool, commits map[string]string, repos map[string]bool,
+) error {
 	ids := map[string]bool{}
 	if len(c.Steps) == 0 {
 		return fmt.Errorf("case %s has no steps", c.Name)
@@ -416,14 +418,11 @@ func (c *Case) validateSteps(dir string, overlays map[string]bool) error {
 		}
 		ids[step.ID] = true
 		if step.Edit != nil {
-			if step.Edit.Overlay == "" {
-				return fmt.Errorf("edit %s requires overlay", step.ID)
+			if *step.Edit != (operation{Overlay: step.Edit.Overlay, Commit: step.Edit.Commit}) {
+				return fmt.Errorf("edit %s permits only overlay or commit", step.ID)
 			}
-			if !overlays[step.Edit.Overlay] {
-				return fmt.Errorf("unknown overlay %q", step.Edit.Overlay)
-			}
-			if *step.Edit != (operation{Overlay: step.Edit.Overlay}) {
-				return fmt.Errorf("edit %s permits only overlay", step.ID)
+			if err := validateOperation(step.Edit, overlays, commits, repos); err != nil {
+				return fmt.Errorf("edit %s: %w", step.ID, err)
 			}
 		} else if err := validateInvocation(dir, step.Invoke); err != nil {
 			return err

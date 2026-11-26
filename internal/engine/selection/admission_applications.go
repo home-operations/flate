@@ -74,7 +74,7 @@ func (c *admissionClosure) applicationDemand(
 		return chain, query
 	}
 	if !containsPath(c.context.EntryPath, filepath.Join(query.Source, query.File)) ||
-		!route.ProjectedPatches && !c.fileChanged(c.source(chain[len(chain)-1]), query.File) {
+		!route.ProjectedPatches && !c.fileChanged(c.boundSource(c.source(chain[len(chain)-1])), query.File).changed {
 		return nil, OccurrenceID{}
 	}
 	return chain, query
@@ -137,7 +137,8 @@ func (c *admissionClosure) demandEntryPath(
 	if !c.context.PlainEntry || !containsPath(c.context.EntryPath, record.Path) {
 		return false
 	}
-	if c.session.request.Changed && !route.Projected && !c.fileChanged(c.source(id), record.File) {
+	if c.session.request.Changed && !route.Projected &&
+		!c.fileChanged(c.boundSource(c.source(id)), record.File).changed {
 		return false
 	}
 	location := c.boundSource(source)

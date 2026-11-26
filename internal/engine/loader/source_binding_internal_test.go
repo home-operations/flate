@@ -18,6 +18,11 @@ import (
 
 func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 	t.Parallel()
+	for _, name := range []string{"same material", "changed declaration", "changed origin", "unknown side"} {
+		t.Run("unfrozen/"+name, func(t *testing.T) {
+			testUnfrozenComparison(t, name)
+		})
+	}
 	for side := range 2 {
 		t.Run(strconv.Itoa(side), func(t *testing.T) {
 			t.Parallel()
@@ -83,6 +88,7 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, facts.Context.SideKnown, true)
 			assert.Equal(t, facts.Context.Side, manifest.TreeSide(side))
 			assert.Equal(t, facts.Paired, true)
+			assert.Equal(t, facts.CurrentSnapshot, true)
 			assert.Equal(t, facts.InitialKnown, true)
 			assert.Equal(t, facts.Initial, input)
 			assert.Equal(t, facts.ConfiguredInput, (*store.SourceArtifact)(nil))
@@ -96,6 +102,15 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, unconfigured.ConfiguredInput, (*store.SourceArtifact)(nil))
 			assert.Equal(t, unconfigured.Initial, input)
 			assert.Equal(t, unconfigured.Derived, false)
+			l.side, l.sideKnown = manifest.TreeSide(side), true
+			otherOrigin := *input
+			otherOrigin.Metadata = map[string]string{"org.opencontainers.image.revision": "other"}
+			assert.Equal(t, reads.Valid(), true)
+			st.SetArtifact(manifest.BootstrapSourceID, &otherOrigin)
+			assert.Equal(t, reads.Valid(), false)
+			rebound := l.SourceFacts(manifest.BootstrapSourceID, nil)
+			assert.Equal(t, rebound.Paired, true)
+			assert.Equal(t, rebound.CurrentSnapshot, false)
 			after := &store.SourceArtifact{
 				Provider:  store.ProviderInput,
 				LocalPath: root,
@@ -106,9 +121,14 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, reads.Valid(), false)
 			replacement := l.SourceFacts(manifest.BootstrapSourceID, nil)
 			assert.Equal(t, replacement.Paired, false)
+			assert.Equal(t, replacement.CurrentSnapshot, false)
 			assert.Equal(t, replacement.Input, after)
 			assert.Equal(t, replacement.InitialKnown, true)
 			assert.Equal(t, replacement.Initial, input)
+		})
+		t.Run(fmt.Sprintf("producer_retry=%d", side), func(t *testing.T) {
+			t.Parallel()
+			testOriginOnlyProducerRetry(t, manifest.TreeSide(side))
 		})
 	}
 	for _, availableSide := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
@@ -165,6 +185,115 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testUnfrozenComparison(t *testing.T, name string) {
+	t.Helper()
+	t.Parallel()
+	root := t.TempDir()
+	base, head := store.New(), store.New()
+	for _, st := range []*store.Store{base, head} {
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+			Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{},
+		})
+	}
+	declaration := &manifest.GitRepository{Name: "bundle", Namespace: "apps"}
+	id := declaration.Named()
+	input := &store.SourceArtifact{LocalPath: root, Content: "bundle", FS: fstest.MapFS{}}
+	active, activeInput := declaration, input
+	switch name {
+	case "changed declaration":
+		active = new(*declaration)
+		active.URL = "https://example.test/other"
+	case "changed origin":
+		activeInput = new(*input)
+		activeInput.Metadata = map[string]string{"org.opencontainers.image.revision": "other"}
+	}
+	base.AddObject(declaration)
+	base.SetArtifact(id, input)
+	head.AddObject(active)
+	head.SetArtifact(id, activeInput)
+	changes, err := change.Qualify(t.Context(), nil,
+		change.SourcePair{Stores: [2]*store.Store{base, head}}, manifest.WorkScope{})
+	assert.NoError(t, err)
+
+	head.AddObject(declaration)
+	head.SetArtifact(id, input)
+	if name == "unknown side" {
+		head.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+			Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{},
+		})
+	}
+	l := New(head)
+	t.Cleanup(l.Close)
+	l.SourceRoot, l.Options.Changes = root, changes
+	facts := l.SourceFacts(id, nil)
+	assert.Equal(t, facts.Context.SideKnown, name != "unknown side")
+	assert.Equal(t, facts.Paired, true)
+	assert.Equal(t, facts.CurrentSnapshot, name == "same material")
+}
+
+func testOriginOnlyProducerRetry(t *testing.T, side manifest.TreeSide) {
+	t.Helper()
+	root := t.TempDir()
+	stores := [2]*store.Store{store.New(), store.New()}
+	for _, st := range stores {
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+			Provider: store.ProviderInput, LocalPath: root, Content: "checkout", FS: fstest.MapFS{},
+		})
+	}
+	st := stores[side]
+	source := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	producer := &manifest.RawObject{
+		APIVersion: manifest.SourceExtensionsDomain + "/v1beta1",
+		Kind:       manifest.KindArtifactGenerator, Name: "generator", Namespace: "apps",
+	}
+	id := producer.Named()
+	st.AddObject(producer)
+	l := New(st)
+	t.Cleanup(l.Close)
+	l.SourceRoot = root
+	changes, err := change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
+	assert.NoError(t, err)
+	l.Options.Changes = changes
+	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	configureSelection(t, l, selection.Request{Changed: true})
+
+	var captured store.ReadSet
+	captured.Init(st, id, nil)
+	t.Cleanup(captured.Retire)
+	facts := l.SourceFacts(manifest.BootstrapSourceID, &captured)
+	assert.Equal(t, facts.Context.Side, side)
+	assert.Equal(t, facts.CurrentSnapshot, true)
+	emission := &store.Emission{Complete: true}
+	captured.Bind(emission)
+	st.RecordEmitted(id, emission, nil)
+
+	var preparation *selection.Preparation
+	t.Cleanup(func() { preparation.Retire() })
+	options := selection.AdmissionOptions{
+		Request: selection.PrepareRequest{
+			Changes: changes, Preparation: &preparation, Invocation: true,
+			LookupSources: []selection.LookupSource{{Materializer: id}},
+		},
+		Stage: selection.Construction,
+	}
+	initial, committed, err := l.Options.Session.Admit(t.Context(), options)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, len(initial.Demands), 0)
+
+	replacement := *source
+	replacement.Metadata = map[string]string{"org.opencontainers.image.revision": "different"}
+	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+	retry, committed, err := l.Options.Session.Admit(t.Context(), options)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.FatalIf(t, len(retry.Demands) != 1, "origin-only retry produced %d demands, want one", len(retry.Demands))
+	assert.Equal(t, retry.Demands[0].Identity, id)
+	assert.Equal(t, retry.Demands[0].Materialize, true)
 }
 
 func TestSourceFacts_PerSourcePublication(t *testing.T) {

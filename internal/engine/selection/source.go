@@ -86,6 +86,19 @@ type SourceFacts struct {
 	Pinned, External     bool
 	PendingGeneration    bool
 	Derived              bool
+	// CurrentSnapshot qualifies material and the declaration against the active side.
+	CurrentSnapshot bool
+}
+
+func (f *SourceFacts) comparisonAvailable(requireCurrentPair bool) bool {
+	if f.Delta == nil || !f.Input.Available() {
+		return false
+	}
+	if !requireCurrentPair {
+		return true
+	}
+	return f.CurrentSnapshot &&
+		f.Snapshots[manifest.TreeBase].Available() && f.Snapshots[manifest.TreeHead].Available()
 }
 
 // ProducerFacts preserves an immutable producer projection and its derivation witness.

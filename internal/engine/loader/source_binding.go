@@ -10,6 +10,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+const (
+	sourcePairFacets     = store.ArtifactContent | store.ArtifactRevision
+	sourceMaterialFacets = sourcePairFacets | store.ArtifactOrigin
+)
+
 type admissionSource struct {
 	source                   manifest.NamedResource
 	changes, delta           *change.Set
@@ -21,6 +26,7 @@ type admissionSource struct {
 	origin                   string
 	files                    []selection.SourceFile
 	bound, paired            bool
+	currentSnapshot          bool
 	filesKnown, initialKnown bool
 	frozen, sideKnown        bool
 	side                     manifest.TreeSide
@@ -54,7 +60,7 @@ func (l *Loader) admissionSourceFacts(
 	if reads != nil {
 		objects = reads
 	}
-	input, _ := objects.GetArtifact(source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
+	input, _ := objects.GetArtifact(source, sourceMaterialFacets).(*store.SourceArtifact)
 	declaration := objects.GetObject(source)
 	evidence.input, evidence.declaration = input, declaration
 	evidence.provider = l.SourceProvider(source, reads, l.Index)
@@ -76,11 +82,12 @@ func (l *Loader) admissionSourceFacts(
 		evidence.origin = input.OriginPath(input.LocalPath)
 	}
 	for side, snapshot := range snapshots {
-		if evidence.pairsSnapshot(manifest.TreeSide(side), snapshot) {
-			evidence.delta = changes
-			evidence.paired = true
-			return l.sourceViewFacts(&evidence, true)
+		paired, current := evidence.pairsSnapshot(manifest.TreeSide(side), snapshot)
+		if !paired {
+			continue
 		}
+		evidence.delta, evidence.paired, evidence.currentSnapshot = changes, true, current
+		return l.sourceViewFacts(&evidence, true)
 	}
 	if evidence.checkoutComparison() {
 		evidence.delta, _, _ = l.Options.Changes.ForSource(manifest.BootstrapSourceID)
@@ -95,18 +102,28 @@ func (e *admissionSource) checkoutComparison() bool {
 	return e.provider.WorkingTree() && e.input.Extent != store.ExtentComposed
 }
 
-func (e *admissionSource) pairsSnapshot(side manifest.TreeSide, snapshot *store.SourceArtifact) bool {
+func (e *admissionSource) pairsSnapshot(
+	side manifest.TreeSide, snapshot *store.SourceArtifact,
+) (paired, current bool) { //nolint:nonamedreturns // Current material also requires the active side and origin.
 	input := e.input
-	if snapshot == nil || input == nil || e.declaration != e.declarations[side] {
-		return false
+	if snapshot == nil || input == nil || e.declaration != e.declarations[side] || !input.Reads.Valid() {
+		return false, false
 	}
 	if !e.frozen {
-		return snapshot == input && input.Reads.Valid()
+		paired = snapshot == input
+		active := e.sideKnown && e.declaration == e.declarations[e.side]
+		return paired, paired && active && input.SameMaterial(e.snapshots[e.side], sourceMaterialFacets)
 	}
-	const read = store.ArtifactContent | store.ArtifactRevision
-	eligible := e.sideKnown && side == e.side &&
-		(snapshot.Content != "" || e.initial.SameMaterial(input, read|store.ArtifactOrigin))
-	return eligible && snapshot.Input(read) == input.Input(read) && input.Reads.Valid()
+	if !e.sideKnown || side != e.side {
+		return false, false
+	}
+	if snapshot.Content == "" && !e.initial.SameMaterial(input, sourceMaterialFacets) {
+		return false, false
+	}
+	if input.SameMaterial(snapshot, sourceMaterialFacets) {
+		return true, true
+	}
+	return snapshot.Input(sourcePairFacets) == input.Input(sourcePairFacets), false
 }
 
 func (e *admissionSource) reusable(l *Loader, current *admissionSource, initialize bool) bool {
@@ -169,6 +186,7 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 		Path:              location.Path,
 		Files:             e.files,
 		Paired:            e.paired,
+		CurrentSnapshot:   e.currentSnapshot,
 		InitialKnown:      e.initialKnown,
 		Pinned:            location.Pinned,
 		External:          e.provider == store.ProviderFetch,

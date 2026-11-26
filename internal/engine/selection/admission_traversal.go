@@ -727,5 +727,6 @@ func (c *admissionClosure) selectedDeclarationFileChanged(
 	selected bool,
 ) bool {
 	return selected &&
-		(c.fileChanged(c.source(id), record.File) || id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj))
+		(c.fileChanged(c.boundSource(c.source(id)), record.File).changed ||
+			id.Namespace == "" && id.KindInfo().Namespaced() && c.affected(id, obj))
 }

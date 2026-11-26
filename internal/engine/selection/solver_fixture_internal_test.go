@@ -176,6 +176,11 @@ func (f *solverFacts) SourceFacts(id manifest.NamedResource, reads *store.ReadSe
 	}
 	facts.Input, _ = objects.GetArtifact(id, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 	facts.Declaration = objects.GetObject(id)
+	if facts.Paired && f.context.SideKnown {
+		const material = store.ArtifactContent | store.ArtifactRevision | store.ArtifactOrigin
+		facts.CurrentSnapshot = facts.Declaration == facts.Declarations[f.context.Side] &&
+			facts.Input.SameMaterial(facts.Snapshots[f.context.Side], material)
+	}
 	if facts.Path == "" {
 		if facts.Input != nil {
 			facts.Path = facts.Input.LocalPath

@@ -26,7 +26,7 @@ type (
 		captured                                  bool
 		publication                               uint64
 		affected, affectedKnown                   bool
-		readinessAffected                         bool
+		readinessAffected, materializationChecked bool
 	}
 )
 
@@ -460,6 +460,7 @@ func (c *admissionClosure) resetDemand() {
 		state.role, state.walked = admissionRole{}, admissionRole{}
 		state.consumer, state.restoration, state.claim, state.incoming = 0, 0, 0, 0
 		state.incomingProductions, state.readinessAffected = nil, false
+		state.materializationChecked = false
 		state.changed, state.rescan, state.requested, state.walkedOnce, state.listed = false, false, false, false, false
 		c.states[id] = state
 	}

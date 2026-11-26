@@ -130,6 +130,61 @@
         "base"
       ],
       "overlay": "generated-initial"
+    },
+    {
+      "repository": "repo",
+      "name": "mounted-generated",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "generated"
+      ],
+      "overlay": "mounted-generated-initial"
+    },
+    {
+      "repository": "repo",
+      "name": "mounted-generated-values",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "mounted-generated"
+      ],
+      "overlay": "mounted-generated-values"
+    },
+    {
+      "repository": "repo",
+      "name": "mounted-generated-template",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "mounted-generated"
+      ],
+      "overlay": "mounted-generated-template"
+    },
+    {
+      "repository": "repo",
+      "name": "mounted-generated-library",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "mounted-generated"
+      ],
+      "overlay": "mounted-generated-library"
+    },
+    {
+      "repository": "repo",
+      "name": "mounted-generated-unrelated",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "mounted-generated"
+      ],
+      "overlay": "mounted-generated-unrelated"
     }
   ],
   "overlays": [
@@ -328,6 +383,35 @@
     {
       "name": "generated-library",
       "directory": "overlays/generated-library",
+      "operations": []
+    },
+    {
+      "name": "mounted-generated-initial",
+      "directory": "overlays/mounted-generated-initial",
+      "operations": [
+        {
+          "delete": "repo/flux"
+        }
+      ]
+    },
+    {
+      "name": "mounted-generated-values",
+      "directory": "overlays/mounted-generated-values",
+      "operations": []
+    },
+    {
+      "name": "mounted-generated-template",
+      "directory": "overlays/mounted-generated-template",
+      "operations": []
+    },
+    {
+      "name": "mounted-generated-library",
+      "directory": "overlays/mounted-generated-library",
+      "operations": []
+    },
+    {
+      "name": "mounted-generated-unrelated",
+      "directory": "overlays/mounted-generated-unrelated",
       "operations": []
     }
   ],
@@ -765,6 +849,406 @@
             "expect": {
               "stdout": "expect/generated-library-diff.stdout",
               "stderr": "expect/generated-library-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-mounted-helmrelease-chart-templated-values",
+      "description": "A ResourceSet mounted from an ExternalArtifact generates a HelmRelease that reads a Git chart. Only the values chart input changes.",
+      "setup": [
+        {
+          "commit": "mounted-generated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-base-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-values",
+          "edit": {
+            "commit": "mounted-generated-values"
+          }
+        },
+        {
+          "id": "head-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-values-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "mounted-generated-values-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD~1",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-values-diff.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-mounted-helmrelease-chart-templated-template",
+      "description": "A ResourceSet mounted from an ExternalArtifact generates a HelmRelease that reads a Git chart. Only the template chart input changes.",
+      "setup": [
+        {
+          "commit": "mounted-generated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-base-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-template",
+          "edit": {
+            "commit": "mounted-generated-template"
+          }
+        },
+        {
+          "id": "head-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-template-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "mounted-generated-template-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD~1",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-template-diff.stdout",
+              "stderr": "expect/mounted-generated-template-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-mounted-helmrelease-chart-templated-library",
+      "description": "A ResourceSet mounted from an ExternalArtifact generates a HelmRelease that reads a Git chart. Only the library chart input changes.",
+      "setup": [
+        {
+          "commit": "mounted-generated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-base-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-library",
+          "edit": {
+            "commit": "mounted-generated-library"
+          }
+        },
+        {
+          "id": "head-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-library-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "mounted-generated-library-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD~1",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-library-diff.stdout",
+              "stderr": "expect/mounted-generated-library-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-mounted-helmrelease-chart-templated-unrelated",
+      "description": "A ResourceSet mounted from an ExternalArtifact generates a HelmRelease that reads a Git chart. Only the unrelated chart input changes.",
+      "setup": [
+        {
+          "commit": "mounted-generated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-base-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-unrelated",
+          "edit": {
+            "commit": "mounted-generated-unrelated"
+          }
+        },
+        {
+          "id": "head-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-base-build.stdout",
+              "stderr": "expect/mounted-generated-values-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "mounted-generated-unrelated-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/clusters/dev",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--base",
+              "HEAD~1",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/mounted-generated-unrelated-diff.stdout",
+              "stderr": "expect/mounted-generated-unrelated-diff.stderr",
               "code": 0
             }
           }
@@ -2265,14 +2749,22 @@
     {
       "path": "overlays/generated-initial/repo/charts/app/Chart.yaml",
       "cases": [
-        "changed-only-emitted-helmrelease-chart-templated"
+        "changed-only-emitted-helmrelease-chart-templated",
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
       ],
       "purpose": "Authored generated release chart input or independently specified complete CLI result."
     },
     {
       "path": "overlays/generated-initial/repo/charts/app/values.yaml",
       "cases": [
-        "changed-only-emitted-helmrelease-chart-templated"
+        "changed-only-emitted-helmrelease-chart-templated",
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
       ],
       "purpose": "Authored generated release chart input or independently specified complete CLI result."
     },
@@ -2286,14 +2778,22 @@
     {
       "path": "overlays/generated-initial/repo/charts/common/Chart.yaml",
       "cases": [
-        "changed-only-emitted-helmrelease-chart-templated"
+        "changed-only-emitted-helmrelease-chart-templated",
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
       ],
       "purpose": "Authored generated release chart input or independently specified complete CLI result."
     },
     {
       "path": "overlays/generated-initial/repo/charts/common/templates/_cm.tpl",
       "cases": [
-        "changed-only-emitted-helmrelease-chart-templated"
+        "changed-only-emitted-helmrelease-chart-templated",
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
       ],
       "purpose": "Authored generated release chart input or independently specified complete CLI result."
     },
@@ -2338,6 +2838,214 @@
         "changed-only-emitted-helmrelease-chart-templated"
       ],
       "purpose": "Authored generated release chart input or independently specified complete CLI result."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/apps/base/kustomization.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/apps/base/resourceset.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/apps/dev/kustomization.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/apps/dev/provider.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/charts/other/Chart.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/charts/other/values.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/clusters/dev/apps.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-initial/repo/clusters/dev/generator.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Mounted ResourceSet and its generated Git chart inputs."
+    },
+    {
+      "path": "overlays/mounted-generated-values/repo/charts/app/values.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values"
+      ],
+      "purpose": "One chart-only edit from the mounted fixture parent."
+    },
+    {
+      "path": "expect/mounted-generated-values-diff.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values"
+      ],
+      "purpose": "Complete expected changed-only stdout."
+    },
+    {
+      "path": "expect/mounted-generated-values-diff.stderr",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Complete build diagnostics and values diff diagnostics."
+    },
+    {
+      "path": "overlays/mounted-generated-template/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-template"
+      ],
+      "purpose": "One chart-only edit from the mounted fixture parent."
+    },
+    {
+      "path": "expect/mounted-generated-template-diff.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-template"
+      ],
+      "purpose": "Complete expected changed-only stdout."
+    },
+    {
+      "path": "expect/mounted-generated-template-diff.stderr",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-template"
+      ],
+      "purpose": "Complete expected changed-only stderr."
+    },
+    {
+      "path": "overlays/mounted-generated-library/repo/charts/common/templates/_cm.tpl",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-library"
+      ],
+      "purpose": "One chart-only edit from the mounted fixture parent."
+    },
+    {
+      "path": "expect/mounted-generated-library-diff.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-library"
+      ],
+      "purpose": "Complete expected changed-only stdout."
+    },
+    {
+      "path": "expect/mounted-generated-library-diff.stderr",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-library"
+      ],
+      "purpose": "Complete expected changed-only stderr."
+    },
+    {
+      "path": "overlays/mounted-generated-unrelated/repo/charts/other/values.yaml",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "One chart-only edit from the mounted fixture parent."
+    },
+    {
+      "path": "expect/mounted-generated-unrelated-diff.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Complete expected changed-only stdout."
+    },
+    {
+      "path": "expect/mounted-generated-unrelated-diff.stderr",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Complete expected changed-only stderr."
+    },
+    {
+      "path": "expect/mounted-generated-values-build.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values"
+      ],
+      "purpose": "Complete head build output for the values edit."
+    },
+    {
+      "path": "expect/mounted-generated-template-build.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-template"
+      ],
+      "purpose": "Complete head build output for the template edit."
+    },
+    {
+      "path": "expect/mounted-generated-library-build.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-library"
+      ],
+      "purpose": "Complete head build output for the library edit."
+    },
+    {
+      "path": "expect/mounted-generated-base-build.stdout",
+      "cases": [
+        "changed-only-mounted-helmrelease-chart-templated-values",
+        "changed-only-mounted-helmrelease-chart-templated-template",
+        "changed-only-mounted-helmrelease-chart-templated-library",
+        "changed-only-mounted-helmrelease-chart-templated-unrelated"
+      ],
+      "purpose": "Complete common base build output and the unchanged head output for the unrelated edit."
     }
   ]
 }

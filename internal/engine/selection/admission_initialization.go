@@ -8,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 
+	"github.com/home-operations/flate/internal/engine/change"
 	"github.com/home-operations/flate/internal/engine/store"
 )
 
@@ -247,7 +248,7 @@ func (c *admissionClosure) demandPendingSources() {
 				slices.ContainsFunc(occurrence.Targets, func(target manifest.ProducerTarget) bool {
 					return target.KindInfo().SourceArtifact
 				}) {
-				c.demandMaterialization(id)
+				c.prepareMaterializer(id, change.Comparison{}, true)
 			}
 		}
 		if state.affectedKnown {
@@ -518,7 +519,7 @@ func (c *admissionClosure) recordDirectState(
 		state.eligible = c.rootEvidence(id).Admitted || c.objects.GetDeclaration(id) != nil
 	}
 	state.declarationChanged = state.eligible && !changed &&
-		(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
+		(c.fileChanged(c.boundSource(c.source(id)), record.File).changed || c.inputsChanged(c.source(id), record.Inputs))
 	for next := state.claim; next != 0; next = claims[next-1].next {
 		claim := claims[next-1]
 		if claim.ancestor {

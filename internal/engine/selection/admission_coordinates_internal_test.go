@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -77,7 +78,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 				affectedLocation{base: indexed, prefix: indexed, known: true},
 			)
 			assert.Equal(t, c.comparisonIndexedFile(file, sources[1], true), indexed)
-			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)
+			assert.Equal(t, c.fileChanged(c.boundSource(manifest.BootstrapSourceID), "input.txt").changed, true)
 			evidence := facts.sources[manifest.BootstrapSourceID]
 			assert.Equal(t, c.comparisonInputLocal(&evidence, changes, indexed), origin == root)
 			assert.Diff(t, slices.Collect(c.sourceFiles(manifest.BootstrapSourceID)), []string{"input.txt"})
@@ -277,7 +278,151 @@ func TestAdmission_FileCoordinates(t *testing.T) {
 			}}
 			c := solverClosure(t, store.New(), facts)
 			c.context.Root = tc.root
-			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, tc.file), tc.want)
+			assert.Equal(t, c.fileChanged(c.boundSource(manifest.BootstrapSourceID), tc.file).changed, tc.want)
+		})
+	}
+	declaration := (&manifest.ResourceSet{Name: "materializer", Namespace: "apps"}).Named()
+	const file = "materializer.yaml"
+	for _, tc := range []struct {
+		name, origin, authoredFile, mount string
+		transformed, built, unindexed     bool
+		noFile, stale, stable             bool
+	}{
+		{name: "mapped_declaration", origin: "/work", stable: true},
+		{name: "unmapped_declaration", origin: "relative"},
+		{name: "unmapped_nofile", origin: "relative", noFile: true},
+		{name: "mapped_raw_declaration_owned_by_builder", origin: "/work", transformed: true},
+		{name: "different_authored_file", origin: "/work", authoredFile: "other.yaml"},
+		{name: "different_mount", origin: "/work", mount: "/other"},
+		{name: "stale_snapshot", origin: "/work", stale: true},
+		{name: "built_at_origin", origin: "/work", mount: "/work", built: true, stable: true},
+		{name: "built_at_local_mount", origin: "/work", built: true},
+		{name: "built_without_catalog", origin: "/work", mount: "/work", built: true, unindexed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := &store.SourceArtifact{
+				LocalPath: "/mounted", LocalRoot: tc.origin, Provider: store.ProviderAlias,
+				FS: fstest.MapFS{file: {Data: []byte("same content")}},
+			}
+			delta, err := change.Detect(t.Context(), input, input, change.DetectConfig{})
+			assert.NoError(t, err)
+			record := manifest.DiscoveryRecord{Authored: declaration, File: file}
+			records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
+			if tc.transformed {
+				owner := &manifest.Kustomization{Name: "transformer", Namespace: "apps"}
+				record.Productions = []manifest.Production{{Owner: owner.Named(), Declaration: declaration}}
+			}
+			if tc.built {
+				owner := (&manifest.Kustomization{Name: "builder", Namespace: "apps"}).Named()
+				record.Parent, record.BuilderOwner, record.Builder = owner, owner, "kustomization.yaml"
+				record.Productions = []manifest.Production{
+					{Owner: owner, Authored: declaration, Declaration: declaration, File: file},
+				}
+				records[owner] = manifest.DiscoveryRecord{Authored: owner, File: "owner.yaml"}
+			}
+			records[declaration] = record
+			authoredFile := cmp.Or(tc.authoredFile, file)
+			if tc.noFile {
+				authoredFile = ""
+			}
+			occurrences := map[manifest.NamedResource]OccurrenceFacts{
+				declaration: {
+					Identity:     declaration,
+					Authored:     declaration,
+					Located:      true,
+					CatalogKnown: true,
+					Declaration: OccurrenceID{
+						Source: cmp.Or(tc.mount, input.LocalPath),
+						File:   authoredFile,
+					},
+				},
+			}
+			if tc.unindexed {
+				authored := declaration
+				authored.Name = "original"
+				record.Authored = authored
+				record.Productions[0].Authored = authored
+				record.Productions[0].Declaration = authored
+				records[declaration] = record
+				records[authored] = manifest.DiscoveryRecord{Authored: authored, File: file}
+				occurrence := occurrences[declaration]
+				occurrence.Identity, occurrence.Authored = authored, authored
+				occurrences[authored] = occurrence
+				delete(occurrences, declaration)
+			}
+			facts := &solverFacts{
+				index: manifest.DiscoveryIndex{Records: records},
+				sources: map[manifest.NamedResource]SourceFacts{
+					manifest.BootstrapSourceID: {
+						Input: input, Origin: tc.origin, Delta: delta, Paired: true, CurrentSnapshot: !tc.stale,
+						Snapshots: [2]*store.SourceArtifact{input, input},
+					},
+				},
+				occurrences: occurrences,
+			}
+			c := solverClosure(t, store.New(), facts)
+			c.context.Root = "/work"
+			assert.Equal(
+				t,
+				store.RawDeclarationAuthority(facts.SelectionIndex(), declaration, false),
+				!tc.transformed && !tc.built,
+			)
+			assert.Equal(t, c.compareDeclarationFile(declaration, manifest.NamedResource{}, &record, true),
+				declarationStability{stable: tc.stable, known: tc.stable})
+		})
+	}
+
+	for _, staleSide := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+		t.Run(fmt.Sprintf("invalidated_snapshot_%d", staleSide), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			stores := [2]*store.Store{store.New(), store.New()}
+			input := &store.SourceArtifact{LocalPath: root, Content: "checkout", FS: fstest.MapFS{file: {}}}
+			dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps"}
+			stale := stores[staleSide]
+			stale.AddObject(dependency)
+			var reads store.ReadSet
+			reads.Init(stale, manifest.BootstrapSourceID, nil)
+			t.Cleanup(reads.Retire)
+			assert.Equal(t, reads.GetObject(dependency.Named()), manifest.BaseManifest(dependency))
+			for _, st := range stores {
+				st.SetArtifact(manifest.BootstrapSourceID, input)
+			}
+			stale.SetArtifact(manifest.BootstrapSourceID, input.WithReads(&reads))
+			changes, err := change.Qualify(t.Context(), nil, change.SourcePair{Stores: stores}, manifest.WorkScope{})
+			assert.NoError(t, err)
+			stores[manifest.TreeHead].SetArtifact(manifest.BootstrapSourceID, input)
+			updated := new(*dependency)
+			updated.Data = map[string]any{"value": "changed"}
+			stale.AddObject(updated)
+			assert.Equal(t, reads.Valid(), false)
+
+			record := manifest.DiscoveryRecord{Authored: declaration, File: file}
+			facts := &solverFacts{
+				store:   stores[manifest.TreeHead],
+				changes: changes,
+				context: SourceContext{Root: root, Side: manifest.TreeHead, SideKnown: true},
+				index: manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{declaration: record},
+				},
+				sources: map[manifest.NamedResource]SourceFacts{manifest.BootstrapSourceID: {Paired: true}},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{
+					declaration: {
+						Identity: declaration, Authored: declaration, Located: true, CatalogKnown: true,
+						Declaration: OccurrenceID{Source: root, File: file},
+					},
+				},
+			}
+			c := solverClosure(t, facts.store, facts)
+			c.context = facts.context
+			evidence := c.boundSource(manifest.BootstrapSourceID)
+			assert.Equal(t, evidence.CurrentSnapshot && evidence.Delta != nil && evidence.Input.Available(), true)
+			assert.Equal(
+				t,
+				c.compareDeclarationFile(declaration, manifest.NamedResource{}, &record, true),
+				declarationStability{},
+			)
 		})
 	}
 }

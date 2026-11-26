@@ -77,6 +77,7 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 //nolint:paralleltest // The corpus harness changes process-global state.
 func TestE2E_ComponentSecretProducerSelection(t *testing.T) {
 	runSubstitutionCases(t, "component-secret-producer",
+		"inline-over-unresolved-name",
 		"shared-file-ordered",
 		"shared-file-unordered",
 		"parent-context-ordered",

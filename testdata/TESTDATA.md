@@ -255,6 +255,9 @@ A native Component holds an ExternalSecret whose metadata and target names resol
 Two Kustomizations share that component with different values.
 The package witness requires zero execution attempts and no output membership for the other owner.
 `component-secret-producer/parent-context-ordered` and `component-secret-producer/parent-context-unordered` add parent namespace projection and inherited substitution of the target.
+`component-secret-producer/inline-over-unresolved-name` selects only the consumer.
+An unreadable parent input leaves the producer's ConfigMap name unknown.
+The inherited inline name still identifies the Secret producer, so the consumer renders without `--allow-missing-kinds`.
 `component-secret-producer/producer-absent` retains the required-Secret error without a producer.
 `component-secret-producer/producer-absent-allowed` renders with matching permission and emits one unresolved warning.
 The latter case includes `--allow-missing-kinds Secret`.

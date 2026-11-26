@@ -78,7 +78,7 @@ func TestResolveStaticValue_ParentSubstitutions(t *testing.T) {
 			if tc.allowMissing {
 				kinds = []string{kind}
 			}
-			got, known, needsInput := ResolveStaticValue(tc.path, parent, provider, testPermissions(kinds))
+			got, known, needsInput := ResolveStaticValue(tc.path, parent, provider, testPermissions(kinds), false)
 			assert.Equal(t, known, tc.known)
 			assert.Equal(t, needsInput, tc.needsInput)
 			if known {
@@ -94,7 +94,7 @@ func TestResolveStaticValue_ParentSubstitutions(t *testing.T) {
 			SubstituteFrom: []kustomizev1.SubstituteReference{ref, ref},
 		}}
 		provider := &countingProvider{}
-		_, known, needsInput := ResolveStaticValue("./${ROOT}", parent, provider, nil)
+		_, known, needsInput := ResolveStaticValue("./${ROOT}", parent, provider, nil, false)
 		assert.Equal(t, known, false)
 		assert.Equal(t, needsInput, true)
 		assert.Equal(t, provider.lookups, 2)
@@ -110,6 +110,7 @@ func TestResolveStaticValue_Activation(t *testing.T) {
 		want       string
 		known      bool
 		needsInput bool
+		unresolved bool
 	}{
 		{name: "nil PostBuild", want: "./${ROOT:-apps/red}", known: true},
 		{name: "empty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{}}, want: "./${ROOT:-apps/red}", known: true},
@@ -150,6 +151,12 @@ func TestResolveStaticValue_Activation(t *testing.T) {
 			}},
 			want: "./apps/red", needsInput: true,
 		},
+		{
+			name:       "unresolved reference name",
+			postBuild:  &kustomizev1.PostBuild{},
+			want:       "./apps/red",
+			unresolved: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -157,10 +164,7 @@ func TestResolveStaticValue_Activation(t *testing.T) {
 			before := parent.Clone()
 			provider := cmp.Or(tc.provider, &sliceProvider{})
 			got, known, needsInput := ResolveStaticValue(
-				"./${ROOT:-apps/red}",
-				parent,
-				provider,
-				testPermissions(nil),
+				"./${ROOT:-apps/red}", parent, provider, testPermissions(nil), tc.unresolved,
 			)
 			assert.Equal(t, known, tc.known)
 			assert.Equal(t, needsInput, tc.needsInput)

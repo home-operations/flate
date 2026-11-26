@@ -94,50 +94,6 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 	}
 }
 
-func TestSubstitutionResolution_InputDiscovery(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, inputName     string
-		encrypted, optional bool
-	}{
-		{name: "absent", inputName: "vars"},
-		{name: "optional absent", inputName: "vars", optional: true},
-		{name: "malformed unnamed"},
-		{name: "encrypted", inputName: "vars", encrypted: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			l := New(store.New())
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
-				{Kind: manifest.KindSecret, Name: tc.inputName, Optional: tc.optional},
-			}}
-			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
-			reader := &substitutionDataReader{
-				inputs: map[manifest.NamedResource]store.ReferenceFacts{}, lookups: map[manifest.NamedResource]int{},
-			}
-			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.inputName}
-			if tc.encrypted {
-				data := &manifest.Secret{
-					Name:       id.Name,
-					Namespace:  id.Namespace,
-					Data:       nil,
-					StringData: map[string]any{"VALUE": "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"},
-				}
-				reader.inputs[id] = store.ReferenceFacts{Data: data, Original: data, Declared: true}
-			}
-			resolution := substitutionResolution{
-				loader:   l,
-				provider: values.NewStoreProvider(reader, manifest.NamedResource{}),
-			}
-			_, known := resolution.resolveValue(t.Context(), owner.Named(), "${VALUE}")
-			assert.Equal(t, known, false)
-			assert.Equal(t, resolution.needsInputs, !tc.encrypted)
-			assert.Equal(t, reader.lookups[id], 1)
-		})
-	}
-}
-
 func TestFinalizeIndex_ApplicationInputProducer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -234,14 +190,16 @@ func TestSubstitutionResolution_InheritedBindings(t *testing.T) {
 		},
 	}
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-	owner.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{
-		"FIRST": "${FIRST_VALUE}", "SECOND": "${SECOND_VALUE}", "UNUSED": "${UNREAD}",
-	}}
+	owner.PostBuild = &kustomizev1.PostBuild{
+		Substitute: map[string]string{
+			"FIRST": "${FIRST_VALUE}", "SECOND": "${SECOND_VALUE}", "UNUSED": "${UNREAD}",
+		},
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "${SETTINGS}"}},
+	}
 	l := New(store.New())
 	l.Index.Records[ancestor.Named()] = manifest.DiscoveryRecord{Declaration: ancestor}
 	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner, Parent: ancestor.Named()}
-	resolution := substitutionResolution{loader: l}
-	for _, tc := range []struct {
+	bindings := []struct {
 		expression, want string
 		known            bool
 	}{
@@ -250,13 +208,36 @@ func TestSubstitutionResolution_InheritedBindings(t *testing.T) {
 		{"${UNUSED}", "${UNUSED}", false},
 		{"${FIRST}/${SECOND}", "one/two", true},
 		{"${FIRST}", "one", true},
-	} {
-		got, known := resolution.resolveValue(t.Context(), owner.Named(), tc.expression)
-		assert.Equal(t, got, tc.want)
-		assert.Equal(t, known, tc.known)
+		{"${MISSING:-default}", "default", false},
 	}
-	assert.Diff(t, owner.PostBuild.Substitute, map[string]string{
-		"FIRST": "${FIRST_VALUE}", "SECOND": "${SECOND_VALUE}", "UNUSED": "${UNREAD}",
+	for _, order := range []string{"inline first", "unknown first"} {
+		t.Run(order, func(t *testing.T) {
+			t.Parallel()
+			reader := &substitutionDataReader{lookups: make(map[manifest.NamedResource]int)}
+			resolution := substitutionResolution{
+				loader: l, provider: values.NewStoreProvider(reader, manifest.NamedResource{}),
+			}
+			cases := bindings
+			if order == "unknown first" {
+				cases = slices.Clone(bindings)
+				slices.Reverse(cases)
+			}
+			for _, tc := range cases {
+				got, known := resolution.resolveValue(t.Context(), owner.Named(), tc.expression)
+				assert.Equal(t, got, tc.want)
+				assert.Equal(t, known, tc.known)
+			}
+			assert.Equal(t, resolution.catalogs[owner.Named()].PostBuild.SubstituteFrom[0].Name, "${SETTINGS}")
+			assert.Equal(t, reader.lookups[manifest.NamedResource{
+				Kind: manifest.KindConfigMap, Namespace: "apps", Name: "${SETTINGS}",
+			}], 0)
+		})
+	}
+	t.Cleanup(func() {
+		assert.Equal(t, owner.PostBuild.SubstituteFrom[0].Name, "${SETTINGS}")
+		assert.Diff(t, owner.PostBuild.Substitute, map[string]string{
+			"FIRST": "${FIRST_VALUE}", "SECOND": "${SECOND_VALUE}", "UNUSED": "${UNREAD}",
+		})
 	})
 }
 

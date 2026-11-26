@@ -7,17 +7,19 @@ import (
 )
 
 // ResolveStaticValue reports absent input only when the scalar remains unknown.
+//
+//nolint:revive // Input policy and inherited-name uncertainty stay explicit without a one-caller options type.
 func ResolveStaticValue(
 	value string,
 	parent *manifest.Kustomization,
 	provider provider,
 	missing missingPolicy,
+	unknownInputs bool,
 ) (resolved string, known, needsInput bool) { //nolint:nonamedreturns // The names distinguish the two boolean results.
 	parent = new(*parent)
 	if parent.PostBuild != nil {
 		parent.PostBuild = new(*parent.PostBuild)
 	}
-	unknownInputs := false
 	absentInput := false
 	var inline map[string]string
 	var inputs []Result

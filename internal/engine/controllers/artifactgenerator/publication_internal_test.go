@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -188,6 +190,11 @@ func testManagedPublication(t *testing.T, owner *cache.Cache, input fs.FS, skip 
 			}},
 		}},
 	)
+	declaration := st.GetObject(gen).(*manifest.RawObject)
+	spec, err := declaration.ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	assert.Equal(t, spec.CommonMetadata == nil, true)
+
 	runForTest(t, c, gen)
 	status, _ := st.GetStatus(gen)
 	assert.FatalIf(t, status.Status != store.StatusReady, "generator status = %+v", status)
@@ -223,6 +230,7 @@ func testManagedPublication(t *testing.T, owner *cache.Cache, input fs.FS, skip 
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 		}
 		child := st.GetObject(id).(*manifest.ExternalArtifact)
+		assert.Equal(t, len(child.Annotations), 0)
 		assert.Equal(t, string(child.ExportedInputs["side"].Raw), `"`+side+`"`)
 	}
 	emission := st.GetArtifact(gen, store.ArtifactContent).(*store.Emission)
@@ -306,7 +314,7 @@ func TestArtifactGenerator_InvalidNamespaceMetadataStrategy(t *testing.T) {
 		{
 			name: "unknown_for_unmanaged_target",
 			metadata: map[string]any{"from": []any{
-				map[string]any{"namespace": "tenant", "strategy": "Merge"},
+				map[string]any{"namespace": "tenant", "strategy": sourcewatcherv1.MergeStrategy},
 				map[string]any{"namespace": "other", "strategy": "Overide"},
 			}},
 			index:    1,
@@ -359,9 +367,12 @@ func TestArtifactGenerator_InvalidNamespaceMetadataStrategy(t *testing.T) {
 			assert.ErrorIf(t, !errors.Is(got, manifest.ErrInput), "reconcile error = %v, want ErrInput", got)
 			assert.ErrorIf(t, !errors.Is(got, manifest.ErrFlux), "reconcile error = %v, want ErrFlux", got)
 			want := fmt.Sprintf(
-				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: Reset, Override, Merge)",
+				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: %s, %s, %s)",
 				tc.index,
 				tc.strategy,
+				sourcewatcherv1.NamespaceMetadataResetStrategy,
+				sourcewatcherv1.OverrideStrategy,
+				sourcewatcherv1.MergeStrategy,
 			)
 			assert.ErrorIf(
 				t,
@@ -397,7 +408,7 @@ func TestArtifactGenerator_ManagedProducerConflict(t *testing.T) {
 						"from": []any{
 							map[string]any{
 								"namespace": "*",
-								"strategy":  "Merge",
+								"strategy":  sourcewatcherv1.MergeStrategy,
 								"labels":    map[string]any{"winner": name},
 							},
 						},

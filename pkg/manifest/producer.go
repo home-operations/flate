@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // KeySet retains known names without proving absence until coverage is complete.
@@ -52,9 +53,9 @@ func (r *RawObject) producerNeedsCandidates() bool {
 	if !r.isArtifactGenerator() {
 		return r.hasGeneratedIdentityPatches()
 	}
-	artifacts := r.artifactGeneratorSpec().spec.Artifacts
+	artifacts := r.artifactGeneratorSpec().spec.OutputArtifacts
 	for i := range artifacts {
-		if artifacts[i].needsCandidates() {
+		if strings.ContainsAny(artifacts[i].Name, "{}") || strings.ContainsAny(artifacts[i].Namespace, "{}") {
 			return true
 		}
 	}

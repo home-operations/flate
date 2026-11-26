@@ -9,6 +9,7 @@ import (
 
 	"github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,22 +31,18 @@ func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifa
 	}})
 }
 
-func (o *ArtifactGeneratorOutput) identityTemplate(namespace string) NamedResource {
+func artifactIdentityTemplate(o *sourcewatcherv1.OutputArtifact, namespace string) NamedResource {
 	return NamedResource{
 		Group: SourceDomain, Kind: KindExternalArtifact,
 		Namespace: cmp.Or(o.Namespace, namespace), Name: o.Name,
 	}
 }
 
-func (o *ArtifactGeneratorOutput) needsCandidates() bool {
-	return strings.ContainsAny(o.Name, "{}") || strings.ContainsAny(o.Namespace, "{}")
-}
-
 // ResolvedArtifactGeneratorOutput carries the authored output with its expansion results.
 type ResolvedArtifactGeneratorOutput struct {
 	Artifact  NamedResource
 	Namespace NamedResource
-	Output    ArtifactGeneratorOutput
+	Output    sourcewatcherv1.OutputArtifact
 
 	// A Namespace metadata path error is deferred until after artifact preparation.
 	NamespaceMetadataPath      string
@@ -55,9 +52,9 @@ type ResolvedArtifactGeneratorOutput struct {
 // ResolveOutput uses normalized captures for identities and raw captures for file paths.
 // Nil captures retain templates for declaration validation.
 func (s *ArtifactGeneratorSpec) ResolveOutput(
-	o *ArtifactGeneratorOutput, namespace string, normalized, raw map[string]string,
+	o *sourcewatcherv1.OutputArtifact, namespace string, normalized, raw map[string]string,
 ) (ResolvedArtifactGeneratorOutput, error) {
-	result := ResolvedArtifactGeneratorOutput{Artifact: o.identityTemplate(namespace), Output: *o}
+	result := ResolvedArtifactGeneratorOutput{Artifact: artifactIdentityTemplate(o, namespace), Output: *o}
 	if normalized != nil {
 		if err := result.expand(normalized, raw); err != nil {
 			return ResolvedArtifactGeneratorOutput{}, err
@@ -107,7 +104,7 @@ func (r *ResolvedArtifactGeneratorOutput) expand(normalized, raw map[string]stri
 }
 
 func (s *ArtifactGeneratorSpec) namespaceTarget(
-	o *ArtifactGeneratorOutput, target, ownerNamespace string,
+	o *sourcewatcherv1.OutputArtifact, target, ownerNamespace string,
 ) NamedResource {
 	if s.ManagedNamespaces == nil || o.Namespace == "" || !managedNamespaceEligible(target, ownerNamespace) {
 		return NamedResource{}
@@ -159,12 +156,12 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 			_, captures, _ = artifactsyntax.Tokens(pattern.Path, nil, scratch[:0], true)
 		}
 	}
-	for i := range spec.Artifacts {
-		output := &spec.Artifacts[i]
+	for i := range spec.OutputArtifacts {
+		output := &spec.OutputArtifacts[i]
 		if output.Name == "" {
 			continue
 		}
-		id := output.identityTemplate(r.Namespace)
+		id := artifactIdentityTemplate(output, r.Namespace)
 		targets = r.appendArtifactTargets(targets, id, candidates, captures)
 		if namespace := spec.namespaceTarget(output, id.Namespace, r.Namespace); namespace.Name != "" {
 			targets = r.appendArtifactTargets(targets, namespace, candidates, captures)
@@ -301,11 +298,11 @@ func (s *ArtifactGeneratorSpec) inputPaths(alias string) []string {
 		}
 	}
 	add(artifactsyntax.ParseSelector(s.PathPattern), "*?[{", false)
-	for i := range s.Artifacts {
-		for _, operation := range s.Artifacts[i].Copy {
+	for i := range s.OutputArtifacts {
+		for _, operation := range s.OutputArtifacts[i].Copy {
 			add(artifactsyntax.ParseSelector(operation.From), "*?[{", false)
 		}
-		addFile(s.Artifacts[i].InputsFrom)
+		addFile(s.OutputArtifacts[i].InputsFrom)
 	}
 	addFile(s.namespaceMetadataPath())
 	slices.Sort(files)

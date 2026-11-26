@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/testutil/assert"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -56,7 +58,7 @@ func TestEvaluate(t *testing.T) {
 			{"@repo/app/*", "all files matching pattern 'app/*' in source 'repo' were excluded", []string{"file"}},
 		} {
 			for _, optional := range []bool{true, false} {
-				req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
+				req := request{Output: sourcewatcherv1.OutputArtifact{Copy: []sourcewatcherv1.CopyOperation{
 					{From: tc.source, To: "@artifact/", Optional: optional, Exclude: tc.exclude},
 				}}}
 				composition, err := e.composition(prepareCompositionRequest(t, &e, &req))
@@ -85,8 +87,8 @@ func TestEvaluate(t *testing.T) {
 				identity: []inputIdentity{{Alias: "repo", Input: store.ArtifactInput{Content: "generation"}}},
 				inputs:   map[string]fs.FS{"repo": fstest.MapFS{"bad.tgz": {Data: []byte("invalid gzip header")}}},
 			}
-			req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
-				{From: tc.source, To: "@artifact/", Optional: true, Strategy: strategyExtract},
+			req := request{Output: sourcewatcherv1.OutputArtifact{Copy: []sourcewatcherv1.CopyOperation{
+				{From: tc.source, To: "@artifact/", Optional: true, Strategy: sourcewatcherv1.ExtractStrategy},
 			}}}
 			composition, err := e.composition(prepareCompositionRequest(t, &e, &req))
 			assert.NoError(t, err)
@@ -113,8 +115,8 @@ func TestEvaluate(t *testing.T) {
 					"repo": fstest.MapFS{"app/file": {Data: []byte("file")}},
 				},
 			}
-			output := manifest.ArtifactGeneratorOutput{
-				Copy: []manifest.ArtifactGeneratorCopy{{From: tc.from, To: tc.to}},
+			output := sourcewatcherv1.OutputArtifact{
+				Copy: []sourcewatcherv1.CopyOperation{{From: tc.from, To: tc.to}},
 			}
 			_, err := e.composition(&request{Output: output})
 			assert.FatalIf(
@@ -148,10 +150,10 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		},
 	}
 	req := request{
-		Output: manifest.ArtifactGeneratorOutput{
+		Output: sourcewatcherv1.OutputArtifact{
 			Name: "artifact",
-			Copy: []manifest.ArtifactGeneratorCopy{
-				{From: "@repo/archive.tgz", To: "@artifact/out", Strategy: strategyExtract},
+			Copy: []sourcewatcherv1.CopyOperation{
+				{From: "@repo/archive.tgz", To: "@artifact/out", Strategy: sourcewatcherv1.ExtractStrategy},
 			},
 		},
 	}

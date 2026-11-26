@@ -9,8 +9,6 @@ import (
 	"github.com/home-operations/flate/internal/engine/source/safepath"
 )
 
-const strategyExtract = "Extract"
-
 type selectorUse uint8
 
 const (

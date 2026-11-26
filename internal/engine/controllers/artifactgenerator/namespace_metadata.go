@@ -8,18 +8,13 @@ import (
 	"slices"
 	"strings"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
-)
-
-const (
-	namespaceStrategyReset    = "Reset"
-	namespaceStrategyOverride = "Override"
-	namespaceStrategyMerge    = "Merge"
 )
 
 type namespaceTargets struct {
@@ -44,7 +39,7 @@ func (t namespaceTargets) validate(
 	ctx context.Context,
 	policies *namespacePolicies,
 	requests []request,
-	source *manifest.ArtifactGeneratorNamespaceMetadataSource,
+	source *sourcewatcherv1.NamespaceMetadataFromSource,
 ) error {
 	for _, req := range t.ordered {
 		if err := policies.validateName(ctx, req.Namespace.Name); err != nil {
@@ -160,12 +155,12 @@ func filterNamespaceMetadata(
 }
 
 type namespaceMetadataRule struct {
-	entry           *manifest.ArtifactGeneratorNamespaceMetadataEntry
+	entry           *sourcewatcherv1.NamespaceMetadataFrom
 	reset, override bool
 }
 
 func resolveNamespaceMetadataRules(
-	metadata *manifest.ArtifactGeneratorNamespaceMetadata,
+	metadata *sourcewatcherv1.ManagedNamespacesMetadata,
 ) ([]namespaceMetadataRule, error) {
 	rules := make([]namespaceMetadataRule, len(metadata.From))
 	for i := range metadata.From {
@@ -173,16 +168,19 @@ func resolveNamespaceMetadataRules(
 		rule := &rules[i]
 		rule.entry = entry
 		switch entry.Strategy {
-		case namespaceStrategyReset:
+		case sourcewatcherv1.NamespaceMetadataResetStrategy:
 			rule.reset = true
-		case namespaceStrategyOverride:
+		case sourcewatcherv1.OverrideStrategy:
 			rule.override = true
-		case namespaceStrategyMerge:
+		case sourcewatcherv1.MergeStrategy:
 		default:
 			return nil, fmt.Errorf(
-				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: Reset, Override, Merge)",
+				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: %s, %s, %s)",
 				i,
 				entry.Strategy,
+				sourcewatcherv1.NamespaceMetadataResetStrategy,
+				sourcewatcherv1.OverrideStrategy,
+				sourcewatcherv1.MergeStrategy,
 			)
 		}
 	}
@@ -193,11 +191,12 @@ func (p *generatorPublication) namespaceMetadataFor(
 	name string,
 	sourced namespaceMetadataValues,
 ) (metav1.ObjectMeta, error) {
+	common := p.spec.commonMetadata()
 	meta := metav1.ObjectMeta{
 		Name:   name,
-		Labels: mergeMetadata(maps.Clone(p.spec.declaration.CommonMetadata.Labels), sourced.Labels, true),
+		Labels: mergeMetadata(maps.Clone(common.Labels), sourced.Labels, true),
 		Annotations: mergeMetadata(
-			maps.Clone(p.spec.declaration.CommonMetadata.Annotations),
+			maps.Clone(common.Annotations),
 			sourced.Annotations,
 			true,
 		),
@@ -272,7 +271,7 @@ func (p *generatorPublication) prepareNamespaces(
 	targets namespaceTargets,
 	requests []request,
 ) error {
-	var source *manifest.ArtifactGeneratorNamespaceMetadataSource
+	var source *sourcewatcherv1.NamespaceMetadataFromSource
 	if metadata := p.spec.declaration.ManagedNamespaces.Metadata; metadata != nil {
 		source = metadata.FromSource
 	}

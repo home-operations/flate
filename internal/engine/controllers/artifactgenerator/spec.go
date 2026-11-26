@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -32,22 +33,29 @@ type generatorSpec struct {
 	namespaceRules []namespaceMetadataRule
 }
 
+func (s *generatorSpec) commonMetadata() sourcewatcherv1.CommonMetadata {
+	if s.declaration.CommonMetadata != nil {
+		return *s.declaration.CommonMetadata
+	}
+	return sourcewatcherv1.CommonMetadata{}
+}
+
 func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) (generatorSpec, error) {
 	sourcesOutsideBounds := len(spec.Sources) < 1 || len(spec.Sources) > maxEntries
-	artifactsOutsideBounds := len(spec.Artifacts) < 1 || len(spec.Artifacts) > maxEntries
+	artifactsOutsideBounds := len(spec.OutputArtifacts) < 1 || len(spec.OutputArtifacts) > maxEntries
 	if sourcesOutsideBounds || artifactsOutsideBounds || len(spec.PathPattern) > maxPatternLength {
 		return generatorSpec{}, fmt.Errorf("sources, artifacts or pathPattern outside API bounds")
 	}
 	aliases := make(map[string]bool, len(spec.Sources))
 	for i := range spec.Sources {
-		if err := validateSource(&spec.Sources[i], aliases); err != nil {
+		if err := validateSource(&spec.Sources[i], spec.SourceNamespaceSet(i), aliases); err != nil {
 			return generatorSpec{}, err
 		}
 	}
 	prepared := generatorSpec{declaration: *spec}
-	identities := make(map[manifest.NamedResource]bool, len(spec.Artifacts))
-	for i := range spec.Artifacts {
-		artifact := &spec.Artifacts[i]
+	identities := make(map[manifest.NamedResource]bool, len(spec.OutputArtifacts))
+	for i := range spec.OutputArtifacts {
+		artifact := &spec.OutputArtifacts[i]
 		resolved, _ := spec.ResolveOutput(artifact, namespace, nil, nil)
 		id := resolved.Artifact
 		if identities[id] {
@@ -58,7 +66,7 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) (gener
 			)
 		}
 		identities[id] = true
-		if err := prepared.validateArtifact(artifact, id, aliases); err != nil {
+		if err := prepared.validateArtifact(i, id, aliases); err != nil {
 			return generatorSpec{}, err
 		}
 	}
@@ -79,17 +87,17 @@ func validateSpec(spec *manifest.ArtifactGeneratorSpec, namespace string) (gener
 	return prepared, nil
 }
 
-func validateSource(input *manifest.ArtifactGeneratorSource, aliases map[string]bool) error {
+func validateSource(input *sourcewatcherv1.SourceReference, namespaceSet bool, aliases map[string]bool) error {
 	if aliases[input.Alias] {
 		return fmt.Errorf("duplicate source alias '%s' found", input.Alias)
 	}
 	invalidAlias := len(input.Alias) > maxAliasLength || !aliasName.MatchString(input.Alias)
 	invalidName := len(input.Name) > maxResourceName || !sourceName.MatchString(input.Name)
-	invalidNamespace := input.NamespaceSet && (len(input.Namespace) > 63 || !sourceName.MatchString(input.Namespace))
+	invalidNamespace := namespaceSet && (len(input.Namespace) > 63 || !sourceName.MatchString(input.Namespace))
 	if invalidAlias || invalidName || invalidNamespace {
 		return fmt.Errorf("invalid or duplicate source %q", input.Alias)
 	}
-	if !input.Supported() {
+	if !manifest.SupportsArtifactGeneratorSource(input.Kind) {
 		return fmt.Errorf("unsupported source kind %q", input.Kind)
 	}
 	aliases[input.Alias] = true
@@ -97,8 +105,9 @@ func validateSource(input *manifest.ArtifactGeneratorSource, aliases map[string]
 }
 
 func (s *generatorSpec) validateArtifact(
-	artifact *manifest.ArtifactGeneratorOutput, id manifest.NamedResource, aliases map[string]bool,
+	position int, id manifest.NamedResource, aliases map[string]bool,
 ) error {
+	artifact := &s.declaration.OutputArtifacts[position]
 	if artifact.Name == "" || len(artifact.Name) > maxPatternLength || len(artifact.Namespace) > maxPatternLength ||
 		len(artifact.Copy) == 0 {
 		return fmt.Errorf("artifact %q outside API bounds", artifact.Name)
@@ -123,7 +132,7 @@ func (s *generatorSpec) validateArtifact(
 		}
 	}
 	for i := range artifact.Copy {
-		if err := s.prepareOperation(&artifact.Copy[i]); err != nil {
+		if err := s.prepareOperation(&artifact.Copy[i], s.declaration.EmptyCopyStrategy(position, i)); err != nil {
 			return err
 		}
 	}
@@ -180,7 +189,7 @@ func (s *generatorSpec) validateFileSelector(text string, aliases map[string]boo
 	return nil
 }
 
-func (s *generatorSpec) prepareOperation(op *manifest.ArtifactGeneratorCopy) error {
+func (s *generatorSpec) prepareOperation(op *sourcewatcherv1.CopyOperation, emptyStrategy bool) error {
 	invalidFrom := len(op.From) < 1 || len(op.From) > maxPatternLength
 	invalidTo := len(op.To) < 1 || len(op.To) > maxPatternLength
 	if invalidFrom || invalidTo || len(op.Exclude) > 100 {
@@ -192,13 +201,17 @@ func (s *generatorSpec) prepareOperation(op *manifest.ArtifactGeneratorCopy) err
 	if _, err := s.selectors.resolve(op.To, destinationSelector, true); err != nil {
 		return fmt.Errorf("invalid copy destination '%s': %w", op.To, err)
 	}
+	strategy := op.Strategy
+	if strategy == "" && !emptyStrategy {
+		strategy = sourcewatcherv1.OverwriteStrategy
+	}
 	var mode cache.CopyMode
-	switch op.Strategy {
-	case "", "Overwrite":
+	switch strategy {
+	case sourcewatcherv1.OverwriteStrategy:
 		mode = cache.CopyFiles
-	case "Merge":
+	case sourcewatcherv1.MergeStrategy:
 		mode = cache.MergeYAML
-	case strategyExtract:
+	case sourcewatcherv1.ExtractStrategy:
 		mode = cache.ExtractArchive
 	default:
 		return fmt.Errorf("unsupported strategy %q", op.Strategy)

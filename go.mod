@@ -25,6 +25,7 @@ require (
 	github.com/fluxcd/pkg/kustomize v1.45.0
 	github.com/fluxcd/pkg/sourceignore v0.23.0
 	github.com/fluxcd/source-controller/api v1.10.2
+	github.com/fluxcd/source-watcher/api/v2 v2.3.1
 	github.com/go-git/go-billy/v6 v6.0.0-beta.1
 	github.com/go-git/go-git/v6 v6.0.0-beta.1
 	github.com/go-task/slim-sprig/v3 v3.0.0

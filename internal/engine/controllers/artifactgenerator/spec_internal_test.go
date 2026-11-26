@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -16,7 +18,7 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 		edit  func(map[string]any, map[string]any, map[string]any, map[string]any)
 		valid bool
 	}{
-		{"valid", func(_, _, _, _ map[string]any) {}, true},
+		{"omitted_strategy", func(_, _, _, _ map[string]any) {}, true},
 		{"sources_required", func(spec, _, _, _ map[string]any) { delete(spec, "sources") }, false},
 		{"sources_empty", func(spec, _, _, _ map[string]any) { spec["sources"] = []any{} }, false},
 		{"sources_type", func(spec, _, _, _ map[string]any) { spec["sources"] = "repo" }, false},
@@ -128,8 +130,29 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 		{"exclude_pattern_at_cap", func(_, _, _, op map[string]any) { op["exclude"] = []string{strings.Repeat("a", 1024)} }, true},
 		{"exclude_pattern_over_cap", func(_, _, _, op map[string]any) { op["exclude"] = []string{strings.Repeat("a", 1025)} }, false},
 		{"exclude_glob_invalid", func(_, _, _, op map[string]any) { op["exclude"] = []string{"["} }, false},
+		{"strategy_empty", func(_, _, _, op map[string]any) { op["strategy"] = "" }, false},
+		{"strategy_null", func(_, _, _, op map[string]any) { op["Strategy"] = nil }, true},
+		{"strategy_null_keeps_empty", func(_, _, _, op map[string]any) {
+			op["Strategy"], op["strategy"] = "", nil
+		}, false},
+		{"strategy_valid_replaces_empty", func(_, _, _, op map[string]any) {
+			op["Strategy"], op["strategy"] = "", sourcewatcherv1.OverwriteStrategy
+		}, true},
+		{"strategy_empty_replaces_valid", func(_, _, _, op map[string]any) {
+			op["Strategy"], op["strategy"] = sourcewatcherv1.MergeStrategy, ""
+		}, false},
+		{"copy_collision_reuses_operation", func(_, _, output, op map[string]any) {
+			op["Strategy"] = ""
+			output["Copy"], output["copy"] = output["copy"], []any{map[string]any{"strategy": nil}}
+		}, false},
+		{"artifacts_collision_reuses_output", func(spec, _, output, op map[string]any) {
+			op["strategy"] = ""
+			spec["Artifacts"], spec["artifacts"] = []any{output}, []any{map[string]any{"copy": []any{map[string]any{
+				"strategy": sourcewatcherv1.OverwriteStrategy,
+			}}}}
+		}, true},
 		{"strategy_invalid", func(_, _, _, op map[string]any) { op["strategy"] = "Append" }, false},
-		{"explicit_overwrite", func(_, _, _, op map[string]any) { op["strategy"] = "Overwrite" }, true},
+		{"explicit_overwrite", func(_, _, _, op map[string]any) { op["strategy"] = sourcewatcherv1.OverwriteStrategy }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -190,6 +213,15 @@ func testArtifactGeneratorValidationCase(t *testing.T, testCaseInput *struct {
 			err.Error(),
 			"copy operation outside API bounds",
 		), "required path diagnostic = %v", err)
+	switch testCaseInput.name {
+	case "strategy_empty",
+		"strategy_null_keeps_empty",
+		"strategy_empty_replaces_valid",
+		"copy_collision_reuses_operation":
+		assert.Equal(t, err.Error(), `unsupported strategy ""`)
+	case "strategy_invalid":
+		assert.Equal(t, err.Error(), `unsupported strategy "Append"`)
+	}
 }
 
 type testArtifactGeneratorValidationCase2Inputs struct {
@@ -235,17 +267,17 @@ func TestValidateSpec_NamespaceMetadataSource(t *testing.T) {
 			t.Parallel()
 			spec := manifest.ArtifactGeneratorSpec{
 				PathPattern: tc.pattern,
-				Sources: []manifest.ArtifactGeneratorSource{
+				Sources: []sourcewatcherv1.SourceReference{
 					{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
 				},
-				Artifacts: []manifest.ArtifactGeneratorOutput{{
+				OutputArtifacts: []sourcewatcherv1.OutputArtifact{{
 					Name:       "output",
 					InputsFrom: tc.inputsFrom,
-					Copy:       []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+					Copy:       []sourcewatcherv1.CopyOperation{{From: "@repo/file", To: "@artifact/file"}},
 				}},
-				ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
-					Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
-						FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: tc.path},
+				ManagedNamespaces: &sourcewatcherv1.ManagedNamespaces{
+					Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+						FromSource: &sourcewatcherv1.NamespaceMetadataFromSource{Path: tc.path},
 					},
 				},
 			}

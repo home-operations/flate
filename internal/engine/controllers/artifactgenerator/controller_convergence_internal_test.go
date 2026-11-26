@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/controllers/kustomization"
 	sourcecontroller "github.com/home-operations/flate/internal/engine/controllers/source"
@@ -363,7 +365,7 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 			destination, path = "@artifact/other", "other/file"
 		}
 		name, operations, wantCalls = (*testCaseInput.phase), []any{
-			map[string]any{"from": "@repo/archive.tgz", "to": destination, "strategy": "Extract"},
+			map[string]any{"from": "@repo/archive.tgz", "to": destination, "strategy": sourcewatcherv1.ExtractStrategy},
 		}, 2
 	}
 	generatorForTestResult := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})

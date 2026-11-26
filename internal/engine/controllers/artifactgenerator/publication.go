@@ -92,7 +92,8 @@ func (p *generatorPublication) prepare(
 }
 
 func (p *generatorPublication) generatedDocument(req *request, inputs map[string]any) (map[string]any, error) {
-	labels := maps.Clone(p.spec.declaration.CommonMetadata.Labels)
+	common := p.spec.commonMetadata()
+	labels := maps.Clone(common.Labels)
 	if labels == nil {
 		labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
 	}
@@ -103,7 +104,7 @@ func (p *generatorPublication) generatedDocument(req *request, inputs map[string
 			Name:        req.Identity.Name,
 			Namespace:   req.Identity.Namespace,
 			Labels:      labels,
-			Annotations: p.spec.declaration.CommonMetadata.Annotations,
+			Annotations: common.Annotations,
 		},
 	)
 	if len(inputs) != 0 {

@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestCompileNamespacePolicies_DiagnosticOrder(t *testing.T) {
@@ -41,10 +42,10 @@ func TestCompileNamespacePolicies_DiagnosticOrder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := compileNamespacePolicies(&manifest.ArtifactGeneratorManagedNamespaces{
+			_, err := compileNamespacePolicies(&sourcewatcherv1.ManagedNamespaces{
 				AllowedNames: tc.names,
-				Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
-					FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{
+				Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+					FromSource: &sourcewatcherv1.NamespaceMetadataFromSource{
 						AllowedLabels: tc.labels, AllowedAnnotations: tc.annotations,
 					},
 				},
@@ -55,7 +56,7 @@ func TestCompileNamespacePolicies_DiagnosticOrder(t *testing.T) {
 	}
 	t.Run("malformed", func(t *testing.T) {
 		t.Parallel()
-		_, err := compileNamespacePolicies(&manifest.ArtifactGeneratorManagedNamespaces{AllowedNames: []string{"ns."}})
+		_, err := compileNamespacePolicies(&sourcewatcherv1.ManagedNamespaces{AllowedNames: []string{"ns."}})
 		assert.FatalIf(t, err == nil, "expected compilation error")
 		assert.Equal(t, strings.HasPrefix(
 			err.Error(),
@@ -98,7 +99,7 @@ func TestNamespacePolicies_NameEvaluation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			policies, err := compileNamespacePolicies(
-				&manifest.ArtifactGeneratorManagedNamespaces{AllowedNames: tc.expressions},
+				&sourcewatcherv1.ManagedNamespaces{AllowedNames: tc.expressions},
 			)
 			assert.NoError(t, err)
 			err = policies.validateName(t.Context(), tc.namespace)
@@ -113,7 +114,7 @@ func TestNamespacePolicies_NameEvaluation(t *testing.T) {
 	for _, reserved := range []string{"default", "kube-system", "kube-public", "flux-system"} {
 		t.Run(reserved, func(t *testing.T) {
 			t.Parallel()
-			policies, err := compileNamespacePolicies(&manifest.ArtifactGeneratorManagedNamespaces{
+			policies, err := compileNamespacePolicies(&sourcewatcherv1.ManagedNamespaces{
 				AllowedNames: []string{broken, "true"},
 			})
 			assert.NoError(t, err)

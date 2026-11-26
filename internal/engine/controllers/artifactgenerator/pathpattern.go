@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 
 	"github.com/home-operations/flate/internal/core/artifactsyntax"
@@ -17,7 +18,7 @@ type request struct {
 	work                       manifest.AcquisitionWork
 	Identity                   manifest.NamedResource
 	Namespace                  manifest.NamedResource
-	Output                     manifest.ArtifactGeneratorOutput
+	Output                     sourcewatcherv1.OutputArtifact
 	Captures                   map[string]string
 	namespaceMetadata          artifactsyntax.Selector
 	inputsFrom                 artifactsyntax.Selector
@@ -37,9 +38,9 @@ func (s *generatorSpec) expand(
 		return nil, err
 	}
 	if matcher == nil {
-		requests := make([]request, 0, len(spec.Artifacts))
-		for i := range spec.Artifacts {
-			output := &spec.Artifacts[i]
+		requests := make([]request, 0, len(spec.OutputArtifacts))
+		for i := range spec.OutputArtifacts {
+			output := &spec.OutputArtifacts[i]
 			resolved, _ := spec.ResolveOutput(output, namespace, nil, nil)
 			requests = append(requests, s.request(&resolved))
 		}
@@ -96,8 +97,8 @@ func (x *requestExpansion) add(dir string, values []string) error {
 		normalized[key] = value
 	}
 	declaration := &x.spec.declaration
-	for i := range declaration.Artifacts {
-		output := &declaration.Artifacts[i]
+	for i := range declaration.OutputArtifacts {
+		output := &declaration.OutputArtifacts[i]
 		resolved, err := declaration.ResolveOutput(output, x.namespace, normalized, raw)
 		if err != nil {
 			return fmt.Errorf("pathPattern %q: failed to render artifact %s for match %s: %w",

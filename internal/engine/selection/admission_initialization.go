@@ -501,13 +501,13 @@ func (c *admissionClosure) recordDirectState(
 ) {
 	state := c.states[id]
 	if state.directKnown {
-		state.requested = state.requested || c.namedSelection(id)
+		state.requested = state.requested || c.session.RequestsNamedRoot(id)
 		c.states[id] = state
 		return
 	}
 	c.derive()
 	state.direct, state.directKnown = changed, state.initialKnown
-	state.requested = state.requested || c.namedSelection(id)
+	state.requested = state.requested || c.session.RequestsNamedRoot(id)
 	root := record.Origin.Policy(id, nil).Root
 	if incoming := c.incoming(id); incoming.Obj != nil {
 		root = incoming.Policy(id).Root
@@ -530,15 +530,6 @@ func (c *admissionClosure) recordDirectState(
 		}
 	}
 	c.states[id] = state
-}
-
-func (c *admissionClosure) namedSelection(id manifest.NamedResource) bool {
-	for _, root := range c.session.request.Roots {
-		if root.Name != "" && rootMatchesIdentity(root, id, true) {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *admissionClosure) noteKnownSelection(

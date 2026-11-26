@@ -57,23 +57,12 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 }
 
 func (s *Store) commitReplacement(
-	id manifest.NamedResource,
 	prev, proposal *Emission,
 	generation uint64,
+	targets *replacementTargets,
 ) publicationResult {
-	if !proposal.Reads.Valid() {
-		return publicationRejected
-	}
-	var storage [4]regionState
-	changed := s.changedTargets(prev, proposal, storage[:])
-	contributor := s.coverage[id]
-	for i := range proposal.coverage {
-		f := &proposal.coverage[i]
-		if contributor.covers(f, proposal, manifest.NamedResource{}) {
-			changed = changed.add(f.id, true, f.independent)
-		}
-	}
-	independent := rawDeclarationAuthority(s.index.Load(), id, false)
+	id := proposal.origin
+	independent := RawDeclarationAuthority(s.index.Load(), id, false)
 	ps := s.shardFor(id)
 	s.lockAll()
 	slot := ps.slots[id]
@@ -85,6 +74,12 @@ func (s *Store) commitReplacement(
 		s.unlockAll()
 		return publicationRetry
 	}
+	for _, bucket := range targets.buckets {
+		if bucket.shard.byName[bucket.kind].generation != bucket.generation {
+			s.unlockAll()
+			return publicationRetry
+		}
+	}
 	if proposal.Reads != nil && ps.cells[id].current().generation != proposal.inputHead.generation {
 		s.unlockAll()
 		return publicationRejected
@@ -94,7 +89,7 @@ func (s *Store) commitReplacement(
 		s.unlockAll()
 		panic("store: authority generation exhausted")
 	}
-	region := s.affectedLocked(changed, id)
+	region := s.affectedLocked(targets.region, id)
 	if slot == nil {
 		slot = &producerSlot{id: id, links: ps.newHeadLocked(0)}
 		ps.slots[id] = slot
@@ -115,6 +110,91 @@ func (s *Store) commitReplacement(
 	return publicationAccepted
 }
 
+type replacementTargets struct {
+	region  objectRegion
+	buckets []publicationBucket
+}
+
+type publicationBucket struct {
+	shard      *shard
+	kind       kindID
+	generation uint64
+}
+
+func (s *Store) prepareReplacement(prev, proposal *Emission, storage []regionState) replacementTargets {
+	targets := replacementTargets{region: s.changedTargets(prev, proposal, storage)}
+	contribution := s.coverage[proposal.origin]
+	if contribution == nil || len(proposal.shadowed) == 0 || len(proposal.coverage) == 0 {
+		return targets
+	}
+	var idsStorage [4]manifest.NamedResource
+	ids := idsStorage[:0]
+	bareNames := make(map[kindID]map[string]struct{})
+	for i := range proposal.coverage {
+		id := proposal.coverage[i].id
+		ids = append(ids, id)
+		if id.Namespace == "" {
+			key := kindID{id.Group, id.Kind}
+			if bareNames[key] == nil {
+				bareNames[key] = make(map[string]struct{})
+			}
+			bareNames[key][id.Name] = struct{}{}
+		}
+	}
+	for kind, names := range bareNames {
+		sh := s.shardForKind(kind.kind)
+		sh.mu.RLock()
+		bucket := sh.byName[kind]
+		generation := bucket.visitIdentities(kind, func(id manifest.NamedResource) {
+			if _, matches := names[id.Name]; matches && id.Namespace != "" {
+				ids = append(ids, id)
+			}
+		})
+		sh.mu.RUnlock()
+		targets.buckets = append(targets.buckets, publicationBucket{sh, kind, generation})
+	}
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	index := s.index.Load()
+	for _, id := range slices.Compact(ids) {
+		record := index.Records[id]
+		bare := bareDiscoveryRecord(index, id)
+		coverage := s.publicationCoverage(id, [2]*manifest.DiscoveryRecord{&record, &bare}, proposal, contribution)
+		if coverage != coverageNone {
+			independent := rawDeclarationAuthority(&record, id, manifest.NamedResource{}, false)
+			targets.region = targets.region.add(id, true, independent)
+			position, _ := targets.region.position(id)
+			targets.region.states[position].retiresSource = coverage == coverageRetired
+		}
+	}
+	return targets
+}
+
+func (s *Store) publicationCoverage(
+	id manifest.NamedResource,
+	evidence [2]*manifest.DiscoveryRecord,
+	proposal *Emission,
+	contribution *contributor,
+) coverageState {
+	record, bare := evidence[0], evidence[1]
+	source := proposal.binding.source
+	support := s.classifySourceSupport(id, source, record, bare)
+	coverage := coverageNone
+	visit := func(p *manifest.Production) bool {
+		if p.Owner == proposal.origin {
+			binding := contribution.binding(p.Source)
+			coverage = max(coverage, proposal.productionCoverage(p, binding, source, support.retained))
+		}
+		return coverage != coverageRetired
+	}
+	for i := range record.Productions {
+		if !visit(&record.Productions[i]) {
+			return coverage
+		}
+	}
+	s.visitBareProductions(id, [2][]manifest.Production{record.Productions, bare.Productions}, false, visit)
+	return coverage
+}
+
 func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) objectRegion {
 	changed := newObjectRegion(len(proposal.entries), storage)
 	add := func(entry admission, direct bool) {
@@ -123,7 +203,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 			changed = changed.add(
 				target.NamedResource,
 				direct,
-				rawDeclarationAuthority(s.index.Load(), target.NamedResource, false),
+				RawDeclarationAuthority(s.index.Load(), target.NamedResource, false),
 			)
 		}
 	}
@@ -339,11 +419,10 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 		sh.cells[target] = cell
 		region.states[position].seed = true
 	}
-	s.retireSourceSupportLocked(proposal.origin, proposal, region)
+	s.retireSourceSupportLocked(proposal, region)
 }
 
-func (s *Store) retireSourceSupportLocked(id manifest.NamedResource, proposal *Emission, region *objectRegion) {
-	contributor := s.coverage[id]
+func (s *Store) retireSourceSupportLocked(proposal *Emission, region *objectRegion) {
 	for stateIndex1 := range region.states {
 		state := region.states[stateIndex1]
 		sh := s.shardFor(state.id)
@@ -352,15 +431,9 @@ func (s *Store) retireSourceSupportLocked(id manifest.NamedResource, proposal *E
 			cell.binding.Ref.NamedResource != proposal.binding.source {
 			continue
 		}
-		covered := slices.ContainsFunc(proposal.coverage, func(f footprint) bool {
-			return f.id == state.id && contributor.covers(&f, proposal, proposal.binding.source)
-		})
-		if !covered {
-			covered = slices.ContainsFunc(proposal.entries, func(entry admission) bool {
-				return entry.child.Obj.Named() == state.id
-			})
-		}
-		if covered {
+		if state.retiresSource || slices.ContainsFunc(proposal.entries, func(entry admission) bool {
+			return entry.child.Obj.Named() == state.id
+		}) {
 			cell.retired, cell.rooted = true, false
 			sh.cells[state.id] = cell
 		}

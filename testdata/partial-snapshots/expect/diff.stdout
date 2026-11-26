@@ -1,0 +1,194 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "infra",
+        "path": "infra"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "apps",
+      "name": "infra",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "infra",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "infra",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "demo",
+              "sourceRef": {
+                "kind": "HelmRepository",
+                "name": "charts"
+              },
+              "version": "0.1.0"
+            }
+          },
+          "interval": "10m",
+          "releaseName": "infra",
+          "targetNamespace": "infra",
+          "values": {
+            "value": "old"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "infra",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "infra",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "demo",
+              "sourceRef": {
+                "kind": "HelmRepository",
+                "name": "charts"
+              },
+              "version": "0.1.0"
+            }
+          },
+          "interval": "10m",
+          "releaseName": "infra",
+          "targetNamespace": "infra",
+          "values": {
+            "value": "new"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "nested",
+        "path": "apps/nested"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "apps",
+      "name": "nested",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "nested",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "nested",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "demo",
+              "sourceRef": {
+                "kind": "HelmRepository",
+                "name": "charts"
+              },
+              "version": "0.1.0"
+            }
+          },
+          "interval": "10m",
+          "releaseName": "nested",
+          "targetNamespace": "nested",
+          "values": {
+            "value": "old"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "nested",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "nested",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "demo",
+              "sourceRef": {
+                "kind": "HelmRepository",
+                "name": "charts"
+              },
+              "version": "0.1.0"
+            }
+          },
+          "interval": "10m",
+          "releaseName": "nested",
+          "targetNamespace": "nested",
+          "values": {
+            "value": "new"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "infra",
+        "path": ""
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "failed on both sides: orig: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/infra: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted; current: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/infra: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted"
+    },
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "nested",
+        "path": ""
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "failed on both sides: orig: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/nested: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted; current: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/nested: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/apps/charts: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/apps/apps: declaration not emitted"
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "apps",
+        "path": ""
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "failed on both sides: orig: dependencies failed: ConfigMap/apps/required: not found; supply a readable document; current: dependencies failed: ConfigMap/apps/required: not found; supply a readable document"
+    }
+  ]
+}

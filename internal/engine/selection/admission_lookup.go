@@ -20,7 +20,7 @@ func (c *admissionClosure) qualifySelectionProducers() {
 		switch {
 		case restricted && record.Builder != "" && request.Matches(id) && !c.outsideEntry(record.BuilderOwner, id):
 			c.add(record.BuilderOwner, admissionRole{needed: true, ordinary: true})
-			if c.namedSelection(id) {
+			if c.session.RequestsNamedRoot(id) {
 				c.proposal.lookups = append(c.proposal.lookups, record.BuilderOwner)
 			}
 		case record.Builder == "":

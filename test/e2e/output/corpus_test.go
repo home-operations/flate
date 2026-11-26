@@ -57,6 +57,7 @@ func TestE2E_OutputCorpus(t *testing.T) {
 			"failed-current",
 			"failed-orig",
 		}},
+		{name: "partial-snapshots", cases: []string{"failed-source"}},
 		{name: "cli-flags", cases: []string{
 			"render-flags-1",
 			"environment-bindings-2",

@@ -77,7 +77,7 @@ func (r *ReadSet) admit(child Child, source, owner manifest.NamedResource, mode 
 	r.GetArtifact(source, ArtifactContent)
 	index := r.store.index.Load()
 	record, _ := index.Lookup(child.Obj.Named())
-	prepared := preparedDeclaration(&record, child.Obj) && !rawDeclarationAuthority(index, child.Obj.Named(), true)
+	prepared := preparedDeclaration(&record, child.Obj) && !RawDeclarationAuthority(index, child.Obj.Named(), true)
 	if prepared {
 		owner = record.Parent
 	}

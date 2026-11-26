@@ -137,6 +137,13 @@ type objectBucket struct {
 	names map[nameID]struct{}
 }
 
+func (b *objectBucket) visitIdentities(kind kindID, visit func(manifest.NamedResource)) uint64 {
+	for name := range b.names {
+		visit(manifest.NamedResource{Group: kind.group, Kind: kind.kind, Namespace: name.namespace, Name: name.name})
+	}
+	return b.generation
+}
+
 func newShard() *shard {
 	sh := &shard{
 		cells:      make(map[manifest.NamedResource]objectCell),
@@ -465,8 +472,8 @@ func (s *Store) addObject(update *objectUpdate) {
 		sh.mu.RUnlock()
 		record, _ := index.Lookup(id)
 		u.classified = update.classified &&
-			(rawDeclarationAuthority(index, id, true) || preparedDeclaration(&record, obj))
-		u.independent = rawDeclarationAuthority(index, id, false)
+			(RawDeclarationAuthority(index, id, true) || preparedDeclaration(&record, obj))
+		u.independent = RawDeclarationAuthority(index, id, false)
 		u.compare()
 		if u.unchanged() {
 			return
@@ -689,15 +696,14 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 	if group != "" || kind != "" {
 		sh := s.shardForKind(kind)
 		sh.mu.RLock()
-		inner := sh.byName[kindID{group, kind}].names
-		out := make([]manifest.BaseManifest, 0, len(inner))
-		for name := range inner {
-			if obj := sh.objectLocked(
-				manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name},
-			); obj != nil {
+		key := kindID{group, kind}
+		bucket := sh.byName[key]
+		out := make([]manifest.BaseManifest, 0, len(bucket.names))
+		bucket.visitIdentities(key, func(id manifest.NamedResource) {
+			if obj := sh.objectLocked(id); obj != nil {
 				out = append(out, obj)
 			}
-		}
+		})
 		sh.mu.RUnlock()
 		// Group and kind are identical within this bucket.
 		slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
@@ -764,6 +770,7 @@ func (s *Store) addAnchor(uValue *objectUpdate, index *manifest.DiscoveryIndex) 
 	u.retainSupport()
 	cell.operand = u.operand
 	cell.rooted = u.binding == nil || u.operand
+	cell.retired = cell.retired && (!u.classified || !u.independent)
 	cell.static, cell.binding, cell.support, cell.document, cell.classified = obj, u.binding, u.support, u.document, u.classified
 	cell.reconcile, cell.report, cell.warnings = u.policy.Reconcile, u.policy.Report, u.warnings
 	sh.retainGeneratedDeclaration(id, u.generated)

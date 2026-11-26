@@ -1,0 +1,14 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: nested, namespace: apps}
+spec:
+  interval: 10m
+  releaseName: nested
+  targetNamespace: nested
+  chart:
+    spec:
+      chart: demo
+      version: 0.1.0
+      sourceRef: {kind: HelmRepository, name: charts}
+  values:
+    value: old

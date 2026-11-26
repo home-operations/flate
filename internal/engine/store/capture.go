@@ -511,15 +511,12 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	} else {
 		sh := r.store.shardFor(key)
 		sh.mu.RLock()
-		bucket := sh.byName[kindID{group, kind}]
+		bucketKey := kindID{group, kind}
+		bucket := sh.byName[bucketKey]
 		ids = make([]manifest.NamedResource, 0, len(bucket.names))
-		for name := range bucket.names {
-			ids = append(
-				ids,
-				manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name},
-			)
-		}
-		generation := bucket.generation
+		generation := bucket.visitIdentities(bucketKey, func(id manifest.NamedResource) {
+			ids = append(ids, id)
+		})
 		sh.mu.RUnlock()
 		r.observe(input, bucketFacet, generation)
 	}

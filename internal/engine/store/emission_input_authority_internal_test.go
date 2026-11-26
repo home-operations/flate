@@ -344,6 +344,7 @@ func testRecordEmittedReplacedInputRejectedCase(
 		sh.mu.RUnlock()
 		var proposal *Emission
 		if strings.HasPrefix((*testCaseInput.route), "locked_") {
+			next.origin = input.Named()
 			prepared := make([]admission, 0, len(next.Children))
 			cValues := next.Children
 			for cIndex := range cValues {
@@ -367,7 +368,8 @@ func testRecordEmittedReplacedInputRejectedCase(
 		case "locked_stable":
 			result = st.commitStable(slot, previous, proposal, generation)
 		case "locked_replacement":
-			result = st.commitReplacement(input.Named(), previous, proposal, generation)
+			targets := st.prepareReplacement(previous, proposal, nil)
+			result = st.commitReplacement(previous, proposal, generation, &targets)
 		default:
 			st.RecordEmitted(input.Named(), &next, nil)
 		}

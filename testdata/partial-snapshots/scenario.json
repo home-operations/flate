@@ -1,0 +1,289 @@
+{
+  "source": {
+    "repository": "tyzbit/fleet-infra",
+    "revision": "87c199e34e96df4e475c5bb1a29b9aff035730e3",
+    "paths": [
+      "clusters/corpus/flux",
+      "clusters/corpus/apps",
+      "clusters/corpus/crds/longhorn"
+    ],
+    "reductions": "Use two changed releases, one absent ConfigMap, and a local chart response to model the partial builds."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/partial.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/partial.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "head",
+      "overlay": "changed",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "base"
+      ],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "changed",
+      "directory": "overlays/changed"
+    }
+  ],
+  "transport": [
+    {
+      "host": "charts.example.invalid",
+      "method": "GET",
+      "path": "/index.yaml",
+      "status": 200,
+      "body": "transport/index.yaml"
+    },
+    {
+      "host": "charts.example.invalid",
+      "method": "GET",
+      "path": "/demo-0.1.0.tgz",
+      "status": 200,
+      "body": "transport/demo-0.1.0.tgz"
+    }
+  ],
+  "cases": [
+    {
+      "name": "failed-source",
+      "description": "Keep two changed declarations and omit the blocked chart output.",
+      "setup": [
+        {
+          "commit": "baseline"
+        },
+        {
+          "commit": "head"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/base.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "head",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/head.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "base",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/base.stdout",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Complete base build output."
+    },
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Complete build diagnostics for both revisions."
+    },
+    {
+      "path": "expect/diff.stderr",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Complete changed-only diff diagnostics."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Only the two changed declarations."
+    },
+    {
+      "path": "expect/head.stdout",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Complete head build output."
+    },
+    {
+      "path": "overlays/changed/repo/apps/nested/release.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Change the nested declaration and its chart value."
+    },
+    {
+      "path": "overlays/changed/repo/infra/release.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Change the independent declaration and its chart value."
+    },
+    {
+      "path": "repo/apps/nested/ks.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Discover the nested Kustomization from its own path."
+    },
+    {
+      "path": "repo/apps/nested/release.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Declare the release from the nested Kustomization."
+    },
+    {
+      "path": "repo/apps/sources/source.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Declare the chart source under the failed Kustomization."
+    },
+    {
+      "path": "repo/cluster/apps.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Require an absent ConfigMap before publishing the chart source."
+    },
+    {
+      "path": "repo/cluster/infra.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Declare the independent Kustomization."
+    },
+    {
+      "path": "repo/cluster/sync.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Bind both Kustomizations to the working tree."
+    },
+    {
+      "path": "repo/infra/release.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Declare the independent release."
+    },
+    {
+      "path": "transport/demo-0.1.0.tgz",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Render a ConfigMap from the release value when the chart is readable."
+    },
+    {
+      "path": "transport/index.yaml",
+      "cases": [
+        "failed-source"
+      ],
+      "purpose": "Supply the chart index without a network connection."
+    }
+  ]
+}

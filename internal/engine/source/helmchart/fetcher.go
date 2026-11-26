@@ -104,7 +104,7 @@ func (f *operation) fetchSource(
 		}
 	}
 	id := dependency.NamedResource
-	r, _ := f.reads.Get[*manifest.HelmRepository](id)
+	r, _ := f.reads.GetDeclaration(id).(*manifest.HelmRepository)
 	if r == nil {
 		return source.PreparedFetch{Inputs: []manifest.DependencyRef{dependency}}, manifest.NewError(
 			manifest.ErrObjectNotFound,

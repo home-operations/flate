@@ -30,6 +30,7 @@ func testFeasibilityPointerOnlyExistingSectionCase(
 		sh.mu.RUnlock()
 		_, _, proposed := s.GetEmission(p.Named())
 		defer proposed.Finish()
+		proposed.origin = p.Named()
 		if (*testCaseInput) == "stable" {
 			proposed.Children = []Child{emissionChild("cut", "proposed")}
 		} else {
@@ -53,7 +54,8 @@ func testFeasibilityPointerOnlyExistingSectionCase(
 		if (*testCaseInput) == "stable" {
 			result = s.commitStable(slot, previous, proposal, generation)
 		} else {
-			result = s.commitReplacement(p.Named(), previous, proposal, generation)
+			targets := s.prepareReplacement(previous, proposal, nil)
+			result = s.commitReplacement(previous, proposal, generation, &targets)
 		}
 		assert.Equal(t, result, publicationRetry)
 	})

@@ -18,12 +18,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+//nolint:paralleltest,tparallel // The collection window must exclude other parallel tests.
 func TestAdmit_LocalPreparationLifetime(t *testing.T) {
-	t.Parallel()
 	for _, ownership := range []string{"local", "caller"} {
 		for _, outcome := range []string{"success", "cancellation", "acquisition error", "expired authority"} {
 			t.Run(ownership+"/"+outcome, func(t *testing.T) {
-				t.Parallel()
 				testAdmitPreparationOutcome(t, ownership, outcome)
 			})
 		}
@@ -40,22 +39,68 @@ func TestAdmit_LocalPreparationLifetime(t *testing.T) {
 func testAdmitPreparationOutcome(t *testing.T, ownership, outcome string) {
 	t.Helper()
 	session, facts := newLifetimeAdmissionSession(t, Request{Changed: true})
+	facts.outcome = outcome
+	var authority store.ReadSet
+	defer authority.Retire()
+	result, preparation, accepted := facts.admitPreparationOutcome(t, session, &authority, ownership)
+	for range facts.store.Sweep() {
+	}
+	if ownership == "local" || !accepted {
+		captures := facts.captures
+		assert.FatalIf(t, len(captures) == 0 || len(captures) != facts.resolutions,
+			"got %d read set captures for %d resolutions", len(captures), facts.resolutions)
+		var zero weak.Pointer[store.ReadSet]
+		for i, capture := range captures {
+			assert.FatalIf(t, capture == zero, "read set capture %d is zero", i)
+		}
+		// Reading a weak handle between cycles can mark its target during collection.
+		runtime.GC()
+		runtime.GC()
+		for i, capture := range captures {
+			assert.ErrorIf(t, capture.Value() != nil, "read set capture %d survived collection", i)
+		}
+	}
+	runtime.KeepAlive(result)
+	runtime.KeepAlive(session)
+	runtime.KeepAlive(&authority)
+	runtime.KeepAlive(preparation)
+}
+
+type lifetimeAdmissionFacts struct {
+	*solverFacts
+
+	outcome     string
+	cancel      context.CancelFunc
+	resolveErr  error
+	authority   *manifest.ConfigMap
+	resolutions int
+	captures    []weak.Pointer[store.ReadSet]
+	preparation **Preparation
+	proofs      []*store.ReadSet
+}
+
+func (f *lifetimeAdmissionFacts) admitPreparationOutcome(
+	t *testing.T,
+	session *Session,
+	authority *store.ReadSet,
+	ownership string,
+) (AdmissionResult, *Preparation, bool) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	facts.outcome, facts.cancel = outcome, cancel
-	facts.resolveErr = manifest.NewError(manifest.ErrInput, nil, "root acquisition failed")
+	outcome := f.outcome
+	f.cancel = cancel
+	f.resolveErr = manifest.NewError(manifest.ErrInput, nil, "root acquisition failed")
 	origin := &manifest.ConfigMap{Name: "authority", Namespace: "apps"}
-	facts.store.AddObject(origin)
-	var authority store.ReadSet
-	authority.Init(facts.store, origin.Named(), nil)
-	defer authority.Retire()
+	f.store.AddObject(origin)
+	authority.Init(f.store, origin.Named(), nil)
 	authority.GetObject(origin.Named())
-	facts.authority = origin
+	f.authority = origin
 	var work manifest.WorkRecorder
 	authority.SetWork(&work)
 	owner := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "history-owner"}
 	child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "history-child"}
-	options := AdmissionOptions{Stage: Construction, Authority: &authority}
+	options := AdmissionOptions{Stage: Construction, Authority: authority}
 	options.EntryHistory.Owner = owner
 	options.EntryHistory.Records = maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{
 		child: {ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"payload"}}},
@@ -69,14 +114,14 @@ func testAdmitPreparationOutcome(t *testing.T, ownership, outcome string) {
 	result, accepted, err := session.admitTest(ctx, options)
 	assert.Equal(t, accepted, outcome == "success")
 	assert.Equal(t, errors.Is(err, context.Canceled), outcome == "cancellation")
-	assert.Equal(t, errors.Is(err, facts.resolveErr), outcome == "acquisition error")
+	assert.Equal(t, errors.Is(err, f.resolveErr), outcome == "acquisition error")
 	if outcome == "success" || outcome == "expired authority" {
 		assert.NoError(t, err)
 	}
-	assert.Equal(t, facts.resolutions, 1)
+	assert.Equal(t, f.resolutions, 1)
 	assert.Equal(t, authority.Valid(), outcome != "expired authority")
 	if accepted {
-		assert.Equal(t, result.Request.Reads == &authority, true)
+		assert.Equal(t, result.Request.Reads == authority, true)
 		assert.Equal(t, result.Request.History[owner].Complete, true)
 		assert.Equal(t, len(result.Request.History), 1)
 	} else {
@@ -100,17 +145,7 @@ func testAdmitPreparationOutcome(t *testing.T, ownership, outcome string) {
 		assert.Equal(t, result.Request.Preparation == nil, true)
 		assert.Equal(t, len(result.Request.Acquired), 0)
 	}
-	for range facts.store.Sweep() {
-	}
-	if ownership == "local" || !accepted {
-		runtime.GC()
-		for _, capture := range facts.captures {
-			assert.Equal(t, capture.Value() == nil, true)
-		}
-	}
-	runtime.KeepAlive(result)
-	runtime.KeepAlive(session)
-	runtime.KeepAlive(&authority)
+	return result, preparation, accepted
 }
 
 func testAdmitProofRenewal(t *testing.T, outcome string) {
@@ -253,19 +288,6 @@ func testAdmitAcceptedDataSurvivesCallerReuse(t *testing.T) {
 	assert.Equal(t, accepted.Request.History[historyOwner].Complete, true)
 	assert.Diff(t, maps.Collect(next.Request.History[historyOwner].Records),
 		map[manifest.NamedResource]manifest.DiscoveryRecord{second.Named(): secondRecord})
-}
-
-type lifetimeAdmissionFacts struct {
-	*solverFacts
-
-	outcome     string
-	cancel      context.CancelFunc
-	resolveErr  error
-	authority   *manifest.ConfigMap
-	resolutions int
-	captures    []weak.Pointer[store.ReadSet]
-	preparation **Preparation
-	proofs      []*store.ReadSet
 }
 
 //nolint:gocritic // The fixture MUST retain the census result signature.

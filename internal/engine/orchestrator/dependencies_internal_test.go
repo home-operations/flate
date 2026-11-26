@@ -1,10 +1,14 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"oras.land/oras-go/v2/errdef"
 
 	sourcecache "github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -153,8 +157,9 @@ func assertExcludedOrderingRecords(t *testing.T, side Rendered) {
 	}
 }
 
-func assertExcludedOrderingWork(t *testing.T, side Rendered, broken, persistent bool) {
+func assertExcludedOrderingWork(t *testing.T, side Rendered, probe *sourcecache.Cache, failedInput string) {
 	t.Helper()
+	broken := failedInput != ""
 	sourceID := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindOCIRepository,
@@ -181,43 +186,135 @@ func assertExcludedOrderingWork(t *testing.T, side Rendered, broken, persistent 
 		wantAcquisitions[sourceID] = manifest.WorkCounts{Attempts: 1, Failures: 1}
 	}
 	assert.Diff(t, witnessPhaseCounts(side.Result.Work, manifest.WorkAcquisition), wantAcquisitions)
-	entry := testutil.KustomizationID("\x00", ".")
-	selectedKS := testutil.KustomizationID("flux-system", "selected")
-	selectedHR := testutil.HelmReleaseID("flux-system", "selected")
-	wantCache := map[manifest.NamedResource]manifest.WorkCounts{
-		{}:         {Attempts: 5, Completed: 2, Failures: 3, CacheService: 0},
-		entry:      {Attempts: 4, Completed: 4, CacheService: 2},
-		selectedKS: {Attempts: 9, Completed: 6, Failures: 3, CacheService: 2},
-	}
-	if !persistent {
-		wantCache = map[manifest.NamedResource]manifest.WorkCounts{
-			{}:         {Attempts: 1, Completed: 1},
-			entry:      {Attempts: 1, Completed: 1, CacheService: 1},
-			selectedKS: {Attempts: 2, Completed: 2, CacheService: 1},
-		}
-	}
-	if !broken {
-		wantCache[selectedHR] = manifest.WorkCounts{Attempts: 4, Completed: 2, Failures: 2}
-		if !persistent {
-			wantCache[selectedHR] = manifest.WorkCounts{Attempts: 1, Completed: 1}
-		}
-	}
+	wantCache := excludedOrderingRenderCache(t, side.Result.Work, probe)
 	if broken {
-		wantCache[sourceID] = manifest.WorkCounts{
+		key := manifest.WorkKey{
+			Tree: side.ID, Owner: sourceID, Source: sourceID, Phase: manifest.WorkCache, Input: failedInput,
+		}
+		wantCache[key] = manifest.WorkCounts{
 			Attempts:     1,
 			Failures:     1,
 			CacheService: workCounts(side.Result.Work, sourceID, manifest.WorkCache).CacheService,
 		}
 	}
-	assert.Diff(t, witnessPhaseCounts(side.Result.Work, manifest.WorkCache), wantCache)
-	assertExcludedOrderingPreparation(t, side, broken, persistent)
+	assert.Equal(t, excludedOrderingCacheDiff(side.Result.Work, wantCache), "")
+	assertExcludedOrderingPreparation(t, side, broken, probe.CanPersistRenders())
 	assertExcludedOrderingRecords(t, side)
+}
+
+func excludedOrderingRenderCache(
+	t *testing.T, work manifest.WorkSummary, probe *sourcecache.Cache,
+) map[manifest.WorkKey]manifest.WorkCounts {
+	t.Helper()
+	entry := testutil.KustomizationID("\x00", ".")
+	selected := testutil.KustomizationID("flux-system", "selected")
+	release := testutil.HelmReleaseID("flux-system", "selected")
+	pending := map[manifest.NamedResource]manifest.WorkCounts{
+		{}:       {Attempts: 1, Completed: 1},
+		entry:    {Attempts: 1, Completed: 1},
+		selected: {Attempts: 2, Completed: 2},
+		release:  {Attempts: 1, Completed: 1},
+	}
+	persistent := probe.CanPersistRenders()
+	if !persistent {
+		pending[entry] = manifest.WorkCounts{Attempts: 1, Completed: 1, CacheService: 1}
+		pending[selected] = manifest.WorkCounts{Attempts: 2, Completed: 2, CacheService: 1}
+	}
+	accepted := map[manifest.NamedResource]manifest.WorkCounts{
+		{}:       {Attempts: 4, Completed: 1, Failures: 3},
+		entry:    {Attempts: 3, Completed: 3, CacheService: 2},
+		selected: {Attempts: 7, Completed: 4, Failures: 3, CacheService: 2},
+		release:  {Attempts: 3, Completed: 1, Failures: 2},
+	}
+
+	lookups := []struct {
+		mode   sourcecache.RenderMode
+		counts map[manifest.NamedResource]manifest.WorkCounts
+	}{
+		{sourcecache.RenderPending, pending},
+		{sourcecache.RenderAccepted, accepted},
+	}
+	if !persistent {
+		lookups = lookups[:1]
+	}
+	want := make(map[manifest.WorkKey]manifest.WorkCounts)
+	for i := range work {
+		render := &work[i].Key
+		if render.Phase != manifest.WorkKustomize && render.Phase != manifest.WorkHelm {
+			continue
+		}
+		owners := []manifest.NamedResource{render.Owner}
+		if render.Owner == (manifest.NamedResource{}) {
+			// Entry reconciliation reuses the root prepared during discovery.
+			owners = append(owners, entry)
+		}
+		for _, lookup := range lookups {
+			key := orderingCacheKey(t, probe, render, lookup.mode)
+			for _, owner := range owners {
+				key.Owner = owner
+				want[key] = lookup.counts[owner]
+			}
+		}
+	}
+	return want
+}
+
+func orderingCacheKey(
+	t *testing.T, probe *sourcecache.Cache, render *manifest.WorkKey, mode sourcecache.RenderMode,
+) manifest.WorkKey {
+	t.Helper()
+	recorder := manifest.WorkRecorder{Key: *render}
+	scope := recorder.Scope()
+	_, _, _, err := probe.Blob(t.Context(), sourcecache.BlobKey{Content: render.Input, Render: mode},
+		&sourcecache.Policy{Work: scope.RenderWork().Pending()}, nil)
+	assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "empty cache lookup: %v", err)
+	work := scope.Snapshot(0)
+	for i := range work {
+		if work[i].Key.Phase == manifest.WorkCache {
+			return work[i].Key
+		}
+	}
+	t.Fatalf("missing cache address for %v", *render)
+	return manifest.WorkKey{}
+}
+
+func excludedOrderingCacheDiff(work manifest.WorkSummary, want map[manifest.WorkKey]manifest.WorkCounts) string {
+	var cacheRows manifest.WorkSummary
+	for i := range work {
+		if work[i].Key.Phase == manifest.WorkCache {
+			cacheRows = append(cacheRows, work[i])
+		}
+	}
+	cacheRows = cacheRows.Normalize()
+	got := make(map[manifest.WorkKey]manifest.WorkCounts, len(cacheRows))
+	for i := range cacheRows {
+		got[cacheRows[i].Key] = cacheRows[i].Counts
+	}
+	return cmp.Diff(want, got)
+}
+
+func TestExcludedOrderingCache_RejectsDuplicateLookups(t *testing.T) {
+	t.Parallel()
+	key := manifest.WorkKey{
+		Tree:  manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+		Owner: testutil.KustomizationID("flux-system", "selected"), Phase: manifest.WorkCache,
+		Source: manifest.NamedResource{
+			Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared",
+		},
+		Input: "pending-selected",
+	}
+	lookup := manifest.WorkCounts{Attempts: 1, Completed: 1}
+	work := manifest.WorkSummary{{Key: key, Counts: lookup}, {Key: key, Counts: lookup}}
+	want := map[manifest.WorkKey]manifest.WorkCounts{key: {Attempts: 2, Completed: 2}}
+	assert.Equal(t, excludedOrderingCacheDiff(work, want), "")
+	assert.Equal(t, work[0].Counts, lookup)
+	work[1].Counts.Add(&lookup)
+	assert.Equal(t, strings.Contains(excludedOrderingCacheDiff(work, want), "Attempts:"), true)
 }
 
 func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 	t.Helper()
 	reason := sourcecache.RenderPersistenceDisabledReason()
-	persistent := reason == ""
 	t.Logf("render persistence: backing=disk disabled reason=%q", reason)
 	baseDir, headDir := excludedOrderingFixture(t, broken)
 	renderedTrees1, err := renderOrderingTreesForTest(t, baseDir, headDir)
@@ -229,18 +326,33 @@ func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 		Namespace: "flux-system",
 		Name:      "selected-source",
 	}
+	probe, probeErr := sourcecache.New(t.Context(), t.TempDir())
+	assert.NoError(t, probeErr)
+	t.Cleanup(func() { assert.NoError(t, probe.Close()) })
+	var failedInput string
 	if broken {
-		produced := workCounts(base.Result.Work, sourceID, manifest.WorkAcquisition)
-		produced.Add(new(workCounts(head.Result.Work, sourceID, manifest.WorkAcquisition)))
-		served := workCounts(base.Result.Work, sourceID, manifest.WorkCache)
-		served.Add(new(workCounts(head.Result.Work, sourceID, manifest.WorkCache)))
+		var produced, served manifest.WorkCounts
+		for _, side := range []Rendered{base, head} {
+			produced.Add(new(workCounts(side.Result.Work, sourceID, manifest.WorkAcquisition)))
+			served.Add(new(workCounts(side.Result.Work, sourceID, manifest.WorkCache)))
+			for i := range side.Result.Work {
+				key := &side.Result.Work[i].Key
+				if key.Phase == manifest.WorkAcquisition && key.Owner == sourceID {
+					if failedInput == "" {
+						failedInput = key.Input
+					}
+					assert.Equal(t, key.Input, failedInput)
+				}
+			}
+		}
+		assert.FatalIf(t, failedInput == "", "missing acquisition key for failed source")
 		assert.Equal(t, produced.Attempts+served.CacheService, uint64(2))
 		assert.Equal(t, produced, manifest.WorkCounts{Attempts: produced.Attempts, Failures: produced.Attempts})
 		assert.Equal(t, served, manifest.WorkCounts{Attempts: 2, Failures: 2, CacheService: served.CacheService})
 		assert.Equal(t, served.CacheService <= 1, true)
 	}
 	for _, side := range []Rendered{base, head} {
-		assertExcludedOrderingWork(t, side, broken, persistent)
+		assertExcludedOrderingWork(t, side, probe, failedInput)
 		assertExcludedOrderingState(t, side, broken)
 	}
 	if !broken {
@@ -426,9 +538,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken, pers
 			Tree: side.ID, Owner: selectedHR, Source: chart, Phase: manifest.WorkPreparation,
 		}] = helmPreparation
 	}
-	assertWitnessPreparations(
-		t, witnessPreparations(side.Result.Work), prepares,
-	)
+	assertWitnessPreparations(t, witnessPreparations(side.Result.Work).counts, prepares)
 }
 
 func assertGeneratedValues(t *testing.T, o *Orchestrator, generatedName string) string {

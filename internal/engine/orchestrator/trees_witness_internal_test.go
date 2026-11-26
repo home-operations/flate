@@ -26,16 +26,25 @@ func witnessWork(summary manifest.WorkSummary, phase manifest.WorkPhase) map[man
 	return out
 }
 
-func witnessPreparations(summary manifest.WorkSummary) map[manifest.WorkKey]manifest.WorkCounts {
-	out := make(map[manifest.WorkKey]manifest.WorkCounts)
-	for recordIndex := range summary {
-		record := summary[recordIndex]
+type witnessPreparationWork struct {
+	counts map[manifest.WorkKey]manifest.WorkCounts
+	rows   map[manifest.WorkKey]manifest.WorkSummary
+}
+
+func witnessPreparations(summary manifest.WorkSummary) witnessPreparationWork {
+	out := witnessPreparationWork{
+		counts: make(map[manifest.WorkKey]manifest.WorkCounts),
+		rows:   make(map[manifest.WorkKey]manifest.WorkSummary),
+	}
+	for i := range summary {
+		record := &summary[i]
 		if record.Key.Phase == manifest.WorkPreparation {
 			key := record.Key
 			key.Input = ""
-			counts := out[key]
+			counts := out.counts[key]
 			counts.Add(&record.Counts)
-			out[key] = counts
+			out.counts[key] = counts
+			out.rows[key] = append(out.rows[key], *record)
 		}
 	}
 	return out
@@ -52,7 +61,7 @@ func witnessAdmissions(owners []manifest.NamedResource, namespace string) map[ma
 	}
 	admission := map[manifest.NamedResource]uint64{
 		a: 1, b: 1, hr: 1, rs: 1, manifest.BootstrapSourceID: 1,
-		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}:     1,
+		namespaceWitnessAlias(): 1,
 		{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "\x00", Name: "flux"}: 1,
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "vars"}:                                          1,
 	}
@@ -79,12 +88,7 @@ func witnessAdmissions(owners []manifest.NamedResource, namespace string) map[ma
 
 func assertWitnessSources(t *testing.T, run Rendered) {
 	t.Helper()
-	alias := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindGitRepository,
-		Namespace: "apps",
-		Name:      "cluster",
-	}
+	alias := namespaceWitnessAlias()
 	chart := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindHelmChart,
@@ -381,6 +385,12 @@ func TestRenderTrees_SelectedFailureWork(t *testing.T) {
 	}
 }
 
+func witnessAdmissionInput() string {
+	var recorder manifest.WorkRecorder
+	recorder.Init(&manifest.WorkKey{}, manifest.WorkScope{})
+	return recorder.Scope().Admission().Key.Input
+}
+
 func assertWitnessPreparations(t *testing.T, got, want map[manifest.WorkKey]manifest.WorkCounts) {
 	t.Helper()
 	for _, counts := range got {
@@ -396,7 +406,9 @@ func witnessCacheLimit(identities int) uint64 {
 	return 3 * (2 + 2*n) * (1 + 8*n)
 }
 
-func assertWitnessCacheCounts(t *testing.T, got, want *manifest.WorkCounts, limit uint64) {
+func assertWitnessCacheCounts(
+	t *testing.T, got, want *manifest.WorkCounts, limit uint64,
+) {
 	t.Helper()
 	if *want == (manifest.WorkCounts{}) {
 		assert.Equal(t, *got, *want)
@@ -411,11 +423,9 @@ func assertWitnessCacheCounts(t *testing.T, got, want *manifest.WorkCounts, limi
 		assert.Equal(t, got.Completed >= 1, true)
 	}
 	if want.CacheService != 0 {
-		assert.Equal(t, got.CacheService >= 1, true)
+		assert.Equal(t, got.CacheService != 0, true)
 	}
-	if want.Failures == 0 {
-		assert.Equal(t, got.Failures, uint64(0))
-	}
+	assert.Equal(t, got.Failures != 0, want.Failures != 0)
 	assert.Equal(t, *got, manifest.WorkCounts{
 		Attempts: got.Attempts, Completed: got.Completed, Failures: got.Failures, CacheService: got.CacheService,
 	})

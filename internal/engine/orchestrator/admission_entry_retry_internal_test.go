@@ -158,6 +158,21 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 		work.Scope().Admission().Counts,
 		manifest.WorkCounts{Attempts: 2, Completed: 2, OwnerPrepares: 2, FileEntries: 4},
 	)
+
+	var settledWork manifest.WorkRecorder
+	var settledReads store.ReadSet
+	settledReads.Init(o.store, id, nil)
+	settledReads.SetWork(&settledWork)
+	defer settledReads.Close()
+	settled, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
+		Missing: o.cfg.missing, Reads: &settledReads,
+		Generation: []store.Child{o.store.Policy(id).Child(current)},
+	})
+	assert.NoError(t, err)
+	defer settled.Retire()
+	assert.Diff(t, settled.Needed, next.Needed)
+	assert.Diff(t, settledWork.Scope().Admission().Counts,
+		manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1, FileEntries: 2})
 }
 
 //nolint:nonamedreturns // gocritic requires names for the distinct base and head directories.

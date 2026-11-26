@@ -37,12 +37,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 		Namespace: "apps",
 		Name:      "set",
 	}
-	alias := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindGitRepository,
-		Namespace: "apps",
-		Name:      "cluster",
-	}
+	alias := namespaceWitnessAlias()
 	chart := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindHelmChart,
@@ -195,12 +190,6 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				18,
 				21,
 				2,
-			),
-			selectionPreparationKey(alias, alias): preparationCounts(
-				3,
-				6,
-				4,
-				0,
 			),
 			selectionPreparationKey(manifest.BootstrapSourceID, manifest.BootstrapSourceID): preparationCounts(
 				1,
@@ -389,12 +378,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 		Namespace: "apps",
 		Name:      "set",
 	}
-	alias := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindGitRepository,
-		Namespace: "apps",
-		Name:      "cluster",
-	}
+	alias := namespaceWitnessAlias()
 	chart := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindHelmChart,
@@ -547,12 +531,6 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				18,
 				21,
 				2,
-			),
-			selectionPreparationKey(alias, alias): preparationCounts(
-				3,
-				6,
-				4,
-				0,
 			),
 			selectionPreparationKey(manifest.BootstrapSourceID, manifest.BootstrapSourceID): preparationCounts(
 				1,

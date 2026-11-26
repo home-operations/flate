@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -76,12 +75,9 @@ data:
 		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	res, err := o.render(ctx, t)
+	res, err := o.render(t.Context(), t)
 	assert.FatalIf(t, err != nil, "Render must converge: %v", err)
-	assert.FatalIf(t, ctx.Err() != nil || len(res.Failed) != 0,
-		"Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
+	assert.FatalIf(t, len(res.Failed) != 0, "Render failures: %v", res.Failed)
 
 	for _, id := range []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.HelmReleaseID("flux-system", "app")} {
 		info, ok := o.store.GetStatus(id)

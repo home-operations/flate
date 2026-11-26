@@ -227,8 +227,8 @@ func (s *generatorSpec) readSelections() map[string]store.ArtifactRead {
 		return nil
 	}
 	selections := make(map[string]store.ArtifactRead, len(s.declaration.Sources))
-	for i := range s.declaration.Artifacts {
-		output := &s.declaration.Artifacts[i]
+	for i := range s.declaration.OutputArtifacts {
+		output := &s.declaration.OutputArtifacts[i]
 		if alias := s.selectors.revision(output.Revision); alias != "" {
 			selections[alias] |= store.ArtifactRevision
 		}

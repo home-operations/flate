@@ -8,64 +8,36 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
+
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 )
 
 // ArtifactGeneratorSpec must retain its JSON layout because it participates in content fingerprints.
+//
+//nolint:recvcheck // Value snapshots need the JSON method set, while decoder helpers mutate through pointers.
 type ArtifactGeneratorSpec struct {
-	CommonMetadata struct {
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
-	} `json:"commonMetadata"`
-	Sources            []ArtifactGeneratorSource           `json:"sources"`
-	PathPattern        string                              `json:"pathPattern"`
-	Artifacts          []ArtifactGeneratorOutput           `json:"artifacts"`
-	ManagedNamespaces  *ArtifactGeneratorManagedNamespaces `json:"managedNamespaces,omitempty"`
-	ServiceAccountName string                              `json:"serviceAccountName,omitempty"`
+	sourcewatcherv1.ArtifactGeneratorSpec
+
+	sourceNamespaces []bool
+	emptyStrategies  map[[2]int]struct{}
 }
 
-// ArtifactGeneratorManagedNamespaces is present even when its name policy is empty.
-type ArtifactGeneratorManagedNamespaces struct {
-	AllowedNames []string                            `json:"allowedNames"`
-	Prune        bool                                `json:"prune"`
-	Metadata     *ArtifactGeneratorNamespaceMetadata `json:"metadata,omitempty"`
+// SourceNamespaceSet reports whether the canonical source at position declares a namespace.
+func (s *ArtifactGeneratorSpec) SourceNamespaceSet(position int) bool {
+	return position >= 0 && position < len(s.sourceNamespaces) && s.sourceNamespaces[position]
 }
 
-// ArtifactGeneratorNamespaceMetadata applies From entries in declaration order after FromSource.
-type ArtifactGeneratorNamespaceMetadata struct {
-	FromSource *ArtifactGeneratorNamespaceMetadataSource `json:"fromSource,omitempty"`
-	From       []ArtifactGeneratorNamespaceMetadataEntry `json:"from,omitempty"`
+// EmptyCopyStrategy reports whether an explicitly empty string survives at the copy position.
+func (s *ArtifactGeneratorSpec) EmptyCopyStrategy(artifact, operation int) bool {
+	_, present := s.emptyStrategies[[2]int{artifact, operation}]
+	return present
 }
 
-// ArtifactGeneratorNamespaceMetadataSource only admits keys listed in its assertions.
-type ArtifactGeneratorNamespaceMetadataSource struct {
-	Path               string            `json:"path"`
-	AllowedAnnotations map[string]string `json:"allowedAnnotations,omitempty"`
-	AllowedLabels      map[string]string `json:"allowedLabels,omitempty"`
-}
-
-// ArtifactGeneratorNamespaceMetadataEntry can use "*" to apply to every managed namespace.
-type ArtifactGeneratorNamespaceMetadataEntry struct {
-	Strategy    string            `json:"strategy"`
-	Namespace   string            `json:"namespace"`
-	Annotations map[string]string `json:"annotations,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-}
-
-// ArtifactGeneratorSource keeps namespace presence outside its serialized content fingerprint.
-type ArtifactGeneratorSource struct {
-	Alias        string `json:"alias"`
-	Name         string `json:"name"`
-	Namespace    string `json:"namespace"`
-	Kind         string `json:"kind"`
-	NamespaceSet bool   `json:"-"`
-}
-
-// Supported keeps generator input capability narrower than source-group membership.
-func (s ArtifactGeneratorSource) Supported() bool {
-	switch s.Kind {
+// SupportsArtifactGeneratorSource keeps input capability narrower than source-group membership.
+func SupportsArtifactGeneratorSource(kind string) bool {
+	switch kind {
 	case KindGitRepository, KindOCIRepository, KindBucket, KindHelmChart, KindExternalArtifact:
 		return true
 	default:
@@ -73,23 +45,11 @@ func (s ArtifactGeneratorSource) Supported() bool {
 	}
 }
 
-// ArtifactGeneratorOutput must retain authored revision selectors in content fingerprints.
-type ArtifactGeneratorOutput struct {
-	Name           string                  `json:"name"`
-	Namespace      string                  `json:"namespace"`
-	InputsFrom     string                  `json:"inputsFrom"`
-	Revision       string                  `json:"revision"`
-	OriginRevision string                  `json:"originRevision"`
-	Copy           []ArtifactGeneratorCopy `json:"copy"`
-}
+type artifactGeneratorDecodeView struct {
+	sourcewatcherv1.ArtifactGeneratorSpec
 
-// ArtifactGeneratorCopy must retain excluded paths in the serialized execution specification.
-type ArtifactGeneratorCopy struct {
-	From     string   `json:"from"`
-	To       string   `json:"to"`
-	Strategy string   `json:"strategy"`
-	Exclude  []string `json:"exclude"`
-	Optional bool     `json:"optional"`
+	// A JSON null must leave metadata from an earlier spelling of the key intact.
+	CommonMetadata sourcewatcherv1.CommonMetadata `json:"commonMetadata"`
 }
 
 type artifactGeneratorDecode struct {
@@ -98,7 +58,7 @@ type artifactGeneratorDecode struct {
 	err              error
 	compact          *artifactGeneratorDecode
 	// Only the canonical sources list supplies indexed declarations.
-	sources []ArtifactGeneratorSource
+	sources []sourcewatcherv1.SourceReference
 }
 
 type artifactGeneratorCatalogRule struct {
@@ -117,7 +77,7 @@ func artifactGeneratorCatalogRules() [3]artifactGeneratorCatalogRule {
 					return false
 				}
 				if compact != nil {
-					compact.ManagedNamespaces = &ArtifactGeneratorManagedNamespaces{}
+					compact.ManagedNamespaces = &sourcewatcherv1.ManagedNamespaces{}
 				}
 				return true
 			},
@@ -156,8 +116,9 @@ func (d *artifactGeneratorDecode) catalogFields(fields map[string]any) map[strin
 func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
 	decoded := new(struct {
 		full, compact artifactGeneratorDecode
+		view          artifactGeneratorDecodeView
 	})
-	result, compact := &decoded.full, &decoded.compact
+	result, compact, view := &decoded.full, &decoded.compact, &decoded.view
 	result.kind, result.apiVersion = r.Kind, r.APIVersion
 	compact.kind, compact.apiVersion = r.Kind, r.APIVersion
 	result.compact, compact.compact = compact, compact
@@ -169,7 +130,8 @@ func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
 		if catalogErr != nil {
 			compact.err = fmt.Errorf("marshal spec: %w", catalogErr)
 		} else {
-			compact.err = decodeArtifactGeneratorFields(projected, &compact.spec)
+			compact.err = view.decode(projected, &compact.spec, false)
+			compact.spec.recordEmptyCopyStrategies(projected)
 		}
 		return result
 	}
@@ -179,12 +141,13 @@ func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
 		result.err = fmt.Errorf("decode spec: %w", err)
 		return result
 	}
-	retained := decodeArtifactGeneratorFields(partition.retained, &compact.spec)
+	retained := view.decode(partition.retained, &compact.spec, false)
+	compact.spec.recordEmptyCopyStrategies(partition.retained)
 	result.spec = compact.spec
-	omitted := decodeArtifactGeneratorFields(partition.omitted, &result.spec)
+	omitted := view.decode(partition.omitted, &result.spec, partition.commonMetadata)
 	if retained != nil || omitted != nil {
-		result.spec = ArtifactGeneratorSpec{}
-		result.err = decodeArtifactGeneratorFields(data, &result.spec)
+		result.spec = ArtifactGeneratorSpec{emptyStrategies: compact.spec.emptyStrategies}
+		result.err = view.decode(data, &result.spec, partition.commonMetadata)
 	}
 	for _, rule := range artifactGeneratorCatalogRules() {
 		if rule.marker != nil {
@@ -197,7 +160,8 @@ func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
 			compact.err = fmt.Errorf("marshal spec: %w", err)
 		} else {
 			compact.spec = ArtifactGeneratorSpec{}
-			compact.err = decodeArtifactGeneratorFields(projected, &compact.spec)
+			compact.err = view.decode(projected, &compact.spec, false)
+			compact.spec.recordEmptyCopyStrategies(projected)
 		}
 	}
 
@@ -208,7 +172,13 @@ func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
 	}
 	for i, source := range sources {
 		fields, _ := source.(map[string]any)
-		_, result.spec.Sources[i].NamespaceSet = fields[namespaceKey]
+		if _, present := fields[namespaceKey]; !present {
+			continue
+		}
+		if result.spec.sourceNamespaces == nil {
+			result.spec.sourceNamespaces = make([]bool, len(sources))
+		}
+		result.spec.sourceNamespaces[i] = true
 	}
 	result.sources = result.spec.Sources
 	return result
@@ -218,6 +188,7 @@ type artifactGeneratorPartition struct {
 	data              []byte
 	retained, omitted []byte
 	buffer            [2][256]byte
+	commonMetadata    bool
 }
 
 //nolint:wrapcheck // The caller wraps decoder errors with the specification operation.
@@ -235,12 +206,18 @@ func (p *artifactGeneratorPartition) UnmarshalJSONFrom(input *jsontext.Decoder) 
 		if err != nil {
 			return err
 		}
+		name := key.String()
+		commonMetadata := strings.EqualFold(name, "commonMetadata")
 		part := &p.omitted
-		if retainedArtifactGeneratorCatalogField(key.String()) >= 0 {
+		if retainedArtifactGeneratorCatalogField(name) >= 0 {
 			part = &p.retained
 		}
-		if _, err := input.ReadValue(); err != nil {
+		value, err := input.ReadValue()
+		if err != nil {
 			return err
+		}
+		if commonMetadata && value.Kind() == '{' {
+			p.commonMetadata = true
 		}
 		separator := byte('{')
 		if len(*part) != 0 {
@@ -258,13 +235,58 @@ func (p *artifactGeneratorPartition) UnmarshalJSONFrom(input *jsontext.Decoder) 
 	return closeErr
 }
 
-func decodeArtifactGeneratorFields(data []byte, spec *ArtifactGeneratorSpec) error {
-	if len(data) != 0 {
-		if err := json.Unmarshal(data, spec); err != nil {
-			return fmt.Errorf("decode spec: %w", err)
-		}
+func (v *artifactGeneratorDecodeView) decode(data []byte, spec *ArtifactGeneratorSpec, commonMetadata bool) error {
+	if len(data) == 0 {
+		return nil
+	}
+	*v = artifactGeneratorDecodeView{ArtifactGeneratorSpec: spec.ArtifactGeneratorSpec}
+	err := json.Unmarshal(data, v)
+	spec.ArtifactGeneratorSpec = v.ArtifactGeneratorSpec
+	if commonMetadata {
+		metadata := v.CommonMetadata
+		spec.CommonMetadata = &metadata
+	}
+	if err != nil {
+		return fmt.Errorf("decode spec: %w", err)
 	}
 	return nil
+}
+
+type emptyCopyStrategy bool
+
+func (s *emptyCopyStrategy) UnmarshalJSON(data []byte) error {
+	if data[0] == '"' {
+		*s = emptyCopyStrategy(bytes.Equal(data, []byte(`""`)))
+	}
+	return nil
+}
+
+func (s *ArtifactGeneratorSpec) recordEmptyCopyStrategies(data []byte) {
+	// Marshal compacts JSON before partitioning it. Only an empty string can
+	// leave a copy strategy that differs from the omitted default.
+	if !bytes.Contains(data, []byte(`:""`)) {
+		return
+	}
+	var presence struct {
+		Artifacts []struct {
+			Copy []struct {
+				Strategy emptyCopyStrategy `json:"strategy"`
+			} `json:"copy"`
+		} `json:"artifacts"`
+	}
+	// Use the same matching and slice reuse rules as the specification decode.
+	// Type errors belong to the specification decode, which also retains partial data.
+	_ = json.Unmarshal(data, &presence)
+	for i, artifact := range presence.Artifacts {
+		for j, operation := range artifact.Copy {
+			if operation.Strategy {
+				if s.emptyStrategies == nil {
+					s.emptyStrategies = make(map[[2]int]struct{})
+				}
+				s.emptyStrategies[[2]int{i, j}] = struct{}{}
+			}
+		}
+	}
 }
 
 func (r *RawObject) initArtifactGeneratorSpec() *RawObject {
@@ -288,45 +310,8 @@ func (r *RawObject) ArtifactGeneratorSpec() (ArtifactGeneratorSpec, error) {
 		return decoded.spec, decoded.err
 	}
 	spec := decoded.spec
-	spec.CommonMetadata.Labels = maps.Clone(spec.CommonMetadata.Labels)
-	spec.CommonMetadata.Annotations = maps.Clone(spec.CommonMetadata.Annotations)
-	spec.ManagedNamespaces = spec.ManagedNamespaces.clone()
-	spec.Sources = slices.Clone(spec.Sources)
-	spec.Artifacts = slices.Clone(spec.Artifacts)
-	for i := range spec.Artifacts {
-		artifact := &spec.Artifacts[i]
-		artifact.Copy = slices.Clone(artifact.Copy)
-		for j := range artifact.Copy {
-			artifact.Copy[j].Exclude = slices.Clone(artifact.Copy[j].Exclude)
-		}
-	}
+	decoded.spec.ArtifactGeneratorSpec.DeepCopyInto(&spec.ArtifactGeneratorSpec)
 	return spec, decoded.err
-}
-
-func (m *ArtifactGeneratorManagedNamespaces) clone() *ArtifactGeneratorManagedNamespaces {
-	if m == nil {
-		return nil
-	}
-	out := *m
-	out.AllowedNames = slices.Clone(m.AllowedNames)
-	if m.Metadata == nil {
-		return &out
-	}
-	metadata := *m.Metadata
-	out.Metadata = &metadata
-	if source := metadata.FromSource; source != nil {
-		cloned := *source
-		cloned.AllowedAnnotations = maps.Clone(source.AllowedAnnotations)
-		cloned.AllowedLabels = maps.Clone(source.AllowedLabels)
-		metadata.FromSource = &cloned
-	}
-	metadata.From = slices.Clone(metadata.From)
-	for i := range metadata.From {
-		entry := &metadata.From[i]
-		entry.Annotations = maps.Clone(entry.Annotations)
-		entry.Labels = maps.Clone(entry.Labels)
-	}
-	return &out
 }
 
 func (s *ArtifactGeneratorSpec) namespaceMetadataPath() string {

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/engine/schedule"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
@@ -66,7 +68,7 @@ func TestArtifactGenerator_CopyValidationPrecedence(t *testing.T) {
 			"generator spec: invalid exclude pattern '['", false,
 		},
 		{
-			"ready source with no matches", "@repo/absent/{App}", "@repo/file", "@artifact/file", "Overwrite",
+			"ready source with no matches", "@repo/absent/{App}", "@repo/file", "@artifact/file", sourcewatcherv1.OverwriteStrategy,
 			"generator spec: invalid exclude pattern '['", true,
 		},
 		{
@@ -87,12 +89,11 @@ func TestArtifactGenerator_CopyValidationPrecedence(t *testing.T) {
 			st := store.New()
 			owner := cachetest.New(t, "", cache.New)
 			c := New(st, task.NewBounded(2), owner)
-			fixture := generatorForTest(t, []any{map[string]any{
-				"name": "output",
-				"copy": []any{map[string]any{
-					"from": tc.from, "to": tc.to, "strategy": tc.strategy, "exclude": []string{"["},
-				}},
-			}})
+			op := map[string]any{"from": tc.from, "to": tc.to, "exclude": []string{"["}}
+			if tc.strategy != "" {
+				op["strategy"] = tc.strategy
+			}
+			fixture := generatorForTest(t, []any{map[string]any{"name": "output", "copy": []any{op}}})
 			doc := fixture.document
 			doc["spec"].(map[string]any)["pathPattern"] = tc.pattern
 			parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
@@ -137,10 +138,18 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 	}{
 		{"directory", []any{map[string]any{"from": "@repo/app/", "to": "@artifact/app/", "exclude": []string{"app"}}}, "app/app/file.txt", "file", false},
 		{
+			"overwrite_default",
+			[]any{
+				map[string]any{"from": "@repo/base.yaml", "to": "@artifact/values.yaml", "strategy": sourcewatcherv1.OverwriteStrategy},
+				map[string]any{"from": "@repo/overlay.yaml", "to": "@artifact/values.yaml"},
+			},
+			"values.yaml", "b: 3\n", false,
+		},
+		{
 			"merge",
 			[]any{
 				map[string]any{"from": "@repo/base.yaml", "to": "@artifact/values.yaml"},
-				map[string]any{"from": "@repo/overlay.yaml", "to": "@artifact/values.yaml", "strategy": "Merge"},
+				map[string]any{"from": "@repo/overlay.yaml", "to": "@artifact/values.yaml", "strategy": sourcewatcherv1.MergeStrategy},
 			},
 			"values.yaml",
 			"a: 1\nb: 3\n",
@@ -148,7 +157,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 		},
 		{
 			"extract",
-			[]any{map[string]any{"from": "@repo/archive.TGZ", "to": "@artifact/out/", "strategy": "Extract"}},
+			[]any{map[string]any{"from": "@repo/archive.TGZ", "to": "@artifact/out/", "strategy": sourcewatcherv1.ExtractStrategy}},
 			"out/inside.txt",
 			"inside",
 			false,
@@ -159,7 +168,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 				map[string]any{"from": "@repo/absent", "to": "@artifact/first", "optional": true},
 				map[string]any{"from": "@repo/absent/**", "to": "@artifact/second", "optional": true},
 				map[string]any{"from": "@repo/app/*.txt", "to": "@artifact/third", "exclude": []string{"*.txt"}, "optional": true},
-				map[string]any{"from": "@repo/app/*.txt", "to": "@artifact/archive", "strategy": "Extract"},
+				map[string]any{"from": "@repo/app/*.txt", "to": "@artifact/archive", "strategy": sourcewatcherv1.ExtractStrategy},
 				map[string]any{"from": "@repo/app/file.txt", "to": "@artifact/selected", "optional": true},
 			},
 			"selected", "file", false,

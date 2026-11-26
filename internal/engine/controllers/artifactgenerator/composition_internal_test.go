@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -26,12 +28,12 @@ func TestComposition_Lowering(t *testing.T) {
 			"unused": fstest.MapFS{"file": {Data: []byte("unused")}},
 		},
 	}
-	req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
+	req := request{Output: sourcewatcherv1.OutputArtifact{Copy: []sourcewatcherv1.CopyOperation{
 		{From: "@first/dir/", To: "@artifact/out/", Exclude: []string{"skip"}},
-		{From: "@second/file", To: "@artifact/value", Strategy: "Overwrite"},
-		{From: "@first/overlay", To: "@artifact/value", Strategy: "Merge"},
-		{From: "@first/**/*.TGZ", To: "@artifact/one/", Strategy: "Extract"},
-		{From: "@second/*.tar.gz", To: "@artifact/two", Strategy: "Extract"},
+		{From: "@second/file", To: "@artifact/value", Strategy: sourcewatcherv1.OverwriteStrategy},
+		{From: "@first/overlay", To: "@artifact/value", Strategy: sourcewatcherv1.MergeStrategy},
+		{From: "@first/**/*.TGZ", To: "@artifact/one/", Strategy: sourcewatcherv1.ExtractStrategy},
+		{From: "@second/*.tar.gz", To: "@artifact/two", Strategy: sourcewatcherv1.ExtractStrategy},
 	}}}
 	got, err := e.composition(prepareCompositionRequest(t, &e, &req))
 	assert.NoError(t, err)
@@ -64,17 +66,21 @@ func TestComposition_ResolvedOutputs(t *testing.T) {
 	t.Parallel()
 	spec := manifest.ArtifactGeneratorSpec{
 		PathPattern: "@repo/apps/{App}",
-		Sources: []manifest.ArtifactGeneratorSource{
+		Sources: []sourcewatcherv1.SourceReference{
 			{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
 		},
-		Artifacts: []manifest.ArtifactGeneratorOutput{{
+		OutputArtifacts: []sourcewatcherv1.OutputArtifact{{
 			Name: "{App}", InputsFrom: "@artifact/{App}.yaml",
-			Copy: []manifest.ArtifactGeneratorCopy{
+			Copy: []sourcewatcherv1.CopyOperation{
 				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/{App}.yaml", Exclude: []string{"{App}.bak"}},
 				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/backup/{App}.yaml"},
-				{From: "@repo/shared.yaml", To: "@artifact/shared.yaml", Strategy: "Merge"},
+				{From: "@repo/shared.yaml", To: "@artifact/shared.yaml", Strategy: sourcewatcherv1.MergeStrategy},
 				{From: "@repo/apps/{App}/values.yaml", To: "@artifact/again/{App}.yaml"},
-				{From: "@repo/shared.yaml", To: "@artifact/backup/shared.yaml", Strategy: "Merge"},
+				{
+					From:     "@repo/shared.yaml",
+					To:       "@artifact/backup/shared.yaml",
+					Strategy: sourcewatcherv1.MergeStrategy,
+				},
 			},
 		}},
 	}
@@ -120,8 +126,8 @@ func TestComposition_ResolvedOutputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			invalid := spec
-			invalid.Artifacts = []manifest.ArtifactGeneratorOutput{{
-				Name: "{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: tc.from, To: tc.to}},
+			invalid.OutputArtifacts = []sourcewatcherv1.OutputArtifact{{
+				Name: "{App}", Copy: []sourcewatcherv1.CopyOperation{{From: tc.from, To: tc.to}},
 			}}
 			prepared, err := validateSpec(&invalid, "apps")
 			assert.NoError(t, err)
@@ -145,7 +151,7 @@ func prepareCompositionRequest(t *testing.T, e *evaluation, req *request) *reque
 	t.Helper()
 	var prepared generatorSpec
 	for i := range req.Output.Copy {
-		assert.NoError(t, prepared.prepareOperation(&req.Output.Copy[i]))
+		assert.NoError(t, prepared.prepareOperation(&req.Output.Copy[i], false))
 	}
 	e.selectors, e.copyModes = &prepared.selectors, prepared.copyModes
 	return req

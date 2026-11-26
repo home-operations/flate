@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/core/artifactsyntax"
@@ -16,7 +17,7 @@ import (
 
 func TestNamespaceTargets_ValidationOrder(t *testing.T) {
 	t.Parallel()
-	paths := &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: "@repo/{Module}.yaml"}
+	paths := &sourcewatcherv1.NamespaceMetadataFromSource{Path: "@repo/{Module}.yaml"}
 	makeRequest := func(name, path string) request {
 		return request{
 			Namespace:         manifest.NamedResource{Name: name},
@@ -50,7 +51,7 @@ func TestNamespaceTargets_ValidationOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			policies, err := compileNamespacePolicies(
-				&manifest.ArtifactGeneratorManagedNamespaces{AllowedNames: []string{"true"}},
+				&sourcewatcherv1.ManagedNamespaces{AllowedNames: []string{"true"}},
 			)
 			assert.NoError(t, err)
 			targets := collectNamespaceTargets(tc.requests)
@@ -114,10 +115,10 @@ func TestNamespaceMetadata_ReadSource(t *testing.T) {
 func TestNamespaceMetadata_DecodeAndFilter(t *testing.T) {
 	t.Parallel()
 	const path = "@repo/metadata.yaml"
-	policies, err := compileNamespacePolicies(&manifest.ArtifactGeneratorManagedNamespaces{
+	policies, err := compileNamespacePolicies(&sourcewatcherv1.ManagedNamespaces{
 		AllowedNames: []string{"true"},
-		Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
-			FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{
+		Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+			FromSource: &sourcewatcherv1.NamespaceMetadataFromSource{
 				AllowedLabels:      map[string]string{"team": "value == 'platform'", "rank": "int(value) > 0"},
 				AllowedAnnotations: map[string]string{"owner": "value.startsWith('platform')"},
 			},
@@ -181,22 +182,41 @@ func TestNamespaceMetadata_DecodeAndFilter(t *testing.T) {
 func TestNamespaceMetadata_OrderedStrategiesAndOwnership(t *testing.T) {
 	t.Parallel()
 	spec := manifest.ArtifactGeneratorSpec{
-		ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
-			Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
-				From: []manifest.ArtifactGeneratorNamespaceMetadataEntry{
-					{Namespace: "reset", Strategy: "Reset", Labels: map[string]string{"team": "reset"}},
-					{Namespace: "*", Strategy: "Merge", Labels: map[string]string{"team": "merge", "added": "merge"}},
-					{Namespace: "*", Strategy: "Override", Labels: map[string]string{"added": "override"}},
-					{Namespace: "*", Strategy: "Merge", Labels: map[string]string{"added": "discarded"}},
-					{Namespace: "reset", Strategy: "Override", Labels: map[string]string{
+		ManagedNamespaces: &sourcewatcherv1.ManagedNamespaces{
+			Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+				From: []sourcewatcherv1.NamespaceMetadataFrom{
+					{
+						Namespace: "reset",
+						Strategy:  sourcewatcherv1.NamespaceMetadataResetStrategy,
+						Labels:    map[string]string{"team": "reset"},
+					},
+					{
+						Namespace: "*",
+						Strategy:  sourcewatcherv1.MergeStrategy,
+						Labels:    map[string]string{"team": "merge", "added": "merge"},
+					},
+					{
+						Namespace: "*",
+						Strategy:  sourcewatcherv1.OverrideStrategy,
+						Labels:    map[string]string{"added": "override"},
+					},
+					{
+						Namespace: "*",
+						Strategy:  sourcewatcherv1.MergeStrategy,
+						Labels:    map[string]string{"added": "discarded"},
+					},
+					{Namespace: "reset", Strategy: sourcewatcherv1.OverrideStrategy, Labels: map[string]string{
 						"source.extensions.fluxcd.io/generator": "entry", "app.kubernetes.io/managed-by": "entry",
 					}},
 				},
 			},
 		},
+
+		CommonMetadata: &sourcewatcherv1.CommonMetadata{
+			Labels:      map[string]string{"team": "common", "kept": "common"},
+			Annotations: map[string]string{"owner": "common"},
+		},
 	}
-	spec.CommonMetadata.Labels = map[string]string{"team": "common", "kept": "common"}
-	spec.CommonMetadata.Annotations = map[string]string{"owner": "common"}
 	sourced := namespaceMetadataValues{
 		Labels: map[string]string{"team": "sourced"}, Annotations: map[string]string{"owner": "sourced"},
 	}

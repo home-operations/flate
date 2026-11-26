@@ -1,11 +1,15 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 	"testing"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -16,9 +20,11 @@ type fingerprintSpecification struct {
 		Labels      map[string]string `json:"labels"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"commonMetadata"`
-	Sources     []fingerprintSource `json:"sources"`
-	PathPattern string              `json:"pathPattern"`
-	Artifacts   []fingerprintOutput `json:"artifacts"`
+	Sources            []fingerprintSource                `json:"sources"`
+	PathPattern        string                             `json:"pathPattern"`
+	Artifacts          []fingerprintOutput                `json:"artifacts"`
+	ManagedNamespaces  *sourcewatcherv1.ManagedNamespaces `json:"managedNamespaces,omitempty"`
+	ServiceAccountName string                             `json:"serviceAccountName,omitempty"`
 }
 
 type fingerprintSource struct {
@@ -57,8 +63,35 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 		{"incomplete", map[string]any{"sources": []any{nil, map[string]any{}, map[string]any{"kind": KindGitRepository, "name": "repo"}}}},
 		{"namespaces", map[string]any{"sources": []any{map[string]any{"namespace": ""}, map[string]any{"namespace": nil}, map[string]any{"namespace": "apps"}}}},
 		{"metadata", map[string]any{"commonMetadata": map[string]any{"labels": map[string]string{"app": "test"}, "annotations": map[string]any{"null": nil}}}},
-		{"copies", map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}", "namespace": "{app}", "inputsFrom": "@repo/settings/{app}.yaml", "revision": "@repo", "originRevision": "@repo", "copy": []any{nil, map[string]any{"from": "@repo/file", "to": "@artifact/file", "strategy": "Overwrite", "exclude": []string{"ignored"}, "optional": true}, map[string]any{"exclude": []any{}}}}}}},
-		{"mixed_case_fields", map[string]any{"PathPattern": "@repo/{app}", "sources": []any{map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "apps"}}, "Artifacts": []any{map[string]any{"Name": "app", "Namespace": "apps", "InputsFrom": "@artifact/file", "Revision": "@repo", "OriginRevision": "@repo", "Copy": []any{map[string]any{"From": "@repo/file", "To": "@artifact/file", "Strategy": "Overwrite", "Exclude": []string{"ignored"}, "Optional": true}}}}}},
+		{"metadata_object_then_null", map[string]any{
+			"CommonMetadata": map[string]any{
+				"labels":      map[string]string{"b": "<tag>", "a": "one"},
+				"annotations": map[string]string{"note": "two"},
+			},
+			"commonMetadata":     nil,
+			"serviceAccountName": "offline",
+			"pathPattern":        "@repo/<path>",
+			"managedNamespaces": map[string]any{
+				"allowedNames": []string{"true"}, "prune": true,
+				"metadata": map[string]any{
+					"fromSource": map[string]any{"path": "@repo/<metadata>.yaml", "allowedLabels": map[string]string{"app": "true"}},
+					"from": []any{map[string]any{
+						"namespace": "*", "strategy": sourcewatcherv1.MergeStrategy,
+						"annotations": map[string]string{"note": "three"}, "labels": map[string]string{"app": "four"},
+					}},
+				},
+			},
+		}},
+		{"managed_empty", map[string]any{"managedNamespaces": map[string]any{"metadata": map[string]any{}}}},
+		{"metadata_empty_object_then_null", map[string]any{
+			"CommonMetadata": map[string]any{}, "commonMetadata": nil,
+		}},
+		{"metadata_partial_then_null", map[string]any{
+			"CommonMetadata": map[string]any{"annotations": map[string]any{"bad": 1}, "labels": map[string]string{"keep": "one"}},
+			"commonMetadata": nil,
+		}},
+		{"copies", map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}", "namespace": "{app}", "inputsFrom": "@repo/settings/{app}.yaml", "revision": "@repo", "originRevision": "@repo", "copy": []any{nil, map[string]any{"from": "@repo/file", "to": "@artifact/file", "strategy": sourcewatcherv1.OverwriteStrategy, "exclude": []string{"ignored"}, "optional": true}, map[string]any{"exclude": []any{}}}}}}},
+		{"mixed_case_fields", map[string]any{"PathPattern": "@repo/{app}", "sources": []any{map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "apps"}}, "Artifacts": []any{map[string]any{"Name": "app", "Namespace": "apps", "InputsFrom": "@artifact/file", "Revision": "@repo", "OriginRevision": "@repo", "Copy": []any{map[string]any{"From": "@repo/file", "To": "@artifact/file", "Strategy": sourcewatcherv1.OverwriteStrategy, "Exclude": []string{"ignored"}, "Optional": true}}}}}},
 		{"mixed_case_exclude_type", map[string]any{"artifacts": []any{map[string]any{"copy": []any{map[string]any{"Exclude": 1}}}}}},
 		{"namespace_type", map[string]any{"sources": []any{map[string]any{"namespace": 1}}}},
 		{"source_type", map[string]any{"sources": []any{"invalid"}}},
@@ -89,16 +122,57 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 			direct, directErr := raw.ArtifactGeneratorSpec()
 			assert.Equal(t, err == nil, priorErr == nil)
 			assert.Equal(t, directErr == nil, err == nil)
-			assert.Diff(t, direct, got)
-			if err != nil {
+			assert.Diff(t, direct.ArtifactGeneratorSpec, got.ArtifactGeneratorSpec)
+			assert.Diff(t, direct.sourceNamespaces, got.sourceNamespaces)
+			assert.Diff(t, direct.emptyStrategies, got.emptyStrategies)
+			assert.Equal(t, Fingerprint(got), Fingerprint(prior))
+			gotBytes, err := json.Marshal(got)
+			assert.NoError(t, err)
+			priorBytes, err := json.Marshal(prior)
+			assert.NoError(t, err)
+			assert.Diff(t, gotBytes, priorBytes)
+			switch tc.name {
+			case "absent", "null":
+				assert.Equal(t, got.CommonMetadata == nil, true)
+			case "metadata_object_then_null":
+				const expected = `{"commonMetadata":{"labels":{"a":"one","b":"\u003ctag\u003e"},"annotations":{"note":"two"}},` +
+					`"sources":null,"pathPattern":"@repo/\u003cpath\u003e","artifacts":null,"managedNamespaces":{"allowedNames":["true"],"prune":true,` +
+					`"metadata":{"fromSource":{"path":"@repo/\u003cmetadata\u003e.yaml","allowedLabels":{"app":"true"}},` +
+					`"from":[{"strategy":"` + sourcewatcherv1.MergeStrategy + `","namespace":"*","annotations":{"note":"three"},"labels":{"app":"four"}}]}},` +
+					`"serviceAccountName":"offline"}`
+				assert.Equal(t, string(gotBytes), expected)
+				assert.Equal(t, Fingerprint(got), SHA256Hex([]byte(expected)))
+				assert.Equal(t, got.CommonMetadata != nil, true)
+
+				var want, encoded bytes.Buffer
+				baseEncoder := json.NewEncoder(&want)
+				baseEncoder.SetEscapeHTML(false)
+				assert.NoError(t, baseEncoder.Encode(prior))
+				encoder := json.NewEncoder(&encoded)
+				encoder.SetEscapeHTML(false)
+				assert.NoError(t, encoder.Encode(got))
+				assert.Diff(t, encoded.Bytes(), want.Bytes())
+				streamed, streamErr := jsonv2.Marshal(got, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false))
+				assert.NoError(t, streamErr)
+				assert.Diff(t, streamed, bytes.TrimSuffix(want.Bytes(), []byte("\n")))
+			case "metadata_empty_object_then_null", "metadata_partial_then_null":
+				assert.Equal(t, got.CommonMetadata != nil, true)
+			}
+			if priorErr != nil {
+				wantType, wantOK := errors.AsType[*json.UnmarshalTypeError](priorErr)
+				gotType, gotOK := errors.AsType[*json.UnmarshalTypeError](directErr)
+				assert.FatalIf(t, !wantOK || !gotOK, "want a JSON type error, got %v and %v", wantType, gotType)
+				assert.Equal(t, gotType.Field, wantType.Field)
+				assert.Equal(t, gotType.Value, wantType.Value)
+				assert.Equal(t, gotType.Offset, wantType.Offset)
 				return
 			}
-			assert.Equal(t, Fingerprint(got), Fingerprint(prior))
+			got.sourceNamespaces = make([]bool, len(got.Sources))
 			for i := range got.Sources {
 				fields, _ := tc.spec["sources"].([]any)[i].(map[string]any)
 				_, present := fields[namespaceKey]
-				assert.Equal(t, got.Sources[i].NamespaceSet, present)
-				got.Sources[i].NamespaceSet = !present
+				assert.Equal(t, direct.SourceNamespaceSet(i), present)
+				got.sourceNamespaces[i] = !present
 			}
 			assert.Equal(t, Fingerprint(got), Fingerprint(prior))
 			mutateGeneratorSpec(&got)
@@ -107,7 +181,7 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 			assert.NoError(t, err)
 			original, err := raw.ArtifactGeneratorSpec()
 			assert.NoError(t, err)
-			assert.Diff(t, again, original)
+			assert.Diff(t, again.ArtifactGeneratorSpec, original.ArtifactGeneratorSpec)
 			assert.Equal(t, Fingerprint(parsed), before)
 			assert.Equal(t, Fingerprint(raw), directBefore)
 		})
@@ -115,17 +189,17 @@ func TestArtifactGeneratorSpec_JSON(t *testing.T) {
 }
 
 func mutateGeneratorSpec(spec *ArtifactGeneratorSpec) {
-	if spec.CommonMetadata.Labels != nil {
+	if spec.CommonMetadata != nil && spec.CommonMetadata.Labels != nil {
 		spec.CommonMetadata.Labels["app"] = "changed"
 	}
-	if spec.CommonMetadata.Annotations != nil {
+	if spec.CommonMetadata != nil && spec.CommonMetadata.Annotations != nil {
 		spec.CommonMetadata.Annotations["null"] = "changed"
 	}
-	if len(spec.Artifacts) > 0 && len(spec.Artifacts[0].Copy) > 1 {
-		spec.Artifacts[0].Copy[1].Exclude[0] = "changed"
+	if len(spec.OutputArtifacts) > 0 && len(spec.OutputArtifacts[0].Copy) > 1 {
+		spec.OutputArtifacts[0].Copy[1].Exclude[0] = "changed"
 	}
-	if len(spec.Artifacts) != 0 {
-		spec.Artifacts[0].Name = "changed"
+	if len(spec.OutputArtifacts) != 0 {
+		spec.OutputArtifacts[0].Name = "changed"
 	}
 }
 
@@ -192,7 +266,7 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 	decoded, err := raw.ArtifactGeneratorSpec()
 	assert.Equal(t, len(decoded.Sources), len(refs))
 	assert.Equal(t, decoded.Sources[refs[1].Position].Alias, "repo")
-	assert.Equal(t, decoded.Sources[refs[1].Position].NamespaceSet, true)
+	assert.Equal(t, decoded.SourceNamespaceSet(refs[1].Position), true)
 	assert.Equal(t, decoded.Sources[refs[0].Position].Alias, "")
 	assert.ErrorIf(t, err == nil, "malformed copy metadata decoded without an error")
 	catalog := CatalogObject(raw, raw.Named())
@@ -305,15 +379,27 @@ func TestArtifactGeneratorSpec_CatalogPartialError(t *testing.T) {
 				}
 				wire, err := json.Marshal(fields)
 				assert.NoError(t, err)
-				var want ArtifactGeneratorSpec
+				var prior fingerprintSpecification
+				priorErr := json.Unmarshal(wire, &prior)
+				var want artifactGeneratorDecodeView
 				wantErr := json.Unmarshal(wire, &want)
 				got, gotErr := object.ArtifactGeneratorSpec()
-				assert.Diff(t, got, want)
-				wantType, wantOK := errors.AsType[*json.UnmarshalTypeError](wantErr)
+				assert.Equal(t, Fingerprint(got), Fingerprint(prior))
+				priorType, priorOK := errors.AsType[*json.UnmarshalTypeError](priorErr)
+				_, wantOK := errors.AsType[*json.UnmarshalTypeError](wantErr)
 				gotType, gotOK := errors.AsType[*json.UnmarshalTypeError](gotErr)
-				assert.FatalIf(t, !wantOK || !gotOK, "want a JSON type error, got %v and %v", wantErr, gotErr)
+				assert.FatalIf(
+					t,
+					!wantOK || !gotOK || !priorOK,
+					"want JSON type errors, got %v, %v and %v",
+					priorErr,
+					wantErr,
+					gotErr,
+				)
 				assert.Equal(t, gotErr.Error(), "decode spec: "+wantErr.Error())
-				assert.Equal(t, gotType.Offset, wantType.Offset)
+				assert.Equal(t, gotType.Field, priorType.Field)
+				assert.Equal(t, gotType.Value, priorType.Value)
+				assert.Equal(t, gotType.Offset, priorType.Offset)
 			}
 			assert.Diff(t, ProducerTargets(catalog), ProducerTargets(raw))
 			assert.Diff(t, ProducerTargets(restored), ProducerTargets(raw))
@@ -340,7 +426,10 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 				map[string]any{"Name": "route", "Namespace": "delivery-{app}"},
 			},
 			"artifacts": []any{
-				map[string]any{"copy": []any{map[string]any{"to": "@artifact/common/file"}}},
+				map[string]any{"copy": []any{
+					map[string]any{"to": "@artifact/common/file"},
+					map[string]any{"strategy": ""},
+				}},
 				map[string]any{"originRevision": "@repo"},
 				map[string]any{},
 			},
@@ -355,12 +444,12 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 					"From": []any{
 						map[string]any{
 							"Namespace": "*",
-							"Strategy":  "Merge",
+							"Strategy":  sourcewatcherv1.MergeStrategy,
 							"Labels":    map[string]string{"app": "one"},
 						},
 						map[string]any{
 							"Namespace":   "delivery",
-							"Strategy":    "Override",
+							"Strategy":    sourcewatcherv1.OverrideStrategy,
 							"Annotations": map[string]string{"owner": "two"},
 						},
 					},
@@ -383,28 +472,32 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	spec, err := parsed.ArtifactGeneratorSpec()
 	assert.NoError(t, err)
 	assert.Equal(t, spec.ServiceAccountName, "offline")
-	assert.Equal(t, spec.Sources[0].NamespaceSet, false)
+	assert.Equal(t, spec.SourceNamespaceSet(0), false)
 	assert.Equal(t, spec.PathPattern, "@repo/clusters/{app}")
-	assert.Equal(t, spec.Artifacts[0].Copy[0].From, "@repo/common/file")
-	assert.Equal(t, spec.Artifacts[0].Copy[0].To, "@artifact/common/file")
+	assert.Equal(t, spec.OutputArtifacts[0].Copy[0].From, "@repo/common/file")
+	assert.Equal(t, spec.OutputArtifacts[0].Copy[0].To, "@artifact/common/file")
 	policy := spec.ManagedNamespaces
 	assert.FatalIf(
 		t,
 		policy == nil || policy.Metadata == nil || policy.Metadata.FromSource == nil,
 		"missing namespace policy",
 	)
-	assert.Diff(t, policy, &ArtifactGeneratorManagedNamespaces{
+	assert.Diff(t, policy, &sourcewatcherv1.ManagedNamespaces{
 		AllowedNames: []string{"true"},
 		Prune:        true,
-		Metadata: &ArtifactGeneratorNamespaceMetadata{
-			FromSource: &ArtifactGeneratorNamespaceMetadataSource{
+		Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+			FromSource: &sourcewatcherv1.NamespaceMetadataFromSource{
 				Path:               "@repo/metadata/{app}.yaml",
 				AllowedLabels:      map[string]string{"app": "true"},
 				AllowedAnnotations: map[string]string{"owner": "true"},
 			},
-			From: []ArtifactGeneratorNamespaceMetadataEntry{
-				{Namespace: "*", Strategy: "Merge", Labels: map[string]string{"app": "one"}},
-				{Namespace: "delivery", Strategy: "Override", Annotations: map[string]string{"owner": "two"}},
+			From: []sourcewatcherv1.NamespaceMetadataFrom{
+				{Namespace: "*", Strategy: sourcewatcherv1.MergeStrategy, Labels: map[string]string{"app": "one"}},
+				{
+					Namespace:   "delivery",
+					Strategy:    sourcewatcherv1.OverrideStrategy,
+					Annotations: map[string]string{"owner": "two"},
+				},
 			},
 		},
 	})
@@ -422,7 +515,7 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	assert.Equal(t, Fingerprint(spec) == before, false)
 	again, err := parsed.ArtifactGeneratorSpec()
 	assert.NoError(t, err)
-	assert.Diff(t, again, pristine)
+	assert.Diff(t, again.ArtifactGeneratorSpec, pristine.ArtifactGeneratorSpec)
 	assert.Equal(t, Fingerprint(again), before)
 
 	target := NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "delivery", Name: "bundle-prod"}
@@ -454,10 +547,15 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	assert.Equal(t, decoded.ReferenceCapacity().References, 0)
 	compact, err := decoded.(*RawObject).ArtifactGeneratorSpec()
 	assert.NoError(t, err)
-	assert.Diff(t, compact.ManagedNamespaces, &ArtifactGeneratorManagedNamespaces{})
+	assert.Diff(t, compact.ManagedNamespaces, &sourcewatcherv1.ManagedNamespaces{})
 	assert.Equal(t, compact.PathPattern, pristine.PathPattern)
-	assert.Diff(t, compact.Artifacts, pristine.Artifacts)
+	assert.Diff(t, compact.OutputArtifacts, pristine.OutputArtifacts)
 	live, err := catalog.(*RawObject).ArtifactGeneratorSpec()
 	assert.NoError(t, err)
-	assert.Diff(t, live, compact)
+	assert.Diff(t, live.ArtifactGeneratorSpec, compact.ArtifactGeneratorSpec)
+	for _, snapshot := range []*ArtifactGeneratorSpec{&pristine, &live, &compact} {
+		assert.Equal(t, len(snapshot.OutputArtifacts[0].Copy), 2)
+		assert.Equal(t, snapshot.EmptyCopyStrategy(0, 0), false)
+		assert.Equal(t, snapshot.EmptyCopyStrategy(0, 1), true)
+	}
 }

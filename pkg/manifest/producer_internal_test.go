@@ -449,7 +449,7 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 		spec, err := raw.ArtifactGeneratorSpec()
 		assert.NoError(t, err)
 		resolved, err := spec.ResolveOutput(
-			&spec.Artifacts[3], "generator",
+			&spec.OutputArtifacts[3], "generator",
 			map[string]string{"left": "ab", "right": "cd"},
 			nil,
 		)
@@ -496,12 +496,12 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 		spec, err := raw.ArtifactGeneratorSpec()
 		assert.NoError(t, err)
 		captures := map[string]string{"tenant": "tenant-a", "app": "api"}
-		resolved, err := spec.ResolveOutput(&spec.Artifacts[2], raw.Namespace, captures, captures)
+		resolved, err := spec.ResolveOutput(&spec.OutputArtifacts[2], raw.Namespace, captures, captures)
 		assert.NoError(t, err)
 		assert.Equal(t, resolved.Artifact, artifact)
 		assert.Equal(t, resolved.Namespace, dynamic)
 		captures["tenant"] = raw.Namespace
-		resolved, err = spec.ResolveOutput(&spec.Artifacts[2], raw.Namespace, captures, captures)
+		resolved, err = spec.ResolveOutput(&spec.OutputArtifacts[2], raw.Namespace, captures, captures)
 		assert.NoError(t, err)
 		assert.Equal(t, resolved.Namespace, NamedResource{})
 	})
@@ -526,7 +526,7 @@ func TestProducerTargets_ArtifactCandidates(t *testing.T) {
 				assert.Equal(t, len(ProducerTargets(generator, target)), 0)
 				spec, err := generator.ArtifactGeneratorSpec()
 				assert.NoError(t, err)
-				_, err = spec.ResolveOutput(&spec.Artifacts[0], "apps", map[string]string{"tenant": "team"}, nil)
+				_, err = spec.ResolveOutput(&spec.OutputArtifacts[0], "apps", map[string]string{"tenant": "team"}, nil)
 				assert.FatalIf(
 					t,
 					err == nil || !strings.Contains(err.Error(), tc.diagnostic),

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 
 	"github.com/google/go-cmp/cmp"
@@ -32,7 +34,7 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 			[]request{
 				{
 					Identity: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod"},
-					Output:   manifest.ArtifactGeneratorOutput{Name: "{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Output:   sourcewatcherv1.OutputArtifact{Name: "{App}", Copy: []sourcewatcherv1.CopyOperation{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
 					Captures: map[string]string{"App": "prod"},
 				},
 			},
@@ -46,7 +48,7 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 			[]request{
 				{
 					Identity: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod-prod"},
-					Output:   manifest.ArtifactGeneratorOutput{Name: "{App}-{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Output:   sourcewatcherv1.OutputArtifact{Name: "{App}-{App}", Copy: []sourcewatcherv1.CopyOperation{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
 					Captures: map[string]string{"App": "prod", "literal": "team"},
 				},
 			},
@@ -73,13 +75,13 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 				t.Parallel()
 				spec := manifest.ArtifactGeneratorSpec{
 					PathPattern: tc.pattern,
-					Sources: []manifest.ArtifactGeneratorSource{
+					Sources: []sourcewatcherv1.SourceReference{
 						{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
 					},
-					Artifacts: []manifest.ArtifactGeneratorOutput{
+					OutputArtifacts: []sourcewatcherv1.OutputArtifact{
 						{
 							Name: tc.output,
-							Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/{App}", To: "@artifact/{App}"}},
+							Copy: []sourcewatcherv1.CopyOperation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}},
 						},
 					},
 				}
@@ -99,8 +101,8 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 							got,
 							cmp.AllowUnexported(
 								request{},
-								manifest.ArtifactGeneratorOutput{},
-								manifest.ArtifactGeneratorCopy{},
+								sourcewatcherv1.OutputArtifact{},
+								sourcewatcherv1.CopyOperation{},
 							),
 							cmpopts.IgnoreFields(request{}, "work"),
 						)
@@ -145,16 +147,16 @@ func TestExpand_NamespaceMetadataPath(t *testing.T) {
 			t.Parallel()
 			spec := manifest.ArtifactGeneratorSpec{
 				PathPattern: tc.pattern,
-				Sources: []manifest.ArtifactGeneratorSource{
+				Sources: []sourcewatcherv1.SourceReference{
 					{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
 				},
-				Artifacts: []manifest.ArtifactGeneratorOutput{{
+				OutputArtifacts: []sourcewatcherv1.OutputArtifact{{
 					Name: "artifact", Namespace: "delivery",
-					Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+					Copy: []sourcewatcherv1.CopyOperation{{From: "@repo/file", To: "@artifact/file"}},
 				}},
-				ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
-					Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
-						FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: tc.path},
+				ManagedNamespaces: &sourcewatcherv1.ManagedNamespaces{
+					Metadata: &sourcewatcherv1.ManagedNamespacesMetadata{
+						FromSource: &sourcewatcherv1.NamespaceMetadataFromSource{Path: tc.path},
 					},
 				},
 			}
@@ -178,12 +180,12 @@ func TestExpand_Canceled(t *testing.T) {
 	{
 		spec := manifest.ArtifactGeneratorSpec{
 			PathPattern: "@repo/{App}",
-			Sources: []manifest.ArtifactGeneratorSource{
+			Sources: []sourcewatcherv1.SourceReference{
 				{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
 			},
-			Artifacts: []manifest.ArtifactGeneratorOutput{{
+			OutputArtifacts: []sourcewatcherv1.OutputArtifact{{
 				Name: "{App}",
-				Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+				Copy: []sourcewatcherv1.CopyOperation{{From: "@repo/file", To: "@artifact/file"}},
 			}},
 		}
 		prepared, err := validateSpec(&spec, "apps")

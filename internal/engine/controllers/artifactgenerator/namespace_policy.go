@@ -10,7 +10,7 @@ import (
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/ext"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	sourcewatcherv1 "github.com/fluxcd/source-watcher/api/v2/v1beta1"
 )
 
 const (
@@ -29,7 +29,7 @@ type stringAssertion struct {
 	program    cel.Program
 }
 
-func compileNamespacePolicies(ns *manifest.ArtifactGeneratorManagedNamespaces) (*namespacePolicies, error) {
+func compileNamespacePolicies(ns *sourcewatcherv1.ManagedNamespaces) (*namespacePolicies, error) {
 	if ns == nil {
 		return nil, nil //nolint:nilnil // An absent policy disables Namespace management.
 	}

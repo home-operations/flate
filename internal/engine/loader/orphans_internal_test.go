@@ -485,7 +485,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 		support := new(store.ReadSet)
 		support.Init(st, manifest.NamedResource{}, nil)
 		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		_, registrationErr := l.RegisterBuilt(
+		_, _, registrationErr := l.RegisterBuilt(
 			t.Context(),
 			BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support},
 			batch,

@@ -81,7 +81,7 @@ spec: {url: https://example.invalid/effective}
 	support.Init(st, parent.Named(), nil)
 	support.GetDeclaration(parent.Named())
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		BuiltInput{Root: packageRoot, Owner: parent.Named(), Source: manifest.BootstrapSourceID, Support: support},
 		children,
 	)

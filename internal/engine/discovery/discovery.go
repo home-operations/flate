@@ -789,7 +789,7 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
 	root := filepath.Join(prepared.source.LocalPath, manifest.NormalizeClaimBase(prepared.owner.Path))
-	publication, err := d.loader.RegisterBuilt(
+	publication, children, err := d.loader.RegisterBuilt(
 		ctx,
 		loader.BuiltInput{
 			Root:             root,
@@ -805,6 +805,7 @@ func (d *Session) registerProducer(ctx context.Context, prepared *declarationPre
 	if err != nil || publication == loader.BuiltRejected {
 		return false, err
 	}
+	prepared.children = children
 	d.prepared[owner] = prepared
 	if prepared.err == nil && d.binding.Producer == owner {
 		d.binding.Failure = nil

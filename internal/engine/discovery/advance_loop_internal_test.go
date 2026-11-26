@@ -108,9 +108,12 @@ func TestAdvance_RepeatedProducerPreparation(t *testing.T) {
 		assert.NoError(t, prepareErr)
 		frame := d.prepared[owner]
 		assert.FatalIf(t, frame == nil, "pass %d: producer %s missing for %s", pass+1, owner, consumer)
-		assert.Equal(t, slices.ContainsFunc(frame.children, func(doc store.Child) bool {
+		preparedIndex := slices.IndexFunc(frame.children, func(doc store.Child) bool {
 			return doc.Obj.Named() == child
-		}), true)
+		})
+		assert.FatalIf(t, preparedIndex < 0, "pass %d: missing prepared child %s", pass+1, child)
+		published, _ := l.PreparedObject(child, nil)
+		assert.Equal(t, frame.children[preparedIndex].Obj, published.Obj)
 		registered := len(l.PromotionDocuments(child)) != 0
 		if progress != (pass == 0) || !frame.support.Valid() || !registered {
 			t.Errorf("pass %d: %s prepared %s for %s from %s (complete=%v registered=%v current=%v progress=%v)",
@@ -119,5 +122,53 @@ func TestAdvance_RepeatedProducerPreparation(t *testing.T) {
 			)
 		}
 		assert.Equal(t, st.GetObject(settings), material)
+	}
+}
+
+func TestRegisterProducer_KeepsReusedDeclarations(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: os.DirFS(root)}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	d := newDiscoverer(&Config{Input: input, Path: root, Store: st})
+	t.Cleanup(d.Close)
+	d.loader.SourceRoot = root
+	d.prepared = make(map[manifest.NamedResource]*declarationPreparation)
+
+	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
+	originals := []*manifest.Kustomization{
+		{Name: "first", Namespace: "apps", Path: "./first"},
+		{Name: "second", Namespace: "apps", Path: "./second"},
+	}
+
+	for pass := range 2 {
+		frame := &declarationPreparation{
+			owner: owner, source: input,
+			complete: true,
+		}
+		for i, original := range originals {
+			child := original
+			if pass == 1 {
+				child = original.Clone()
+			}
+			frame.children = append(frame.children, store.Child{Obj: child, Ordinal: i})
+		}
+		frame.captureSupport(st, owner.EffectiveSourceID())
+
+		_, err := d.registerProducer(t.Context(), frame)
+		assert.NoError(t, err)
+		assert.Equal(t, frame.publication, loader.BuiltRegistered)
+		assert.FatalIf(t, len(frame.children) != len(originals),
+			"pass %d: prepared children = %v", pass+1, frame.children)
+
+		for i, original := range originals {
+			id := original.Named()
+			indexed, ok := d.loader.Index.Lookup(id)
+			assert.FatalIf(t, !ok || indexed.Declaration != original, "pass %d: loader did not retain %s", pass+1, id)
+			assert.ErrorIf(t, frame.children[i].Obj != indexed.Declaration,
+				"pass %d: prepared child %s does not use the indexed declaration", pass+1, id)
+		}
 	}
 }

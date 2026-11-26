@@ -136,7 +136,7 @@ spec:
 	data, err := result.AsYaml()
 	assert.NoError(t, err)
 	docs := builtObjectsForTest(t, string(data))
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -284,7 +284,7 @@ spec:
 			t,
 			release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n",
 		)
-		_, registrationErr := l.RegisterBuilt(t.Context(),
+		_, _, registrationErr := l.RegisterBuilt(t.Context(),
 			supportedBuiltInputForTest(l, &BuiltInput{
 				Root:   root,
 				Source: manifest.BootstrapSourceID,
@@ -299,7 +299,7 @@ spec:
 		assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
 		assert.Equal(t, generated.File, "kustomization.yaml")
 		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
-		_, registrationErr2 := l.RegisterBuilt(t.Context(),
+		_, _, registrationErr2 := l.RegisterBuilt(t.Context(),
 			supportedBuiltInputForTest(l, &BuiltInput{
 				Root: root, Source: manifest.BootstrapSourceID,
 				Owner: testutil.KustomizationID("apps", "entry"),
@@ -357,7 +357,7 @@ spec:
 				strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1),
 			)
 			raw := docs[0].Obj.(*manifest.RawObject)
-			_, registrationErr3 := l.RegisterBuilt(t.Context(),
+			_, _, registrationErr3 := l.RegisterBuilt(t.Context(),
 				supportedBuiltInputForTest(l, &BuiltInput{
 					Root:   root,
 					Source: manifest.BootstrapSourceID,
@@ -446,7 +446,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	docs := []store.Child{
 		{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}},
 	}
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -524,7 +524,7 @@ spec:
 	docs := builtObjectsForTest(t, string(data))
 	assert.FatalIf(t, len(docs) != 1 ||
 		docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}), "deletion patch did not leave only the retained ConfigMap: %v", docs)
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -597,7 +597,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	}
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(
 			l,
 			&BuiltInput{
@@ -616,7 +616,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	}
 	independent := filepath.Join(root, "entry", "independent")
 	independentOwner := testutil.KustomizationID("apps", "independent")
-	_, registrationErr2 := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr2 := l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(l, &BuiltInput{
 			Root:   independent,
 			Source: manifest.BootstrapSourceID,

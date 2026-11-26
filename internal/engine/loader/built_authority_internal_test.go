@@ -64,7 +64,7 @@ func TestRegisterBuilt_KeepsCheckoutScope(t *testing.T) {
 	input := supportedBuiltInputForTest(l, &BuiltInput{Root: filepath.Join(mount, entry), Owner: owner, Source: source})
 	before, found := l.Index.Lookup(owner)
 	assert.FatalIf(t, !found || before.File == "", "authored file missing for %s", owner)
-	_, registrationErr := l.RegisterBuilt(t.Context(), input, builtObjectsForTest(t, sync))
+	_, _, registrationErr := l.RegisterBuilt(t.Context(), input, builtObjectsForTest(t, sync))
 	assert.NoError(t, registrationErr)
 	assert.Equal(t, st.GetDeclaration(owner), declaration)
 	assert.Equal(t, input.Support.Valid(), true)
@@ -75,7 +75,7 @@ func TestRegisterBuilt_KeepsCheckoutScope(t *testing.T) {
 	assert.Equal(t, manifest.Equal(stamped[0].Obj, declaration), false)
 	next := input
 	next = supportedBuiltInputForTest(l, &next)
-	_, registrationErr2 := l.RegisterBuilt(t.Context(), next, stamped)
+	_, _, registrationErr2 := l.RegisterBuilt(t.Context(), next, stamped)
 	assert.NoError(t, registrationErr2)
 	after, found := l.Index.Lookup(owner)
 	assert.Equal(t, found, true)
@@ -157,7 +157,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			support.Init(st, owner.Named(), nil)
 			support.GetDeclaration(owner.Named())
 			support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-			_, registrationErr := l.RegisterBuilt(t.Context(),
+			_, _, registrationErr := l.RegisterBuilt(t.Context(),
 				BuiltInput{
 					Root:    packageRoot,
 					Owner:   owner.Named(),
@@ -234,7 +234,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			replacement.Init(st, owner.Named(), nil)
 			replacement.GetDeclaration(owner.Named())
 			replacement.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-			_, registrationErr2 := l.RegisterBuilt(t.Context(),
+			_, _, registrationErr2 := l.RegisterBuilt(t.Context(),
 				BuiltInput{
 					Root:    packageRoot,
 					Owner:   owner.Named(),
@@ -304,7 +304,7 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 				Source:  manifest.BootstrapSourceID,
 				Support: support,
 			}
-			_, registrationErr := l.RegisterBuilt(t.Context(), input, children)
+			_, _, registrationErr := l.RegisterBuilt(t.Context(), input, children)
 			assert.NoError(t, registrationErr)
 			if invalidation == "native_source" {
 				var before store.ReadSet
@@ -360,7 +360,7 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			assert.Equal(t, current, false)
 			_, complete = l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, complete, "invalidated batch proved child presence or absence")
-			publication, registrationErr2 := l.RegisterBuilt(t.Context(), input, nil)
+			publication, _, registrationErr2 := l.RegisterBuilt(t.Context(), input, nil)
 			assert.NoError(t, registrationErr2)
 			assert.Equal(t, publication, BuiltRejected)
 			fresh := new(store.ReadSet)
@@ -402,7 +402,7 @@ func TestBuiltChildren_RetiredSourceAuthority(t *testing.T) {
 		support.Init(st, owner.Named(), nil)
 		support.GetDeclaration(owner.Named())
 		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		_, registrationErr := l.RegisterBuilt(t.Context(),
+		_, _, registrationErr := l.RegisterBuilt(t.Context(),
 			BuiltInput{Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID, Support: support},
 			children,
 		)
@@ -444,7 +444,7 @@ func TestBuiltChildren_SuppliedPrecedence(t *testing.T) {
 	support.Init(st, owner.Named(), nil)
 	support.GetDeclaration(owner.Named())
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		BuiltInput{Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID, Support: support},
 		children,
 	)
@@ -488,7 +488,7 @@ func TestRootEvidence_CapturesRequestedBuiltChild(t *testing.T) {
 	support.Init(st, owner.Named(), nil)
 	support.GetDeclaration(owner.Named())
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		BuiltInput{Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID, Support: support},
 		children,
 	)
@@ -539,7 +539,7 @@ func TestRegisterBuilt_DirectoryReadsDoNotOwnDescendants(t *testing.T) {
 	_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 
-	_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+	_, _, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 		Root: packageRoot, Owner: parent.Named(), Source: manifest.BootstrapSourceID,
 		Reads: map[string]bool{"workload": false, "missing.yaml": false, "workload/settings.txt": true},
 	}), []store.Child{{Obj: child}})
@@ -600,7 +600,7 @@ func TestRootEvidence_PreparedNativeOwnerAfterClose(t *testing.T) {
 			_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			children := builtObjectsForTest(t, testutil.KustomizationYAML("child", "apps", "  path: ./entry\n"))
-			_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+			_, _, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 				Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID,
 			}), children)
 			assert.NoError(t, registrationErr)
@@ -711,14 +711,14 @@ func TestPreparedObject_SharedDirectoryProducerLifetimes(t *testing.T) {
 	nativeInput := supportedBuiltInputForTest(l, &BuiltInput{
 		Root: packageRoot, Owner: native.Named(), Source: manifest.BootstrapSourceID,
 	})
-	_, registrationErr := l.RegisterBuilt(t.Context(), nativeInput, initial)
+	_, _, registrationErr := l.RegisterBuilt(t.Context(), nativeInput, initial)
 	assert.NoError(t, registrationErr)
 	parent, child := initial[0].Obj.Named(), initial[1].Obj.Named()
 	current := builtObjectsForTest(t, parentYAML+"---\n"+childYAML)
 	parentInput := supportedBuiltInputForTest(l, &BuiltInput{
 		Root: packageRoot, Owner: parent, Source: manifest.BootstrapSourceID,
 	})
-	_, registrationErr2 := l.RegisterBuilt(t.Context(), parentInput, current)
+	_, _, registrationErr2 := l.RegisterBuilt(t.Context(), parentInput, current)
 	assert.NoError(t, registrationErr2)
 	var reads store.ReadSet
 	reads.Init(st, manifest.NamedResource{}, nil)
@@ -735,7 +735,7 @@ func TestPreparedObject_SharedDirectoryProducerLifetimes(t *testing.T) {
 	})
 	validationInput := testutil.KustomizationID("apps", "validation-input")
 	replacement.Support.GetDeclaration(validationInput)
-	_, registrationErr3 := l.RegisterBuilt(t.Context(), replacement, nil)
+	_, _, registrationErr3 := l.RegisterBuilt(t.Context(), replacement, nil)
 	assert.NoError(t, registrationErr3)
 	assert.Equal(t, l.builtBatches[parent].input.Support, replacement.Support)
 	record, _ := l.Index.Lookup(parent)

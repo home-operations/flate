@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,66 @@ import (
 	"github.com/home-operations/flate/internal/testutil/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type registrationContext struct {
+	context.Context //nolint:containedctx // The fixture overrides Err at the registration boundary.
+
+	onRegistration func()
+	checks         int
+}
+
+func (c *registrationContext) Err() error {
+	const registrationCheck = 2
+	c.checks++
+	if c.checks == registrationCheck {
+		c.onRegistration()
+	}
+	return c.Context.Err()
+}
+
+func TestFollowOutput_StalePreparationReturnsOriginalChildren(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	d := newDiscoverer(&Config{Input: input, Path: root, Store: st, Trees: testTrees(t)})
+	t.Cleanup(d.Close)
+	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
+	original := selection.OccurrenceFacts{
+		Identity: testutil.KustomizationID("apps", "authored"), RequiresBuild: true,
+	}
+	built := &manifest.Kustomization{Name: "built", Namespace: "apps"}
+	frame := &declarationPreparation{
+		owner: owner, source: input, complete: true, children: []store.Child{{Obj: built}},
+	}
+	frame.captureSupport(st, manifest.BootstrapSourceID)
+	d.prepared = map[manifest.NamedResource]*declarationPreparation{owner.Named(): frame}
+	occurrence := selection.OccurrenceFacts{
+		Declaration: selection.OccurrenceID{Source: root, File: "parent.yaml"},
+		Identity:    owner.Named(), Object: owner, Mounted: input,
+	}
+	planner := entryPlanner{
+		session: d,
+		inputs:  map[string]*store.SourceArtifact{root: input},
+		objects: map[occurrenceKey]store.Child{occurrenceIdentity(&occurrence): {VisibleGeneration: true}},
+		projections: map[occurrenceProjection][]selection.OccurrenceFacts{
+			{path: root, namespace: owner.EmissionPolicy().Namespace, input: input}: {original},
+		},
+	}
+	ctx := &registrationContext{Context: t.Context(), onRegistration: func() {
+		next := *input
+		next.Content = "replacement"
+		st.SetArtifact(manifest.BootstrapSourceID, &next)
+	}}
+	assert.Equal(t, frame.support.Valid(), true)
+	children, err := planner.followOutput(ctx, input, &rootVisit{occurrence: &occurrence}, root)
+	assert.NoError(t, err)
+	assert.Equal(t, d.prepared[owner.Named()], frame)
+	assert.Equal(t, frame.complete, true)
+	assert.Equal(t, frame.support.Valid(), false)
+	assert.Diff(t, children, []selection.OccurrenceFacts{original})
+}
 
 func TestPlan_LocalWorkloadTracing(t *testing.T) {
 	t.Parallel()

@@ -100,7 +100,7 @@ func TestEntryCandidateReady_SourcePublication(t *testing.T) {
 	frame := d.prepared[owner.Named()]
 	assert.FatalIf(
 		t,
-		frame == nil || !frame.complete || !frame.registered,
+		frame == nil || !frame.complete || frame.publication != loader.BuiltRegistered,
 		"published source did not prepare retained owner",
 	)
 	assert.Equal(t, frame.source, published)
@@ -247,7 +247,7 @@ spec:
 			owner := &manifest.Kustomization{Name: "entry", Path: "./app"}
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
 			{
-				err := d.prepareProducer(
+				_, err := d.prepareProducer(
 					t.Context(),
 					owner,
 					st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
@@ -315,7 +315,8 @@ spec:
 			_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
-			assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
+			_, preparationErr := d.prepareProducer(t.Context(), owner, source, nil)
+			assert.NoError(t, preparationErr)
 			assert.NoError(t, d.acceptPrepared(t.Context()))
 			wantRecords := 0
 			if persistent {
@@ -357,7 +358,8 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	assert.NoError(t, err)
 	req := preparedRequest(t, &d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
-	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
+	_, preparationErr := d.prepareProducer(t.Context(), owner, source, nil)
+	assert.NoError(t, preparationErr)
 	err = d.acceptPrepared(t.Context())
 	if persistent {
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) ||
@@ -726,7 +728,8 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 		previous := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt
 		input, err := kustomize.SourceInput((*tailCaseInput.st), selected)
 		assert.NoError(t, err)
-		assert.NoError(t, (*tailCaseInput.d).prepareProducer(t.Context(), selected, input, nil))
+		_, preparationErr := (*tailCaseInput.d).prepareProducer(t.Context(), selected, input, nil)
+		assert.NoError(t, preparationErr)
 		declaration := (*tailCaseInput.d).loader.Index.Records[(*tailCaseInput.owner).Named()].Declaration
 		assert.FatalIf(
 			t,

@@ -224,7 +224,7 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 	_, indexed = l.Index.Lookup(marker)
 	assert.Equal(t, indexed, true)
 	assert.FatalIf(t, d.prepared[retained.Named()] == nil, "accepted producer demand did not prepare its declaration")
-	assert.Equal(t, d.prepared[retained.Named()].registered, true)
+	assert.Equal(t, d.prepared[retained.Named()].publication == loader.BuiltRegistered, true)
 	assert.Equal(t, len(d.prepared[retained.Named()].children), 1)
 	assert.Equal(t, d.prepared[retained.Named()].children[0].Obj.Named(), target)
 	for _, warning := range st.Warnings() {
@@ -666,7 +666,7 @@ func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
 			assert.Equal(t, advanced, true)
 			frame := d.prepared[parent.Named()]
 			assert.FatalIf(t, frame == nil, "physical parent demand did not prepare its package")
-			assert.Equal(t, frame.registered, true)
+			assert.Equal(t, frame.publication == loader.BuiltRegistered, true)
 			assert.Equal(
 				t,
 				slices.ContainsFunc(

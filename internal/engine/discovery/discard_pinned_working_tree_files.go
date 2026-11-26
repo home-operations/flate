@@ -516,33 +516,20 @@ func (d *Session) preparePendingProducer(
 	if err != nil || !guard.Valid() || d.cfg.Trees == nil {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
-	if scope := d.loader.EntryScope(ks.Named()); scope != nil {
-		if previous := d.prepared[ks.Named()]; previous != nil && previous.source == input &&
-			manifest.Equal(previous.owner, ks) && previous.support.Valid() {
-			return false, nil
-		}
-		prepareErr := d.prepareLookupPackage(ctx, ks, input, nil)
-		frame := d.prepared[ks.Named()]
-		return frame != nil && frame.inventoryReady(), prepareErr
+	if d.loader.EntryScope(ks.Named()) != nil {
+		return d.prepareLookupPackage(ctx, ks, input, nil)
 	}
 	if !d.canPrepare(ks) {
-		return false, nil
-	}
-	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered && previous.err == nil &&
-		previous.matches(ks, input, nil) {
 		return false, nil
 	}
 	prepared, err := d.prepareDocuments(ctx, ks, input, nil)
 	if err != nil {
 		return false, err
 	}
-	if !guard.Valid() || !prepared.complete {
+	if !guard.Valid() || prepared.publication == loader.BuiltRegistered {
 		return false, nil
 	}
-	if err := d.registerProducer(ctx, prepared); err != nil {
-		return false, err
-	}
-	return true, nil
+	return d.registerProducer(ctx, prepared)
 }
 
 func (d *Session) refreshDeclarations(ctx context.Context, root string, build bool) error {

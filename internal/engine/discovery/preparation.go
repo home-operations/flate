@@ -130,6 +130,10 @@ func (p *declarationPreparation) inventoryReady() bool {
 	return p.complete && p.inventoryError() == nil
 }
 
+func (p *declarationPreparation) canAcceptRender() bool {
+	return p.publication != loader.BuiltRejected || p.lookup != noLookup
+}
+
 func (p *declarationPreparation) inventoryError() error {
 	if len(p.failedDocuments) != 0 {
 		return nil
@@ -200,10 +204,12 @@ func (d *Session) preparePlannedPackages(ctx context.Context) (bool, error) {
 		if !pkg.register {
 			continue
 		}
-		if err := d.prepareEntryPackage(ctx, pkg.render.owner, d.cfg.Input, nil); err != nil {
+		_, err := d.prepareEntryPackage(ctx, pkg.render.owner, d.cfg.Input, nil)
+		if err != nil {
 			return false, err
 		}
-		registered = true
+		frame := d.prepared[pkg.render.owner.Named()]
+		registered = registered || frame != nil && frame.publication != loader.BuiltRejected
 	}
 	return registered, nil
 }
@@ -276,7 +282,7 @@ func (p *declarationPreparation) captureSupport(st *store.Store, source manifest
 }
 
 func (p *declarationPreparation) retireSupport(st *store.Store) {
-	if !p.registered {
+	if p.publication != loader.BuiltRegistered {
 		p.support.ReleaseCapture()
 	}
 	st.Retire(&p.support)
@@ -286,7 +292,7 @@ func (p *declarationPreparation) retire(st *store.Store) {
 	p.retireSupport(st)
 	p.declarationRender = declarationRender{}
 	p.work = nil
-	p.complete, p.registered, p.err = false, false, nil
+	p.complete, p.publication, p.err = false, loader.BuiltRejected, nil
 }
 
 // Close MUST follow task drain and every possible construction consumer.

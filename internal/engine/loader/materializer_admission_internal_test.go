@@ -343,7 +343,7 @@ func registerMaterializerPrepared(t *testing.T, fixture preparedMaterializerInpu
 		input := fixture.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 		fixture.store.SetArtifact(source, &store.SourceArtifact{LocalPath: builtRoot, FS: input.FS})
 	}
-	assert.NoError(t, fixture.loader.RegisterBuilt(t.Context(),
+	_, registrationErr := fixture.loader.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(fixture.loader, &BuiltInput{
 			Root:   builtRoot,
 			Source: source,
@@ -354,7 +354,8 @@ func registerMaterializerPrepared(t *testing.T, fixture preparedMaterializerInpu
 			},
 		}),
 		docs,
-	))
+	)
+	assert.NoError(t, registrationErr)
 }
 
 func TestAdmission_ApplicationProducerEvidence(t *testing.T) {

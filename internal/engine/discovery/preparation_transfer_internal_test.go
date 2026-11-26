@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/assert"
@@ -237,7 +238,7 @@ func TestResult_PlannedBootstrapPreparationTransfer(t *testing.T) {
 			id := pkg.render.owner.Named()
 			frame := session.prepared[id]
 			assert.FatalIf(t, frame == nil, "construction discarded the planned build")
-			assert.Equal(t, frame.registered, tc.register)
+			assert.Equal(t, frame.publication == loader.BuiltRegistered, tc.register)
 			assert.Equal(t, frame.receipt == pkg.render.receipt, true)
 
 			result, err := session.Freeze(t.Context())

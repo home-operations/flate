@@ -44,7 +44,7 @@ func TestPrepareLookupPackage_CanceledAfterInventoryReuse(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	boundary := &cancelOnInventoryReturn{Context: ctx, cancel: cancel}
-	err := session.prepareLookupPackage(boundary, owner, input, nil)
+	_, err := session.prepareLookupPackage(boundary, owner, input, nil)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 	assert.Equal(t, prepared.lookup, noLookup)
 }
@@ -150,13 +150,15 @@ func TestPrepareLookupPackage_ChangedReadSupport(t *testing.T) {
 				Selection:        selection.Request{Roots: []manifest.NamedResource{match}},
 			})
 			t.Cleanup(session.Close)
-			assert.NoError(t, session.prepareLookupPackage(t.Context(), owner, input, nil))
+			_, preparationErr := session.prepareLookupPackage(t.Context(), owner, input, nil)
+			assert.NoError(t, preparationErr)
 			frame := session.prepared[owner.Named()]
 			assert.NoError(t, frame.lookupErr)
 			assert.Equal(t, len(frame.children), 2)
 
 			files.path = tc.file
-			assert.NoError(t, session.prepareLookupPackage(t.Context(), owner, input, nil))
+			_, preparationErr = session.prepareLookupPackage(t.Context(), owner, input, nil)
+			assert.NoError(t, preparationErr)
 			assert.Equal(t, session.prepared[owner.Named()], frame)
 			assert.FatalIf(t, frame.lookupErr == nil, "the outside match must remain unresolved")
 			assert.Equal(
@@ -164,7 +166,7 @@ func TestPrepareLookupPackage_ChangedReadSupport(t *testing.T) {
 				frame.lookupErr.Error(),
 				selection.EntryMembershipFailure(entry, owner.Named(), match).Error(),
 			)
-			assert.Equal(t, frame.registered, false)
+			assert.Equal(t, frame.publication == loader.BuiltRegistered, false)
 			_, indexed := session.loader.Index.Lookup(match)
 			assert.Equal(t, indexed, false)
 		})
@@ -250,17 +252,15 @@ func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 				)
 				assert.NoError(t, prepareErr)
 				assert.Equal(t, frame.complete, false)
-				assert.Equal(t, frame.registered, false)
+				assert.Equal(t, frame.publication == loader.BuiltRegistered, false)
 				assert.Equal(t, len(frame.children), 0)
 				assert.Equal(t, frame.receipt == nil, true)
-				assert.NoError(
-					t,
-					session.prepareProducer(ctx, owner, session.cfg.Input, nil),
-				)
-				assert.Equal(t, frame.registered, false)
+				_, preparationErr := session.prepareProducer(ctx, owner, session.cfg.Input, nil)
+				assert.NoError(t, preparationErr)
+				assert.Equal(t, frame.publication == loader.BuiltRegistered, false)
 			case "readable failure", "malformed readable", "malformed after absent":
 				if err == nil {
-					err = session.prepareProducer(
+					_, err = session.prepareProducer(
 						ctx,
 						owner,
 						session.cfg.Input,
@@ -288,11 +288,12 @@ func TestAdvance_UnreadablePreparationDefers(t *testing.T) {
 func TestAdvance_RestrictedLookupWaitsForSubstitution(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	entry := filepath.Join(root, "package", "leaf")
-	testutil.WriteFile(t, root, "package/kustomization.yaml", "resources: [leaf/inside.yaml, outside.yaml]\n")
-	testutil.WriteFile(t, root, "package/leaf/inside.yaml", testutil.KustomizationYAML(
+	entry := filepath.Join(root, "package", "leaf", "selected")
+	testutil.WriteFile(t, root, "package/kustomization.yaml",
+		"resources: [leaf/selected/inside.yaml, leaf/outside.yaml]\n")
+	testutil.WriteFile(t, root, "package/leaf/selected/inside.yaml", testutil.KustomizationYAML(
 		"${CHILD}", "apps", "  path: ./inside\n"))
-	testutil.WriteFile(t, root, "package/outside.yaml", testutil.KustomizationYAML(
+	testutil.WriteFile(t, root, "package/leaf/outside.yaml", testutil.KustomizationYAML(
 		"outside", "apps", "  path: ./outside\n"))
 	st := store.New()
 	l := loader.New(st)
@@ -313,7 +314,8 @@ func TestAdvance_RestrictedLookupWaitsForSubstitution(t *testing.T) {
 	}
 	st.AddObject(owner)
 	assert.Equal(t, session.canPrepare(owner), false)
-	assert.NoError(t, session.prepareLookupPackage(t.Context(), owner, session.cfg.Input, nil))
+	_, preparationErr := session.prepareLookupPackage(t.Context(), owner, session.cfg.Input, nil)
+	assert.NoError(t, preparationErr)
 	scope := l.RootEvidence(owner.Named(), nil).EntryScope
 	assert.FatalIf(t, scope == nil || scope.Current(), "scope prepared before substitution input")
 	assert.Equal(t, scope.Allows(child), false)
@@ -346,8 +348,24 @@ func TestAdvance_RestrictedLookupWaitsForSubstitution(t *testing.T) {
 	assert.Equal(t, progressed, true)
 	scope = l.RootEvidence(owner.Named(), nil).EntryScope
 	assert.Equal(t, scope.Allows(child), true)
-	assert.Equal(t, scope.Allows(testutil.KustomizationID("apps", "outside")), false)
+	outside := testutil.KustomizationID("apps", "outside")
+	assert.Equal(t, scope.Allows(outside), false)
 	_, indexed = l.Index.Lookup(child)
 	assert.Equal(t, indexed, true)
-	assert.Equal(t, len(session.prepared[owner.Named()].children), 2)
+	frame := session.prepared[owner.Named()]
+	assert.Equal(t, len(frame.children), 2)
+	assert.Equal(t, frame.publication, loader.BuiltRegistered)
+
+	session.cfg.Path = filepath.Dir(entry)
+	for _, wantProgress := range []bool{true, false} {
+		progressed, err := session.prepareLookupPackage(t.Context(), owner, session.cfg.Input, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, progressed, wantProgress)
+		assert.Equal(t, session.prepared[owner.Named()], frame)
+		assert.Equal(t, frame.support.Valid(), true)
+		assert.Equal(t, frame.publication, loader.BuiltRegistered)
+		scope = l.EntryScope(owner.Named())
+		assert.Equal(t, scope.Allows(child), true)
+		assert.Equal(t, scope.Allows(outside), true)
+	}
 }

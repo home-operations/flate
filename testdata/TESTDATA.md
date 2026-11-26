@@ -2235,3 +2235,12 @@ The native entry still renders for discovery on both sides.
 | `external-artifact-reach/chart-generated-source` | Edit values copied into the artifact that supplies the chart. |
 | `external-artifact-reach/chart-unrelated` | Leave Helm work empty after an unrelated local chart edit. |
 | `external-artifact-reach/chart-unrelated-in-generated-source` | Leave Helm work empty after another generated artifact changes. |
+
+### Producer preparation after a comment edit
+
+`issue-1680-advance-loop/comment-edit` retains the layout from issue #1680.
+The root Kustomization reads a ConfigMap that it renders through a namespace transformation.
+The child Kustomization renders a HelmRelease backed by a chart in the same Git tree.
+The harness commits the original files and edits only a comment under the child.
+Full and changed-only test and build commands produce the same results.
+Both comparisons against the pristine files produce an empty diff.

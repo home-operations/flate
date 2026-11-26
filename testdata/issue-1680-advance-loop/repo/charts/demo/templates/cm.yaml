@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: demo}
+data: {v: {{ .Values.v | quote }}}

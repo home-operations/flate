@@ -413,9 +413,10 @@ func TestPromotionChildren_KeepEachPackageOwnerAndSource(t *testing.T) {
 		support.GetDeclaration(owner.Named())
 		t.Cleanup(support.Retire)
 		child := &manifest.HelmRelease{Name: "demo", Namespace: ns}
-		assert.NoError(t, l.RegisterBuilt(t.Context(), loader.BuiltInput{
+		_, registrationErr := l.RegisterBuilt(t.Context(), loader.BuiltInput{
 			Owner: owner.Named(), Source: gitSource.Named(), Root: app, Support: support,
-		}, []store.Child{{Obj: child}}))
+		}, []store.Child{{Obj: child}})
+		assert.NoError(t, registrationErr)
 		want[child.Named()] = store.Child{
 			Obj: child,
 			Productions: []manifest.Production{

@@ -341,7 +341,7 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			assert.NoError(t, err)
 			children := builtObjectsForTest(t, string(data))
 			native := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
-			_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+			_, _, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
 			}), children)
 			assert.NoError(t, registrationErr)

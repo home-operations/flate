@@ -335,7 +335,7 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 			data, err := result.AsYaml()
 			assert.NoError(t, err)
 			children := builtObjectsForTest(t, string(data))
-			_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+			_, _, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
 			}), children)
 			assert.NoError(t, registrationErr)

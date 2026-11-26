@@ -47,7 +47,7 @@ spec:
 	assert.FatalIf(t, len(claims) == 0, "missing physical owner claim")
 	assert.Equal(t, slices.Contains(before[0].Identities, testutil.HelmReleaseID("apps", "release")), true)
 	assert.Equal(t, selection.Root(selection.RootEvidence{Native: &before[0]}).Construction, true)
-	_, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
+	_, _, registrationErr := l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 		Root: entry, Source: manifest.BootstrapSourceID,
 		Owner: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named(),
 	}), nil)

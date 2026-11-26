@@ -20,6 +20,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+const dynamicEmissionSourceURL = "https://example.test/cluster.git"
+
 // The late provider depends on both optional readers completing. The emitted
 // name is an input expression, so discovery cannot supply a producer edge.
 func BenchmarkDirtyRerun_DynamicEmissionChain(b *testing.B) {
@@ -33,7 +35,7 @@ func BenchmarkDirtyRerun_DynamicEmissionChain(b *testing.B) {
 	testutil.WriteFile(b, root, "source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
-spec: {url: "https://example.test/cluster.git"}
+spec: {url: "`+dynamicEmissionSourceURL+`"}
 `)
 	testutil.WriteFile(b, root, "consumer.yaml", ksYAML("consumer", "app", "")+`  postBuild:
     substituteFrom: [{kind: ConfigMap, name: late-settings, optional: true}]
@@ -112,6 +114,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 		Concurrency: workers,
 		Path:        (*root),
 		RepoRoot:    (*root),
+		SelfURLs:    []string{dynamicEmissionSourceURL},
 	}
 	assert.NoError(b, snapshotSubstitutions(&cfg.Config))
 	var renders int64

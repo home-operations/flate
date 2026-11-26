@@ -161,7 +161,7 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 				return r
 			}
 			old, incoming := support("old"), support("incoming")
-			_, registrationErr := l.RegisterBuilt(
+			_, _, registrationErr := l.RegisterBuilt(
 				t.Context(),
 				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: old},
 				nil,
@@ -176,7 +176,7 @@ func TestRegisterBuilt_CancellationDuringRound(t *testing.T) {
 					st.AddObject(child)
 				}
 			}
-			_, err := l.RegisterBuilt(
+			_, _, err := l.RegisterBuilt(
 				ctx,
 				BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: incoming},
 				[]store.Child{{Obj: child}},

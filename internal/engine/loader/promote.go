@@ -130,12 +130,14 @@ const (
 	BuiltRegistered
 )
 
-// RegisterBuilt MUST receive sanitized immutable build output and retire support in publication order.
+// RegisterBuilt MUST receive immutable build output and retire support in publication order.
+// Callers MUST treat the returned inventory as immutable because it can share loader storage.
+// The returned inventory includes children outside the publication scope.
 func (l *Loader) RegisterBuilt(
 	ctx context.Context,
 	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
 	docs []store.Child,
-) (BuiltPublication, error) {
+) (BuiltPublication, []store.Child, error) {
 	retained := false
 	defer func() {
 		if !retained {
@@ -144,15 +146,21 @@ func (l *Loader) RegisterBuilt(
 	}()
 	switch err := ctx.Err(); {
 	case err != nil:
-		return BuiltRejected, err
+		return BuiltRejected, nil, err
 	case l.frozen || input.Support == nil || !input.Support.Valid():
-		return BuiltRejected, nil
+		return BuiltRejected, nil, nil
 	}
-	docs = slices.Clone(docs)
-	if scope := l.EntryScope(input.Owner); scope != nil {
-		docs = slices.DeleteFunc(docs, func(child store.Child) bool {
-			return !scope.Allows(child.Obj.Named())
-		})
+	scope, allowed := l.EntryScope(input.Owner), len(docs)
+	var scoped []store.Child
+	if scope != nil {
+		// Capture scope before admission can change its support. Keep the inventory's child indexes.
+		scoped = slices.Clone(docs)
+	}
+	for i := range scoped {
+		if !scope.Allows(scoped[i].Obj.Named()) {
+			scoped[i] = store.Child{}
+			allowed--
+		}
 	}
 	previous := l.builtBatches[input.Owner]
 	root := input.Root
@@ -165,19 +173,24 @@ func (l *Loader) RegisterBuilt(
 		scopeRoot, admitted, err = l.admitBuiltRoot(ctx, &input, sourceRoot)
 		switch {
 		case err != nil || !input.Support.Valid():
-			return BuiltRejected, err
+			return BuiltRejected, nil, err
 		case !admitted && previous != nil && previous.input.Support == input.Support:
 			retained = true
-			return BuiltRegistered, nil
+			return BuiltRegistered, docs, nil
 		case !admitted:
 			retained = true
-			return BuiltInventory, nil
+			return BuiltInventory, docs, nil
 		}
 		rel, _ := filepath.Rel(sourceRoot, root)
 		inputs = l.selectBuiltInputs(sourceRoot, rel, &input, map[string]bool{})
 		builder = l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
 	}
-	l.replaceBuiltRecords(&input, docs, &inputs, builder)
+	docs = l.replaceBuiltRecords(
+		&builtBatch{input: &input, documents: scoped, builder: builder},
+		docs,
+		&inputs,
+		allowed,
+	)
 	if filepath.IsAbs(root) {
 		rebuild := previous != nil && previous.input.Root != root || !input.Support.Valid()
 		l.refreshNativeBuildFacts(root, rebuild)
@@ -189,9 +202,9 @@ func (l *Loader) RegisterBuilt(
 		l.Store.Retire(previous.input.Support)
 	}
 	if !retained {
-		return BuiltRejected, err
+		return BuiltRejected, nil, err
 	}
-	return BuiltRegistered, err
+	return BuiltRegistered, docs, err
 }
 
 type retainedBuiltChild struct {
@@ -200,50 +213,79 @@ type retainedBuiltChild struct {
 }
 
 func (l *Loader) replaceBuiltRecords(
-	input *BuiltInput, docs []store.Child, inputs *builtInputs, builder string,
-) {
-	records, locations, retainedChildren := make([]manifest.DiscoveryRecord, len(docs)),
-		make([]authoredOccurrence, len(docs)), map[manifest.NamedResource]retainedBuiltChild{}
+	batch *builtBatch, docs []store.Child, inputs *builtInputs, allowed int,
+) []store.Child {
+	input, scoped := batch.input, batch.documents
+	published := scoped[:0]
+	records := make([]manifest.DiscoveryRecord, 0, allowed)
+	locations := make([]authoredOccurrence, 0, allowed)
+	retainedChildren := map[manifest.NamedResource]retainedBuiltChild{}
+	private := false
 	for i := range docs {
+		if len(scoped) != 0 && scoped[i].Obj == nil {
+			continue
+		}
 		child := &docs[i]
 		id := child.Obj.Named()
-		record, authored := l.builtRecord(input, child.Obj, inputs, builder)
-		retained := retainedBuiltChild{authored: authored}
-		if built := l.builtRoots[id]; built.batch != nil {
-			previous, _ := l.Index.Lookup(id)
-			oldChild := &built.batch.documents[built.index]
-			if previous.BuilderOwner == input.Owner && previous.Declaration == oldChild.Obj &&
-				previous.Equal(record) && sameBuiltChild(oldChild, child) {
-				record.Declaration, child.Obj = oldChild.Obj, oldChild.Obj
-				retained.reuse = true
+		record, authored := l.builtRecord(input, child.Obj, inputs, batch.builder)
+		declaration := l.reusableBuiltDeclaration(input.Owner, id, &record, child)
+		retained := retainedBuiltChild{authored: authored, reuse: declaration != nil}
+		record.Declaration = cmp.Or(declaration, record.Declaration)
+		if child.Obj != record.Declaration {
+			if !private {
+				docs = slices.Clone(docs)
+				private = true
 			}
+			child = &docs[i]
+			child.Obj = record.Declaration
 		}
-		records[i] = record
-		locations[i] = l.locations[id]
+		if scoped != nil {
+			published = append(published, *child)
+		}
+		records = append(records, record)
+		locations = append(locations, l.locations[id])
 		if authored.Obj != nil || retained.reuse {
 			retainedChildren[id] = retained
 		}
 	}
+	if scoped == nil {
+		published = docs
+	} else {
+		clear(scoped[len(published):])
+	}
 	l.removeReplacedRecords(input, retainedChildren, inputs.selected)
-	for i := range docs {
+	for i := range published {
 		if locations[i].Declaration != (occurrenceID{}) {
-			l.locations[docs[i].Obj.Named()] = locations[i]
+			l.locations[published[i].Obj.Named()] = locations[i]
 		}
 	}
 	input.Reads = maps.Clone(input.Reads)
 	// Directory membership and node-kind probes MUST NOT claim descendant content.
 	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
-	l.publishBuiltRecords(
-		&builtBatch{input: input, documents: docs, builder: builder},
-		records, retainedChildren,
-	)
+	batch.documents = published
+	l.publishBuiltRecords(batch, records, retainedChildren)
+	return docs
 }
 
-func sameBuiltChild(a, b *store.Child) bool {
-	return store.SameDeclarationContent(a, b) &&
-		slices.EqualFunc(a.Warnings, b.Warnings, func(a, b manifest.Warning) bool {
-			return a.Subject == b.Subject && a.Count == b.Count
-		})
+func (l *Loader) reusableBuiltDeclaration(
+	owner, id manifest.NamedResource, record *manifest.DiscoveryRecord, child *store.Child,
+) manifest.BaseManifest {
+	built := l.builtRoots[id]
+	if built.batch == nil {
+		return nil
+	}
+	previous, _ := l.Index.Lookup(id)
+	old := &built.batch.documents[built.index]
+	if previous.BuilderOwner != owner || previous.Declaration != old.Obj || !previous.Equal(*record) ||
+		!store.SameDeclarationContent(old, child) {
+		return nil
+	}
+	if !slices.EqualFunc(old.Warnings, child.Warnings, func(a, b manifest.Warning) bool {
+		return a.Subject == b.Subject && a.Count == b.Count
+	}) {
+		return nil
+	}
+	return old.Obj
 }
 
 func (l *Loader) builtRecord(
@@ -663,7 +705,7 @@ func (l *Loader) publishBuiltRecords(
 		switch {
 		case retained.authored.Obj != nil:
 			l.candidates[id] = retained.authored
-		case !retained.reuse:
+		case !retained.reuse || l.candidates[id].Obj == obj:
 			l.candidates[id] = child
 		}
 	}

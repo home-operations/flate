@@ -537,7 +537,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	support.Init(st, testutil.KustomizationID("apps", "entry"), nil)
 	support.GetDeclaration(testutil.KustomizationID("apps", "entry"))
 	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-	_, registrationErr := l.RegisterBuilt(t.Context(),
+	_, _, registrationErr := l.RegisterBuilt(t.Context(),
 		loader.BuiltInput{
 			Support: &support,
 			Root:    filepath.Join(root, "entry"),

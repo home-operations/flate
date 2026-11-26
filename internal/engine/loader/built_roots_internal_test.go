@@ -3,6 +3,7 @@ package loader
 import (
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 
 func TestReplaceBuiltRecords_ChangedDeclarationEvidence(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"document", "warning payload", "warning subject", "warning count"} {
+	for _, change := range []string{"equal", "document", "warning payload", "warning subject", "warning count"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
 			root := testutil.WriteTree(t, map[string]string{
@@ -41,18 +42,40 @@ func TestReplaceBuiltRecords_ChangedDeclarationEvidence(t *testing.T) {
 				Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID,
 			})
 			defer input.Support.Close()
-			publication, err := l.RegisterBuilt(t.Context(), input, docs)
+			publication, _, err := l.RegisterBuilt(t.Context(), input, docs)
 			assert.NoError(t, err)
 			assert.Equal(t, publication, BuiltRegistered)
 			record, ok := l.Index.Lookup(id)
 			assert.FatalIf(t, !ok || record.Authored != id, "built child must retain its authored candidate")
-			l.admitted[id] = child.Obj
 			st.AddObject(child.Obj, child.Doc)
 			var reader store.ReadSet
 			reader.Init(st, owner.Named(), nil)
 			defer reader.Close()
 			assert.Equal(t, reader.GetDeclaration(id), child.Obj)
 
+			if change == "equal" {
+				fresh := builtObjectsForTest(t, testutil.KustomizationYAML("child", "apps", "  path: ./built\n"))
+				fresh[0].Warnings = slices.Clone(child.Warnings)
+				freshObject := fresh[0].Obj
+				freshDocument := reflect.ValueOf(fresh[0].Doc).Pointer()
+				replacement := supportedBuiltInputForTest(l, &input)
+				status, inventory, registerErr := l.RegisterBuilt(t.Context(), replacement, fresh)
+				assert.NoError(t, registerErr)
+				assert.Equal(t, status, BuiltRegistered)
+				assert.Equal(t, reader.Valid(), true)
+				assert.Equal(t, reader.GetDeclaration(id), child.Obj)
+				assert.Equal(t, fresh[0].Obj, freshObject)
+				assert.Equal(t, reflect.ValueOf(fresh[0].Doc).Pointer(), freshDocument)
+				published := l.PromotionDocuments(id)
+				assert.FatalIf(t, len(inventory) != 1 || len(published) != 1, "equal child is missing")
+				assert.Equal(t, inventory[0].Obj, child.Obj)
+				assert.Equal(t, published[0].Obj, child.Obj)
+				assert.Equal(t, reflect.ValueOf(inventory[0].Doc).Pointer(), freshDocument)
+				assert.Equal(t, reflect.ValueOf(published[0].Doc).Pointer(), freshDocument)
+				return
+			}
+
+			l.admitted[id] = child.Obj
 			next := *child
 			next.Doc, next.Warnings = maps.Clone(child.Doc), slices.Clone(child.Warnings)
 			switch change {
@@ -67,7 +90,8 @@ func TestReplaceBuiltRecords_ChangedDeclarationEvidence(t *testing.T) {
 			}
 			replacement := supportedBuiltInputForTest(l, &input)
 			inputs := l.selectBuiltInputs(root, "parent", &replacement, map[string]bool{})
-			l.replaceBuiltRecords(&replacement, []store.Child{next}, &inputs, record.Builder)
+			batch := &builtBatch{input: &replacement, builder: record.Builder}
+			l.replaceBuiltRecords(batch, []store.Child{next}, &inputs, 1)
 			assert.Equal(t, reader.Valid(), false)
 			assert.Equal(t, st.GetDeclaration(id), nil)
 			after, _ := l.Index.Lookup(id)
@@ -102,23 +126,33 @@ func testRegisterBuiltStandaloneRootsInactivePackageBatch(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
+	a := store.Child{Obj: &manifest.ConfigMap{Name: "injected", Namespace: "apps"}}
+	b := store.Child{Obj: &manifest.ConfigMap{Name: "extra", Namespace: "apps"}, Ordinal: 1}
+	docs := []store.Child{b, a}
+	want := []store.Child{b, a}
+	sameInventory := func(got, want []store.Child) bool {
+		return reflect.DeepEqual(got, want) //nolint:govet // The fixture expects nil error fields.
+	}
 	input := supportedBuiltInputForTest(l, &BuiltInput{
 		Root:   filepath.Join(root, "target"),
 		Source: manifest.BootstrapSourceID,
 		Owner:  testutil.KustomizationID("apps", "entry"),
 	})
 	defer l.Store.Retire(input.Support)
-	publication, registrationErr := l.RegisterBuilt(t.Context(), input, []store.Child{{Obj: obj}})
+	publication, inventory, registrationErr := l.RegisterBuilt(t.Context(), input, docs)
 	assert.NoError(t, registrationErr)
 	assert.Equal(t, publication, BuiltInventory)
-	{
-		_, indexed := l.Index.Lookup(obj.Named())
+	assert.ErrorIf(
+		t, !sameInventory(inventory, want), "inactive inventory = %v, want %v", inventory, want,
+	)
+	for i := range want {
+		id := want[i].Obj.Named()
+		_, indexed := l.Index.Lookup(id)
 		assert.FatalIf(
 			t,
-			indexed || l.Store.GetObject(obj.Named()) != nil,
-			"%s",
-			"inactive package published authoritative output",
+			indexed || l.Store.GetObject(id) != nil,
+			"inactive package published authoritative output for %v",
+			id,
 		)
 	}
 
@@ -126,24 +160,31 @@ func testRegisterBuiltStandaloneRootsInactivePackageBatch(t *testing.T) {
 	file := l.documents.read(input.Root).file
 	scope := staticScope{loader: l}
 	scope.SetEligibility(file, selection.RootEligible)
-	publication, err = l.RegisterBuilt(t.Context(), input, []store.Child{{Obj: obj}})
+	publication, _, err = l.RegisterBuilt(t.Context(), input, []store.Child{b, a})
 	assert.NoError(t, err)
 	assert.Equal(t, publication, BuiltRegistered)
 	batch := l.builtBatches[input.Owner]
 	assert.FatalIf(t, batch == nil, "eligible package did not install a batch")
 
 	scope.SetEligibility(file, selection.RootInactive)
-	publication, err = l.RegisterBuilt(t.Context(), input, []store.Child{{Obj: obj}})
+	publication, inventory, err = l.RegisterBuilt(t.Context(), input, []store.Child{a, b})
 	assert.NoError(t, err)
 	assert.Equal(t, publication, BuiltRegistered)
+	wantInventory := []store.Child{a, b}
+	assert.ErrorIf(
+		t, !sameInventory(inventory, wantInventory), "same-support inventory = %v, want %v", inventory, wantInventory,
+	)
 	assert.Equal(t, l.builtBatches[input.Owner], batch)
 	assert.Equal(t, input.Support.Valid(), true)
 	var reads store.ReadSet
 	reads.Init(l.Store, input.Owner, nil)
 	t.Cleanup(reads.Close)
 	children, current := l.BuiltChildren(input.Root, input.Owner, &reads)
-	assert.FatalIf(t, !current || len(children) != 1, "installed batch lost current children: %v", children)
-	assert.Equal(t, children[0].Obj, manifest.BaseManifest(obj))
+	assert.FatalIf(t, !current || len(children) != len(want), "installed batch lost current children: %v", children)
+	for i := range want {
+		assert.Equal(t, children[i].Obj, want[i].Obj)
+		assert.Equal(t, children[i].Ordinal, want[i].Ordinal)
+	}
 }
 
 func testRegisterBuiltStandaloneRootsCase(t *testing.T, testCaseInput *struct {

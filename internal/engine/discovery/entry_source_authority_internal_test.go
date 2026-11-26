@@ -89,7 +89,7 @@ spec: {url: https://mirror.invalid/source}
 	assert.Equal(t, before.provider, store.ProviderAlias)
 	replacement := *before.object.(*manifest.GitRepository)
 	replacement.URL = "https://upstream.invalid/independent"
-	st.AddDeclaration(store.Declaration{Obj: &replacement, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: &replacement, Role: store.SuppliedDeclaration})
 	child, material, _, err := result.Admission.Resolve(t.Context(), id, &replacement, aliasRequestReads(t, st, id))
 	assert.NoError(t, err)
 	assert.Equal(t, child.Obj, manifest.BaseManifest(&replacement))

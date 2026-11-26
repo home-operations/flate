@@ -450,7 +450,7 @@ func testRunSuppliedDocuments(t *testing.T, scenario string) {
 	assert.Equal(t, runValue(t, selected[0].Manifests), want)
 	assert.Equal(t, len(run.invocation.Config.Supply), 1)
 	assert.Equal(t, run.invocation.Config.Supply[0].InputPath, "last.yaml")
-	assert.Equal(t, run.invocation.Config.Supply[0].Origin, manifest.SuppliedDeclaration)
+	assert.Equal(t, run.invocation.Config.Supply[0].Role, store.SuppliedDeclaration)
 }
 
 func writeRunCluster(t *testing.T, root, reference, value string) {

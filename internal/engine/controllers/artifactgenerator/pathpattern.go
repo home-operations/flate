@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/validate/content"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -18,20 +19,19 @@ type request struct {
 	Namespace                  manifest.NamedResource
 	Output                     manifest.ArtifactGeneratorOutput
 	Captures                   map[string]string
-	NamespaceMetadataPath      string
+	namespaceMetadata          artifactsyntax.Selector
+	inputsFrom                 artifactsyntax.Selector
 	NamespaceMetadataPathError error
 	stagedMetadata             stagedNamespaceMetadata
 	stagedMetadataError        error
 }
 
-var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-func expand(
+func (s *generatorSpec) expand(
 	ctx context.Context,
-	spec *manifest.ArtifactGeneratorSpec,
 	namespace string,
 	inputs map[string]fs.FS,
 ) ([]request, error) {
+	spec := &s.declaration
 	matcher, input, err := pathMatcher(spec.PathPattern, inputs)
 	if err != nil {
 		return nil, err
@@ -41,15 +41,12 @@ func expand(
 		for i := range spec.Artifacts {
 			output := &spec.Artifacts[i]
 			resolved, _ := spec.ResolveOutput(output, namespace, nil, nil)
-			requests = append(requests, request{
-				Identity: resolved.Artifact, Namespace: resolved.Namespace, Output: resolved.Output,
-				NamespaceMetadataPath: resolved.NamespaceMetadataPath,
-			})
+			requests = append(requests, s.request(&resolved))
 		}
 		return requests, nil
 	}
 	x := requestExpansion{
-		spec: spec, namespace: namespace, captures: matcher.SubexpNames()[1:],
+		spec: s, namespace: namespace, captures: matcher.SubexpNames()[1:],
 		seen: make(map[manifest.NamedResource]string),
 	}
 	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
@@ -74,7 +71,7 @@ func expand(
 }
 
 type requestExpansion struct {
-	spec      *manifest.ArtifactGeneratorSpec
+	spec      *generatorSpec
 	namespace string
 	captures  []string
 	requests  []request
@@ -90,7 +87,7 @@ func (x *requestExpansion) add(dir string, values []string) error {
 		if errs := content.IsLabelValue(value); len(errs) != 0 {
 			return fmt.Errorf(
 				"pathPattern %q: captured value %q for variable %q is not a valid Kubernetes label value: %s",
-				x.spec.PathPattern,
+				x.spec.declaration.PathPattern,
 				value,
 				key,
 				strings.Join(errs, "; "),
@@ -98,80 +95,57 @@ func (x *requestExpansion) add(dir string, values []string) error {
 		}
 		normalized[key] = value
 	}
-	for i := range x.spec.Artifacts {
-		output := &x.spec.Artifacts[i]
-		resolved, err := x.spec.ResolveOutput(output, x.namespace, normalized, raw)
+	declaration := &x.spec.declaration
+	for i := range declaration.Artifacts {
+		output := &declaration.Artifacts[i]
+		resolved, err := declaration.ResolveOutput(output, x.namespace, normalized, raw)
 		if err != nil {
 			return fmt.Errorf("pathPattern %q: failed to render artifact %s for match %s: %w",
-				x.spec.PathPattern, output.Name, dir, err)
+				x.spec.declaration.PathPattern, output.Name, dir, err)
 		}
 		id := resolved.Artifact
 		if err := validateArtifactIdentity(id, output.Namespace != "", "rendered artifact"); err != nil {
-			return fmt.Errorf("pathPattern %q: %w", x.spec.PathPattern, err)
+			return fmt.Errorf("pathPattern %q: %w", x.spec.declaration.PathPattern, err)
 		}
 		if previous, exists := x.seen[id]; exists {
 			return fmt.Errorf("pathPattern %q: directories %q and %q both resolve to artifact name %q in namespace %q",
-				x.spec.PathPattern, previous, dir, id.Name, id.Namespace)
+				x.spec.declaration.PathPattern, previous, dir, id.Name, id.Namespace)
 		}
 		x.seen[id] = dir
-		x.requests = append(x.requests, request{
-			Identity: id, Namespace: resolved.Namespace, Output: resolved.Output, Captures: normalized,
-			NamespaceMetadataPath:      resolved.NamespaceMetadataPath,
-			NamespaceMetadataPathError: resolved.NamespaceMetadataPathError,
-		})
+		req := x.spec.request(&resolved)
+		req.Captures = normalized
+		x.requests = append(x.requests, req)
 	}
 	return nil
 }
 
-func pathMatcher(patternValue string, inputs map[string]fs.FS) (*regexp.Regexp, fs.FS, error) {
-	var matcher *regexp.Regexp
-	var input fs.FS
-	if patternValue != "" {
-		sourcePathResult1, sourcePathResult1Err := sourcePath(patternValue)
-		alias, pattern, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err
-		if err != nil {
-			return nil, nil, err
-		}
-		input = inputs[alias]
-		if input == nil {
-			return nil, nil, fmt.Errorf(
-				"pathPattern %q: source alias %s not found in local sources",
-				patternValue,
-				alias,
-			)
-		}
-		matcher, err = compilePathPattern(pattern)
-		if err != nil {
-			return nil, nil, err
-		}
+func (s *generatorSpec) request(resolved *manifest.ResolvedArtifactGeneratorOutput) request {
+	return request{
+		Identity:                   resolved.Artifact,
+		Namespace:                  resolved.Namespace,
+		Output:                     resolved.Output,
+		inputsFrom:                 s.selectors.parsedFile(resolved.Output.InputsFrom),
+		namespaceMetadata:          s.selectors.parsedFile(resolved.NamespaceMetadataPath),
+		NamespaceMetadataPathError: resolved.NamespaceMetadataPathError,
 	}
-	return matcher, input, nil
 }
 
-func compilePathPattern(pattern string) (*regexp.Regexp, error) {
-	var expression strings.Builder
-	expression.WriteByte('^')
-	seen := map[string]bool{}
-	for pattern != "" {
-		i := strings.IndexAny(pattern, "{}")
-		if i < 0 {
-			expression.WriteString(regexp.QuoteMeta(pattern))
-			break
-		}
-		expression.WriteString(regexp.QuoteMeta(pattern[:i]))
-		name, rest, ok := strings.Cut(pattern[i+1:], "}")
-		if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
-			len(content.IsLabelKey(name)) != 0 {
-			return nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
-		}
-		seen[name] = true
-		expression.WriteString("(?P<" + name + ">[^/]+)")
-		pattern = rest
+func pathMatcher(text string, inputs map[string]fs.FS) (*regexp.Regexp, fs.FS, error) {
+	if text == "" {
+		return nil, nil, nil
 	}
-	expression.WriteByte('$')
-	matcher, err := regexp.Compile(expression.String())
-	if err != nil {
-		return nil, fmt.Errorf("compile: %w", err)
+	selector := artifactsyntax.ParseSelector(text)
+	if err := validateSelector(selector, patternSelector); err != nil {
+		return nil, nil, err
 	}
-	return matcher, nil
+	input := inputs[selector.Alias]
+	if input == nil {
+		return nil, nil, fmt.Errorf(
+			"pathPattern %q: source alias %s not found in local sources",
+			selector.Text,
+			selector.Alias,
+		)
+	}
+	matcher, err := artifactsyntax.CompilePathPattern(selector.Path)
+	return matcher, input, err
 }

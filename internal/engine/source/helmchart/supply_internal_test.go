@@ -30,7 +30,7 @@ func TestFetcher_SuppliedHTTPMaterial(t *testing.T) {
 				Name:       "auth",
 				Namespace:  "apps",
 				StringData: map[string]any{"username": "filled", "password": "filled", "ca.crt": ca},
-			}), Origin: manifest.SuppliedDeclaration,
+			}), Role: store.SuppliedDeclaration,
 		},
 	}
 	s := store.New()

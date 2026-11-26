@@ -462,7 +462,7 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 				backing := &membershipCountingFS{
 					Filesystem: osfs.New(root, osfs.WithBoundOS()), reads: make(map[string]int), err: fs.ErrPermission,
 				}
-				directory, err = openDirectory(ctx, location, backing, "")
+				directory, err = openDirectory(ctx, location, backing, nil)
 			default:
 				directory, err = OpenDirectory(ctx, location)
 			}

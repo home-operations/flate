@@ -446,7 +446,7 @@ func (s *Store) addObject(update *objectUpdate) {
 		cell := sh.cells[id]
 		generated := sh.generatedDeclarations[id]
 		supplied := binding != nil && cell.reference != nil && cell.reference.Obj == obj &&
-			cell.reference.policy.Supplied()
+			cell.reference.Role == SuppliedDeclaration
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
 		sameObject := update.repeatsDeclaration(&cell, generated)
 		sameAuthority := cell.binding == binding && cell.support == support && cell.operand == update.operand

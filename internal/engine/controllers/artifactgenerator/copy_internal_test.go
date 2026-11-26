@@ -59,7 +59,7 @@ func TestEvaluate(t *testing.T) {
 				req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
 					{From: tc.source, To: "@artifact/", Optional: optional, Exclude: tc.exclude},
 				}}}
-				composition, err := e.composition(&req)
+				composition, err := e.composition(prepareCompositionRequest(t, &e, &req))
 				assert.NoError(t, err)
 				out, _, _, err := owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever})
 				if optional {
@@ -88,7 +88,7 @@ func TestEvaluate(t *testing.T) {
 			req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
 				{From: tc.source, To: "@artifact/", Optional: true, Strategy: strategyExtract},
 			}}}
-			composition, err := e.composition(&req)
+			composition, err := e.composition(prepareCompositionRequest(t, &e, &req))
 			assert.NoError(t, err)
 			out, _, _, err := owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever})
 			assert.Equal(t, out == nil, true)
@@ -97,13 +97,13 @@ func TestEvaluate(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
-		name       string
-		operations []manifest.ArtifactGeneratorCopy
-		invalid    bool
+		name, from, to, want string
 	}{
-		{"unknown_alias", []manifest.ArtifactGeneratorCopy{{From: "@absent/file", To: "@artifact/file"}}, true},
-		{"bare_alias", []manifest.ArtifactGeneratorCopy{{From: "@repo", To: "@artifact/"}}, true},
-		{"destination_prefix", []manifest.ArtifactGeneratorCopy{{From: "@repo/app/file", To: "file"}}, true},
+		{"unknown_alias", "@absent/file", "@artifact/file", "source alias 'absent' not found"},
+		{"bare_alias", "@repo", "@artifact/", "invalid copy source '@repo': source format must be '@alias/pattern'"},
+		{"destination_prefix", "@repo/app/file", "file", "invalid copy destination 'file': destination must start with '@artifact/'"},
+		{"destination_before_alias", "@absent/file", "file", "invalid copy destination 'file': destination must start with '@artifact/'"},
+		{"source_comma_limit_first", "@absent/{" + strings.Repeat("a,", 21) + "z}", "file", "glob contains more than 20 brace commas"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -113,8 +113,17 @@ func TestEvaluate(t *testing.T) {
 					"repo": fstest.MapFS{"app/file": {Data: []byte("file")}},
 				},
 			}
-			_, err := e.composition(&request{Output: manifest.ArtifactGeneratorOutput{Copy: tc.operations}})
-			assert.FatalIf(t, (err != nil) != tc.invalid, "evaluate() = %v; invalid=%v", err, tc.invalid)
+			output := manifest.ArtifactGeneratorOutput{
+				Copy: []manifest.ArtifactGeneratorCopy{{From: tc.from, To: tc.to}},
+			}
+			_, err := e.composition(&request{Output: output})
+			assert.FatalIf(
+				t,
+				err == nil || !strings.HasSuffix(err.Error(), tc.want),
+				"composition() = %v; want %s",
+				err,
+				tc.want,
+			)
 		})
 	}
 }
@@ -147,7 +156,7 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		},
 	}
 	req.work.Scope = scope
-	composition, err := e.composition(&req)
+	composition, err := e.composition(prepareCompositionRequest(t, &e, &req))
 	assert.FatalIf(t, err != nil, "%v", err)
 	_, _, _, err = owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever, Work: &req.work})
 	assert.FatalIf(t, err != nil, "%v", err)

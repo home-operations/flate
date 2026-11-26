@@ -102,7 +102,7 @@ spec:
 		CacheDir:    cache,
 		Concurrency: 2,
 		Supply: []store.Declaration{
-			{Obj: settings, Doc: testutil.ObjectDocument(settings), Origin: manifest.SuppliedDeclaration},
+			{Obj: settings, Doc: testutil.ObjectDocument(settings), Role: store.SuppliedDeclaration},
 		},
 	}
 	prime, err := newTestOrchestrator(t, tree, cfg)
@@ -398,7 +398,7 @@ func (f *entryReceiptFixture) assertEntryReceiptSuppliedInputs(
 				if scenario != "unchanged" {
 					data.Data = map[string]any{"values.yaml": "value: changed\n"}
 				}
-				current.AddDeclaration(store.Declaration{Obj: &data, Origin: manifest.SuppliedDeclaration})
+				current.AddDeclaration(store.Declaration{Obj: &data, Role: store.SuppliedDeclaration})
 			}
 			if scenario == "repository precedence" {
 				current.AddObject(settings, testutil.ObjectDocument(settings))

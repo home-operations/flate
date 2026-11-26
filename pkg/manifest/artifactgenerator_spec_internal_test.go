@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -195,8 +196,14 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 	assert.Equal(t, decoded.Sources[refs[0].Position].Alias, "")
 	assert.ErrorIf(t, err == nil, "malformed copy metadata decoded without an error")
 	catalog := CatalogObject(raw, raw.Named())
-	assert.Equal(t, len(slices.Collect(References(catalog, ReferenceRelations))), 0)
-	assert.Equal(t, len(ProducerTargets(catalog)), 1)
+	encoded, err := EncodeCatalog(catalog)
+	assert.NoError(t, err)
+	restored, err := DecodeCatalog(encoded)
+	assert.NoError(t, err)
+	for _, obj := range []BaseManifest{catalog, restored} {
+		assert.Equal(t, len(slices.Collect(References(obj, ReferenceRelations))), 0)
+		assert.Diff(t, ProducerTargets(obj), targets)
+	}
 	for ref := range References(raw, ReferenceRelations) {
 		ref.NamedResource.Name = "mutated"
 		assert.Equal(t, ref.Name, "mutated")
@@ -206,6 +213,112 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 		t.Errorf("borrowed references changed (-want +got):\n%s", diff)
 	}
 	assert.Equal(t, Fingerprint(raw), before)
+}
+
+func TestArtifactGeneratorSpec_CatalogPartialError(t *testing.T) {
+	t.Parallel()
+	artifact := []any{map[string]any{
+		"Name": "bundle", "Namespace": "delivery", "Copy": []any{map[string]any{"From": "@repo/base"}},
+	}}
+	partial := []any{map[string]any{
+		"name": false, "copy": []any{map[string]any{"to": "@artifact/base"}},
+	}}
+	for _, tc := range []struct {
+		name    string
+		full    map[string]any
+		catalog map[string]any
+	}{
+		{
+			name:    "empty_managed_namespaces",
+			full:    map[string]any{"ManagedNamespaces": map[string]any{}, "pathPattern": true},
+			catalog: map[string]any{"artifacts": nil, "managedNamespaces": map[string]any{}, "pathPattern": true},
+		},
+		{
+			name: "populated_managed_namespaces",
+			full: map[string]any{
+				"MANAGEDNAMESPACES": map[string]any{"allowedNames": []any{"apps"}, "prune": true},
+				"pathPattern":       true,
+			},
+			catalog: map[string]any{"artifacts": nil, "managedNamespaces": map[string]any{}, "pathPattern": true},
+		},
+		{
+			name:    "earlier_error",
+			full:    map[string]any{"commonMetadata": true, "pathPattern": true},
+			catalog: map[string]any{"artifacts": nil, "pathPattern": true},
+		},
+		{
+			name: "earlier_field",
+			full: map[string]any{
+				"commonMetadata": map[string]any{"labels": map[string]any{"team": "apps"}},
+				"pathPattern":    true,
+			},
+			catalog: map[string]any{"artifacts": nil, "pathPattern": true},
+		},
+		{
+			name: "omitted_error_precedes_colliding_artifacts",
+			full: map[string]any{
+				"Artifacts": artifact, "CommonMetadata": true,
+				"ManagedNamespaces": map[string]any{"prune": 1},
+				"PathPattern":       "@repo/{app}", "artifacts": partial, "pathPattern": true,
+			},
+			catalog: map[string]any{
+				"Artifacts": artifact, "PathPattern": "@repo/{app}", "artifacts": partial,
+				"managedNamespaces": map[string]any{}, "pathPattern": true,
+			},
+		},
+		{
+			name: "retained_error_precedes_omitted_error",
+			full: map[string]any{
+				"ARTIFACTS": partial, "CommonMetadata": true,
+				"Artifacts": artifact, "pathPattern": true,
+			},
+			catalog: map[string]any{"ARTIFACTS": partial, "Artifacts": artifact, "pathPattern": true},
+		},
+		{
+			name: "marker_precedes_error",
+			full: map[string]any{
+				"ManagedNamespaces": map[string]any{"prune": "invalid"},
+				"PathPattern":       "@repo/{app}", "pathPattern": 1,
+			},
+			catalog: map[string]any{
+				"PathPattern": "@repo/{app}", "artifacts": nil, "managedNamespaces": map[string]any{}, "pathPattern": 1,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := (&RawObject{
+				APIVersion: SourceExtensionsDomain + "/v1beta1", Kind: KindArtifactGenerator,
+				Namespace: "apps", Name: "generator", Spec: tc.full,
+			}).initArtifactGeneratorSpec()
+			catalog := CatalogObject(raw, raw.Named()).(*RawObject)
+			assert.Diff(t, catalog.Spec, tc.catalog)
+			encoded, err := EncodeCatalog(catalog)
+			assert.NoError(t, err)
+			restoredObject, err := DecodeCatalog(encoded)
+			assert.NoError(t, err)
+			restored := restoredObject.(*RawObject)
+			for _, object := range []*RawObject{raw, catalog, restored} {
+				fields := tc.catalog
+				if object == raw {
+					fields = tc.full
+				}
+				wire, err := json.Marshal(fields)
+				assert.NoError(t, err)
+				var want ArtifactGeneratorSpec
+				wantErr := json.Unmarshal(wire, &want)
+				got, gotErr := object.ArtifactGeneratorSpec()
+				assert.Diff(t, got, want)
+				wantType, wantOK := errors.AsType[*json.UnmarshalTypeError](wantErr)
+				gotType, gotOK := errors.AsType[*json.UnmarshalTypeError](gotErr)
+				assert.FatalIf(t, !wantOK || !gotOK, "want a JSON type error, got %v and %v", wantErr, gotErr)
+				assert.Equal(t, gotErr.Error(), "decode spec: "+wantErr.Error())
+				assert.Equal(t, gotType.Offset, wantType.Offset)
+			}
+			assert.Diff(t, ProducerTargets(catalog), ProducerTargets(raw))
+			assert.Diff(t, ProducerTargets(restored), ProducerTargets(raw))
+		})
+	}
 }
 
 func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
@@ -218,11 +331,18 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 			"sources": []any{
 				map[string]any{"Alias": "repo", "Kind": KindGitRepository, "Name": "repo", "Namespace": "input"},
 			},
+			"PATHPATTERN": "@wrong/{app}",
 			"PathPattern": "@repo/clusters/{app}",
+			"pathPattern": nil,
 			"Artifacts": []any{
 				map[string]any{"Name": "literal", "Copy": []any{map[string]any{"From": "@repo/common/file"}}},
 				map[string]any{"Name": "bundle-{app}", "Namespace": "delivery"},
 				map[string]any{"Name": "route", "Namespace": "delivery-{app}"},
+			},
+			"artifacts": []any{
+				map[string]any{"copy": []any{map[string]any{"to": "@artifact/common/file"}}},
+				map[string]any{"originRevision": "@repo"},
+				map[string]any{},
 			},
 			"ServiceAccountName": "offline",
 			"ManagedNamespaces": map[string]any{
@@ -263,6 +383,10 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	spec, err := parsed.ArtifactGeneratorSpec()
 	assert.NoError(t, err)
 	assert.Equal(t, spec.ServiceAccountName, "offline")
+	assert.Equal(t, spec.Sources[0].NamespaceSet, false)
+	assert.Equal(t, spec.PathPattern, "@repo/clusters/{app}")
+	assert.Equal(t, spec.Artifacts[0].Copy[0].From, "@repo/common/file")
+	assert.Equal(t, spec.Artifacts[0].Copy[0].To, "@artifact/common/file")
 	policy := spec.ManagedNamespaces
 	assert.FatalIf(
 		t,
@@ -309,10 +433,18 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 		{NamedResource: literal}, {NamedResource: target}, {NamedResource: fixed}, {NamedResource: dynamic},
 	}
 	catalog := CatalogObject(parsed, parsed.Named())
+	assert.Diff(t, catalog.(*RawObject).Spec, map[string]any{
+		"Artifacts": parsed.Spec["Artifacts"], "artifacts": parsed.Spec["artifacts"],
+		"PATHPATTERN": parsed.Spec["PATHPATTERN"], "PathPattern": parsed.Spec["PathPattern"], "pathPattern": nil,
+		"managedNamespaces": map[string]any{},
+	})
 	data, err := EncodeCatalog(catalog)
 	assert.NoError(t, err)
 	decoded, err := DecodeCatalog(data)
 	assert.NoError(t, err)
+	againData, err := EncodeCatalog(decoded)
+	assert.NoError(t, err)
+	assert.Diff(t, againData, data)
 	for _, obj := range []BaseManifest{parsed, catalog, decoded} {
 		assert.Equal(t, obj.(*RawObject).generator != nil, true)
 		assert.Equal(t, ProducerNeedsCandidates(obj), true)
@@ -323,4 +455,9 @@ func TestArtifactGeneratorSpec_MixedCaseDeclarations(t *testing.T) {
 	compact, err := decoded.(*RawObject).ArtifactGeneratorSpec()
 	assert.NoError(t, err)
 	assert.Diff(t, compact.ManagedNamespaces, &ArtifactGeneratorManagedNamespaces{})
+	assert.Equal(t, compact.PathPattern, pristine.PathPattern)
+	assert.Diff(t, compact.Artifacts, pristine.Artifacts)
+	live, err := catalog.(*RawObject).ArtifactGeneratorSpec()
+	assert.NoError(t, err)
+	assert.Diff(t, live, compact)
 }

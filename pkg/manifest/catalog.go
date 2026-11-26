@@ -92,8 +92,8 @@ func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
 	switch {
 	case r.isArtifactGenerator():
-		out.Spec = r.artifactGeneratorCatalogSpec()
-		out.initArtifactGeneratorSpec()
+		decoded := r.artifactGeneratorSpec()
+		out.Spec, out.generator = decoded.compact.catalogFields(r.Spec), decoded.compact
 	case r.Named().isFluxInstance():
 		keys := [...]string{"sync", "distribution", "cluster", "kustomize"}
 		out.Spec = make(map[string]any, len(keys))

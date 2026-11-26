@@ -450,7 +450,7 @@ func TestBuiltChildren_SuppliedPrecedence(t *testing.T) {
 	)
 	assert.NoError(t, registrationErr)
 	supplied := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./supplied"}
-	st.AddDeclaration(store.Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: supplied, Role: store.SuppliedDeclaration})
 	reads := new(store.ReadSet)
 	reads.Init(st, testutil.KustomizationID("apps", "binding"), nil)
 	defer st.Retire(reads)

@@ -14,8 +14,7 @@ func (l *Loader) recordUnownedProductions(b *selfProduceBuilder) {
 		if !include {
 			continue
 		}
-		if (declaration.obj != nil && manifest.ProducerNeedsCandidates(declaration.obj) || declaration.fact != nil && declaration.fact.facts.needsCandidates) &&
-			candidates == nil {
+		if declaration.needsCandidates && candidates == nil {
 			candidates = map[string][]manifest.NamedResource{}
 			//nolint:gocritic // Files' public iterator yields value snapshots and cannot be indexed.
 			for _, input := range l.Index.Files() {
@@ -41,6 +40,7 @@ func (l *Loader) unownedProductionDeclaration(
 	declaration := producerDeclaration{obj: obj, identity: id, authored: r.Authored}
 	if l.documents.compact {
 		if occurrence, ok := l.locations[id]; ok {
+			declaration.obj = nil
 			declaration.fact = &occurrence
 		}
 	}
@@ -55,6 +55,7 @@ func (l *Loader) unownedProductionDeclaration(
 	if hasOtherFileOwner(l.Index, id, r.File) {
 		return producerDeclaration{}, false
 	}
+	declaration.project(false)
 	return declaration, true
 }
 

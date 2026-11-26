@@ -442,7 +442,7 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
 			o.store.AddObject(consumer)
 			if supplied {
-				o.store.AddDeclaration(store.Declaration{Obj: source, Origin: manifest.SuppliedDeclaration})
+				o.store.AddDeclaration(store.Declaration{Obj: source, Role: store.SuppliedDeclaration})
 			} else {
 				o.store.AddObject(source)
 			}

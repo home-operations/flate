@@ -530,8 +530,8 @@ func (s *Store) seedReachabilityLocked(region objectRegion, add func(manifest.Na
 		cell := sh.cells[id]
 		members := sh.members[id]
 		physical := cell.operand && len(members) != 0 && cell.bound()
-		supplied := cell.reference != nil && cell.reference.policy.Reconcile
-		if physical || supplied || s.staticAnchorLocked(id, region) {
+		reference := cell.reference != nil && cell.reference.reconcile
+		if physical || reference || s.staticAnchorLocked(id, region) {
 			add(id)
 			continue
 		}
@@ -704,7 +704,6 @@ type capturedChild struct {
 	Obj               manifest.BaseManifest
 	Doc               map[string]any
 	Productions       []manifest.Production
-	Origin            manifest.DeclarationOrigin
 	Generated         bool
 	VisibleGeneration bool
 	policy            DeclarationPolicy
@@ -716,7 +715,6 @@ func snapshotChild(child *Child) capturedChild {
 		Doc:               child.Doc,
 		Productions:       child.Productions,
 		Warnings:          child.Warnings,
-		Origin:            child.Origin,
 		Generated:         child.Generated,
 		VisibleGeneration: child.VisibleGeneration,
 		policy:            child.policy,
@@ -726,7 +724,7 @@ func snapshotChild(child *Child) capturedChild {
 func (c *capturedChild) input() Child {
 	return Child{
 		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
-		Origin: c.Origin, Generated: c.Generated, VisibleGeneration: c.VisibleGeneration, policy: c.policy,
+		Generated: c.Generated, VisibleGeneration: c.VisibleGeneration, policy: c.policy,
 	}
 }
 

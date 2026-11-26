@@ -110,7 +110,7 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 					Data:       nil,
 					StringData: map[string]any{"VALUE": value},
 				},
-				Origin: manifest.SuppliedDeclaration,
+				Role: store.SuppliedDeclaration,
 			})
 		}
 		if (*testCaseInput) == "repository precedence" {

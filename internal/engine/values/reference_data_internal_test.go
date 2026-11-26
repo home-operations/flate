@@ -52,7 +52,7 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 		store.Declaration{
 			Obj:       supplied,
 			Doc:       testutil.ObjectDocument(supplied),
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: "input.yaml",
 		},
 	)

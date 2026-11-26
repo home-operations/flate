@@ -2,10 +2,12 @@ package artifactgenerator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/engine/store"
@@ -16,7 +18,7 @@ type generatorPublication struct {
 	execution   *execution
 	id          manifest.NamedResource
 	raw         *manifest.RawObject
-	spec        *manifest.ArtifactGeneratorSpec
+	spec        *generatorSpec
 	policies    *namespacePolicies
 	uid         string
 	fingerprint string
@@ -82,18 +84,15 @@ func (p *generatorPublication) prepare(
 		}
 		req.stagedMetadataError = readErr
 	}
-	doc, err := p.generatedDocument(req)
+	doc, err := p.generatedDocument(req, inputs)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(inputs) != 0 {
-		doc["status"] = map[string]any{"exportedInputs": inputs}
 	}
 	return doc, payload, nil
 }
 
-func (p *generatorPublication) generatedDocument(req *request) (map[string]any, error) {
-	labels := maps.Clone(p.spec.CommonMetadata.Labels)
+func (p *generatorPublication) generatedDocument(req *request, inputs map[string]any) (map[string]any, error) {
+	labels := maps.Clone(p.spec.declaration.CommonMetadata.Labels)
 	if labels == nil {
 		labels = make(map[string]string, len(req.Captures)+generatedLabelCount)
 	}
@@ -104,9 +103,19 @@ func (p *generatorPublication) generatedDocument(req *request) (map[string]any, 
 			Name:        req.Identity.Name,
 			Namespace:   req.Identity.Namespace,
 			Labels:      labels,
-			Annotations: p.spec.CommonMetadata.Annotations,
+			Annotations: p.spec.declaration.CommonMetadata.Annotations,
 		},
 	)
+	if len(inputs) != 0 {
+		declaration.ExportedInputs = make(map[string]*apiextensionsv1.JSON, len(inputs))
+		for key, input := range inputs {
+			raw, err := json.Marshal(input)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode input %q: %w", key, err)
+			}
+			declaration.ExportedInputs[key] = &apiextensionsv1.JSON{Raw: raw}
+		}
+	}
 	return declaration.RenderDocument()
 }
 

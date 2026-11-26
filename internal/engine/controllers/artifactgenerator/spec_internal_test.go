@@ -114,6 +114,7 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 		}, true},
 		{"selector_over_cap", func(_, _, output, _ map[string]any) { output["originRevision"] = "@" + strings.Repeat("a", 64) }, false},
 		{"selector_prefix", func(_, _, output, _ map[string]any) { output["revision"] = "repo" }, false},
+		{"selector_with_path", func(_, _, output, _ map[string]any) { output["revision"] = "@repo/" }, false},
 		{"unknown_revision", func(_, _, output, _ map[string]any) { output["revision"] = "@missing" }, false},
 		{"absent_origin_alias", func(_, _, output, _ map[string]any) { output["originRevision"] = "@missing" }, false},
 		{"from_required", func(_, _, _, op map[string]any) { delete(op, "from") }, false},
@@ -175,7 +176,7 @@ func testArtifactGeneratorValidationCase(t *testing.T, testCaseInput *struct {
 	testCaseInput.edit(spec, source, output, op)
 	decoded, err := (&manifest.RawObject{Spec: spec}).ArtifactGeneratorSpec()
 	if err == nil {
-		err = validateSpec(&decoded, "apps")
+		_, err = validateSpec(&decoded, "apps")
 	}
 	assert.FatalIf(
 		t,
@@ -248,7 +249,7 @@ func TestValidateSpec_NamespaceMetadataSource(t *testing.T) {
 					},
 				},
 			}
-			err := validateSpec(&spec, "apps")
+			_, err := validateSpec(&spec, "apps")
 			if tc.want == "" {
 				assert.NoError(t, err)
 				return

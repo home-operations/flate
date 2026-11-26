@@ -50,6 +50,9 @@ func TestReferences_ReadsSourceTree(t *testing.T) {
 			assert.Equal(t, len(refs), 1)
 			assert.Equal(t, refs[0].ReadsSourceTree(), tc.tree)
 			assert.Equal(t, refs[0].Clone().ReadsSourceTree(), tc.tree)
+			if tc.name == "operator input" {
+				assert.Equal(t, refs[0].BindsSource(), true)
+			}
 		})
 	}
 	t.Run("foreign source group", func(t *testing.T) {

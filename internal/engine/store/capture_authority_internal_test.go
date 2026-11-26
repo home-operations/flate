@@ -55,7 +55,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 		owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 		s.AddObject(owner)
 		supplied := &manifest.OCIRepository{Name: "input", Namespace: "apps", URL: "oci://supplied.example"}
-		s.AddDeclaration(Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+		s.AddDeclaration(Declaration{Obj: supplied, Role: SuppliedDeclaration})
 		replacement := &manifest.OCIRepository{
 			Name:      supplied.Name,
 			Namespace: supplied.Namespace,

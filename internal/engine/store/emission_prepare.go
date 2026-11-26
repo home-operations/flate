@@ -142,7 +142,7 @@ func (a Child) equal(b Child) bool {
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) sameDeclaration(b Child) bool {
-	if a.Origin != b.Origin || a.Generated != b.Generated || a.VisibleGeneration != b.VisibleGeneration {
+	if a.Origin() != b.Origin() || a.Generated != b.Generated || a.VisibleGeneration != b.VisibleGeneration {
 		return false
 	}
 	return SameDeclarationContent(&a, &b)

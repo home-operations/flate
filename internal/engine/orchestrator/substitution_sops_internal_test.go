@@ -50,7 +50,7 @@ func TestRender_RootSecretOverridesDeclaredOutput(t *testing.T) {
 			Path:     root,
 			RepoRoot: root,
 			Supply: []store.Declaration{
-				{Doc: testutil.ObjectDocument(input), Obj: input, Origin: manifest.SuppliedDeclaration},
+				{Doc: testutil.ObjectDocument(input), Obj: input, Role: store.SuppliedDeclaration},
 			},
 		},
 	)
@@ -116,7 +116,7 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
+					}), Role: store.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
@@ -135,7 +135,7 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 						Name:       "missing",
 						Namespace:  "elsewhere",
 						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
+					}), Role: store.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "elsewhere",
 						StringData: map[string]any{"OTHER": "unrelated"},
@@ -154,7 +154,7 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 						Name:       "given",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
+					}), Role: store.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "given",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
@@ -173,7 +173,7 @@ func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},
-					}), Origin: manifest.SuppliedDeclaration, Obj: &manifest.Secret{
+					}), Role: store.SuppliedDeclaration, Obj: &manifest.Secret{
 						Name:       "missing",
 						Namespace:  "flux-system",
 						StringData: map[string]any{"OTHER": "unrelated"},

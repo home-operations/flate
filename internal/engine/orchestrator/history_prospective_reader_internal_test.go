@@ -646,7 +646,7 @@ spec:
 				Doc: testutil.ObjectDocument(
 					&manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}},
 				),
-				Origin: manifest.SuppliedDeclaration,
+				Role: store.SuppliedDeclaration,
 				Obj: &manifest.ConfigMap{
 					Name:      "supplied",
 					Namespace: "apps",

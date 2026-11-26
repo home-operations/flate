@@ -12,6 +12,75 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func TestUnownedProductionDeclaration_ProjectTargets(t *testing.T) {
+	t.Parallel()
+	bundle := manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "projected", Name: "bundle",
+	}
+	dynamic := bundle
+	dynamic.Name = "app-web"
+	otherNamespace := dynamic
+	otherNamespace.Namespace = "authored"
+	for _, tc := range []struct {
+		name       string
+		spec       map[string]any
+		candidates []manifest.NamedResource
+		want       []manifest.ProducerTarget
+	}{
+		{name: "empty"},
+		{
+			name: "fixed",
+			spec: map[string]any{"artifacts": []any{map[string]any{"name": "bundle"}}},
+			want: []manifest.ProducerTarget{{NamedResource: bundle}},
+		},
+		{
+			name: "candidate-dependent",
+			spec: map[string]any{
+				"pathPattern": "@repo/{app}",
+				"artifacts": []any{
+					map[string]any{"name": "bundle"},
+					map[string]any{"name": "app-{app}"},
+				},
+			},
+			candidates: []manifest.NamedResource{otherNamespace, dynamic},
+			want:       []manifest.ProducerTarget{{NamedResource: dynamic}, {NamedResource: bundle}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := &manifest.RawObject{
+				APIVersion: manifest.SourceExtensionsDomain + "/v1beta1", Kind: manifest.KindArtifactGenerator,
+				Name: "generator", Namespace: "authored", Spec: tc.spec,
+			}
+			occurrence := compactOccurrence(raw, manifest.TemplateProjection{})
+			occurrence.Identity.Namespace = bundle.Namespace
+			record := manifest.DiscoveryRecord{Authored: raw.Named(), Path: "generator.yaml", File: "generator.yaml"}
+			for _, mode := range []string{"live", "index-only"} {
+				t.Run(mode, func(t *testing.T) {
+					t.Parallel()
+					l := New(store.New())
+					l.documents.compact = mode == "index-only"
+					if l.documents.compact {
+						l.locations = map[manifest.NamedResource]authoredOccurrence{occurrence.Identity: occurrence}
+					} else {
+						l.Store.AddObject(raw.WithNamespace(occurrence.Identity.Namespace))
+					}
+					declaration, include := l.unownedProductionDeclaration(occurrence.Identity, &record)
+					assert.Equal(t, include, true)
+					assert.Equal(t, declaration.identity, occurrence.Identity)
+					assert.Equal(t, declaration.authored, raw.Named())
+					assert.Equal(t, declaration.needsCandidates, len(tc.candidates) != 0)
+					assert.Diff(t, declaration.producerTargets(tc.candidates), tc.want)
+					if declaration.needsCandidates {
+						assert.Equal(t, declaration.obj.Named(), occurrence.Identity)
+					}
+					assert.Equal(t, raw.Namespace, "authored")
+				})
+			}
+		})
+	}
+}
+
 func TestSelfProduceBuilder_SubstitutedTargets(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []substitutedTargetCase{
@@ -161,7 +230,7 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 			l.Index.Records[producer.Named()] = record
 		}
 		occurrence := compactOccurrence(external, manifest.TemplateProjection{})
-		builder.recordProducer(&producerDeclaration{
+		targets := producerDeclaration{
 			fact: &occurrence, authored: external.Named(),
 			identity: manifest.Resolve(external.Named(), producer.TargetNamespace, ""),
 			visit: graphVisit{
@@ -170,7 +239,9 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 				coordinate:   "component/external.yaml",
 				graphContext: graphContext{namespace: producer.TargetNamespace},
 			},
-		}, nil)
+		}
+		targets.project(false)
+		builder.recordProducer(&targets, nil)
 	}
 	assert.NoError(t, builder.finalizeTargets(t.Context(), l, nil))
 	if tc.inherited {

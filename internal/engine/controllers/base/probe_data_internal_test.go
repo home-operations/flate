@@ -219,7 +219,7 @@ func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
 	}
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
 	secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: map[string]any{"value": "supplied"}}
-	st.AddDeclaration(store.Declaration{Obj: secret, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: secret, Role: store.SuppliedDeclaration})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		secret.Named(): {Productions: []manifest.Production{{Owner: producer.Named()}}},
 	}})

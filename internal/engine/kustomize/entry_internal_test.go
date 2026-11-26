@@ -98,7 +98,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	}
 	st := store.New()
 	st.SetArtifact(chart, artifact)
-	st.AddDeclaration(store.Declaration{Obj: data, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: data, Role: store.SuppliedDeclaration})
 	assert.Equal(t, cache.EntryValid(t.Context(), accepted, st), persistent)
 	for _, scenario := range []string{"unchanged", "changed", "removed", "repository precedence"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 						Data:       nil,
 						StringData: map[string]any{"VALUE": value},
 					},
-					Origin: manifest.SuppliedDeclaration,
+					Role: store.SuppliedDeclaration,
 				})
 			}
 			if scenario == "repository precedence" {

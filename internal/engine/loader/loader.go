@@ -159,7 +159,7 @@ func (l *Loader) AdmitDeclarations(children []store.Declaration) {
 		id := child.Obj.Named()
 		r := l.Index.Records[id]
 		if r.Path == "" && r.Builder == "" {
-			r.Origin, r.Declaration = child.Origin, child.Obj
+			r.Origin, r.Declaration = child.Role.Origin(), child.Obj
 			r.Refs = discoveryReferences(nil, child.Obj)
 			l.Index.Records[id] = r
 		}
@@ -285,7 +285,8 @@ func (l *Loader) eachIndexedKustomization(yield func(store.Child)) {
 func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
 	child := l.candidates[id]
 	if r.Origin == manifest.SuppliedDeclaration {
-		return store.Child{Obj: l.Store.GetDeclaration(id), Origin: r.Origin}
+		obj := l.Store.GetDeclaration(id)
+		return store.SuppliedDeclaration.Policy(id, obj).Child(obj)
 	}
 	if child.Obj == nil {
 		child = l.authoredObject(r.Path, r.Authored)

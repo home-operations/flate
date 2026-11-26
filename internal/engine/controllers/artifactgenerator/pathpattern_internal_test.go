@@ -38,6 +38,20 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 			},
 			false,
 		},
+		{
+			"literal_regexp_character_and_repeated_output_capture",
+			"@repo/apps.{literal}/{App}",
+			"{App}-{App}",
+			fstest.MapFS{"apps.Team/Prod/file": {Data: []byte("x")}, "appsXTeam/Other/file": {}},
+			[]request{
+				{
+					Identity: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod-prod"},
+					Output:   manifest.ArtifactGeneratorOutput{Name: "{App}-{App}", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Captures: map[string]string{"App": "prod", "literal": "team"},
+				},
+			},
+			false,
+		},
 		{"zero_matches", "@repo/absent/{App}", "{App}", fstest.MapFS{"apps/Prod/file": {}}, nil, false},
 		{"files_not_directories", "@repo/{App}", "{App}", fstest.MapFS{"file": {}}, nil, false},
 		{"root_excluded", "@repo/", "fixed", fstest.MapFS{"file": {}}, nil, false},
@@ -59,6 +73,9 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 				t.Parallel()
 				spec := manifest.ArtifactGeneratorSpec{
 					PathPattern: tc.pattern,
+					Sources: []manifest.ArtifactGeneratorSource{
+						{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
+					},
 					Artifacts: []manifest.ArtifactGeneratorOutput{
 						{
 							Name: tc.output,
@@ -66,7 +83,9 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 						},
 					},
 				}
-				got, err := expand(t.Context(), &spec, "apps", map[string]fs.FS{"repo": tc.input})
+				prepared, err := validateSpec(&spec, "apps")
+				assert.FatalIf(t, err != nil, "%v", err)
+				got, err := prepared.expand(t.Context(), "apps", map[string]fs.FS{"repo": tc.input})
 				assert.FatalIf(t, (err != nil) != tc.invalid, "expand() = %v; invalid=%v", err, tc.invalid)
 				assert.FatalIf(t, tc.name == "invalid_capture" &&
 					!strings.Contains(
@@ -93,6 +112,25 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 	}
 }
 
+func TestPathMatcher_CaptureErrorPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		input fs.FS
+		want  string
+	}{
+		{"available alias", fstest.MapFS{}, `invalid or repeated pathPattern capture "App"`},
+		{"missing alias", nil, `pathPattern "@repo/{App": source alias repo not found in local sources`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := pathMatcher("@repo/{App", map[string]fs.FS{"repo": tc.input})
+			assert.FatalIf(t, err == nil, "expected pathPattern error")
+			assert.Equal(t, err.Error(), tc.want)
+		})
+	}
+}
+
 func TestExpand_NamespaceMetadataPath(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -107,7 +145,13 @@ func TestExpand_NamespaceMetadataPath(t *testing.T) {
 			t.Parallel()
 			spec := manifest.ArtifactGeneratorSpec{
 				PathPattern: tc.pattern,
-				Artifacts:   []manifest.ArtifactGeneratorOutput{{Name: "artifact", Namespace: "delivery"}},
+				Sources: []manifest.ArtifactGeneratorSource{
+					{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
+				},
+				Artifacts: []manifest.ArtifactGeneratorOutput{{
+					Name: "artifact", Namespace: "delivery",
+					Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+				}},
 				ManagedNamespaces: &manifest.ArtifactGeneratorManagedNamespaces{
 					Metadata: &manifest.ArtifactGeneratorNamespaceMetadata{
 						FromSource: &manifest.ArtifactGeneratorNamespaceMetadataSource{Path: tc.path},
@@ -115,11 +159,13 @@ func TestExpand_NamespaceMetadataPath(t *testing.T) {
 				},
 			}
 			input := fstest.MapFS{"apps/Prod/file": {}}
-			got, err := expand(t.Context(), &spec, "apps", map[string]fs.FS{"repo": input})
+			prepared, err := validateSpec(&spec, "apps")
+			assert.FatalIf(t, err != nil, "%v", err)
+			got, err := prepared.expand(t.Context(), "apps", map[string]fs.FS{"repo": input})
 			assert.NoError(t, err)
 			assert.FatalIf(t, len(got) != 1, "request count = %d", len(got))
 			assert.Equal(t, got[0].Namespace, manifest.NamedResource{Kind: "Namespace", Name: "delivery"})
-			assert.Equal(t, got[0].NamespaceMetadataPath, tc.want)
+			assert.Equal(t, got[0].namespaceMetadata.Text, tc.want)
 			assert.Equal(t, got[0].NamespaceMetadataPathError != nil, tc.wantError)
 		})
 	}
@@ -130,12 +176,19 @@ func TestExpand_Canceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	{
-		_, err := expand(
-			ctx,
-			&manifest.ArtifactGeneratorSpec{PathPattern: "@repo/{App}"},
-			"apps",
-			map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
-		)
+		spec := manifest.ArtifactGeneratorSpec{
+			PathPattern: "@repo/{App}",
+			Sources: []manifest.ArtifactGeneratorSource{
+				{Alias: "repo", Name: "repo", Kind: manifest.KindGitRepository},
+			},
+			Artifacts: []manifest.ArtifactGeneratorOutput{{
+				Name: "{App}",
+				Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/file", To: "@artifact/file"}},
+			}},
+		}
+		prepared, err := validateSpec(&spec, "apps")
+		assert.FatalIf(t, err != nil, "%v", err)
+		_, err = prepared.expand(ctx, "apps", map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}})
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "expand() = %v", err)
 	}
 }

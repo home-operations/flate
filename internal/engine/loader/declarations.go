@@ -36,7 +36,7 @@ func LoadDocuments(ctx context.Context, r io.Reader, path string) ([]store.Decla
 				store.Declaration{
 					Obj:       object.Obj,
 					Doc:       object.Doc,
-					Origin:    manifest.SuppliedDeclaration,
+					Role:      store.SuppliedDeclaration,
 					InputPath: path,
 					Ordinal:   object.outcome.Ordinal,
 					Warnings:  object.Warnings,

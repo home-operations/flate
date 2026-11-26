@@ -64,7 +64,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	st := store.New()
 	data := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	st.AddDeclaration(
-		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Origin: manifest.SuppliedDeclaration},
+		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Role: store.SuppliedDeclaration},
 	)
 	provider := values.NewStoreProvider(st, manifest.NamedResource{})
 	captured := provider.Lookup(data.Named()).Data
@@ -231,9 +231,9 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 		}
 		st.AddDeclaration(
 			store.Declaration{
-				Obj:    supplied,
-				Doc:    testutil.ObjectDocument(supplied),
-				Origin: manifest.SuppliedDeclaration,
+				Obj:  supplied,
+				Doc:  testutil.ObjectDocument(supplied),
+				Role: store.SuppliedDeclaration,
 			},
 		)
 	}

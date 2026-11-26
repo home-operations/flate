@@ -1,10 +1,16 @@
 package manifest
 
 import (
+	"bytes"
+	"cmp"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // ArtifactGeneratorSpec must retain its JSON layout because it participates in content fingerprints.
@@ -90,25 +96,114 @@ type artifactGeneratorDecode struct {
 	kind, apiVersion string
 	spec             ArtifactGeneratorSpec
 	err              error
+	compact          *artifactGeneratorDecode
 	// Only the canonical sources list supplies indexed declarations.
 	sources []ArtifactGeneratorSource
 }
 
-func decodeArtifactGeneratorSpec(fields map[string]any) *artifactGeneratorDecode {
-	result := &artifactGeneratorDecode{}
+type artifactGeneratorCatalogRule struct {
+	key    string
+	marker func(full, compact *ArtifactGeneratorSpec) bool
+}
+
+func artifactGeneratorCatalogRules() [3]artifactGeneratorCatalogRule {
+	return [...]artifactGeneratorCatalogRule{
+		{key: "artifacts"},
+		{key: "pathPattern"},
+		{
+			key: "managedNamespaces",
+			marker: func(full, compact *ArtifactGeneratorSpec) bool {
+				if full.ManagedNamespaces == nil {
+					return false
+				}
+				if compact != nil {
+					compact.ManagedNamespaces = &ArtifactGeneratorManagedNamespaces{}
+				}
+				return true
+			},
+		},
+	}
+}
+
+func retainedArtifactGeneratorCatalogField(key string) int {
+	rules := artifactGeneratorCatalogRules()
+	return slices.IndexFunc(rules[:], func(rule artifactGeneratorCatalogRule) bool {
+		return rule.marker == nil && strings.EqualFold(key, rule.key)
+	})
+}
+
+func (d *artifactGeneratorDecode) catalogFields(fields map[string]any) map[string]any {
+	rules := artifactGeneratorCatalogRules()
+	catalog := make(map[string]any, len(rules))
+	var present [len(rules)]bool
+	for key, value := range fields {
+		if i := retainedArtifactGeneratorCatalogField(key); i >= 0 {
+			catalog[key], present[i] = value, true
+		}
+	}
+	for i, rule := range rules {
+		if rule.marker == nil {
+			if !present[i] {
+				catalog[rule.key] = nil
+			}
+		} else if rule.marker(&d.spec, nil) {
+			catalog[rule.key] = map[string]any{}
+		}
+	}
+	return catalog
+}
+
+func (r *RawObject) decodeArtifactGeneratorSpec() *artifactGeneratorDecode {
+	decoded := new(struct {
+		full, compact artifactGeneratorDecode
+	})
+	result, compact := &decoded.full, &decoded.compact
+	result.kind, result.apiVersion = r.Kind, r.APIVersion
+	compact.kind, compact.apiVersion = r.Kind, r.APIVersion
+	result.compact, compact.compact = compact, compact
+	fields := r.Spec
 	data, err := json.Marshal(fields)
 	if err != nil {
 		result.err = fmt.Errorf("marshal spec: %w", err)
+		projected, catalogErr := json.Marshal(compact.catalogFields(fields))
+		if catalogErr != nil {
+			compact.err = fmt.Errorf("marshal spec: %w", catalogErr)
+		} else {
+			compact.err = decodeArtifactGeneratorFields(projected, &compact.spec)
+		}
 		return result
 	}
-	if err := json.Unmarshal(data, &result.spec); err != nil {
+
+	partition := artifactGeneratorPartition{data: data}
+	if err := jsonv2.Unmarshal(data, &partition, json.DefaultOptionsV1()); err != nil {
 		result.err = fmt.Errorf("decode spec: %w", err)
+		return result
 	}
+	retained := decodeArtifactGeneratorFields(partition.retained, &compact.spec)
+	result.spec = compact.spec
+	omitted := decodeArtifactGeneratorFields(partition.omitted, &result.spec)
+	if retained != nil || omitted != nil {
+		result.spec = ArtifactGeneratorSpec{}
+		result.err = decodeArtifactGeneratorFields(data, &result.spec)
+	}
+	for _, rule := range artifactGeneratorCatalogRules() {
+		if rule.marker != nil {
+			rule.marker(&result.spec, &compact.spec)
+		}
+	}
+	if retained != nil {
+		projected, err := json.Marshal(compact.catalogFields(fields))
+		if err != nil {
+			compact.err = fmt.Errorf("marshal spec: %w", err)
+		} else {
+			compact.spec = ArtifactGeneratorSpec{}
+			compact.err = decodeArtifactGeneratorFields(projected, &compact.spec)
+		}
+	}
+
 	sources, _ := fields["sources"].([]any)
 	if len(sources) != len(result.spec.Sources) {
-		if result.err == nil {
-			result.err = fmt.Errorf("sources must be a list")
-		}
+		result.err = cmp.Or(result.err, errors.New("sources must be a list"))
 		return result
 	}
 	for i, source := range sources {
@@ -119,10 +214,62 @@ func decodeArtifactGeneratorSpec(fields map[string]any) *artifactGeneratorDecode
 	return result
 }
 
+type artifactGeneratorPartition struct {
+	data              []byte
+	retained, omitted []byte
+	buffer            [2][256]byte
+}
+
+//nolint:wrapcheck // The caller wraps decoder errors with the specification operation.
+func (p *artifactGeneratorPartition) UnmarshalJSONFrom(input *jsontext.Decoder) error {
+	// Marshal produced one sorted object. Partition its original members so
+	// colliding spellings reach the same typed field in their original order.
+	root, rootErr := input.ReadToken()
+	if rootErr != nil || root.Kind() == 'n' {
+		return rootErr
+	}
+	p.retained, p.omitted = p.buffer[0][:0], p.buffer[1][:0]
+	for input.PeekKind() == '"' {
+		start := input.InputOffset()
+		key, err := input.ReadToken()
+		if err != nil {
+			return err
+		}
+		part := &p.omitted
+		if retainedArtifactGeneratorCatalogField(key.String()) >= 0 {
+			part = &p.retained
+		}
+		if _, err := input.ReadValue(); err != nil {
+			return err
+		}
+		separator := byte('{')
+		if len(*part) != 0 {
+			separator = ','
+		}
+		*part = append(append(*part, separator), bytes.TrimPrefix(p.data[start:input.InputOffset()], []byte(","))...)
+	}
+	if len(p.retained) != 0 {
+		p.retained = append(p.retained, '}')
+	}
+	if len(p.omitted) != 0 {
+		p.omitted = append(p.omitted, '}')
+	}
+	_, closeErr := input.ReadToken()
+	return closeErr
+}
+
+func decodeArtifactGeneratorFields(data []byte, spec *ArtifactGeneratorSpec) error {
+	if len(data) != 0 {
+		if err := json.Unmarshal(data, spec); err != nil {
+			return fmt.Errorf("decode spec: %w", err)
+		}
+	}
+	return nil
+}
+
 func (r *RawObject) initArtifactGeneratorSpec() *RawObject {
 	if r.Named().IsArtifactGenerator() {
-		r.generator = decodeArtifactGeneratorSpec(r.Spec)
-		r.generator.kind, r.generator.apiVersion = r.Kind, r.APIVersion
+		r.generator = r.decodeArtifactGeneratorSpec()
 	}
 	return r
 }
@@ -131,7 +278,7 @@ func (r *RawObject) artifactGeneratorSpec() *artifactGeneratorDecode {
 	if r.generator != nil {
 		return r.generator
 	}
-	return decodeArtifactGeneratorSpec(r.Spec)
+	return r.decodeArtifactGeneratorSpec()
 }
 
 // ArtifactGeneratorSpec returns an independent snapshot, including partial data on decode errors.

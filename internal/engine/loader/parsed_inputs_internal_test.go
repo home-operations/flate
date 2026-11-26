@@ -489,7 +489,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 						Name:       name,
 						Namespace:  "apps",
 					},
-					Origin: manifest.SuppliedDeclaration,
+					Role: store.SuppliedDeclaration,
 				},
 			},
 		)

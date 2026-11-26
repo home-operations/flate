@@ -67,11 +67,11 @@ func (t namespaceTargets) validate(
 				err,
 			)
 		}
-		if first := t.first[name].NamespaceMetadataPath; first != req.NamespaceMetadataPath {
+		if first := t.first[name].namespaceMetadata.Text; first != req.namespaceMetadata.Text {
 			return fmt.Errorf(
 				"namespace reconciliation failed: namespace metadata path %q resolves to %q and %q "+
 					"for different artifacts targeting namespace %q, it must only use namespace-level captures",
-				source.Path, first, req.NamespaceMetadataPath, name,
+				source.Path, first, req.namespaceMetadata.Text, name,
 			)
 		}
 	}
@@ -159,33 +159,61 @@ func filterNamespaceMetadata(
 	return filtered, nil
 }
 
-func namespaceMetadataFor(
-	spec *manifest.ArtifactGeneratorSpec,
-	name, uid string,
+type namespaceMetadataRule struct {
+	entry           *manifest.ArtifactGeneratorNamespaceMetadataEntry
+	reset, override bool
+}
+
+func resolveNamespaceMetadataRules(
+	metadata *manifest.ArtifactGeneratorNamespaceMetadata,
+) ([]namespaceMetadataRule, error) {
+	rules := make([]namespaceMetadataRule, len(metadata.From))
+	for i := range metadata.From {
+		entry := &metadata.From[i]
+		rule := &rules[i]
+		rule.entry = entry
+		switch entry.Strategy {
+		case namespaceStrategyReset:
+			rule.reset = true
+		case namespaceStrategyOverride:
+			rule.override = true
+		case namespaceStrategyMerge:
+		default:
+			return nil, fmt.Errorf(
+				"spec.managedNamespaces.metadata.from[%d].strategy: unsupported strategy %q (allowed: Reset, Override, Merge)",
+				i,
+				entry.Strategy,
+			)
+		}
+	}
+	return rules, nil
+}
+
+func (p *generatorPublication) namespaceMetadataFor(
+	name string,
 	sourced namespaceMetadataValues,
 ) (metav1.ObjectMeta, error) {
 	meta := metav1.ObjectMeta{
-		Name:        name,
-		Labels:      mergeMetadata(maps.Clone(spec.CommonMetadata.Labels), sourced.Labels, true),
-		Annotations: mergeMetadata(maps.Clone(spec.CommonMetadata.Annotations), sourced.Annotations, true),
+		Name:   name,
+		Labels: mergeMetadata(maps.Clone(p.spec.declaration.CommonMetadata.Labels), sourced.Labels, true),
+		Annotations: mergeMetadata(
+			maps.Clone(p.spec.declaration.CommonMetadata.Annotations),
+			sourced.Annotations,
+			true,
+		),
 	}
-	if policy := spec.ManagedNamespaces.Metadata; policy != nil {
-		for i := range policy.From {
-			entry := &policy.From[i]
-			if entry.Namespace != "*" && entry.Namespace != name {
-				continue
-			}
-			switch entry.Strategy {
-			case namespaceStrategyReset:
-				meta.Labels, meta.Annotations = maps.Clone(entry.Labels), maps.Clone(entry.Annotations)
-			case namespaceStrategyOverride, namespaceStrategyMerge:
-				override := entry.Strategy == namespaceStrategyOverride
-				meta.Labels = mergeMetadata(meta.Labels, entry.Labels, override)
-				meta.Annotations = mergeMetadata(meta.Annotations, entry.Annotations, override)
-			}
+	for _, rule := range p.spec.namespaceRules {
+		entry := rule.entry
+		if entry.Namespace != "*" && entry.Namespace != name {
+			continue
 		}
+		if rule.reset {
+			meta.Labels, meta.Annotations = nil, nil
+		}
+		meta.Labels = mergeMetadata(meta.Labels, entry.Labels, rule.override)
+		meta.Annotations = mergeMetadata(meta.Annotations, entry.Annotations, rule.override)
 	}
-	meta.Labels = ownGeneratorLabels(meta.Labels, uid)
+	meta.Labels = ownGeneratorLabels(meta.Labels, p.uid)
 	if err := validateResolvedNamespaceMetadata(&meta); err != nil {
 		return metav1.ObjectMeta{}, err
 	}
@@ -245,7 +273,7 @@ func (p *generatorPublication) prepareNamespaces(
 	requests []request,
 ) error {
 	var source *manifest.ArtifactGeneratorNamespaceMetadataSource
-	if metadata := p.spec.ManagedNamespaces.Metadata; metadata != nil {
+	if metadata := p.spec.declaration.ManagedNamespaces.Metadata; metadata != nil {
 		source = metadata.FromSource
 	}
 	if err := targets.validate(ctx, p.policies, requests, source); err != nil {
@@ -273,12 +301,12 @@ func (p *generatorPublication) namespaceDocument(
 		if err != nil {
 			return nil, err
 		}
-		sourced, err = p.policies.decodeMetadata(ctx, req.NamespaceMetadataPath, data)
+		sourced, err = p.policies.decodeMetadata(ctx, req.namespaceMetadata.Text, data)
 		if err != nil {
 			return nil, err
 		}
 	}
-	meta, err := namespaceMetadataFor(p.spec, req.Namespace.Name, p.uid, sourced)
+	meta, err := p.namespaceMetadataFor(req.Namespace.Name, sourced)
 	if err != nil {
 		return nil, err
 	}
@@ -296,8 +324,8 @@ func (p *generatorPublication) namespaceDocument(
 }
 
 func (e *evaluation) namespaceMetadata(ctx context.Context, req *request) ([]byte, error) {
-	if !strings.HasPrefix(req.NamespaceMetadataPath, "@"+artifactAlias+"/") {
-		return e.readSourceFile(ctx, req.NamespaceMetadataPath, nil, namespaceFile)
+	if !req.namespaceMetadata.StagedFile() {
+		return e.readSourceFile(ctx, req.namespaceMetadata, nil, namespaceFile)
 	}
 	if req.stagedMetadataError != nil {
 		return nil, req.stagedMetadataError

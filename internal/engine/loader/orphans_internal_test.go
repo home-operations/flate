@@ -322,9 +322,9 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 	l := New(st)
 	supplied := &manifest.Kustomization{Name: "supplied", Namespace: "default", Path: "."}
 	l.AdmitDeclarations([]store.Declaration{{
-		Obj:    supplied,
-		Doc:    testutil.ObjectDocument(supplied),
-		Origin: manifest.SuppliedDeclaration,
+		Obj:  supplied,
+		Doc:  testutil.ObjectDocument(supplied),
+		Role: store.SuppliedDeclaration,
 	}})
 	l.SourceRoot = root
 	if testCaseInput.tc.chartPath != "" {

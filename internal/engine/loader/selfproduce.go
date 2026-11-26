@@ -186,31 +186,55 @@ func (v *graphVisit) localCoordinate() string {
 type producerDeclaration struct {
 	obj                manifest.BaseManifest
 	fact               *authoredOccurrence
+	targets            []manifest.ProducerTarget
 	identity           manifest.NamedResource
 	authored           manifest.NamedResource
 	visit              graphVisit
 	substituteDisabled bool
+	needsCandidates    bool
 }
 
-func (d *producerDeclaration) producerTargets(candidates []manifest.NamedResource) ([]manifest.ProducerTarget, bool) {
-	obj, disabled := d.obj, d.substituteDisabled
-	if d.fact != nil {
+func (d *producerDeclaration) project(projectReferences bool) {
+	namespace := d.identity.Namespace
+	obj := d.obj
+	needsCandidates := obj != nil && manifest.ProducerNeedsCandidates(obj)
+	deriveTargets := obj != nil
+	if d.fact != nil && !needsCandidates {
 		facts := d.fact.facts
-		obj, disabled = facts.catalog, facts.substituteDisabled
-		if !facts.needsCandidates && (len(facts.authoredTargets) == 0 || d.authored.Namespace == d.identity.Namespace) {
-			return facts.authoredTargets, disabled
+		d.substituteDisabled = facts.substituteDisabled
+		needsCandidates = facts.needsCandidates
+		deriveTargets = needsCandidates || len(facts.authoredTargets) != 0 && d.authored.Namespace != namespace
+		if !deriveTargets {
+			d.targets = facts.authoredTargets
+		}
+		if deriveTargets || projectReferences && obj == nil {
+			obj = facts.catalog
 		}
 	}
 	if obj == nil {
-		return nil, disabled
+		return
 	}
-	if obj.Named().Namespace != d.identity.Namespace {
-		if d.fact == nil && !manifest.ProducerNeedsCandidates(obj) && len(manifest.ProducerTargets(obj)) == 0 {
-			return nil, disabled
-		}
-		obj = obj.WithNamespace(d.identity.Namespace)
+
+	namespaceChanged := obj.Named().Namespace != namespace
+	if deriveTargets && d.fact == nil && !needsCandidates && !projectReferences {
+		d.targets = manifest.ProducerTargets(obj)
+		// A known non-producer MUST stay allocation-free on repeated visits.
+		deriveTargets = namespaceChanged && len(d.targets) != 0
 	}
-	return manifest.ProducerTargets(obj, candidates...), disabled
+	if namespaceChanged && (projectReferences || deriveTargets) {
+		obj = obj.WithNamespace(namespace)
+	}
+	d.obj, d.needsCandidates = obj, needsCandidates
+	if deriveTargets && !needsCandidates {
+		d.targets = manifest.ProducerTargets(obj)
+	}
+}
+
+func (d *producerDeclaration) producerTargets(candidates []manifest.NamedResource) []manifest.ProducerTarget {
+	if d.needsCandidates {
+		return manifest.ProducerTargets(d.obj, candidates...)
+	}
+	return d.targets
 }
 
 type pendingProduction struct {
@@ -334,7 +358,7 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 		}
 		v.owner = projected
 	}
-	targets, disabled := declaration.producerTargets(candidates)
+	targets, disabled := declaration.producerTargets(candidates), declaration.substituteDisabled
 	production := manifest.Production{
 		Owner: v.owner, Declaration: projected, Authored: authored,
 		Source: v.source, File: cmp.Or(v.localCoordinate(), v.coordinate),
@@ -457,15 +481,15 @@ func (b *selfProduceBuilder) recordDeclarationProduction(
 	}
 }
 
+func (d *producerDeclaration) hasApplicationOwner() bool {
+	return d.visit.owner != (manifest.NamedResource{}) && d.visit.owner != d.identity
+}
+
 func (b *selfProduceBuilder) recordApplication(l *Loader, declaration *producerDeclaration) {
-	if declaration.visit.owner == (manifest.NamedResource{}) || declaration.visit.owner == declaration.identity {
+	if !declaration.hasApplicationOwner() {
 		return
 	}
-	object := declaration.obj
-	if object == nil && declaration.fact != nil {
-		object = manifest.CatalogObject(declaration.fact.facts.catalog, declaration.identity)
-	}
-	application, valid := manifest.ApplicationFor(object)
+	application, valid := manifest.ApplicationFor(declaration.obj)
 	if !valid {
 		return
 	}

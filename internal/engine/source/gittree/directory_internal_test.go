@@ -38,7 +38,7 @@ func TestDirectory_IndexedSiblingLookups(t *testing.T) {
 		Filesystem: newMembershipRoot(t, root), reads: make(map[string]int), names: &names,
 		directoryChecks: make(map[string]int),
 	}
-	directory, err := openDirectory(t.Context(), location, backing, "")
+	directory, err := openDirectory(t.Context(), location, backing, nil)
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, directory.Close()) }()
 	indexed := names
@@ -96,7 +96,7 @@ func TestDirectory_SharedCaptureAndBaseline(t *testing.T) {
 	backing := &membershipCountingFS{
 		Filesystem: newMembershipRoot(t, root), reads: make(map[string]int), directoryChecks: make(map[string]int),
 	}
-	directory, err := openDirectory(t.Context(), location, backing, "")
+	directory, err := openDirectory(t.Context(), location, backing, nil)
 	assert.NoError(t, err)
 	defer func() { assert.NoError(t, directory.Close()) }()
 	assert.Equal(t, backing.payloadOpens, 0)

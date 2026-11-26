@@ -42,9 +42,9 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			}
 			st.AddDeclaration(
 				store.Declaration{
-					Obj:    source,
-					Doc:    testutil.ObjectDocument(source),
-					Origin: manifest.SuppliedDeclaration,
+					Obj:  source,
+					Doc:  testutil.ObjectDocument(source),
+					Role: store.SuppliedDeclaration,
 				},
 			)
 			c := New(st, task.NewBounded(2), nil)
@@ -80,9 +80,9 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			c := New(st, task.NewBounded(2), nil)
 			st.AddDeclaration(
 				store.Declaration{
-					Obj:    external,
-					Doc:    testutil.ObjectDocument(external),
-					Origin: manifest.SuppliedDeclaration,
+					Obj:  external,
+					Doc:  testutil.ObjectDocument(external),
+					Role: store.SuppliedDeclaration,
 				},
 			)
 			c.Configure(Options{}, sourcecache.RetryConfig{})
@@ -125,9 +125,9 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 			c := New(st, task.NewBounded(2), nil)
 			st.AddDeclaration(
 				store.Declaration{
-					Obj:    source,
-					Doc:    testutil.ObjectDocument(source),
-					Origin: manifest.SuppliedDeclaration,
+					Obj:  source,
+					Doc:  testutil.ObjectDocument(source),
+					Role: store.SuppliedDeclaration,
 				},
 			)
 			c.Configure(Options{}, sourcecache.RetryConfig{})

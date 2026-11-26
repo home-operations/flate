@@ -28,7 +28,7 @@ func TestFetcher_SuppliedCredentials(t *testing.T) {
 				Namespace:  "apps",
 				StringData: map[string]any{"accesskey": "filled", "secretkey": "filled"},
 			},
-			Origin: manifest.SuppliedDeclaration,
+			Role: store.SuppliedDeclaration,
 		},
 	}
 

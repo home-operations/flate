@@ -769,7 +769,7 @@ func addSourceAuthority(t *testing.T, st *store.Store, id manifest.NamedResource
 		object, bindErr := id.BindLocal("/authoritative")
 		assert.NoError(t, bindErr)
 		if authority == "supplied" {
-			st.AddDeclaration(store.Declaration{Obj: object, Origin: manifest.SuppliedDeclaration})
+			st.AddDeclaration(store.Declaration{Obj: object, Role: store.SuppliedDeclaration})
 		} else {
 			st.AddObject(object)
 		}

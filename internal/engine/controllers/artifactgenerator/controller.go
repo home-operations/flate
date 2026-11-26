@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"strings"
 	"time"
 
 	"github.com/home-operations/flate/internal/engine/schedule"
@@ -66,12 +65,11 @@ type inputIdentity struct {
 }
 
 type evaluation struct {
-	inputs   map[string]fs.FS
-	identity []inputIdentity
-	maxAge   time.Duration
-	// Source syntax is independent of input generations and output placement.
-	lastFrom      string
-	lastSelection sourceSelection
+	inputs    map[string]fs.FS
+	identity  []inputIdentity
+	maxAge    time.Duration
+	selectors *selectorResults
+	copyModes map[string]cache.CopyMode
 	// Projections are borrowed only until Compose returns; outputs reconcile serially.
 	projectedInputs []cache.CompositionInput
 	projectedCopies []cache.Copy
@@ -109,14 +107,15 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, err, "")
 	}
-	if specErr := validateSpec(&spec, id.Namespace); specErr != nil {
-		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", specErr), "")
+	prepared, err := validateSpec(&spec, id.Namespace)
+	if err != nil {
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", err), "")
 	}
 	raw, err = c.run.RequireRefresh(ctx, raw, manifest.GateArtifacts, level)
 	if err != nil {
 		return err
 	}
-	localEvaluation, err := c.generatorInputs(raw, &spec)
+	localEvaluation, err := c.generatorInputs(raw, &prepared)
 	if err != nil {
 		return err
 	}
@@ -141,7 +140,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if handled || err != nil {
 		return err
 	}
-	requests, err := expand(ctx, &spec, id.Namespace, localEvaluation.inputs)
+	requests, err := prepared.expand(ctx, id.Namespace, localEvaluation.inputs)
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}
@@ -149,7 +148,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		execution:   c,
 		id:          id,
 		raw:         raw,
-		spec:        &spec,
+		spec:        &prepared,
 		policies:    policies,
 		uid:         uid,
 		fingerprint: fingerprint,
@@ -191,12 +190,15 @@ func validateGenerator(
 	return raw, nil
 }
 
-func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.ArtifactGeneratorSpec) (evaluation, error) {
+func (c *execution) generatorInputs(raw *manifest.RawObject, prepared *generatorSpec) (evaluation, error) {
+	spec := &prepared.declaration
 	localEvaluation := evaluation{
-		inputs: make(map[string]fs.FS, len(spec.Sources)),
-		maxAge: cache.Forever,
+		inputs:    make(map[string]fs.FS, len(spec.Sources)),
+		maxAge:    cache.Forever,
+		selectors: &prepared.selectors,
+		copyModes: prepared.copyModes,
 	}
-	selections := generatorReadSelections(spec)
+	selections := prepared.readSelections()
 	for ref := range manifest.References(raw, manifest.ReferenceRelations) {
 		alias := spec.Sources[ref.Position].Alias
 		read := store.ArtifactContent | selections[alias]
@@ -220,13 +222,17 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.Arti
 	return localEvaluation, nil
 }
 
-func generatorReadSelections(spec *manifest.ArtifactGeneratorSpec) map[string]store.ArtifactRead {
-	selections := make(map[string]store.ArtifactRead, len(spec.Sources))
-	for _, output := range spec.Artifacts {
-		if alias := strings.TrimPrefix(output.Revision, "@"); alias != "" {
+func (s *generatorSpec) readSelections() map[string]store.ArtifactRead {
+	if !s.selectors.first[revisionSelector].selector.Marked {
+		return nil
+	}
+	selections := make(map[string]store.ArtifactRead, len(s.declaration.Sources))
+	for i := range s.declaration.Artifacts {
+		output := &s.declaration.Artifacts[i]
+		if alias := s.selectors.revision(output.Revision); alias != "" {
 			selections[alias] |= store.ArtifactRevision
 		}
-		if alias := strings.TrimPrefix(output.OriginRevision, "@"); alias != "" {
+		if alias := s.selectors.revision(output.OriginRevision); alias != "" {
 			selections[alias] |= store.ArtifactOrigin
 		}
 	}

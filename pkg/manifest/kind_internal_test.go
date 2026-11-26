@@ -234,10 +234,8 @@ func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	parsed, err := ParseDoc(doc, ParseDocOptions{})
 	obj := parsed.Object
 	assert.NoError(t, err)
-	{
-		_, ok := obj.(*RawObject)
-		assert.FatalIf(t, !ok, "generator type = %T", obj)
-	}
+	raw, ok := obj.(*RawObject)
+	assert.FatalIf(t, !ok, "generator type = %T", obj)
 	want := KindInfo{
 		Group:     "source.extensions.fluxcd.io",
 		Kind:      "ArtifactGenerator",
@@ -249,6 +247,15 @@ func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	assert.Equal(t, obj.Named().KindInfo(), want)
 	want.apiVersion = "source.extensions.fluxcd.io/v1beta1"
 	assert.Equal(t, KindOf(obj), want)
+	catalog := CatalogObject(raw, raw.Named()).(*RawObject)
+	assert.Equal(t, catalog.isArtifactGenerator(), true)
+	assert.Equal(t, catalog.generator.kind, raw.Kind)
+	assert.Equal(t, catalog.generator.apiVersion, raw.APIVersion)
+	assert.Equal(t, KindOf(catalog), want)
+	foreign := *catalog
+	foreign.APIVersion = "foreign.example/v1"
+	assert.Equal(t, foreign.isArtifactGenerator(), false)
+	assert.Equal(t, KindOf(&foreign).isArtifactGenerator(), false)
 }
 
 func TestKindInfo_RawIdentity(t *testing.T) {

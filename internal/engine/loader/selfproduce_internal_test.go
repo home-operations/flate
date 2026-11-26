@@ -264,7 +264,9 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 		b := &selfProduceBuilder{}
 		{
 			got := testing.AllocsPerRun(10, func() {
-				b.recordProducer(new(producerDeclaration{obj: ks, identity: ks.Named()}), nil)
+				declaration := producerDeclaration{obj: ks, identity: ks.Named()}
+				declaration.project(false)
+				b.recordProducer(&declaration, nil)
 			})
 			assert.FatalIf(t, got != 0, "nonproducer preparation allocations=%v, want 0", got)
 		}

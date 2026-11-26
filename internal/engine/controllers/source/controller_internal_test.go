@@ -96,7 +96,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		store.Declaration{
 			Obj:       secret,
 			Doc:       testutil.ObjectDocument(secret),
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: "credentials.yaml",
 		},
 	)
@@ -472,7 +472,7 @@ func testSourceDeclarationContributorsReuseCase(
 		store.Declaration{
 			Obj:       secret,
 			Doc:       testutil.ObjectDocument(secret),
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: "credentials.yaml",
 		},
 	)

@@ -1,13 +1,13 @@
 package artifactgenerator
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -36,42 +36,29 @@ func (e *evaluation) composition(req *request) (cache.Composition, error) {
 			Backing: identity.Input.LocalPath,
 		}
 	}
-	for i, op := range req.Output.Copy {
-		selection := e.lastSelection
-		if op.From != e.lastFrom || selection.alias == "" {
-			var err error
-			selection, err = sourcePath(op.From)
-			if err != nil {
-				return cache.Composition{}, fmt.Errorf("invalid copy source '%s': %w", op.From, err)
-			}
-			if globErr := validateGlob(selection.pattern); globErr != nil {
-				return cache.Composition{}, fmt.Errorf("invalid copy source '%s': %w", op.From, globErr)
-			}
-			e.lastFrom, e.lastSelection = op.From, selection
+	for i := range req.Output.Copy {
+		op := &req.Output.Copy[i]
+		source, err := e.selectors.resolve(op.From, copySourceSelector, false)
+		if sourceErr := cmp.Or(err, source.globErr); sourceErr != nil {
+			return cache.Composition{}, fmt.Errorf("invalid copy source '%s': %w", op.From, sourceErr)
 		}
-		to, err := destinationPath(op.To)
+		destination, err := e.selectors.resolve(op.To, destinationSelector, false)
 		if err != nil {
 			return cache.Composition{}, fmt.Errorf("invalid copy destination '%s': %w", op.To, err)
 		}
-		position := e.inputIndex(selection.alias)
+		from := source.selector
+		position := e.inputIndex(from.Alias)
 		if position == -1 {
-			return cache.Composition{}, fmt.Errorf("source alias '%s' not found", selection.alias)
+			return cache.Composition{}, fmt.Errorf("source alias '%s' not found", from.Alias)
 		}
-		lowered := cache.Copy{
+		result.Copies[i] = cache.Copy{
 			Input:    position,
-			From:     selection.pattern,
-			To:       to,
+			From:     from.Path,
+			To:       cmp.Or(destination.selector.Path, "."),
 			Exclude:  op.Exclude,
 			Optional: op.Optional,
-			Mode:     cache.CopyFiles,
+			Mode:     e.copyModes[op.Strategy],
 		}
-		switch op.Strategy {
-		case "Merge":
-			lowered.Mode = cache.MergeYAML
-		case strategyExtract:
-			lowered.Mode = cache.ExtractArchive
-		}
-		result.Copies[i] = lowered
 	}
 	return result, nil
 }
@@ -94,21 +81,21 @@ func (p *generatorPublication) generatedSource(
 	if err != nil {
 		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Identity.Name, err), "")
 	}
-	from := req.Output.InputsFrom
-	stagedInputs := strings.HasPrefix(from, "@"+artifactAlias+"/")
+	from := req.inputsFrom
+	stagedInputs := from.StagedFile()
 	if stagedInputs {
 		composition.Captures = append(composition.Captures,
-			cache.StagedCapture{Purpose: inputsCapture, Path: from, Read: p.evaluation.captureInputs})
+			cache.StagedCapture{Purpose: inputsCapture, Path: from.Text, Read: p.evaluation.captureInputs(from)})
 	}
-	metadataPath := req.NamespaceMetadataPath
-	stagedMetadata := captureMetadata && strings.HasPrefix(metadataPath, "@"+artifactAlias+"/")
+	metadata := req.namespaceMetadata
+	stagedMetadata := captureMetadata && metadata.StagedFile()
 	if stagedMetadata {
 		composition.Captures = append(
 			composition.Captures,
 			cache.StagedCapture{
 				Purpose: metadataCapture,
-				Path:    metadataPath,
-				Read:    p.evaluation.captureNamespaceMetadata,
+				Path:    metadata.Text,
+				Read:    p.evaluation.captureNamespaceMetadata(metadata),
 			},
 		)
 	}
@@ -163,10 +150,10 @@ func (e *evaluation) generatedPayload(req *request, input fs.FS, digest string) 
 		Digest:   digest,
 		Revision: "latest@" + digest,
 	}
-	if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
+	if alias := e.selectors.revision(req.Output.Revision); alias != "" {
 		payload.Revision = e.identity[e.inputIndex(alias)].Input.Revision
 	}
-	if position := e.inputIndex(strings.TrimPrefix(req.Output.OriginRevision, "@")); position >= 0 {
+	if position := e.inputIndex(e.selectors.revision(req.Output.OriginRevision)); position >= 0 {
 		source := &e.identity[position].Input
 		origin := source.Origin
 		if origin == "" {

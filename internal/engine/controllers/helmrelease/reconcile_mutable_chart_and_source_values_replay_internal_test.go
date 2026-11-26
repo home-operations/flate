@@ -450,7 +450,7 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		store.Declaration{
 			Obj:       input,
 			Doc:       testutil.ObjectDocument(input),
-			Origin:    manifest.SuppliedDeclaration,
+			Role:      store.SuppliedDeclaration,
 			InputPath: "supply.yaml",
 		},
 	)

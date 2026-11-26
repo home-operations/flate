@@ -176,10 +176,7 @@ func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if g.policy != nil {
-		return g.policy, nil
-	}
-	return g.snapshot.load(g)
+	return g.sourcePolicy(ctx, "", false)
 }
 
 func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, requested []string) {
@@ -200,11 +197,11 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 	if !fresh {
 		if v, ok := g.view.(*gitView); ok && v.identity != "" {
 			c.key = v.identity
-			if g.membership.directory != "" {
+			if len(g.membership.excluded) != 0 {
 				c.key = manifest.Fingerprint(struct {
 					Content, Excluded string
 					ExcludedPaths     []string
-				}{v.identity, g.membership.directory, g.membership.extra})
+				}{v.identity, g.membership.excluded.primary(), g.membership.excluded.tail()})
 			}
 		} else {
 			c.key = manifest.Fingerprint(inventory.files)
@@ -424,7 +421,7 @@ func (g *FS) FreshInputs(
 		files = selectFiles(files, requested)
 		return InputObservations{Files: files, Types: evidence.types}, nil
 	}
-	input, err := g.freshInput(ctx, g.membership.directory)
+	input, err := g.freshInput(ctx, "")
 	if err != nil {
 		return InputObservations{}, err
 	}
@@ -450,10 +447,10 @@ func selectFiles(files map[string]string, requested []string) map[string]string 
 }
 
 func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
-	directory = cmp.Or(directory, g.membership.directory)
+	directory = cmp.Or(directory, g.membership.excluded.primary())
 	switch v := g.view.(type) {
 	case *localView:
-		admission, err := openDirectoryAt(ctx, g.location, directory)
+		admission, err := openDirectoryAt(ctx, g.location, g.membership.excluded.withPrimary(directory))
 		if err != nil {
 			return nil, err
 		}
@@ -461,7 +458,6 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 		_ = admission.Close()
 		input := newLocal(v.root, true, &localPolicy{})
 		input.location = g.location
-		captured.extra = g.membership.extra
 		input.membership = captured
 		return input, nil
 	case *scopedView:
@@ -484,7 +480,7 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 		}
 		opts := *v.refresh
 		opts.membership = g.membership
-		opts.membership.directory = directory
+		opts.membership.excluded = g.membership.excluded.withPrimary(directory)
 		opts.membership.captured = false
 		opts.policy = nil
 		if current, ok := opts.Current.(*FS); ok {
@@ -498,7 +494,7 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 		return input, err
 	default:
 		selected := g.membership
-		selected.directory = directory
+		selected.excluded = selected.excluded.withPrimary(directory)
 		return &FS{view: g.view, location: g.location, membership: selected, snapshot: &localPolicy{}}, nil
 	}
 }

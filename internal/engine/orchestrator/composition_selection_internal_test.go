@@ -717,8 +717,8 @@ func TestConstruction_RequiredDeclarationPromotion(t *testing.T) {
 	controller := sourcectrl.New(st, tasks, cachetest.New(t, "", cache.New))
 	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cache.RetryConfig{})
 	assert.NoError(t, reconcileConstruction(t.Context(), session.PendingSources(), controller, tasks))
-	st.AddDeclaration(store.Declaration{Obj: including, Origin: manifest.SuppliedDeclaration})
-	st.AddDeclaration(store.Declaration{Obj: input, Origin: manifest.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: including, Role: store.SuppliedDeclaration})
+	st.AddDeclaration(store.Declaration{Obj: input, Role: store.SuppliedDeclaration})
 	e := orchestratorExistence{o: &Orchestrator{store: st, admission: session.Admission()}, construction: true}
 	var reads store.ReadSet
 	reads.Init(st, including.Named(), nil)

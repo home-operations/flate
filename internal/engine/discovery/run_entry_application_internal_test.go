@@ -689,9 +689,9 @@ func (a *Admission) publishEntryAuthorityFixture(
 	case supplied:
 		st.AddDeclaration(
 			store.Declaration{
-				Obj:    current,
-				Doc:    testutil.ObjectDocument(current),
-				Origin: manifest.SuppliedDeclaration,
+				Obj:  current,
+				Doc:  testutil.ObjectDocument(current),
+				Role: store.SuppliedDeclaration,
 			},
 		)
 	case history:

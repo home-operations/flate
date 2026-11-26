@@ -233,7 +233,7 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 		},
 	}
 	snapshot := []store.Declaration{
-		{Doc: testutil.ObjectDocument(supplied), Obj: supplied, Origin: manifest.SuppliedDeclaration},
+		{Doc: testutil.ObjectDocument(supplied), Obj: supplied, Role: store.SuppliedDeclaration},
 	}
 
 	s := store.New()

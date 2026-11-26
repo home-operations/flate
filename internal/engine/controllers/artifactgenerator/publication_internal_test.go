@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/core/artifactsyntax"
 	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/source/cache"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -109,8 +110,12 @@ func TestArtifactGenerator_StaleSourceAfterGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			fixture := generatorForTest(t, nil)
+			fixture := generatorForTest(t, []any{managedOutput("bundle", "apps", "@repo/", "@artifact/")})
 			raw := fixture.object
+			spec, err := raw.ArtifactGeneratorSpec()
+			assert.NoError(t, err)
+			prepared, err := validateSpec(&spec, raw.Namespace)
+			assert.NoError(t, err)
 			source := &manifest.GitRepository{Name: "repo", Namespace: "apps"}
 			credential := &manifest.ConfigMap{Name: "settings", Namespace: "apps"}
 			st.AddObject(raw, fixture.document)
@@ -144,9 +149,7 @@ func TestArtifactGenerator_StaleSourceAfterGate(t *testing.T) {
 				assert.Equal(t, sourceReads.Valid(), false)
 			}
 
-			spec, err := raw.ArtifactGeneratorSpec()
-			assert.NoError(t, err)
-			_, err = ex.generatorInputs(raw, &spec)
+			_, err = ex.generatorInputs(raw, &prepared)
 			blocked, ok := errors.AsType[*depwait.BlockedError](err)
 			assert.FatalIf(t, !ok, "expected a blocked dependency, got %v", err)
 			assert.Diff(t, blocked.Deps, []manifest.NamedResource{source.Named()})
@@ -438,7 +441,11 @@ func TestCaptureNamespaceMetadata_RetriesRead(t *testing.T) {
 		Base:   cache.CompositionInput{FS: base, Content: "immutable"},
 		Policy: "fixed",
 		Captures: []cache.StagedCapture{
-			{Purpose: metadataCapture, Path: "@artifact/" + path, Read: e.captureNamespaceMetadata},
+			{
+				Purpose: metadataCapture,
+				Path:    "@artifact/" + path,
+				Read:    e.captureNamespaceMetadata(artifactsyntax.ParseSelector("@artifact/" + path)),
+			},
 		},
 	}
 	root := t.TempDir()

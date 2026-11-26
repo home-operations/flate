@@ -304,7 +304,7 @@ func testFetcherLocalHelmContinuationCase1(
 						Namespace:  r.Namespace,
 						StringData: map[string]any{"username": "supply", "password": "password-canary"},
 					},
-					Origin: manifest.SuppliedDeclaration,
+					Role: store.SuppliedDeclaration,
 				},
 			}
 			for i := range supplied {

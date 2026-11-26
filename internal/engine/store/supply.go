@@ -2,23 +2,25 @@ package store
 
 import "github.com/home-operations/flate/pkg/manifest"
 
-type declarationRole uint8
+// DeclarationRole identifies the authority under which the store admits a declaration.
+type DeclarationRole uint8
 
+// The loader admits repository and supplied declarations. The store owns construction authority.
 const (
-	repositoryRole declarationRole = iota
-	suppliedRole
+	RepositoryDeclaration DeclarationRole = iota
+	SuppliedDeclaration
 	constructionRole
 )
 
 // DeclarationPolicy includes the authority of provisional inputs.
 type DeclarationPolicy struct {
-	role                    declarationRole
+	role                    DeclarationRole
 	Root, Reconcile, Report bool
 }
 
 // Supplied reports whether the invocation supplied the declaration.
 func (p DeclarationPolicy) Supplied() bool {
-	return p.role == suppliedRole
+	return p.role == SuppliedDeclaration
 }
 
 // RootCandidate includes supplied references that can support root selection.
@@ -28,15 +30,29 @@ func (p DeclarationPolicy) RootCandidate() bool {
 
 // Child retains declaration authority when a captured object enters a generation.
 func (p DeclarationPolicy) Child(obj manifest.BaseManifest) Child {
-	child := Child{Obj: obj, policy: p}
-	if p.Supplied() {
-		child.Origin = manifest.SuppliedDeclaration
-	}
-	return child
+	return Child{Obj: obj, policy: p}
 }
 
 func (p DeclarationPolicy) reference() bool {
 	return p.role == constructionRole || p.Supplied()
+}
+
+// Origin projects store input authority into a discovery record.
+func (r DeclarationRole) Origin() manifest.DeclarationOrigin {
+	if r == SuppliedDeclaration {
+		return manifest.SuppliedDeclaration
+	}
+	return manifest.RepositoryDeclaration
+}
+
+// Policy derives eligibility for the given object and identity.
+func (r DeclarationRole) Policy(id manifest.NamedResource, obj manifest.BaseManifest) DeclarationPolicy {
+	if r == constructionRole {
+		policy := manifest.SuppliedDeclaration.Policy(id, obj)
+		return DeclarationPolicy{role: r, Reconcile: policy.Reconcile}
+	}
+	policy := r.Origin().Policy(id, obj)
+	return DeclarationPolicy{role: r, Root: policy.Root, Reconcile: policy.Reconcile, Report: policy.Report}
 }
 
 // DeclarationContent MUST come from loader comparison of an immutable document.
@@ -50,17 +66,18 @@ type DeclarationContent struct {
 type Declaration struct {
 	Obj       manifest.BaseManifest
 	Doc       map[string]any
-	Origin    manifest.DeclarationOrigin
-	policy    DeclarationPolicy
+	Role      DeclarationRole
+	reconcile bool
 	InputPath string
 	Ordinal   int
 	Warnings  []manifest.Warning `json:"-"`
 }
 
 func (d *Declaration) child() Child {
-	child := d.policy.Child(d.Obj)
-	child.Doc, child.Warnings = d.Doc, d.Warnings
-	return child
+	return Child{
+		Obj: d.Obj, Doc: d.Doc, Warnings: d.Warnings,
+		policy: DeclarationPolicy{role: d.Role, Reconcile: d.reconcile},
+	}
 }
 
 // AddDeclaration admits an immutable declaration under its origin's authority.
@@ -71,33 +88,28 @@ func (s *Store) AddDeclaration(child Declaration) {
 		warning := child.Warnings[warningIndex]
 		s.AddWarning(warning)
 	}
-	if child.Origin == manifest.RepositoryDeclaration {
+	if child.Role == RepositoryDeclaration {
 		s.addObject(&objectUpdate{obj: child.Obj, document: child.Doc, explicit: true, warnings: child.Warnings})
 		return
 	}
-	child.policy = (Child{Obj: child.Obj, Origin: child.Origin}).Policy(child.Obj.Named())
 	s.addReference(&child)
 }
 
 // AddConstructionDeclaration supplies an include before discovery grants repository authority.
 func (s *Store) AddConstructionDeclaration(obj manifest.BaseManifest, doc map[string]any) {
-	info := manifest.KindOf(obj)
-	policy := DeclarationPolicy{
-		role:      constructionRole,
-		Reconcile: info.IsSource() && info.Runnable,
-	}
-	s.addReference(&Declaration{Obj: obj, Doc: doc, policy: policy})
+	s.addReference(&Declaration{Obj: obj, Doc: doc, Role: constructionRole})
 }
 
 func (s *Store) addReference(child *Declaration) {
 	id := child.Obj.Named()
+	child.reconcile = child.Role.Policy(id, child.Obj).Reconcile
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	cell := sh.cells[id]
 	before := cell.reference
 	if before != nil && before.Obj == child.Obj {
 		sameLocation := before.InputPath == child.InputPath && before.Ordinal == child.Ordinal
-		sameInput := sameLocation && before.policy.role == child.policy.role
+		sameInput := sameLocation && before.Role == child.Role
 		if sameInput && warningsEqual(before.Warnings, child.Warnings) &&
 			manifest.ValueEqual(before.Doc, child.Doc) {
 			sh.mu.Unlock()
@@ -171,23 +183,23 @@ func (sh *shard) policyLocked(id manifest.NamedResource) DeclarationPolicy {
 	return policy
 }
 
-// Policy derives execution roles from an incoming or captured declaration envelope.
+// Origin projects construction and repository children into the same discovery origin.
+//
+//nolint:gocritic // Child methods preserve declaration snapshots by value.
+func (c Child) Origin() manifest.DeclarationOrigin {
+	return c.policy.role.Origin()
+}
+
+// Policy retains construction authority and derives visibility under the incoming identity.
 //
 //nolint:gocritic // The value receiver supports literal declarations before store admission.
 func (c Child) Policy(id manifest.NamedResource) DeclarationPolicy {
 	if c.policy.role == constructionRole {
 		return c.policy
 	}
-	policy := c.Origin.Policy(id, c.Obj)
-	roles := DeclarationPolicy{
-		Root:      policy.Root,
-		Reconcile: policy.Reconcile,
-		Report:    policy.Report && (!c.Generated || c.VisibleGeneration),
-	}
-	if c.Origin == manifest.SuppliedDeclaration {
-		roles.role = suppliedRole
-	}
-	return roles
+	policy := c.policy.role.Policy(id, c.Obj)
+	policy.Report = policy.Report && (!c.Generated || c.VisibleGeneration)
+	return policy
 }
 
 // Lookup MUST return the object and policy from one captured authority.

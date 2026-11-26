@@ -141,9 +141,9 @@ func TestReadSet_AdmissionStableHiddenDeclaration(t *testing.T) {
 			s.SetArtifact(source, &SourceArtifact{Content: "first", FS: fstest.MapFS{}})
 			s.AddDeclaration(
 				Declaration{
-					Obj:    supplied,
-					Doc:    testutil.ObjectDocument(supplied),
-					Origin: manifest.SuppliedDeclaration,
+					Obj:  supplied,
+					Doc:  testutil.ObjectDocument(supplied),
+					Role: SuppliedDeclaration,
 				},
 			)
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

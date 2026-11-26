@@ -380,7 +380,7 @@ func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
 		},
 	}
 	for _, obj := range objects {
-		l.AdmitDeclarations([]store.Declaration{{Obj: obj, Origin: manifest.SuppliedDeclaration}})
+		l.AdmitDeclarations([]store.Declaration{{Obj: obj, Role: store.SuppliedDeclaration}})
 	}
 	for range 2 {
 		l.construction++

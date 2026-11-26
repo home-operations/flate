@@ -40,12 +40,7 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 		opts.Sparse = NormalizeSparsePaths(opts.Sparse)
 	case Source:
 		opts.Sparse = NormalizeSparsePaths(opts.Sparse)
-		if matcher == nil {
-			matcher, err = input.SourcePolicy(ctx)
-			if err == nil && opts.Ignore != "" {
-				matcher = matcher.WithExtra(opts.Ignore)
-			}
-		}
+		matcher, err = input.sourcePolicy(ctx, opts.Ignore, true)
 		input.policy = matcher
 		if err == nil && len(opts.Sparse) == 0 && matcher.UsesDefaults() {
 			input.policyKey = DefaultSourcePolicyKey
@@ -167,13 +162,22 @@ func (g *gitView) resolveSelectedNode(name string, node *gitNode, links *tree.Bu
 	return true, nil
 }
 
-func (o *ViewOptions) currentPolicy(ctx context.Context, current *FS) (*sourceignore.Matcher, error) {
-	matcher, err := current.SourcePolicy(ctx)
-	if err != nil {
-		return nil, err
+func (g *FS) sourcePolicy(ctx context.Context, ignore string, prepared bool) (*sourceignore.Matcher, error) {
+	matcher := g.policy
+	if matcher == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var err error
+		matcher, err = g.snapshot.load(g)
+		if err != nil {
+			return nil, err
+		}
+	} else if prepared {
+		return matcher, nil
 	}
-	if o.Ignore != "" {
-		matcher = matcher.WithExtra(o.Ignore)
+	if ignore != "" {
+		matcher = matcher.WithExtra(ignore)
 	}
 	return matcher, nil
 }

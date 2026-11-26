@@ -771,7 +771,7 @@ data: {VALUE: rendered}
 				Doc: testutil.ObjectDocument(&manifest.ConfigMap{
 					Name: "supplied", Namespace: "apps", Data: map[string]any{"ENTRY": "flux"},
 				}),
-				Origin: manifest.SuppliedDeclaration,
+				Role: store.SuppliedDeclaration,
 			},
 		},
 	}

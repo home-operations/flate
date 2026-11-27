@@ -1,0 +1,155 @@
+{
+  "source": {
+    "repository": "buroa/home-ops",
+    "revision": "efef17bfd5630ebaf6415ae9000b4e8f183a932a",
+    "paths": [
+      "kubernetes/apps/flux-system/artifactgenerator.yaml",
+      "kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml"
+    ],
+    "reductions": "Use one local Helm chart, one captured app, and one shared component. Keep the namespace transform and GitRepository checkout."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/redispatch.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "artifact-generator--publication-converges",
+      "description": "A streamed artifact and the complete inventory settle while the selected generator stays unchanged.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Complete stream with the standard render persistence notice when applicable."
+    },
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Complete stream authored from the two ConfigMaps and the consumer's ownership labels."
+    },
+    {
+      "path": "repo/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/instance.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/artifactgenerator.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/demo/app/cm.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/demo/ks.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/release.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/components/shared/cm.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    },
+    {
+      "path": "repo/kubernetes/components/shared/kustomization.yaml",
+      "cases": [
+        "artifact-generator--publication-converges"
+      ],
+      "purpose": "Source, producer, consumer or payload in the offline reproduction."
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+namespace: flux-system
+resources: [artifactgenerator.yaml, release.yaml, demo/ks.yaml]

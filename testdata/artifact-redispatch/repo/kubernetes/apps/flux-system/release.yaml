@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: flux-instance}
+spec:
+  interval: 1m
+  chart:
+    spec:
+      chart: charts/bootstrap
+      sourceRef: {kind: GitRepository, name: flux-system}

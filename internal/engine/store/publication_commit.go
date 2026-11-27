@@ -161,7 +161,8 @@ func (s *Store) prepareReplacement(prev, proposal *Emission, storage []regionSta
 		coverage := s.publicationCoverage(id, [2]*manifest.DiscoveryRecord{&record, &bare}, proposal, contribution)
 		if coverage != coverageNone {
 			independent := rawDeclarationAuthority(&record, id, manifest.NamedResource{}, false)
-			targets.region = targets.region.add(id, true, independent)
+			// Coverage can retire source support without changing the effective declaration.
+			targets.region = targets.region.add(id, false, independent)
 			position, _ := targets.region.position(id)
 			targets.region.states[position].retiresSource = coverage == coverageRetired
 		}

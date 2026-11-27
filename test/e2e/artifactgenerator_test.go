@@ -30,6 +30,7 @@ func TestE2E_ArtifactGenerator(t *testing.T) {
 		{"artifact-generator-fields", "artifact-generator--inputs-forward"},
 		{"artifact-generator-fields", "artifact-generator--inputs-reverse"},
 		{"artifact-convergence", "artifact-generator--consumed-input-convergence"},
+		{"artifact-redispatch", "artifact-generator--publication-converges"},
 		{"artifact-managed-namespaces", "artifact-generator--managed-render"},
 		{"artifact-managed-namespaces", "artifact-generator--managed-namespace-target"},
 		{"artifact-managed-namespaces", "artifact-generator--managed-metadata-forward"},

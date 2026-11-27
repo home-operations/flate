@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+data:
+  value: demo
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: demo
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: demo
+  namespace: flux-system
+---
+apiVersion: v1
+data:
+  value: shared
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: demo
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: shared
+  namespace: flux-system

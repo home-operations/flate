@@ -3,6 +3,7 @@ package discovery
 import (
 	"cmp"
 	"context"
+	"iter"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
@@ -220,17 +221,15 @@ func (w *qualificationWalk) unavailableProjection(ctx context.Context, id manife
 		return false
 	}
 	waiter := depwait.Waiter{Store: w.reads, Parent: id, Missing: l.Options.Missing}
-	for ref := range occurrenceReferences(&occurrence) {
+	available := occurrence.VisitReferences(manifest.ReferenceRelations, func(ref manifest.Reference) bool {
 		if ref.Use != "dependsOn" || l.IsFileIndexed(ref.NamedResource) {
-			continue
+			return true
 		}
 		gate := ref.DependencyRef
 		gate.RequiresDeclaration = true
-		if waiter.Classify(ctx, gate, manifest.DrainCascade).Kind == schedule.DependencyFailed {
-			return true
-		}
-	}
-	return false
+		return waiter.Classify(ctx, gate, manifest.DrainCascade).Kind != schedule.DependencyFailed
+	})
+	return !available
 }
 
 func (w *qualificationWalk) visitActiveOperands(ctx context.Context) (manifest.NamedResource, error) {
@@ -362,7 +361,7 @@ func (w *qualificationWalk) admitOperandPackage(operands []selection.OccurrenceF
 	}
 	for i := range operands {
 		operand := &operands[i]
-		obj := occurrenceObject(operand)
+		obj := operand.EffectiveObject()
 		if obj == nil || obj.Suspended() || operand.RequiresBuild {
 			continue
 		}
@@ -379,4 +378,51 @@ func (w *qualificationWalk) admitOperandPackage(operands []selection.OccurrenceF
 			w.q.active = append(w.q.active, id)
 		}
 	}
+}
+
+func (p *entryPlanner) followReferences(ctx context.Context, root *clusterRoot, application *rootApplication) error {
+	var err error
+	application.visit.occurrence.VisitReferences(manifest.ReferenceRelations, func(ref manifest.Reference) bool {
+		err = p.followReference(ctx, root, application, &ref)
+		return err == nil
+	})
+	return err
+}
+
+func (p *entryPlanner) followReference(
+	ctx context.Context, root *clusterRoot, application *rootApplication, ref *manifest.Reference,
+) error {
+	if !ref.IsSource() || !ref.NamedResource.KindInfo().IsSource() ||
+		ref.NamedResource == application.application.Source {
+		return nil
+	}
+	_, err := p.source(ctx, root, application, ref)
+	return err
+}
+
+func (s *rootScope) checkoutTargets(admission *Admission) iter.Seq[*scopedEntryTarget] {
+	return func(yield func(*scopedEntryTarget) bool) {
+		for scope := s; scope != nil; scope = scope.parent {
+			scope.prepareCheckoutTargets(admission)
+			for i := range scope.targets {
+				if !yield(&scope.targets[i]) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *rootScope) prepareCheckoutTargets(admission *Admission) {
+	if s.targetInput == admission.input {
+		return
+	}
+	s.targets = s.targets[:0]
+	for i := range s.occurrences {
+		target := admission.scopedCheckoutTarget(&s.occurrences[i])
+		if target.application.Source != (manifest.NamedResource{}) {
+			s.targets = append(s.targets, target)
+		}
+	}
+	s.targetInput = admission.input
 }

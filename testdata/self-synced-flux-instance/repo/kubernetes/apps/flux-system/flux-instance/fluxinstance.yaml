@@ -1,0 +1,13 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+spec:
+  distribution:
+    version: "2.x"
+    registry: ghcr.io/fluxcd
+  sync:
+    kind: GitRepository
+    url: https://example.invalid/self-synced-flux-instance.git
+    ref: refs/heads/main
+    path: kubernetes/apps

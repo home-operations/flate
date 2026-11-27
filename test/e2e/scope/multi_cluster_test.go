@@ -16,3 +16,8 @@ func TestE2E_RepositoryRootMultiCluster_IsolatesCollidingIdentities(t *testing.T
 func TestE2E_ClusterPartitionRoot(t *testing.T) {
 	testScopeCases(t, "cluster-partition", []string{"root", "explicit", "singleton", "renamed"})
 }
+
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestE2E_RepositoryRootMultiCluster_SelfSyncedFluxInstance(t *testing.T) {
+	testScopeCases(t, "self-synced-flux-instance", []string{"sync-folder", "detached-root"})
+}

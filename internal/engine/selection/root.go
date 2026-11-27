@@ -63,9 +63,14 @@ func classifyAuthoredRoot(evidence *RootEvidence) RootResult {
 	admitted := scope.Eligibility != RootInactive && owner == (manifest.NamedResource{})
 	if scope.Eligibility != RootInactive && evidence.Identity.KindInfo().Discovery && !scope.EntryKustomize &&
 		scope.Loaded && !scope.Bootstrap {
-		admitted = !slices.ContainsFunc(scope.Owners, func(candidate RootOwnerFacts) bool {
-			return candidate.Identity == owner && candidate.Indexed && candidate.Path == ""
-		})
+		admitted = true
+		for i := range scope.Owners {
+			candidate := &scope.Owners[i]
+			if candidate.Identity == owner && candidate.Indexed && candidate.Path == "" {
+				admitted = false
+				break
+			}
+		}
 	}
 	result := RootResult{Owner: owner, Admitted: admitted, Occurrence: evidence.Occurrence}
 	if evidence.InitialScope != nil {

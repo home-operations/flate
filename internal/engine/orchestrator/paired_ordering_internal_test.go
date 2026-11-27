@@ -102,15 +102,15 @@ func TestOrderingPackageOwners_Unique(t *testing.T) {
 	first := &manifest.Kustomization{Name: "first", Namespace: "apps", Path: "./db"}
 	second := &manifest.Kustomization{Name: "second", Namespace: "apps", Path: "db"}
 	third := &manifest.Kustomization{Name: "third", Namespace: "apps", Path: "./other"}
-	objects := make([]selection.OccurrenceFacts, 0, 5)
-	for _, obj := range []*manifest.Kustomization{first, first, second, second, third} {
-		objects = append(objects, selection.OccurrenceFacts{Identity: obj.Named(), Authored: obj.Named(), Object: obj})
-	}
 	source := manifest.BootstrapSourceID
 	st := store.New()
 	st.SetArtifact(source, &store.SourceArtifact{FS: fstest.MapFS{"db/obj.yaml": {}, "other/obj.yaml": {}}})
 	l := loader.New(st)
 	t.Cleanup(l.Close)
+	objects := make([]selection.OccurrenceFacts, 0, 5)
+	for _, obj := range []*manifest.Kustomization{first, first, second, second, third} {
+		objects = append(objects, l.ProducerFacts(obj).Occurrence)
+	}
 	tree := &Orchestrator{store: st, loader: l}
 	owners, err := tree.orderingPackageOwners(t.Context(), objects)
 	assert.NoError(t, err)

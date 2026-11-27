@@ -416,7 +416,7 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 	r.StaticOutput = kind.Structural || len(rf.loader.templateProjections[id].Targets) != 0
 	if r.Builder == "" && !rf.loader.documents.eager && len(rf.loader.locations) != 0 {
 		if occurrence, known := rf.loader.catalogOccurrence(id); known {
-			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateProjections[id].Targets)
+			r.StaticOutput = !occurrence.opaque(rf.loader.templateProjections[id].Targets)
 		}
 	}
 	r.StaticOutput = r.StaticOutput && !rf.unresolvedPaths[id]
@@ -756,7 +756,7 @@ func (rf *readerFinalizer) observeRepositories(
 	if !present || occurrence.object != object && occurrence.facts.catalog != object {
 		projection, _ := manifest.ProjectProducer(object, nil)
 		previous := occurrence
-		occurrence = compactOccurrence(object, projection)
+		occurrence = new(occurrenceFacts).compactOccurrence(object, projection)
 		record := rf.loader.Index.Records[consumer]
 		if present && record.Path == filepath.Join(previous.Declaration.Source, previous.Declaration.File) {
 			occurrence.Declaration, occurrence.Authored = previous.Declaration, previous.Authored

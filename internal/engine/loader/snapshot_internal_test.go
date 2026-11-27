@@ -23,6 +23,7 @@ func snapshotDiff(want, got any) string {
 			authoredOccurrence{},
 			occurrenceID{},
 			occurrenceFacts{},
+			occurrencePath{},
 			manifest.Reference{},
 		),
 		cmp.Transformer("CompleteRecord", func(r manifest.DiscoveryRecord) record { return record(r) }),

@@ -174,7 +174,7 @@ func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
 							assert.NoError(t, censusErr)
 							assert.Equal(t, len(objects), 1)
 							assert.Equal(t, objects[0].fact.Authored, testutil.KustomizationID("flux-system", "child"))
-							assert.Equal(t, objects[0].fact.facts.path, "./payload/one")
+							assert.Equal(t, objects[0].fact.path, "./payload/one")
 							t.Log("accepted external declaration frame before authored resolution")
 						default:
 							_, known := l.documents.cache[filepath.Join(root, "layer", "common", "child.yaml")]

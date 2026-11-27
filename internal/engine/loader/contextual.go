@@ -72,10 +72,10 @@ func (l *Loader) projectOccurrence(
 	if !known {
 		projected = *o
 		id, err := l.projectIdentity(o.Authored, visit, version, o.facts.namespaced)
-		projected.Identity = id
 		if err != nil {
 			return projected, err
 		}
+		projected.setIdentity(id)
 	}
 	uncertain := projected.Identity.Name == "" || identitySubstituted(projected.Identity)
 	owned := visit.owner != (manifest.NamedResource{})
@@ -86,11 +86,11 @@ func (l *Loader) projectOccurrence(
 	case uncertain != projected.facts.uncertain, structureChanged:
 		facts := *projected.facts
 		facts.uncertain = uncertain
+		projected.facts = &facts
 		if owned && facts.structural != nil && !uncertain {
 			previous := l.locations[projected.Identity]
-			facts.projectStructure(projected.Identity, &previous)
+			projected.projectStructure(&previous)
 		}
-		projected.facts = &facts
 	}
 	previous, found := l.locations[projected.Identity]
 	sameCensus := found && previous.facts.census != nil && previous.facts.census == projected.facts.census
@@ -134,7 +134,7 @@ func (l *Loader) resolveAuthored(ctx context.Context, repoRoot string) error {
 		// Expanded applications MUST retain ordinary discovery of their producers.
 		for key := range l.scopes.contextual {
 			occurrence := l.scopes.contextual[key]
-			if occurrence.facts.hasPath && !occurrence.facts.uncertain && key.substituted(occurrence.facts) {
+			if occurrence.hasPath && !occurrence.facts.uncertain && key.substituted(occurrence.facts) {
 				inputs[occurrence.Identity] = true
 			}
 		}
@@ -244,17 +244,21 @@ func (p *substitutionResolution) resolveContextualObject(
 		return nil //nolint:nilerr // Production finalization MUST report malformed declarations with their resource context.
 	}
 	o := child.fact
-	if !o.facts.indexed() {
+	if !o.indexed() && !o.Identity.CanDeclareGeneratedEntry() {
 		return nil
 	}
 	key := occurrenceContext{o.Declaration, visit.owner, visit.source, visit.graphContext, visit.file}
-	hasSubstitutions := key.substituted(o.facts)
-	if !hasSubstitutions && (!l.documents.compact || o.facts.structural == nil) {
+	structural := l.documents.compact && o.facts.structural != nil
+	if !key.substituted(o.facts) && !o.Identity.CanDeclareGeneratedEntry() && !structural {
 		return nil
 	}
 	projected, err := p.resolveOccurrence(ctx, o, visit, child.version)
 	if err != nil {
 		return err
+	}
+	hasSubstitutions := key.substituted(projected.facts)
+	if !hasSubstitutions && !structural {
+		return nil
 	}
 	structuralEvidence := visit.deferDecode && !hasSubstitutions
 	if !structuralEvidence && !projected.facts.uncertain && sameOccurrenceProjection(&projected, o) {
@@ -275,16 +279,17 @@ func (p *substitutionResolution) resolveContextualObject(
 
 func sameOccurrenceProjection(o, other *authoredOccurrence) bool {
 	if o.Identity != other.Identity || o.facts.uncertain != other.facts.uncertain ||
-		o.facts.source != other.facts.source {
+		o.source != other.source {
 		return false
 	}
-	return o.facts.path == other.facts.path && slices.Equal(o.facts.projection, other.facts.projection)
+	return o.hasPath == other.hasPath && o.path == other.path &&
+		slices.Equal(o.facts.projection, other.facts.projection)
 }
 
 func (l *Loader) retainUnknownOwnerReach() {
 	for key := range l.scopes.contextual {
 		occurrence := l.scopes.contextual[key]
-		if !occurrence.facts.uncertain || key.owner == (manifest.NamedResource{}) || !occurrence.facts.hasPath {
+		if !occurrence.facts.uncertain || key.owner == (manifest.NamedResource{}) || !occurrence.hasPath {
 			continue
 		}
 		l.retainUnknownOccurrenceReach(key.owner, &occurrence)
@@ -325,10 +330,16 @@ func (p *substitutionResolution) resolveOccurrence(
 	if err != nil {
 		return o, err
 	}
-	o.Identity = id
+	unresolvedIdentity := identitySubstituted(id)
+	uncertain := id.Name == "" || unresolvedIdentity
 	substitute := !o.facts.substituteDisabled && visit.owner != (manifest.NamedResource{}) &&
-		(o.facts.substituted || identitySubstituted(id))
-	uncertain := id.Name == "" || identitySubstituted(id)
+		(o.facts.substituted || unresolvedIdentity || id.CanDeclareGeneratedEntry())
+	if substitute && unresolvedIdentity {
+		uncertain = !p.resolveIdentity(ctx, visit.owner, &id)
+	}
+	o.setIdentity(id)
+	substitutedPath := manifest.HasEnvsubstReference(o.path) || identitySubstituted(o.source)
+	substitute = substitute && (o.facts.substituted || unresolvedIdentity || substitutedPath)
 	if !substitute && (o.facts.structural == nil || o.facts.structural.Named() == id) &&
 		uncertain == o.facts.uncertain {
 		return o, nil
@@ -339,20 +350,21 @@ func (p *substitutionResolution) resolveOccurrence(
 	o.facts = &facts
 	changed := false
 	if substitute {
+		facts.substituted = true
 		changed = p.resolveScalars(ctx, visit.owner, &o)
 	}
-	if err := ctx.Err(); err != nil {
+	switch err := ctx.Err(); {
+	case err != nil:
 		return o, err
-	}
-	if !changed && o.Identity == occurrence.Identity && facts.source == occurrence.facts.source &&
-		facts.uncertain == occurrence.facts.uncertain {
+	case !changed && o.Identity == occurrence.Identity && o.source == occurrence.source &&
+		facts.uncertain == occurrence.facts.uncertain:
 		o.facts = occurrence.facts
-		return o, nil
-	}
-	if facts.structural != nil && !facts.uncertain {
+	case facts.structural != nil && !facts.uncertain:
 		previous := p.loader.locations[o.Identity]
-		facts.projectStructure(o.Identity, &previous)
+		o.projectStructure(&previous)
 		facts.roots = slices.Collect(manifest.RenderRoots(facts.structural))
+	case id.CanDeclareGeneratedEntry() && o.hasPath && o.path == "":
+		o.occurrencePath = occurrencePath{}
 	}
 	return o, nil
 }
@@ -367,10 +379,11 @@ func (f *occurrenceFacts) projectNamespace(namespace string) bool {
 	return true
 }
 
-func (f *occurrenceFacts) projectStructure(id manifest.NamedResource, previous *authoredOccurrence) {
+func (o *authoredOccurrence) projectStructure(previous *authoredOccurrence) {
+	f, id := o.facts, o.Identity
 	structural := *f.structural
 	structural.Name, structural.Namespace = id.Name, id.Namespace
-	structural.Path = f.path
+	structural.Path = o.path
 	if f.policy != nil {
 		if f.policy.Namespace == "" {
 			f.projectNamespace(structural.TargetNamespace)
@@ -378,12 +391,16 @@ func (f *occurrenceFacts) projectStructure(id manifest.NamedResource, previous *
 		structural.TargetNamespace = f.policy.Namespace
 	}
 	if structural.SourceRef.Name != "" {
-		structural.SourceRef.Name = f.source.Name
-		structural.SourceRef.Namespace = f.source.Namespace
+		structural.SourceRef.Name = o.source.Name
+		if structural.SourceRef.Namespace != "" {
+			structural.SourceRef.Namespace = o.source.Namespace
+		}
 	}
-	projected := authoredOccurrence{Identity: id, facts: f}
+	// The projection can stay on the stack when the census reuses the prior structure.
+	o.source = structural.EffectiveSourceID()
+	o.setApplication(&structural, true)
 	sameCensus := previous.facts != nil && previous.facts.census != nil && previous.facts.census == f.census
-	if sameCensus && sameOccurrenceProjection(previous, &projected) &&
+	if sameCensus && sameOccurrenceProjection(previous, o) &&
 		structural.ProjectionCompatible(previous.facts.structural) {
 		f.structural = previous.facts.structural
 	} else {
@@ -398,7 +415,6 @@ func (p *substitutionResolution) resolveScalars(
 ) bool {
 	facts := occurrence.facts
 	changed := false
-	facts.uncertain = !p.resolveIdentity(ctx, owner, &occurrence.Identity)
 	resolve := func(value string) string {
 		if !manifest.HasEnvsubstReference(value) {
 			return value
@@ -411,8 +427,11 @@ func (p *substitutionResolution) resolveScalars(
 		facts.projection = append(facts.projection, value)
 		return value
 	}
-	p.resolveIdentity(ctx, owner, &facts.source)
-	facts.path = resolve(facts.path)
+	p.resolveIdentity(ctx, owner, &occurrence.source)
+	if occurrence.source.Name != "" {
+		occurrence.source = manifest.Resolve(occurrence.source, "", occurrence.Identity.Namespace)
+	}
+	occurrence.path = resolve(occurrence.path)
 	facts.roots = projectStrings(facts.roots, resolve)
 	facts.labels = projectLabels(facts.labels, resolve)
 	facts.refs = projectReferences(facts.refs, resolve)

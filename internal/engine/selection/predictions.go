@@ -97,7 +97,7 @@ func (s *Snapshot) predictionReferences(id manifest.NamedResource, reads *store.
 	optional := hidden || occurrence.Declaration.File == "" ||
 		failure.Outcome() != store.OutcomeBlocked
 	var references []manifest.Reference
-	occurrence.references(manifest.ReferenceAll, func(ref manifest.Reference) bool {
+	occurrence.VisitReferences(manifest.ReferenceAll, func(ref manifest.Reference) bool {
 		references = append(references, ref)
 		return true
 	})

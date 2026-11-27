@@ -217,7 +217,7 @@ func TestFilter_CopiedInputsPairedSides(t *testing.T) {
 					loader: l, repoRoot: root, sources: map[manifest.NamedResource]graphVisit{},
 					visited: map[manifest.NamedResource]struct{}{},
 				}
-				occurrence := compactOccurrence(raw, manifest.TemplateProjection{})
+				occurrence := new(occurrenceFacts).compactOccurrence(raw, manifest.TemplateProjection{})
 				occurrence.Identity = id
 				assert.Equal(t, cmp.Diff(
 					slices.Collect(manifest.References(raw.WithNamespace("effective"), manifest.ReferenceRelations)),
@@ -351,7 +351,7 @@ func TestFinalizeRecords_PendingPackageReaders(t *testing.T) {
 	raw := &manifest.Kustomization{Name: "pending", PostBuild: &kustomizev1.PostBuild{
 		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
 	}}
-	pending := compactOccurrence(raw, manifest.TemplateProjection{})
+	pending := new(occurrenceFacts).compactOccurrence(raw, manifest.TemplateProjection{})
 	pending.requiresBuild = true
 	l.locations = map[manifest.NamedResource]authoredOccurrence{raw.Named(): pending}
 	r := manifest.DiscoveryRecord{

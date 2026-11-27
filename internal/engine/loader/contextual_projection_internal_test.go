@@ -25,7 +25,7 @@ func TestProjectOccurrence_StructuralIdentity(t *testing.T) {
 			l.scopes = &scopeConstruction{}
 			child := &manifest.Kustomization{Name: "child", Namespace: namespace}
 			child.Path = "./work"
-			original := compactOccurrence(child, manifest.TemplateProjection{})
+			original := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 			predicted := *child
 			predicted.TargetNamespace = "apps"
 			structured := withAuthoredStructure(&original, &predicted)
@@ -68,7 +68,7 @@ func TestProjectOccurrence_StructuralIdentity(t *testing.T) {
 			l.scopes.contextual = nil
 			updated := &manifest.Kustomization{Name: child.Name, Namespace: namespace}
 			updated.Path, updated.Components = child.Path, []string{"./other"}
-			fresh := compactOccurrence(updated, manifest.TemplateProjection{})
+			fresh := new(occurrenceFacts).compactOccurrence(updated, manifest.TemplateProjection{})
 			changedPrediction := *updated
 			changedPrediction.TargetNamespace = "apps"
 			structured = withAuthoredStructure(&fresh, &changedPrediction)
@@ -88,7 +88,7 @@ func TestProjectOccurrence_StructuralIdentity(t *testing.T) {
 		l.documents.compact = true
 		l.scopes = &scopeConstruction{}
 		child := &manifest.Kustomization{Name: "child", Path: "./work"}
-		original := compactOccurrence(child, manifest.TemplateProjection{})
+		original := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 		original.Declaration = occurrenceID{Source: "mounted", File: "shared/child.yaml"}
 		source := manifest.BootstrapSourceID
 		otherSource := source
@@ -142,7 +142,7 @@ func TestSubstitutionResolution_RestoredCoverage(t *testing.T) {
 	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
 	child := &manifest.Kustomization{Name: "${VALUE}", Namespace: "apps"}
 	child.Path = "./work"
-	fact := compactOccurrence(child, manifest.TemplateProjection{})
+	fact := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 	fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "child.yaml"}
 	file := filepath.Join(l.SourceRoot, "child.yaml")
 	inputFS := &declarationReadFS{FS: fstest.MapFS{}}
@@ -181,7 +181,7 @@ func TestProjectAuthored_UnownedStructure(t *testing.T) {
 	l.ensureScopes()
 	child := &manifest.Kustomization{Name: "child"}
 	child.Path = "./work"
-	original := compactOccurrence(child, manifest.TemplateProjection{})
+	original := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 	predicted := *child
 	predicted.TargetNamespace = "apps"
 	structured := withAuthoredStructure(&original, &predicted)
@@ -216,7 +216,7 @@ func TestAuthoredNamespace_UnchangedStructure(t *testing.T) {
 			t.Parallel()
 			authored := *child
 			authored.TargetNamespace = target
-			original := compactOccurrence(&authored, manifest.TemplateProjection{})
+			original := new(occurrenceFacts).compactOccurrence(&authored, manifest.TemplateProjection{})
 			projected := l.inAuthoredNamespace(&original, "apps")
 			assert.Equal(t, projected.facts == original.facts, true)
 			assert.Equal(t, projected.facts.structural == original.facts.structural, true)
@@ -228,9 +228,9 @@ func TestPublishAuthoredLocation_CatalogIdentity(t *testing.T) {
 	t.Parallel()
 	l := New(store.New())
 	child := &manifest.Kustomization{Name: "child", Path: "./work"}
-	original := compactOccurrence(child, manifest.TemplateProjection{})
+	original := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 	projected := original
-	projected.Identity.Namespace = "apps"
+	projected.setIdentity(testutil.KustomizationID("apps", child.Name))
 	l.publishAuthoredLocation(&projected)
 	first := l.CatalogObject(projected.Identity)
 	second := l.CatalogObject(projected.Identity)
@@ -239,15 +239,15 @@ func TestPublishAuthoredLocation_CatalogIdentity(t *testing.T) {
 	assert.Equal(t, original.facts.catalog.Named(), child.Named())
 
 	again := original
-	again.Identity = projected.Identity
+	again.setIdentity(projected.Identity)
 	l.publishAuthoredLocation(&again)
 	assert.Equal(t, l.CatalogObject(projected.Identity) == first, true)
 	assert.Equal(t, again.facts == projected.facts, true)
 
 	updated := *child
 	updated.Path = "./updated"
-	fresh := compactOccurrence(&updated, manifest.TemplateProjection{})
-	fresh.Identity = projected.Identity
+	fresh := new(occurrenceFacts).compactOccurrence(&updated, manifest.TemplateProjection{})
+	fresh.setIdentity(projected.Identity)
 	l.publishAuthoredLocation(&fresh)
 	changed := l.CatalogObject(fresh.Identity)
 	_, path, _ := changed.SourcePath()
@@ -255,4 +255,94 @@ func TestPublishAuthoredLocation_CatalogIdentity(t *testing.T) {
 	assert.Equal(t, changed == first, false)
 	assert.Equal(t, child.Namespace, "")
 	assert.Equal(t, child.Path, "./work")
+}
+
+func TestSubstitutionResolution_ProjectedSyncPath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	l := New(st)
+	l.SourceRoot = root
+	l.ensureScopes()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	owner.PostBuild = &kustomizev1.PostBuild{
+		Substitute: map[string]string{"SYNC_PATH": "./workloads"},
+	}
+	st.AddObject(owner)
+	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
+	object := &manifest.RawObject{
+		APIVersion: manifest.FluxOperatorDomain + "/v1",
+		Kind:       "FluxInstance",
+		Name:       "installer",
+		Spec: map[string]any{"sync": map[string]any{
+			"kind": manifest.KindGitRepository, "url": "https://fixture.invalid/repo",
+			"ref": "refs/heads/main", "path": "${SYNC_PATH}",
+		}},
+	}
+	original := new(occurrenceFacts).compactOccurrence(object, manifest.TemplateProjection{})
+	original.Declaration = occurrenceID{Source: root, File: "installer.yaml"}
+	visit := graphVisit{owner: owner.Named(), namespace: owner.Namespace, file: filepath.Join(root, "installer.yaml")}
+	resolution := substitutionResolution{loader: l}
+	assert.NoError(
+		t,
+		resolution.resolveContextualObject(
+			t.Context(),
+			&parsedObject{fact: &original, version: object.APIVersion},
+			&visit,
+		),
+	)
+
+	l.scopes.contextual = resolution.contextual
+	projected, err := l.projectOccurrence(&original, &visit, object.APIVersion)
+	assert.NoError(t, err)
+	l.publishAuthoredLocation(&projected)
+	indexed, known := l.Occurrence(projected.Identity)
+	assert.Equal(t, known, true)
+	wantSource := manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "apps", Namespace: "apps",
+	}
+	source, path, hasPath := indexed.SourcePath()
+	assert.Equal(t, hasPath, true)
+	assert.Equal(t, source, wantSource)
+	assert.Equal(t, path, "./workloads")
+	application, applies := indexed.EntryApplication()
+	assert.Equal(t, applies, true)
+	assert.Equal(t, application, manifest.EntryApplication{Source: wantSource, Path: "./workloads"})
+	assert.Equal(t, indexed.Authored, object.Named())
+	assert.Equal(t, indexed.Declaration.File, "installer.yaml")
+	assert.Equal(t, original.facts.catalog.Named().Namespace, "")
+	_, _, authoredPath := original.SourcePath()
+	assert.Equal(t, authoredPath, false)
+}
+
+func TestSubstitutionResolution_EmptyApplicationPath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	l := New(st)
+	l.SourceRoot = root
+	l.ensureScopes()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	owner.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"APP_PATH": ""}}
+	st.AddObject(owner)
+	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "${APP_PATH}"}
+	original := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
+	original.Declaration = occurrenceID{Source: root, File: "child.yaml"}
+	visit := graphVisit{owner: owner.Named(), namespace: owner.Namespace, file: filepath.Join(root, "child.yaml")}
+
+	resolution := substitutionResolution{loader: l}
+	assert.NoError(t, resolution.resolveContextualObject(
+		t.Context(), &parsedObject{fact: &original, version: "v1"}, &visit,
+	))
+	l.scopes.contextual = resolution.contextual
+	projected, err := l.projectOccurrence(&original, &visit, "v1")
+	assert.NoError(t, err)
+	view := occurrenceView(&projected)
+	_, path, known := view.SourcePath()
+	assert.Equal(t, known, true)
+	assert.Equal(t, path, "")
+	_, applies := view.EntryApplication()
+	assert.Equal(t, applies, false)
+	assert.Equal(t, original.application, true)
 }

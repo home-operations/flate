@@ -14,7 +14,7 @@ type Catalog struct {
 	physicalView
 
 	EntryScopes   *selection.EntryScopes
-	buckets       [64]*map[manifest.BaseManifest]producerFact
+	buckets       [64]*map[manifest.BaseManifest]*producerFact
 	retainedRoots rootInventory
 	provider      func(manifest.NamedResource, *store.ReadSet, *manifest.DiscoveryIndex) store.SourceProvider
 }
@@ -25,7 +25,7 @@ type physicalView struct {
 	roots       *rootInventory
 	files       map[string]document
 	candidates  map[manifest.NamedResource]store.Child
-	projections *[64]*map[manifest.BaseManifest]producerFact
+	projections *[64]*map[manifest.BaseManifest]*producerFact
 	nativeEntry *manifest.Kustomization
 	sourceRoot  string
 	inventory   string
@@ -141,7 +141,7 @@ func (v *physicalView) projectObject(
 		return catalogIdentity(projection, id)
 	}
 	bucket := producerBucket(object)
-	var projections *map[manifest.BaseManifest]producerFact
+	var projections *map[manifest.BaseManifest]*producerFact
 	if live != nil {
 		projections = live.producerFacts[bucket].Load()
 	} else if v.projections != nil {
@@ -248,7 +248,7 @@ func (v *physicalView) rootFacts(
 		evidence.Scope.NamespaceEligible = rootNamespaceEligible(id, object)
 	}
 	evidence.Identity, evidence.Record = id, selection.RootRecordFrom(&record)
-	evidence.Occurrence.Identity = id
+	setViewIdentity(&evidence.Occurrence, id)
 	evidence.Scope.Records = v.index.Records
 	evidence.Scope.NativeEntry = v.nativeEntry != nil && v.nativeEntry.Named() == id
 	if live != nil && record.Builder != "" {

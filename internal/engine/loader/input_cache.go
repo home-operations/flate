@@ -185,7 +185,6 @@ func (r documentReader) restoreCachedFile(absolute string) {
 		}
 		f := &saved.Facts
 		facts := &occurrenceFacts{
-			source: f.Source, path: f.Path, hasPath: f.HasPath,
 			namespaced: f.Namespaced, uncertain: f.Uncertain, retained: f.Retained,
 			catalog: catalog, reverse: f.Reverse, refs: f.Refs, templateInputs: f.TemplateInputs,
 			roots: f.Roots, targets: f.Targets, authoredTargets: f.AuthoredTargets,
@@ -194,7 +193,6 @@ func (r documentReader) restoreCachedFile(absolute string) {
 		}
 		facts.census = facts
 		facts.structural, _ = catalog.(*manifest.Kustomization)
-		facts.substituted = facts.indexed() && facts.hasSubstitutions(saved.Authored)
 		occurrence := &authoredOccurrence{
 			Declaration: occurrenceID{
 				Source:   source,
@@ -202,10 +200,14 @@ func (r documentReader) restoreCachedFile(absolute string) {
 				Document: saved.Ordinal,
 				item:     saved.Item,
 			},
-			Identity: saved.Identity, requiresBuild: saved.RequiresBuild,
-			Authored: saved.Authored,
-			facts:    facts,
+			Identity:      saved.Identity,
+			requiresBuild: saved.RequiresBuild,
+			Authored:      saved.Authored,
+			facts:         facts,
+			source:        f.Source, path: f.Path, hasPath: f.HasPath,
 		}
+		occurrence.setApplication(catalog, facts.structural != nil)
+		facts.substituted = occurrence.indexed() && occurrence.hasSubstitutions(saved.Authored)
 		var structural manifest.BaseManifest
 		if facts.structural != nil {
 			structural = facts.structural
@@ -382,9 +384,9 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 			Identity: occurrence.Identity, Authored: occurrence.Authored, RequiresBuild: occurrence.requiresBuild,
 			Catalog: catalog, payload: object.payload,
 			Facts: cachedOccurrenceFacts{
-				Source:             facts.source,
-				Path:               facts.path,
-				HasPath:            facts.hasPath,
+				Source:             occurrence.source,
+				Path:               occurrence.path,
+				HasPath:            occurrence.hasPath,
 				Namespaced:         facts.namespaced,
 				Uncertain:          facts.uncertain,
 				Retained:           facts.retained,

@@ -42,38 +42,59 @@ func (l *Loader) selectionContext() selection.SourceContext {
 	}
 }
 
+// Producer cache snapshots share immutable records. The record owns its census allocation.
+type producerFact struct {
+	occurrencePath
+
+	facts                   occurrenceFacts
+	omitName, omitNamespace bool
+}
+
+func (f *producerFact) occurrence(object manifest.BaseManifest) authoredOccurrence {
+	authored := object.Named()
+	id := authored
+	if f.omitName {
+		id.Name = ""
+	}
+	if f.omitNamespace {
+		id.Namespace = ""
+	}
+	return authoredOccurrence{
+		Identity: id, Authored: authored, object: object, facts: &f.facts, occurrencePath: f.occurrencePath,
+	}
+}
+
 // ProducerFacts reuses immutable projections across concurrent preparations.
 func (l *Loader) ProducerFacts(object manifest.BaseManifest) selection.ProducerFacts {
 	bucket := &l.producerFacts[producerBucket(object)]
 	previous := bucket.Load()
 	if previous != nil {
 		if cached, known := (*previous)[object]; known {
-			occurrence := authoredOccurrence{
-				Identity: cached.identity,
-				Authored: object.Named(),
-				object:   object,
-				facts:    cached.facts,
-			}
+			occurrence := cached.occurrence(object)
 			return selection.ProducerFacts{Declaration: object, Occurrence: occurrenceView(&occurrence)}
 		}
 	}
 	projection, _ := manifest.ProjectProducer(object, nil)
-	occurrence := compactOccurrence(object, projection)
+	derived := new(producerFact)
+	occurrence := derived.facts.compactOccurrence(object, projection)
 	occurrence.object, occurrence.Authored = object, object.Named()
+	derived.omitName = occurrence.Identity.Name == ""
+	derived.omitNamespace = occurrence.Identity.Namespace == ""
+	derived.occurrencePath = occurrence.occurrencePath
 	for {
-		var next map[manifest.BaseManifest]producerFact
-		if previous == nil {
-			next = make(map[manifest.BaseManifest]producerFact, 1)
-		} else {
-			next = maps.Clone(*previous)
+		var current map[manifest.BaseManifest]*producerFact
+		if previous != nil {
+			current = *previous
 		}
-		next[object] = producerFact{identity: occurrence.Identity, facts: occurrence.facts}
+		next := make(map[manifest.BaseManifest]*producerFact, len(current)+1)
+		maps.Copy(next, current)
+		next[object] = derived
 		if bucket.CompareAndSwap(previous, &next) {
 			return selection.ProducerFacts{Declaration: object, Occurrence: occurrenceView(&occurrence), Derived: true}
 		}
 		previous = bucket.Load()
 		if cached, known := (*previous)[object]; known {
-			occurrence.Identity, occurrence.facts = cached.identity, cached.facts
+			occurrence = cached.occurrence(object)
 			return selection.ProducerFacts{Declaration: object, Occurrence: occurrenceView(&occurrence)}
 		}
 	}
@@ -88,15 +109,25 @@ func (l *Loader) SelectionIndex() *manifest.DiscoveryIndex {
 func (l *Loader) Occurrence(id manifest.NamedResource) (selection.OccurrenceFacts, bool) {
 	record, indexed := l.Index.Lookup(id)
 	occurrence, catalog := l.catalogOccurrence(id)
-	located := catalog && !occurrence.requiresBuild && occurrence.Identity.Name == occurrence.Authored.Name
-	facts := occurrenceView(&occurrence)
-	facts.Identity = id
-	facts.Located, facts.CatalogKnown = located, catalog
+	var facts selection.OccurrenceFacts
+	if catalog {
+		located := !occurrence.requiresBuild && occurrence.Identity.Name == occurrence.Authored.Name
+		occurrence.setIdentity(id)
+		facts = occurrenceView(&occurrence)
+		facts.Located, facts.CatalogKnown = located, true
+	} else {
+		facts.Identity = id
+	}
 	facts.Mounted = l.documents.artifacts[occurrence.Declaration.Source]
 	facts.Traversed = l.documents.cache[record.Path].traversed
 	if facts.Catalog == nil {
 		view := l.physicalView()
 		facts.Catalog = view.object(id, &record, l)
+		if facts.Catalog != nil && occurrence.facts == nil {
+			resolved := objectPath(facts.Catalog)
+			facts.Source, facts.Path, facts.HasPath, facts.Application =
+				resolved.source, resolved.path, resolved.hasPath, resolved.application
+		}
 	}
 	return facts, indexed || catalog
 }
@@ -133,9 +164,9 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 		if view.Parsed == nil && facts.completeCatalog {
 			view.Parsed = facts.catalog
 		}
-		view.Source, view.Path, view.HasPath = facts.source, facts.path, facts.hasPath
 		view.Namespaced, view.Uncertain = facts.namespaced, facts.uncertain
-		view.Retained, view.Structural, view.NeedsCandidates = facts.retained, facts.structural, facts.needsCandidates
+		view.Retained, view.Structural, view.NeedsCandidates = facts.retained ||
+			occurrence.hasPath, facts.structural, facts.needsCandidates
 		view.Labels, view.Labeled, view.Witness = facts.labels, facts.labeled, facts
 		view.Refs, view.Reverse = facts.relations(), facts.reverse
 		if len(view.Refs) != len(facts.refs) {
@@ -145,10 +176,11 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 		view.Roots, view.Targets, view.AuthoredTargets = facts.roots, facts.targets, facts.authoredTargets
 		view.Policy = facts.policy
 	} else if occurrence.object != nil {
-		view.Source, view.Path, view.HasPath = occurrence.object.SourcePath()
 		view.Namespaced = manifest.KindOf(occurrence.object).Namespaced()
 		view.Catalog = occurrence.object
 	}
+	view.Source, view.Path, view.HasPath = occurrence.SourcePath()
+	view.Application = occurrence.application
 	return view
 }
 
@@ -163,15 +195,34 @@ func (l *Loader) RootEvidence(
 	return facts
 }
 
+func occurrenceCoordinate(view *selection.OccurrenceFacts) occurrenceID {
+	return occurrenceID{
+		Source: view.Declaration.Source, File: view.Declaration.File,
+		Document: view.Declaration.Document, item: view.Declaration.Item,
+	}
+}
+
+func setViewIdentity(view *selection.OccurrenceFacts, id manifest.NamedResource) {
+	if view.Identity == id {
+		return
+	}
+	occurrence := physicalOccurrence(view)
+	if occurrence.object == nil && occurrence.facts == nil {
+		occurrence.object = view.Catalog
+	}
+	occurrence.setIdentity(id)
+	view.Identity = id
+	view.Source, view.Path, view.HasPath = occurrence.SourcePath()
+	view.Application = occurrence.application
+}
+
 func physicalOccurrence(view *selection.OccurrenceFacts) authoredOccurrence {
 	facts, _ := view.Witness.(*occurrenceFacts)
 	return authoredOccurrence{
-		Declaration: occurrenceID{
-			Source: view.Declaration.Source, File: view.Declaration.File,
-			Document: view.Declaration.Document, item: view.Declaration.Item,
-		},
-		Identity: view.Identity, Authored: view.Authored, object: view.Object,
+		Declaration: occurrenceCoordinate(view),
+		Identity:    view.Identity, Authored: view.Authored, object: view.Object,
 		facts: facts, requiresBuild: view.RequiresBuild,
+		source: view.Source, path: view.Path, hasPath: view.HasPath, application: view.Application,
 	}
 }
 

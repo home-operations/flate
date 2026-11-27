@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"maps"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -70,7 +71,12 @@ func TestFollowOutput_StalePreparationReturnsOriginalChildren(t *testing.T) {
 		st.SetArtifact(manifest.BootstrapSourceID, &next)
 	}}
 	assert.Equal(t, frame.support.Valid(), true)
-	children, err := planner.followOutput(ctx, input, &rootVisit{occurrence: &occurrence}, root)
+	children, err := planner.followOutput(
+		ctx,
+		input,
+		&rootApplication{visit: &rootVisit{occurrence: &occurrence}, object: owner},
+		root,
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, d.prepared[owner.Named()], frame)
 	assert.Equal(t, frame.complete, true)
@@ -176,6 +182,108 @@ func TestPlan_TracksDisjointWorkloadsForMultipleRoots(t *testing.T) {
 		var inputs entryInputs
 		inputs.collectEntryOperands(entry, roots, "entry/"+name, false)
 		assert.Diff(t, inputs.publicOperands, []manifest.NamedResource{testutil.KustomizationID("apps", name)})
+	}
+}
+
+func TestPlan_IndirectAnchorSeedOrder(t *testing.T) {
+	t.Parallel()
+	for _, order := range []string{"first seed first", "anchor seed first"} {
+		t.Run(order, func(t *testing.T) {
+			t.Parallel()
+			for i, side := range []string{"base", "current"} {
+				t.Run(side, func(t *testing.T) {
+					t.Parallel()
+					testIndirectAnchorSeedOrder(t, order == "anchor seed first", manifest.TreeSide(i))
+				})
+			}
+		})
+	}
+}
+
+func testIndirectAnchorSeedOrder(t *testing.T, reverse bool, side manifest.TreeSide) {
+	t.Helper()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"outside/a.yaml": {Data: []byte(testutil.KustomizationYAML("a", "apps",
+			"  path: ./shared\n"))},
+		"entry/bootstrap/b.yaml": {Data: []byte(testutil.KustomizationYAML("b", "apps",
+			"  path: ./shared\n"))},
+		"entry/kustomization.yaml": {Data: []byte("resources: [bootstrap/b.yaml, marker.yaml]\n")},
+		"entry/marker.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker}\ndata: {side: base}\n"),
+		},
+		"shared/return.yaml": {Data: []byte(testutil.KustomizationYAML("return", "apps",
+			"  path: ./entry\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))},
+		"orphan/root.yaml": {Data: []byte(testutil.KustomizationYAML("orphan", "apps",
+			"  path: ./workload\n"))},
+		"workload/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload}\n")},
+	}
+	current := maps.Clone(files)
+	current["entry/marker.yaml"] = &fstest.MapFile{Data: []byte(
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker}\ndata: {side: current}\n",
+	)}
+	inputs := [2]*store.SourceArtifact{
+		{Provider: store.ProviderInput, LocalPath: root, FS: files},
+		{Provider: store.ProviderInput, LocalPath: root, FS: current},
+	}
+	changes, err := change.Detect(
+		t.Context(),
+		inputs[manifest.TreeBase],
+		inputs[manifest.TreeHead],
+		change.DetectConfig{},
+	)
+	assert.NoError(t, err)
+	d, err := Begin(t.Context(), Config{
+		Path: root, Input: inputs[side],
+		Store: store.New(), Selection: selection.Request{Changed: true}, Changes: changes,
+	})
+	assert.NoError(t, err)
+	t.Cleanup(d.Close)
+	assert.NoError(t, constructTestSources(t.Context(), d))
+	assert.NoError(t, d.loadPlan(t.Context()))
+	first, err := d.loader.Occurrences(t.Context(), filepath.Join(root, "outside"), "")
+	assert.NoError(t, err)
+	second, err := d.loader.Occurrences(t.Context(), filepath.Join(root, "entry", "bootstrap"), "")
+	assert.NoError(t, err)
+	seeds := append(slices.Clone(first), second...)
+	assert.FatalIf(t, len(seeds) != 2, "seeds = %+v", seeds)
+	if reverse {
+		slices.Reverse(seeds)
+	}
+	orphan, err := d.loader.Occurrences(t.Context(), filepath.Join(root, "orphan"), "")
+	assert.NoError(t, err)
+	d.planner = &entryPlanner{
+		session: d, inputs: map[string]*store.SourceArtifact{root: d.cfg.Input},
+		coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]rootVisitState{},
+		roots: []clusterRoot{{Path: "entry/bootstrap", seeds: seeds}, {Path: "orphan", seeds: orphan}},
+	}
+	roots, err := d.clusterRoots(t.Context())
+	assert.NoError(t, err)
+	entries := clusterEntries(roots, d.cfg.Input, root)
+	assert.FatalIf(t, len(entries) != 2, "entries = %+v", entries)
+	assert.Equal(t, entries[0].ID, manifest.ClusterID("entry"))
+	assert.Equal(t, entries[0].target, filepath.Join(root, "entry"))
+	assert.Equal(t, entries[1].ID, manifest.ClusterID("orphan"))
+	for _, entry := range entries {
+		var members []manifest.NamedResource
+		for _, i := range entry.roots {
+			for j := range roots[i].Occurrences {
+				occurrence := &roots[i].Occurrences[j]
+				members = append(members, occurrence.Identity)
+			}
+		}
+		slices.SortFunc(members, manifest.NamedResource.Compare)
+		if entry.ID == manifest.ClusterID("orphan") {
+			assert.Diff(t, members, []manifest.NamedResource{
+				{Kind: "ConfigMap", Name: "workload"}, testutil.KustomizationID("apps", "orphan"),
+			})
+			continue
+		}
+		assert.Diff(t, members, []manifest.NamedResource{
+			{Kind: "ConfigMap", Name: "marker"},
+			testutil.KustomizationID("apps", "a"),
+			testutil.KustomizationID("apps", "b"), testutil.KustomizationID("apps", "return"),
+		})
 	}
 }
 
@@ -306,7 +414,7 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 	d := newDiscoverer(&Config{Path: root, Input: input, Store: store.New()})
 	t.Cleanup(d.Close)
 	planner := entryPlanner{
-		session: d, coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]bool{},
+		session: d, coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]rootVisitState{},
 	}
 	mounts := map[string]*store.SourceArtifact{
 		"left": input,
@@ -327,10 +435,10 @@ func TestPlan_CatalogSourceScope(t *testing.T) {
 		owner := &manifest.Kustomization{Name: "root", Namespace: "apps"}
 		owner.Path = "./" + side
 		mount := mounts[side]
-		candidate := clusterRoot{Path: side, seeds: []selection.OccurrenceFacts{{
-			Declaration: selection.OccurrenceID{Source: mount.LocalPath, File: side + "/sync.yaml"},
-			Identity:    owner.Named(), Object: owner, Mounted: mount,
-		}}}
+		seed := d.loader.ProducerFacts(owner).Occurrence
+		seed.Declaration = selection.OccurrenceID{Source: mount.LocalPath, File: side + "/sync.yaml"}
+		seed.Mounted = mount
+		candidate := clusterRoot{Path: side, seeds: []selection.OccurrenceFacts{seed}}
 		assert.NoError(t, planner.start(t.Context(), &candidate))
 		id := planner.catalog.occurrences[0].Identity
 		selected, _ := planner.catalogSource(id)
@@ -428,10 +536,89 @@ func TestPlan_CatalogNamespaceProjection(t *testing.T) {
 	assert.NoError(t, d.beginRootPlan(t.Context()))
 	assert.FatalIf(t, len(d.planner.catalog.occurrences) != 1, "catalog = %+v", d.planner.catalog.occurrences)
 	occurrence := &d.planner.catalog.occurrences[0]
-	projected := occurrenceObject(occurrence)
+	projected := occurrence.EffectiveObject()
 	assert.Equal(t, projected.Named().Namespace, "apps")
-	assert.Equal(t, occurrenceObject(occurrence) == projected, true)
+	assert.Equal(t, occurrence.EffectiveObject() == projected, true)
 	assert.Equal(t, d.packages[0].Occurrences[0].Object.Named().Namespace, "")
+}
+
+func TestPlan_ProjectedGeneratedApplication(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, syncPath, syncName, wantName string
+		prepare                            bool
+	}{
+		{name: "omitted path"},
+		{name: "missing directory", syncPath: "./missing", wantName: "apps"},
+		{name: "authored root", syncPath: ".", wantName: "apps", prepare: true},
+		{name: "explicit sync name", syncPath: "./missing", syncName: "content", wantName: "content"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			var syncName string
+			if tc.syncName != "" {
+				syncName = "    name: " + tc.syncName + "\n"
+			}
+			var syncPath string
+			if tc.syncPath != "" {
+				syncPath = "    path: " + tc.syncPath + "\n"
+			}
+			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [instance.yaml]\n")},
+				"instance.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance}
+spec:
+  sync:
+    kind: GitRepository
+    url: https://fixture.invalid/checkout.git
+    ref: refs/heads/main
+` + syncPath + syncName)},
+			}}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			d := newDiscoverer(&Config{Path: root, Input: input, Store: st, Trees: testTrees(t)})
+			t.Cleanup(d.Close)
+			configureSelection(t, d.loader, selection.Request{Changed: true})
+			d.loader.SourceRoot = root
+			_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			occurrences, err := d.loader.Occurrences(t.Context(), root, "")
+			assert.NoError(t, err)
+			assert.Equal(t, len(occurrences), 1)
+			occurrence := &occurrences[0]
+			assert.Equal(t, occurrence.Object, manifest.BaseManifest(nil))
+			assert.Equal(t, occurrence.Authored.Namespace, "")
+			assert.Equal(t, occurrence.Identity.Namespace, "apps")
+			assert.Equal(t, occurrence.Catalog.Named().Namespace, "")
+			assert.Equal(t, st.GetDeclaration(occurrence.Identity), manifest.BaseManifest(nil))
+
+			occurrence.RequiresBuild = true
+			planner := entryPlanner{session: d, directoryInventory: true}
+			assert.Equal(
+				t,
+				planner.rootRequiresPreparation(&clusterRoot{Path: ".", seeds: occurrences}, input),
+				tc.prepare,
+			)
+			source, path, valid := occurrence.SourcePath()
+			assert.Equal(t, valid, tc.syncPath != "")
+			assert.Equal(t, path, tc.syncPath)
+			var expected manifest.NamedResource
+			if tc.syncPath != "" {
+				expected = manifest.NamedResource{
+					Group:     manifest.SourceDomain,
+					Kind:      manifest.KindGitRepository,
+					Namespace: "apps",
+					Name:      tc.wantName,
+				}
+			}
+			assert.Equal(t, source, expected)
+			application, applies := occurrence.EntryApplication()
+			assert.Equal(t, applies, valid)
+			assert.Equal(t, application, manifest.EntryApplication{Source: expected, Path: tc.syncPath})
+		})
+	}
 }
 
 func TestPlan_ProducerEvidenceReuse(t *testing.T) {
@@ -470,7 +657,7 @@ spec: {}
 	}
 	reference := aliasRequestReference(t, d.cfg.Store, id)
 	visit := rootVisit{occurrence: &scope.occurrences[0], scope: &scope}
-	_, err = planner.source(t.Context(), &clusterRoot{}, &visit, &reference)
+	_, err = planner.source(t.Context(), &clusterRoot{}, &rootApplication{visit: &visit}, &reference)
 	assert.Equal(t, errors.Is(err, errPendingSources), true)
 	assert.NoError(t, constructTestSources(t.Context(), d))
 	before := reads.Load()
@@ -478,7 +665,7 @@ spec: {}
 	planner.parsed = d.loader.ParsedInputs()
 	parsed := planner.parsed
 	for range 2 {
-		_, sourceErr := planner.source(t.Context(), &clusterRoot{}, &visit, &reference)
+		_, sourceErr := planner.source(t.Context(), &clusterRoot{}, &rootApplication{visit: &visit}, &reference)
 		assert.NoError(t, sourceErr)
 	}
 	assert.Equal(t, reads.Load(), before)
@@ -521,4 +708,63 @@ spec:
 	id.Namespace = "apps"
 	_, producers = scope.source(id)
 	assert.Equal(t, len(producers), 0)
+}
+
+func TestPlan_ResolvedEntryDeclarations(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+		"owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps", `  path: ./entry
+  postBuild:
+    substitute: {SYNC_PATH: ./entry, SYNC_NAME: content}
+`))},
+		"entry/kustomization.yaml": {Data: []byte("resources: [instance.yaml, child.yaml]\n")},
+		"entry/instance.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance, namespace: apps}
+spec:
+  sync:
+    kind: GitRepository
+    url: https://fixture.invalid/checkout.git
+    ref: refs/heads/main
+    path: ${SYNC_PATH}
+    name: ${SYNC_NAME}
+`)},
+		"entry/child.yaml": {Data: []byte(testutil.KustomizationYAML("child", "apps", `  path: ${SYNC_PATH}
+  sourceRef: {kind: GitRepository, name: "${SYNC_NAME}"}
+`))},
+	}}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	d := newDiscoverer(&Config{Path: root, Input: input, Store: st, Trees: testTrees(t)})
+	t.Cleanup(d.Close)
+	configureSelection(t, d.loader, selection.Request{Changed: true})
+	d.loader.SourceRoot = root
+	_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, false))
+
+	source := &manifest.GitRepository{Name: "content", Namespace: "apps"}
+	want := manifest.EntryApplication{Source: source.Named(), Path: "./entry"}
+	child, known := d.loader.Occurrence(testutil.KustomizationID("apps", "child"))
+	assert.Equal(t, known, true)
+	assert.Equal(t, child.Declaration.File, "entry/child.yaml")
+	authored, _ := manifest.ApplicationFor(child.EffectiveObject())
+	assert.FatalIf(t, authored == want, "checkout fixture did not distinguish authored and resolved application")
+
+	scope := rootScope{occurrences: []selection.OccurrenceFacts{child}}
+	planner := entryPlanner{session: d, inputs: map[string]*store.SourceArtifact{root: input}}
+	assert.Equal(t, planner.scopedEntry(source.Named(), source, &scope), entryAccepted)
+
+	instance, known := d.loader.Occurrence(manifest.NamedResource{
+		Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "instance",
+	})
+	assert.Equal(t, known, true)
+	generated, err := planner.scopeGeneration(&instance, instance.EffectiveObject())
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(generated) != 2, "generated %d declarations, want 2", len(generated))
+	assert.Equal(t, generated[0].Identity, want.Source)
+	application, applies := generated[1].EntryApplication()
+	assert.Equal(t, applies, true)
+	assert.Equal(t, application, want)
 }

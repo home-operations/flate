@@ -1,0 +1,192 @@
+{
+  "source": {
+    "repository": "rcdailey/home-ops",
+    "revision": "160d87b0d0b31796b454435762167f435970ebf6",
+    "paths": [
+      "kubernetes/apps/flux-system/kustomization.yaml",
+      "kubernetes/apps/flux-system/flux-instance/ks.yaml",
+      "kubernetes/apps/flux-system/flux-instance/kustomization.yaml"
+    ],
+    "reductions": "Keep the installer and instance in separate packages under the sync folder. Replace the other applications with one ConfigMap workload in a sibling package. Use a synthetic origin and local Git commit."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/self-synced-flux-instance.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "Fixture",
+      "email": "fixture@example.invalid",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "sync-folder",
+      "description": "Select the installer, generated sync, and sibling workload from the sync folder.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test-all",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "kubernetes/apps",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/sync-folder.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "detached-root",
+      "description": "Select the same self-sync cluster from the repository root at a detached HEAD.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test-all",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--cache-dir",
+              "",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/sync-folder.stdout",
+              "stderr": "expect/quiet.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/quiet.stderr",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Independently derived complete result."
+    },
+    {
+      "path": "expect/sync-folder.stdout",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Independently derived complete result."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/flux-instance/fluxinstance.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/flux-instance/ks.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/flux-instance/kustomization.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/kustomization.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/network/kustomization.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/network/sample/configmap.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/network/sample/ks.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    },
+    {
+      "path": "repo/kubernetes/apps/network/sample/kustomization.yaml",
+      "cases": [
+        "sync-folder",
+        "detached-root"
+      ],
+      "purpose": "Reduced authored package input."
+    }
+  ]
+}

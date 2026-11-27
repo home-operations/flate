@@ -2245,6 +2245,13 @@ The `entry-unknown-projection/` fixture covers the replacement overlay from issu
 | `entry-unknown-projection/rootless` | List the transformed child and compare its workload when the requested path has no builder. |
 | `entry-unknown-projection/real-parent` | List the physical parent and make the same workload comparison. |
 
+The `self-synced-flux-instance/` fixture covers issue #1712. It follows the installer and sync layout from `rcdailey/home-ops@160d87b0`.
+
+| Case | Behavior |
+| --- | --- |
+| `self-synced-flux-instance/sync-folder` | Render the installer, generated sync, and a sibling workload from the sync folder. The instance lives in the installer target package. The workload package includes its own declaration. |
+| `self-synced-flux-instance/detached-root` | Render the same cluster from the repository root at a detached HEAD. The origin matches the generated GitRepository URL. |
+
 The generated chart fixture and its two output pairs come from hatemosphere's PR #1640 at `561b07b52e995f1b76200921c88b20aafbfb93bd`.
 The related CLI tests also edit only the library, edit a source-root values file, and compare charts that read generated artifacts.
 An unrelated chart edit causes zero Helm calls.

@@ -3,8 +3,11 @@ package discovery
 import (
 	"cmp"
 	"context"
+	"io/fs"
+	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -171,9 +174,10 @@ func (w *qualificationWalk) captureSyncGeneration(
 func (p *entryPlanner) scopeGeneration(
 	occurrence *selection.OccurrenceFacts, object manifest.BaseManifest,
 ) ([]selection.OccurrenceFacts, error) {
-	if !generatesEntry(occurrence) || occurrence.RequiresBuild {
+	if _, valid := generatedEntryPath(occurrence); !valid || occurrence.RequiresBuild {
 		return nil, nil
 	}
+	object = loader.ProjectedSyncDeclaration(occurrence, object)
 	output, err := p.session.admission().prepareGeneration(object, p.session.cfg.Work.Source(occurrence.Identity))
 	if err != nil {
 		return nil, err
@@ -354,4 +358,70 @@ func (p *entryPlanner) scopedSyncSource(
 		return before.sync
 	}
 	return nil
+}
+
+func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.SourceArtifact) bool {
+	if p.session.cfg.Trees == nil {
+		return false
+	}
+	for i := range root.seeds {
+		occurrence := &root.seeds[i]
+		if occurrence.RequiresBuild && p.occurrenceRequiresPreparation(occurrence, input) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *entryPlanner) occurrenceRequiresPreparation(
+	occurrence *selection.OccurrenceFacts, input *store.SourceArtifact,
+) bool {
+	request := p.session.cfg.Selection
+	kind := occurrence.Identity.KindInfo()
+	lookupOwner := request.RestrictedPackageLookup() && kind.Structural && !request.Matches(occurrence.Identity)
+	path, generated := generatedEntryPath(occurrence)
+	if lookupOwner || p.directoryInventory && rootPreparationProducer(kind, generated) {
+		if !generated || generatedEntryDirectory(input, path) {
+			return true
+		}
+	}
+	if !generated {
+		application, valid := occurrence.EntryApplication()
+		if !valid {
+			return false
+		}
+		path = application.Path
+	}
+	_, contains := configuredApplicationTarget(input, path, occurrence)
+	return contains
+}
+
+func rootProducerCount(occurrences []selection.OccurrenceFacts) int {
+	count := 0
+	for i := range occurrences {
+		occurrence := &occurrences[i]
+		_, generated := generatedEntryPath(occurrence)
+		if rootPreparationProducer(occurrence.Identity.KindInfo(), generated) {
+			count++
+		}
+	}
+	return count
+}
+
+func rootPreparationProducer(kind manifest.KindInfo, generated bool) bool {
+	return kind.Parent || kind.IsSource() || generated
+}
+
+func generatedEntryPath(occurrence *selection.OccurrenceFacts) (string, bool) {
+	if !occurrence.Identity.CanDeclareGeneratedEntry() {
+		return "", false
+	}
+	_, path, valid := occurrence.SourcePath()
+	return path, valid
+}
+
+func generatedEntryDirectory(input *store.SourceArtifact, path string) bool {
+	name := filepath.ToSlash(filepath.Join(".", manifest.NormalizeClaimBase(path)))
+	info, err := fs.Stat(input.FS, name)
+	return err == nil && info.IsDir()
 }

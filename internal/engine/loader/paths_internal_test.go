@@ -48,7 +48,7 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 			}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
 			child := &manifest.Kustomization{Name: tc.childName, Namespace: "apps", Path: tc.expression}
-			fact := compactOccurrence(child, manifest.TemplateProjection{})
+			fact := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 			fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "child.yaml"}
 			file := filepath.Join(l.SourceRoot, "child.yaml")
 			visit := graphVisit{file: file, owner: owner.Named(), source: manifest.BootstrapSourceID}
@@ -85,11 +85,11 @@ func TestFinalizeIndex_RepeatedContext(t *testing.T) {
 						continue
 					}
 					assert.Equal(t, projected.Identity.Name, key.context.namePrefix+"child")
-					assert.Equal(t, projected.facts.path, "work")
+					assert.Equal(t, projected.path, "work")
 				}
 				l.scopes.contextual = resolution.contextual
 			}
-			assert.Equal(t, fact.facts.path, tc.expression)
+			assert.Equal(t, fact.path, tc.expression)
 		})
 	}
 }
@@ -279,7 +279,7 @@ func TestSubstitutionResolution_ReusedCancellation(t *testing.T) {
 	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Declaration: owner}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	child.Path = "./${VALUE}"
-	fact := compactOccurrence(child, manifest.TemplateProjection{})
+	fact := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 	parsed := parsedObject{fact: &fact}
 	visit := &graphVisit{owner: owner.Named()}
 	resolution := substitutionResolution{loader: l}

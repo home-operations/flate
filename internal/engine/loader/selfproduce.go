@@ -489,7 +489,14 @@ func (b *selfProduceBuilder) recordApplication(l *Loader, declaration *producerD
 	if !declaration.hasApplicationOwner() {
 		return
 	}
-	application, valid := manifest.ApplicationFor(declaration.obj)
+	var application manifest.EntryApplication
+	var valid bool
+	if declaration.fact == nil {
+		application, valid = manifest.ApplicationFor(declaration.obj)
+	} else {
+		facts := declaration.fact.occurrencePath
+		application, valid = manifest.EntryApplication{Source: facts.source, Path: facts.path}, facts.application
+	}
 	if !valid {
 		return
 	}

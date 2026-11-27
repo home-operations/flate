@@ -230,7 +230,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			Source: manifest.BootstrapSourceID, Authored: bare, File: "missing.yaml", Path: "missing.yaml",
 		}}}
 	}
-	occurrence := compactOccurrence(opaque, projectedProducerForTest(opaque))
+	occurrence := new(occurrenceFacts).compactOccurrence(opaque, projectedProducerForTest(opaque))
 	occurrence.Declaration.Source = root
 	l.locations = map[manifest.NamedResource]authoredOccurrence{opaque.Named(): occurrence}
 	l.Index.Records[opaque.Named()] = manifest.DiscoveryRecord{}

@@ -47,7 +47,7 @@ spec:
 			documentReader,
 		).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: doc})
 		assert.NoError(t, child.outcome.Err)
-		fact := compactOccurrence(child.Obj, manifest.TemplateProjection{})
+		fact := new(occurrenceFacts).compactOccurrence(child.Obj, manifest.TemplateProjection{})
 		projected, err := resolution.resolveOccurrence(
 			t.Context(),
 			&fact,

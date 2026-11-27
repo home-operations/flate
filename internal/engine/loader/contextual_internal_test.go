@@ -81,7 +81,7 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 		documentReader,
 	).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: doc})
 	assert.NoError(t, child.outcome.Err)
-	fact := compactOccurrence(child.Obj, manifest.TemplateProjection{})
+	fact := new(occurrenceFacts).compactOccurrence(child.Obj, manifest.TemplateProjection{})
 	fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "shared/child.yaml"}
 	child.fact = &fact
 	l.documents.cache[file] = document{objects: []parsedObject{child}, coverage: l.documents.intent}
@@ -123,7 +123,7 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 		projected, found := resolution.contextual[key]
 		assert.Equal(t, found, true)
 		assert.Equal(t, projected.Identity, testutil.KustomizationID(color, color))
-		assert.Equal(t, projected.facts.path, color)
+		assert.Equal(t, projected.path, color)
 		assert.Equal(t, projected.facts.policy.Namespace, color)
 		assert.Equal(t, projected.facts.labels["role"], color)
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "vars-" + color}
@@ -134,7 +134,7 @@ func TestSubstitutionResolution_RepeatedScalar(t *testing.T) {
 	}
 	assert.Equal(t, len(reader.lookups), 2)
 	assert.Equal(t, fact.Authored, testutil.KustomizationID("${VALUE}", "${VALUE}"))
-	assert.Equal(t, fact.facts.path, "${VALUE}")
+	assert.Equal(t, fact.path, "${VALUE}")
 	l.scopes.contextual = resolution.contextual
 	want := []authoredRecord{
 		{id: testutil.KustomizationID("blue", "blue"), authored: fact.Authored, path: file, file: "shared/child.yaml"},
@@ -205,7 +205,7 @@ func TestFinalizeIndex_ContextualEligibility(t *testing.T) {
 				assert.NoError(t, parsed.outcome.Err)
 				object = parsed.Obj
 			}
-			fact := compactOccurrence(object, templates)
+			fact := new(occurrenceFacts).compactOccurrence(object, templates)
 			fact.Declaration = occurrenceID{Source: l.SourceRoot, File: "child.yaml"}
 			file := filepath.Join(l.SourceRoot, "child.yaml")
 			l.documents.cache[file] = document{objects: []parsedObject{{fact: &fact}}, coverage: tc.coverage}
@@ -242,7 +242,7 @@ func TestFinalizeIndex_ContextualEligibility(t *testing.T) {
 					assert.Equal(t, projected.facts.refs[0].Selector.MatchExpressions[0].Key, "role")
 				default:
 					assert.Equal(t, projected.facts.uncertain, true)
-					assert.Equal(t, projected.facts.path, "./work")
+					assert.Equal(t, projected.path, "./work")
 				}
 			}
 		})
@@ -354,11 +354,11 @@ spec:
 	for _, color := range []string{"red", "blue"} {
 		old := testutil.KustomizationID(color, "child-"+color)
 		id := testutil.KustomizationID(color, "next-"+color)
-		assert.Equal(t, borrowed[old].facts.path, "./work")
+		assert.Equal(t, borrowed[old].path, "./work")
 		assert.Equal(t, borrowed[old].Authored, testutil.KustomizationID("${NS}", "${NAME}"))
 		current, found := catalogOccurrence(catalog.locations, id)
 		assert.Equal(t, found, true)
-		assert.Equal(t, current.facts.path, "./next")
+		assert.Equal(t, current.path, "./next")
 		assert.Equal(t, current.Authored, borrowed[old].Authored)
 		assert.Equal(t, current.Declaration.File, "children/child.yaml")
 		assert.Equal(t, catalog.CatalogObject(id).(*manifest.Kustomization).Path, "./${DIR}")
@@ -539,7 +539,7 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				"kind":       "Kustomization",
 				"metadata": map[string]any{
 					"name":      "child",
-					"namespace": "apps",
+					"namespace": "authored",
 					"labels":    map[string]any{"${LABEL:-role}": "${VALUE:-y}"},
 				},
 				"spec": map[string]any{
@@ -592,10 +592,12 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				{Inputs: templates.Inputs[1:]},
 				{Objects: templates.Objects},
 			} {
-				literal := compactOccurrence(&manifest.ResourceSet{Name: "literal", Namespace: "apps"}, projection)
+				literal := new(
+					occurrenceFacts,
+				).compactOccurrence(&manifest.ResourceSet{Name: "literal", Namespace: "apps"}, projection)
 				assert.Equal(t, literal.facts.substituted, true)
 			}
-			fact := compactOccurrence(child.Obj, templates)
+			fact := new(occurrenceFacts).compactOccurrence(child.Obj, templates)
 			l.SourceRoot = t.TempDir()
 			fact.Declaration.Source = l.SourceRoot
 			fact.facts.substituteDisabled = child.substituteDisabled
@@ -603,7 +605,7 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 			projected, err := resolution.resolveOccurrence(
 				t.Context(),
 				&fact,
-				&graphVisit{owner: owner.Named(), namePrefix: "${PREFIX:-pre}-"},
+				&graphVisit{owner: owner.Named(), namespace: "apps", namePrefix: "${PREFIX:-pre}-"},
 				child.version,
 			)
 			assert.NoError(t, err)
@@ -647,13 +649,18 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 			assert.Equal(t, fact.facts.catalog.Named().Name, "child")
 			assert.Equal(t, projected.facts.labels[want("${LABEL:-role}", "role")], want("${VALUE:-y}", "y"))
 			assert.Equal(t, fact.facts.labels["${LABEL:-role}"], "${VALUE:-y}")
-			assert.Equal(t, projected.facts.path, want("./${DIR:-a}", "./a"))
-			assert.Equal(t, projected.facts.source.Name, want("${SOURCE:-repo}", "repo"))
-			assert.Equal(t, projected.facts.source.Namespace, want("${NS:-apps}", "apps"))
+			assert.Equal(t, projected.path, want("./${DIR:-a}", "./a"))
+			assert.Equal(t, projected.source.Name, want("${SOURCE:-repo}", "repo"))
+			assert.Equal(t, projected.source.Namespace, want("${NS:-apps}", "apps"))
+			source, path, applies := projected.SourcePath()
+			assert.Equal(t, applies, true)
+			assert.Equal(t, source.Namespace, want("${NS:-apps}", "apps"))
+			assert.Equal(t, source.Name, want("${SOURCE:-repo}", "repo"))
+			assert.Equal(t, path, want("./${DIR:-a}", "./a"))
 			assert.Equal(t, projected.facts.policy.Namespace, want("${TARGET:-work}", "work"))
-			assert.Equal(t, projected.facts.structural.Path, projected.facts.path)
+			assert.Equal(t, projected.facts.structural.Path, projected.path)
 			assert.Equal(t, projected.facts.structural.Components[0], want("${COMP:-../../shared}", "../../shared"))
-			assert.Equal(t, fact.facts.path, "./${DIR:-a}")
+			assert.Equal(t, fact.path, "./${DIR:-a}")
 			assert.Equal(t, fact.facts.structural.SourceRef.Name, "${SOURCE:-repo}")
 			refs := make(map[string]manifest.Reference)
 			for ref := range projected.references() {
@@ -684,7 +691,7 @@ func TestSubstitutionResolution_ContextualScalars(t *testing.T) {
 				documentReader,
 			).prepareStreamObject(manifest.ParseDocOptions{}, &manifest.DocOccurrence{Document: selectorDoc})
 			assert.NoError(t, set.outcome.Err)
-			setFact := compactOccurrence(set.Obj, manifest.TemplateProjection{})
+			setFact := new(occurrenceFacts).compactOccurrence(set.Obj, manifest.TemplateProjection{})
 			setFact.facts.substituteDisabled = set.substituteDisabled
 			setProjection, err := resolution.resolveOccurrence(
 				t.Context(),

@@ -57,8 +57,9 @@ func targetsSubstituted(targets []manifest.ProducerTarget) bool {
 	return false
 }
 
-func (f *occurrenceFacts) hasSubstitutions(id manifest.NamedResource) bool {
-	if identitySubstituted(id) || identitySubstituted(f.source) || manifest.HasEnvsubstReference(f.path) ||
+func (o *authoredOccurrence) hasSubstitutions(id manifest.NamedResource) bool {
+	f := o.facts
+	if identitySubstituted(id) || identitySubstituted(o.source) || manifest.HasEnvsubstReference(o.path) ||
 		slices.ContainsFunc(f.roots, manifest.HasEnvsubstReference) {
 		return true
 	}

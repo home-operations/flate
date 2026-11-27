@@ -32,6 +32,8 @@ type occurrenceID struct {
 
 // occurrence retains an immutable declaration and its contextual resource identity.
 type authoredOccurrence struct {
+	occurrencePath
+
 	Declaration   occurrenceID
 	Identity      manifest.NamedResource
 	Authored      manifest.NamedResource
@@ -41,18 +43,17 @@ type authoredOccurrence struct {
 	orderingKnown bool
 }
 
-type producerFact struct {
-	identity manifest.NamedResource
-	facts    *occurrenceFacts
+type occurrencePath struct {
+	source               manifest.NamedResource
+	path                 string
+	hasPath, application bool
 }
 
 type occurrenceFacts struct {
 	// Census identity MUST survive projection and change when a declaration is reparsed.
 	census                          *occurrenceFacts
 	projection                      []string
-	source                          manifest.NamedResource
-	path                            string
-	hasPath, namespaced, uncertain  bool
+	namespaced, uncertain           bool
 	retained, completeCatalog       bool
 	collection                      bool
 	structural                      *manifest.Kustomization
@@ -80,86 +81,102 @@ func (f *occurrenceFacts) relations() []manifest.Reference {
 	return f.refs
 }
 
-func (f *occurrenceFacts) indexed() bool {
-	return f.retained || len(f.targets) != 0 || f.needsCandidates
+func (o *authoredOccurrence) indexed() bool {
+	return o.facts.retained || o.hasPath || len(o.facts.targets) != 0 || o.facts.needsCandidates
 }
 
-func (f *occurrenceFacts) opaque(targets []manifest.ProducerTarget) bool {
-	return f != nil && f.policy != nil && f.structural == nil && !f.hasPath && len(f.authoredTargets) == 0 &&
+func (o *authoredOccurrence) opaque(targets []manifest.ProducerTarget) bool {
+	f := o.facts
+	return f != nil && f.policy != nil && f.structural == nil && !o.hasPath && len(f.authoredTargets) == 0 &&
 		len(targets) == 0 &&
 		len(f.templateInputs) == 0 &&
 		len(f.templateObjects) == 0
 }
 
-// SourcePath returns the source and path in the occurrence's effective namespace.
-//
-//nolint:gocritic // The SDK value receiver preserves a snapshot of the occurrence identity.
-func (o authoredOccurrence) SourcePath() (manifest.NamedResource, string, bool) {
-	if o.facts == nil {
-		obj := o.object
-		if obj == nil {
-			return manifest.NamedResource{}, "", false
-		}
-		if o.Identity.Namespace != o.Authored.Namespace {
-			obj = obj.WithNamespace(o.Identity.Namespace)
-		}
-		return obj.SourcePath()
-	}
-	return manifest.Resolve(o.facts.source, "", o.Identity.Namespace), o.facts.path, o.facts.hasPath
+// SourcePath reports the loader's immutable source and path facts.
+func (o *authoredOccurrence) SourcePath() (manifest.NamedResource, string, bool) {
+	return o.source, o.path, o.hasPath
 }
 
-func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplateProjection) authoredOccurrence {
-	source, path, hasPath := obj.SourcePath()
+func objectOccurrence(object manifest.BaseManifest) authoredOccurrence {
+	id := object.Named()
+	return authoredOccurrence{
+		Identity: id, Authored: id, object: object,
+		occurrencePath: objectPath(object),
+	}
+}
+
+func objectPath(object manifest.BaseManifest) occurrencePath {
+	source, path, hasPath := object.SourcePath()
+	facts := occurrencePath{source: source, path: path, hasPath: hasPath}
+	facts.setApplication(object, manifest.KindOf(object).Structural)
+	return facts
+}
+
+func (o *occurrencePath) setApplication(object manifest.BaseManifest, structural bool) {
+	o.application = o.hasPath
+	if o.hasPath && structural {
+		_, o.application = manifest.ApplicationFor(object)
+	}
+}
+
+func (f *occurrenceFacts) compactOccurrence(
+	obj manifest.BaseManifest,
+	projection manifest.TemplateProjection,
+) authoredOccurrence {
+	path := objectPath(obj)
 	targets := manifest.ProducerTargets(obj)
-	facts := &occurrenceFacts{
-		source:          source,
-		path:            path,
-		hasPath:         hasPath,
+	*f = occurrenceFacts{
 		namespaced:      manifest.KindOf(obj).Namespaced(),
-		retained:        manifest.KindOf(obj).Tracked || hasPath,
+		retained:        manifest.KindOf(obj).Tracked || path.hasPath,
 		targets:         targets,
 		authoredTargets: targets,
 		needsCandidates: manifest.ProducerNeedsCandidates(obj),
 		roots:           slices.Collect(manifest.RenderRoots(obj)),
 	}
-	facts.census = facts
-	facts.templateInputs = projection.Inputs
-	facts.templateObjects = projection.Objects
-	facts.targets = append(facts.targets, projection.Targets...)
+	f.census = f
+	f.templateInputs = projection.Inputs
+	f.templateObjects = projection.Objects
+	f.targets = append(f.targets, projection.Targets...)
 	generated, _ := manifest.GeneratedTargets(obj)
-	facts.targets = append(facts.targets, generated...)
-	facts.catalog = manifest.CatalogObject(obj, obj.Named())
-	facts.completeCatalog = facts.catalog == obj
-	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
+	f.targets = append(f.targets, generated...)
+	f.catalog = manifest.CatalogObject(obj, obj.Named())
+	f.completeCatalog = f.catalog == obj
+	f.structural, _ = f.catalog.(*manifest.Kustomization)
 	if manifest.KindOf(obj).Parent {
 		policy := obj.EmissionPolicy()
-		facts.policy = &manifest.EmissionPolicy{
+		f.policy = &manifest.EmissionPolicy{
 			Namespace:         policy.Namespace,
 			InternalNamespace: policy.InternalNamespace,
 			ExcludeChildren:   policy.ExcludeChildren,
 		}
 	}
-	if manifest.KindOf(facts.catalog).TypedLabels {
-		facts.labels, facts.labeled = facts.catalog.GetLabels(), true
+	if manifest.KindOf(f.catalog).TypedLabels {
+		f.labels, f.labeled = f.catalog.GetLabels(), true
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceAll) {
-		if facts.refs == nil && ref.Use == "" && ref.Gate != 0 {
-			facts.refs = facts.implicitGate[:0]
+		if f.refs == nil && ref.Use == "" && ref.Gate != 0 {
+			f.refs = f.implicitGate[:0]
 		}
-		facts.refs = append(facts.refs, ref.Clone())
+		f.refs = append(f.refs, ref.Clone())
 		if ref.Use != "" && ref.AffectedInput() {
-			facts.reverse = append(facts.reverse, ref.NamedResource)
+			f.reverse = append(f.reverse, ref.NamedResource)
 		}
 	}
 	id := obj.Named()
-	facts.substituted = facts.indexed() && facts.hasSubstitutions(id)
 	if manifest.HasEnvsubstReference(id.Name) {
-		id.Name, facts.uncertain = "", true
+		id.Name, f.uncertain = "", true
 	}
 	if manifest.HasEnvsubstReference(id.Namespace) {
-		id.Namespace, facts.uncertain = "", true
+		id.Namespace, f.uncertain = "", true
 	}
-	return authoredOccurrence{Identity: id, Authored: obj.Named(), facts: facts}
+	o := authoredOccurrence{
+		Identity: obj.Named(), Authored: obj.Named(), facts: f,
+		occurrencePath: path,
+	}
+	f.substituted = o.indexed() && o.hasSubstitutions(o.Authored)
+	o.setIdentity(id)
+	return o
 }
 
 // PackageEvidence retains package provenance and shared root admission.
@@ -217,11 +234,12 @@ func (l *Loader) PathObjects() []selection.OccurrenceFacts {
 		if !l.Store.Policy(object.Named()).Root || l.documents.compact && object.Named().ReportHidden() {
 			continue
 		}
-		if _, _, applies := object.SourcePath(); applies && !l.inactiveKustomization(object.Named()) {
-			objects = append(
-				objects,
-				authoredOccurrence{Identity: object.Named(), Authored: object.Named(), object: object},
-			)
+		if l.inactiveKustomization(object.Named()) {
+			continue
+		}
+		o := objectOccurrence(object)
+		if _, _, applies := o.SourcePath(); applies {
+			objects = append(objects, o)
 		}
 	}
 	objects = l.appendIndexedPathObjects(objects)
@@ -255,12 +273,13 @@ func (l *Loader) appendIndexedPathObjects(objects []authoredOccurrence) []author
 		if object == nil {
 			continue
 		}
-		if _, _, applies := object.SourcePath(); applies {
-			occurrence, _ := l.catalogOccurrence(id)
-			objects = append(objects, authoredOccurrence{
-				Identity: id, Authored: id, object: object,
-				requiresBuild: occurrence.requiresBuild && l.Index.Records[id].Builder == "",
-			})
+		o := objectOccurrence(object)
+		if occurrence, known := l.catalogOccurrence(id); known && o.hasPath && l.Index.Records[id].Builder == "" {
+			o.occurrencePath = occurrence.occurrencePath
+			o.requiresBuild = occurrence.requiresBuild
+		}
+		if _, _, applies := o.SourcePath(); applies {
+			objects = append(objects, o)
 		}
 	}
 	return objects
@@ -579,18 +598,10 @@ func (l *Loader) OccurrenceObject(
 	return child, nil
 }
 
-//nolint:gocritic // The iterator retains its original occurrence value snapshot.
-func (o authoredOccurrence) references() iter.Seq[manifest.Reference] {
-	refs, namespace := o.facts.relations(), o.Identity.Namespace
+func (o *authoredOccurrence) references() iter.Seq[manifest.Reference] {
 	return func(yield func(manifest.Reference) bool) {
-		for _, ref := range refs {
-			if ref.NamespaceDefault {
-				ref.Namespace = namespace
-			}
-			if !yield(ref) {
-				return
-			}
-		}
+		view := selection.OccurrenceFacts{Identity: o.Identity, Refs: o.facts.relations(), Witness: o.facts}
+		view.VisitReferences(manifest.ReferenceRelations, yield)
 	}
 }
 
@@ -626,7 +637,7 @@ func catalogOccurrence(
 		bare := id
 		bare.Namespace = ""
 		if o, ok := locations[bare]; ok && o.facts != nil && o.facts.namespaced && o.Authored.Namespace == "" {
-			o.Identity = id
+			o.setIdentity(id)
 			return o, true
 		}
 	}
@@ -689,7 +700,7 @@ func (l *Loader) appendPathObject(
 	if child.fact != nil {
 		o = *child.fact
 	} else {
-		o = authoredOccurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj}
+		o = objectOccurrence(child.Obj)
 	}
 	source, path, ok := o.SourcePath()
 	if !ok || o.facts != nil && o.facts.uncertain {
@@ -759,31 +770,27 @@ func (l *Loader) visitOccurrences(vValue *graphVisit, yield func(authoredOccurre
 				continue
 			}
 			var o authoredOccurrence
-			var namespaced bool
 			if child.fact != nil {
-				o, namespaced = *child.fact, child.fact.facts.namespaced
-				if o.facts.uncertain {
+				if child.fact.facts.uncertain {
 					continue
 				}
-			} else {
-				o = authoredOccurrence{
-					Declaration: occurrenceID{
-						Source:   source,
-						File:     filepath.ToSlash(file),
-						Document: child.outcome.Ordinal,
-						item:     child.item,
-					},
-					Authored: child.Obj.Named(),
-					Identity: child.Obj.Named(),
-					object:   child.Obj,
+				projected, err := l.projectOccurrence(child.fact, &v, child.version)
+				if err != nil {
+					return err
 				}
-				namespaced = manifest.KindOf(child.Obj).Namespaced()
+				o = projected
+			} else {
+				o = objectOccurrence(child.Obj)
+				o.Declaration = occurrenceID{
+					Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item,
+				}
+				id, err := l.projectIdentity(o.Authored, &v, child.version, manifest.KindOf(child.Obj).Namespaced())
+				if err != nil {
+					return err
+				}
+				o.setIdentity(id)
 			}
-			id, err := l.projectIdentity(o.Authored, new(v), child.version, namespaced)
-			if err != nil {
-				return err
-			}
-			o.Identity, o.requiresBuild = id, o.requiresBuild || v.requiresBuild
+			o.requiresBuild = o.requiresBuild || v.requiresBuild
 			yield(o)
 		}
 	}

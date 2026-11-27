@@ -600,7 +600,7 @@ func (p *substitutionResolution) resolveInheritedPath(
 	var known bool
 	source := child.EffectiveSourceID()
 	var roots []string
-	if occurrence, located := l.catalogOccurrence(id); located && occurrence.facts.path != child.Path {
+	if occurrence, located := l.catalogOccurrence(id); located && occurrence.path != child.Path {
 		source, path, _ = occurrence.SourcePath()
 		known, roots = true, slices.Collect(manifest.RenderRoots(occurrence.facts.structural))
 	} else {

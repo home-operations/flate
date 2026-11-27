@@ -80,7 +80,7 @@ func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.D
 		child := &doc.objects[i]
 		if child.fact != nil && child.fact.Authored == record.Authored {
 			occurrence = *child.fact
-			occurrence.Identity = id
+			occurrence.setIdentity(id)
 			return occurrence
 		}
 		if child.Obj == nil || child.Obj.Named() != record.Authored {
@@ -88,11 +88,14 @@ func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.D
 		}
 		source := l.documents.mountedRoot(record.Path)
 		file, _ := filepath.Rel(source, record.Path)
-		occurrence = compactOccurrence(child.Obj, manifest.TemplateProjection{})
+		occurrence = new(occurrenceFacts).compactOccurrence(child.Obj, manifest.TemplateProjection{})
 		occurrence.Declaration = occurrenceID{
 			Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item,
 		}
-		occurrence.Identity, occurrence.Authored, occurrence.object = id, record.Authored, child.Obj
+		authored := objectOccurrence(child.Obj)
+		occurrence.Authored, occurrence.object = record.Authored, child.Obj
+		occurrence.occurrencePath = authored.occurrencePath
+		occurrence.setIdentity(id)
 		break
 	}
 	return occurrence
@@ -140,7 +143,7 @@ func (l *Loader) EntryRoots(
 		if !available {
 			return
 		}
-		coordinate := rootCoordinate{declaration: physicalOccurrence(&occurrence).Declaration, identity: id}
+		coordinate := rootCoordinate{declaration: occurrenceCoordinate(&occurrence), identity: id}
 		if seen[coordinate] {
 			return
 		}
@@ -197,7 +200,8 @@ func (q *rootQuery) entryRoot(
 		evidence.Scope.Prepared = prepared
 	}
 	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
-		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
+		native := objectOccurrence(l.nativeEntry)
+		evidence.Occurrence = occurrenceView(&native)
 	}
 	classification := evidence
 	classification.Captured = false
@@ -224,12 +228,19 @@ func (q *rootQuery) entryRoot(
 		return selection.OccurrenceFacts{}, false
 	}
 	occurrence = result.Occurrence
-	occurrence.Identity = id
+	setViewIdentity(&occurrence, id)
 	if occurrence.Authored == (manifest.NamedResource{}) {
 		occurrence.Authored = evidence.Record.Authored
 	}
-	if occurrence.Object == nil {
+	if occurrence.Object == nil && object != nil {
 		occurrence.Object = object
+		if occurrence.Witness == nil {
+			admitted := objectOccurrence(object)
+			admitted.setIdentity(id)
+			occurrence.Object = admitted.object
+			occurrence.Source, occurrence.Path, occurrence.HasPath = admitted.SourcePath()
+			occurrence.Application = admitted.application
+		}
 	}
 	return occurrence, true
 }
@@ -256,11 +267,16 @@ func (l *Loader) entryRootAvailable(
 
 func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdmission {
 	scope := rootAdmission{}
+	hasOwner := func(id manifest.NamedResource) bool {
+		for i := range scope.owners {
+			if scope.owners[i].Identity == id {
+				return true
+			}
+		}
+		return false
+	}
 	l.fileOwners(file, coordinate, func(owner manifest.NamedResource) bool {
-		if slices.ContainsFunc(
-			scope.owners,
-			func(existing selection.RootOwnerFacts) bool { return existing.Identity == owner },
-		) {
+		if hasOwner(owner) {
 			return true
 		}
 		record, indexed := l.Index.Lookup(owner)
@@ -274,12 +290,7 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 	})
 	if structural && len(scope.owners) != 0 {
 		for _, group := range l.Index.Claims {
-			if !slices.ContainsFunc(group, func(peer manifest.NamedResource) bool {
-				return slices.ContainsFunc(
-					scope.owners,
-					func(owner selection.RootOwnerFacts) bool { return owner.Identity == peer },
-				)
-			}) {
+			if !slices.ContainsFunc(group, hasOwner) {
 				continue
 			}
 			if !l.documents.cache[file].bootstrap ||
@@ -408,7 +419,7 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 		for index := range p.Occurrences {
 			occurrence := &p.Occurrences[index]
 			coordinate := rootCoordinate{
-				declaration: physicalOccurrence(occurrence).Declaration,
+				declaration: occurrenceCoordinate(occurrence),
 				identity:    occurrence.Identity,
 				context:     p.Path,
 			}

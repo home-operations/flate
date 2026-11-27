@@ -515,7 +515,7 @@ spec:
 		Namespace: "apps",
 	}
 	occurrence := d.loader.RootEvidence(id, nil).Occurrence
-	instance := occurrenceObject(&occurrence)
+	instance := occurrence.EffectiveObject()
 	assert.FatalIf(t, instance == nil, "fixture did not index the FluxInstance")
 	app, _ := manifest.ApplicationFor(instance)
 

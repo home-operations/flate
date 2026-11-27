@@ -499,7 +499,7 @@ func selectorVisibilityPair(t *testing.T, incoming bool, visibleSide manifest.Tr
 				case "store":
 					st.AddObject(object)
 				case "compact":
-					occurrence := compactOccurrence(object, projectedProducerForTest(object))
+					occurrence := new(occurrenceFacts).compactOccurrence(object, projectedProducerForTest(object))
 					occurrence.Declaration = occurrenceID{Source: root, File: id.Name + ".yaml"}
 					l.locations[id] = occurrence
 				case "candidate":

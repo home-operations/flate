@@ -192,7 +192,7 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 			application := false
 			if child.fact != nil {
 				object = child.fact.facts.catalog
-				application = child.fact.facts.hasPath
+				application = child.fact.hasPath
 			} else if object != nil {
 				_, _, application = object.SourcePath()
 			}

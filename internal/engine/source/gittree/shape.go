@@ -133,6 +133,27 @@ func (g *FS) selectNodes(
 	return kept, nil
 }
 
+func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {
+	var err error
+	for parent := name; len(g.denied) > 0 && parent != "."; parent = path.Dir(parent) {
+		if g.denied[parent] {
+			err = errRejectedLink
+			break
+		}
+	}
+	indexed := err != nil
+	if !indexed && g.backing == nil && g.current != nil {
+		_, err = fs.Lstat(g.current, name)
+	}
+	switch {
+	case err == nil, errors.Is(err, fs.ErrNotExist), g.mode == Source && errors.Is(err, errRejectedLink):
+		err = fs.ErrNotExist
+	case !indexed:
+		return nil, err
+	}
+	return nil, &fs.PathError{Op: statOperation, Path: name, Err: err}
+}
+
 func (g *gitView) resolveSelectedNode(name string, node *gitNode, links *tree.Builder, selected bool) (bool, error) {
 	if node.mode&fs.ModeSymlink == 0 {
 		return selected, nil

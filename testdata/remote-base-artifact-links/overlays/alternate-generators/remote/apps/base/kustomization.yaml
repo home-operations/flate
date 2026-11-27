@@ -1,0 +1,5 @@
+generators: [child]
+configMapGenerator:
+  - name: parent
+    files: [child/kustomization.yaml]
+    options: {disableNameSuffixHash: true}

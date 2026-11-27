@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -45,6 +46,21 @@ func testNewEntryPolicyRejectedLinks(t *testing.T) {
 	for _, mode := range []ViewMode{Direct, Source} {
 		t.Run(fmt.Sprint(mode), func(t *testing.T) {
 			t.Parallel()
+			for _, name := range []string{"link", "link/child"} {
+				t.Run("mounted point lookup/"+name, func(t *testing.T) {
+					t.Parallel()
+					current := local.FS.(*FS).OperationView()
+					reader := &FS{view: &gitView{mode: mode, current: current}}
+					_, statErr := fs.Stat(reader, name)
+					if mode == Direct {
+						assert.FatalIf(t, !errors.Is(statErr, fs.ErrPermission), "Stat(%q) = %v", name, statErr)
+						return
+					}
+					got, ok := errors.AsType[*fs.PathError](statErr)
+					assert.FatalIf(t, !ok || !errors.Is(got, fs.ErrNotExist), "Stat(%q) = %v", name, statErr)
+					assert.Equal(t, got.Path, name)
+				})
+			}
 			testNewEntryPolicyRejectedLinksCase(
 				t,
 				testNewEntryPolicyRejectedLinksCaseInputs{
@@ -125,6 +141,12 @@ type testNewEntryPolicyRejectedLinksCaseInputs struct {
 	mode    *ViewMode
 }
 
+type rejectedLinkView struct {
+	name string
+	fs   *FS
+	mode ViewMode
+}
+
 func testNewEntryPolicyRejectedLinksCase(t *testing.T, testCaseInput testNewEntryPolicyRejectedLinksCaseInputs) {
 	t.Helper()
 
@@ -140,7 +162,13 @@ func testNewEntryPolicyRejectedLinksCase(t *testing.T, testCaseInput testNewEntr
 		ViewOptions{Mode: (*testCaseInput.mode), Worktree: osfs.New((*testCaseInput.root))},
 	)
 	assert.NoError(t, err)
-	mounted, _, err := operation(t, (*testCaseInput.local).FS, (*testCaseInput.mode))
+	current := (*testCaseInput.local).FS.(*FS).OperationView()
+	_, err = fs.ReadDir(current, ".")
+	assert.NoError(t, err)
+	mounted, _, err := New(
+		t.Context(), nil, plumbing.ZeroHash,
+		ViewOptions{Mode: *testCaseInput.mode, Current: current, CurrentObserved: true},
+	)
 	assert.NoError(t, err)
 	for _, input := range []struct {
 		name string
@@ -148,10 +176,14 @@ func testNewEntryPolicyRejectedLinksCase(t *testing.T, testCaseInput testNewEntr
 	}{{"committed", committed}, {"mutable", mutable}, {"mounted", mounted}} {
 		refreshed, _, err := operation(t, input.fs, Source)
 		assert.NoError(t, err)
-		for _, view := range []struct {
-			name string
-			fs   *FS
-		}{{"initial", input.fs}, {"refreshed", refreshed}} {
+		isCommitted := input.name == "committed"
+		if isCommitted && *testCaseInput.mode == Source {
+			assert.Equal(t, refreshed == input.fs, true)
+		}
+		if input.name == "mutable" {
+			assert.Equal(t, refreshed == input.fs, false)
+		}
+		for _, view := range []rejectedLinkView{{"initial", input.fs, *testCaseInput.mode}, {"refreshed", refreshed, Source}} {
 			reader := view.fs
 			entries, err := fs.ReadDir(reader, ".")
 			assert.NoError(t, err)
@@ -161,16 +193,13 @@ func testNewEntryPolicyRejectedLinksCase(t *testing.T, testCaseInput testNewEntr
 			for _, name := range []string{"link", "link/child", "link/nested/child"} {
 				t.Run(input.name+"/"+view.name+"/"+name, func(t *testing.T) {
 					t.Parallel()
-					testNewEntryPolicyRejectedLinksCaseCase(
-						t,
-						testNewEntryPolicyRejectedLinksCaseCaseInputs{reader: &reader, name: &name},
-					)
+					testNewEntryPolicyRejectedLinksCaseCase(t, view, name, isCommitted)
 				},
 				)
 			}
 			_, err = fs.ReadFile(reader, "absent")
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
-			if reader == refreshed || (*testCaseInput.mode) == Source {
+			if view.mode == Source {
 				_, err = fs.ReadFile(reader, "ignored")
 				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 			}
@@ -181,23 +210,42 @@ func testNewEntryPolicyRejectedLinksCase(t *testing.T, testCaseInput testNewEntr
 	}
 }
 
-type testNewEntryPolicyRejectedLinksCaseCaseInputs struct {
-	reader **FS
-	name   *string
-}
-
-func testNewEntryPolicyRejectedLinksCaseCase(
-	t *testing.T,
-	testCaseInput testNewEntryPolicyRejectedLinksCaseCaseInputs,
-) {
+func testNewEntryPolicyRejectedLinksCaseCase(t *testing.T, view rejectedLinkView, name string, committed bool) {
 	t.Helper()
 
-	data, readFileErr2 := fs.ReadFile((*testCaseInput.reader), (*testCaseInput.name))
+	reader := view.fs
+	data, readErr := fs.ReadFile(reader, name)
 	assert.Equal(t, len(data), 0)
-	assert.Equal(t, errors.Is(readFileErr2, fs.ErrPermission), true)
-	_, readFileErr2 = fs.Stat((*testCaseInput.reader), (*testCaseInput.name))
-	assert.Equal(t, errors.Is(readFileErr2, fs.ErrPermission), true)
-	target, readFileErr2 := fs.ReadLink((*testCaseInput.reader), (*testCaseInput.name))
+	_, statErr := fs.Stat(reader, name)
+	target, linkErr := fs.ReadLink(reader, name)
 	assert.Equal(t, target, "")
-	assert.Equal(t, errors.Is(readFileErr2, fs.ErrPermission), true)
+
+	if view.mode == Direct {
+		for _, err := range []error{readErr, statErr, linkErr} {
+			assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+			got, ok := errors.AsType[*fs.PathError](err)
+			assert.FatalIf(t, !ok, "rejected link %q error = %v", name, err)
+			if committed {
+				assert.Equal(t, got.Path, name)
+			} else {
+				assert.Equal(t, filepath.Base(got.Path), "link")
+			}
+		}
+		return
+	}
+	absent := "absent" + strings.TrimPrefix(name, "link")
+	_, missingRead := fs.ReadFile(reader, absent)
+	_, missingStat := fs.Stat(reader, absent)
+	_, missingLink := fs.ReadLink(reader, absent)
+	for _, tc := range []struct{ got, missing error }{
+		{readErr, missingRead}, {statErr, missingStat}, {linkErr, missingLink},
+	} {
+		want, ok := errors.AsType[*fs.PathError](tc.missing)
+		assert.FatalIf(t, !ok || !errors.Is(want, fs.ErrNotExist), "missing path error = %v", tc.missing)
+		got, ok := errors.AsType[*fs.PathError](tc.got)
+		assert.FatalIf(t, !ok, "omitted link error = %v", tc.got)
+		assert.Equal(t, got.Op, want.Op)
+		assert.Equal(t, got.Path, name)
+		assert.Equal(t, got.Err, want.Err)
+	}
 }

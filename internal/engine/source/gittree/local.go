@@ -152,7 +152,7 @@ func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
 			name := filepath.Join(abs, entry.Name())
 			g.observations.LoadOrStore(
 				name,
-				&localObservation{err: &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}},
+				&localObservation{err: &fs.PathError{Op: statOperation, Path: name, Err: errRejectedLink}},
 			)
 		}
 		return entry.Name() == gitDirectory || !entry.Type().IsRegular() && !entry.IsDir()
@@ -227,7 +227,7 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 		}
 	}
 	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
+		return nil, &fs.PathError{Op: statOperation, Path: name, Err: errRejectedLink}
 	}
 	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
 		if pathErr, ok := err.(*fs.PathError); ok && pathErr.Op == statOperation &&

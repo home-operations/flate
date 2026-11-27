@@ -13,11 +13,14 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
 	"github.com/home-operations/flate/internal/engine/kustomize"
 	"github.com/home-operations/flate/internal/engine/loader"
 	"github.com/home-operations/flate/internal/engine/source/cache"
+	"github.com/home-operations/flate/internal/engine/source/gitrepo"
+	"github.com/home-operations/flate/internal/engine/source/gittree"
 	"github.com/home-operations/flate/internal/engine/store"
 	"github.com/home-operations/flate/internal/engine/task"
 	"github.com/home-operations/flate/internal/testutil"
@@ -97,6 +100,35 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		"mounted symlink",
 		func(t *testing.T) { t.Parallel(); testLoadAtIgnoreFileAndMissingDirectoryMountedSymlink(t) },
 	)
+
+	t.Run("source omitted directory", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\n")
+		testutil.WriteFile(t, root, "override.krmignore", "")
+		assert.NoError(t, os.Symlink("apps", filepath.Join(root, "link")))
+		location, err := gitrepo.Locate(t.Context(), root, root)
+		assert.NoError(t, err)
+		directory, err := gittree.OpenDirectory(t.Context(), location)
+		assert.NoError(t, err)
+		defer func() { _ = directory.Close() }()
+		input := directory.Artifact()
+		view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+			gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+		assert.NoError(t, err)
+		source := &manifest.GitRepository{Name: "source"}
+		st := store.New()
+		st.AddObject(source)
+		st.SetArtifact(source.Named(), &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: view})
+		d := Session{loader: loader.New(st)}
+		d.loader.IgnoreFile = filepath.Join(root, "override.krmignore")
+		total := 0
+		loaded, err := d.loadAt(t.Context(), filepath.Join(root, "link"), &total, &sourceLoad{})
+		assert.NoError(t, err)
+		assert.Equal(t, loaded, 0)
+		assert.Equal(t, total, 0)
+	})
 
 	for _, backing := range []string{"disk", "memory"} {
 		for _, scenario := range []string{"missing-directory", "file", "missing-ignore"} {

@@ -193,7 +193,7 @@ func testNewEntryPolicyShapingCase(t *testing.T, testCaseInput testNewEntryPolic
 	}
 	for _, name := range omitted {
 		want := fs.ErrNotExist
-		if testCaseInput.tc.opts.Mode != RemoteBase {
+		if testCaseInput.tc.opts.Mode == Direct {
 			want = fs.ErrPermission
 		}
 		_, err := fs.Stat(input, name)

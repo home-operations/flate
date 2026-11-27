@@ -33,6 +33,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+var errRejectedLink = fmt.Errorf("%w", fs.ErrPermission)
+
 // ViewMode selects admitted input and source artifact membership.
 type ViewMode uint8
 
@@ -799,6 +801,7 @@ func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native 
 			return err
 		}
 	} else {
+		// Omitted links have no corresponding nodes to select again.
 		g.denied = current.denied
 		for name, node := range current.nodes {
 			g.nodes[name] = &gitNode{name: node.name, hash: node.hash, mode: node.mode, children: node.children}
@@ -838,20 +841,6 @@ func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
 		}
 		return nil
 	})
-}
-
-func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {
-	for parent := name; len(g.denied) > 0 && parent != "."; parent = path.Dir(parent) {
-		if g.denied[parent] {
-			return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
-		}
-	}
-	if g.backing == nil && g.current != nil {
-		if _, err := fs.Lstat(g.current, name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, err //nolint:wrapcheck // Preserve backing filesystem failures other than missing paths.
-		}
-	}
-	return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 }
 
 func (g *gitView) blobLink(name string) (string, error) {

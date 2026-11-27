@@ -304,8 +304,7 @@ func (p *entryPlanner) follow(
 	}
 	total := 0
 	_, err = p.session.loadAt(ctx, absolute, &total, &sourceLoad{
-		work:     p.session.cfg.Work.Source(application.Source).Record(manifest.WorkPreparation, absolute),
-		artifact: input,
+		work: p.session.cfg.Work.Source(application.Source).Record(manifest.WorkPreparation, absolute),
 	})
 	if err != nil {
 		return nil, err

@@ -55,8 +55,13 @@ func TestCheckout_AdmittedMembership(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = fs.Stat(source, "kept/file")
 	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
-	_, err = fs.Lstat(source, "kept/link")
-	assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+	for _, name := range []string{"kept/link", "kept/link/child"} {
+		_, err = fs.Lstat(source, name)
+		got, ok := errors.AsType[*fs.PathError](err)
+		assert.FatalIf(t, !ok, "source lookup %s: %v", name, err)
+		assert.Equal(t, got.Path, name)
+		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	}
 }
 
 func TestCheckout_RetainsCurrentSourcePolicy(t *testing.T) {

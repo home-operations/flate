@@ -96,7 +96,7 @@ func TestRun_EntryApplication(t *testing.T) {
 		{name: "admitted bucket", owner: "bucket", kind: manifest.KindBucket, url: "s3.fixture.invalid", admitted: true, qualified: true},
 		{name: "unadmitted bucket", owner: "bucket", kind: manifest.KindBucket, url: "s3.fixture.invalid"},
 		{name: "instance git", owner: "flux", kind: manifest.KindGitRepository, url: "https://fixture.invalid/self", instance: true, admitted: true, qualified: true},
-		{name: "instance foreign git", owner: "flux", kind: manifest.KindGitRepository, url: "https://fixture.invalid/foreign", instance: true},
+		{name: "instance with distinct Git remote", owner: "flux", kind: manifest.KindGitRepository, url: "https://fixture.invalid/foreign", instance: true, qualified: true},
 		{name: "instance oci", owner: "flux", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self", instance: true, admitted: true, qualified: true},
 		{name: "instance unadmitted oci", owner: "flux", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self", instance: true},
 		{name: "instance bucket", owner: "flux", kind: manifest.KindBucket, url: "s3.fixture.invalid", instance: true, admitted: true, qualified: true},

@@ -234,10 +234,18 @@ spec:
   ✗  Kustomization  flux-system/kustomize-mutating-webhook  kustomization path is not a directory: ./clusters/cluster-00/flux-system/kustomize-mutating-webhook/app: resolve ./clusters/cluster-00/flux-system/kustomize-mutating-webhook/app: stat clusters: file does not exist
   ✓  OCIRepository  flux-system/flux-system
 `
+	directConsumers := strings.Replace(
+		chartConsumers,
+		"  ✗  Kustomization  flux-system/kustomize-mutating-webhook",
+		"  ✗  Kustomization  flux-system/flux-system  kustomization path is not a directory: ./clusters/cluster-00: resolve ./clusters/cluster-00: stat clusters: file does not exist\n"+
+			"  ✗  Kustomization  flux-system/kustomize-mutating-webhook",
+		1,
+	)
+
 	for _, tc := range []struct{ name, document, want string }{
 		{
 			name: "direct", document: instance,
-			want: blockedConsumers + "\n  ✗ 0 passed · 4 blocked   <DUR>\n",
+			want: directConsumers + "\n  ✗ 1 passed · 5 failed   <DUR>\n",
 		},
 		{
 			name:     "template",

@@ -30,6 +30,7 @@ type entrySource interface {
 }
 
 type entryResolution struct {
+	sync        *syncSource
 	producers   []occurrenceKey
 	object      manifest.BaseManifest
 	placeholder *manifest.BaseManifest // Synthetic declaration retained until its producer emits.
@@ -39,6 +40,7 @@ type entryResolution struct {
 	entry       bool
 	entryScoped bool // A scoped denial is authoritative for the selected declaration.
 	projected   bool
+	checkout    checkoutRole
 	provider    store.SourceProvider
 	artifact    *store.SourceArtifact
 	warnings    []manifest.Warning
@@ -295,6 +297,7 @@ func (d *Session) resolveEntrySource(
 		id,
 		&sourceRequest{
 			object:    obj,
+			sync:      group.sync,
 			reference: group.reference,
 			work:      d.cfg.Work,
 			scoped:    group.scoped,
@@ -809,13 +812,25 @@ func (a *Admission) checkoutMount(candidate *entryResolution, input fs.FS, alias
 	return root
 }
 
-// Only working-input aliases contribute; canonical and independently committed artifacts do not.
 func (p *entrySourcePublisher) aliasWarning() *manifest.Warning {
 	var names []string
-	for id := range p.snapshot() {
+	resolutions := p.snapshot()
+	for id := range resolutions {
+		resolution := resolutions[id]
+		switch resolution.checkout {
+		case checkoutBootstrap:
+			continue
+		case checkoutDefaultSync:
+			pair := resolution.sync
+			// A live alias artifact can outlast the emitted pair that established its role.
+			if !pair.emitted() || p.store.GetDeclaration(id) == pair.source &&
+				p.store.GetDeclaration(pair.application.Named()) == pair.application {
+				continue
+			}
+		case checkoutAlias:
+		}
 		artifact, _ := p.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-		if id != manifest.BootstrapSourceID && artifact != nil && artifact.Provider == store.ProviderAlias &&
-			artifact.Reads.Valid() {
+		if artifact != nil && artifact.Provider == store.ProviderAlias && artifact.Reads.Valid() {
 			names = append(names, id.String())
 		}
 	}

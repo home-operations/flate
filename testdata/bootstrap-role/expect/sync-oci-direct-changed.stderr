@@ -1,0 +1,6 @@
+
+  ✗  Kustomization  flux-system/cluster  kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+flate error: compare base ordering outputs: reconcile completed with 1 failure(s):
+  Kustomization.kustomize.toolkit.fluxcd.io/flux-system/cluster (kubernetes/clusters/cluster-00/cluster.yaml): kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+
+  ✗ 1 failed

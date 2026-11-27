@@ -14,7 +14,9 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 
+	"github.com/home-operations/flate/internal/engine/depwait"
 	"github.com/home-operations/flate/internal/engine/loader"
+	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/gitrepo"
 	"github.com/home-operations/flate/internal/engine/source/gittree"
@@ -161,6 +163,21 @@ func TestEntryApplication_InventoryAuthority(t *testing.T) {
 
 func TestProjectedOperands_ParentCycle(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name, sync string
+	}{
+		{name: "GitRepository", sync: "kind: GitRepository, name: sync, url: https://fixture.invalid/repo, ref: refs/heads/main"},
+		{name: "OCIRepository", sync: "kind: OCIRepository, name: sync, url: oci://fixture.invalid/repo, ref: latest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testProjectedOperandsParentCycle(t, tc.sync)
+		})
+	}
+}
+
+func testProjectedOperandsParentCycle(t *testing.T, sync string) {
+	t.Helper()
 	root := t.TempDir()
 	files := fstest.MapFS{
 		"release.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
@@ -176,7 +193,7 @@ spec:
 kind: FluxInstance
 metadata: {name: child, namespace: apps}
 spec:
-  sync: {kind: GitRepository, name: sync, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./entry}
+  sync: {` + sync + `, path: ./entry}
 `)},
 		"entry/kustomization.yaml": {Data: []byte("resources: [workload.yaml]\n")},
 		"entry/workload.yaml": {Data: []byte(testutil.KustomizationYAML(
@@ -201,13 +218,6 @@ spec:
 	generator := testutil.HelmReleaseID("apps", "generator")
 	projections := l.SourceFacts(manifest.BootstrapSourceID, nil).Context.TemplateProjections
 	assert.FatalIf(t, len(projections[generator].Objects) == 0, "fixture did not index the chart projection")
-	owner, other := testutil.KustomizationID("apps", "owner"), testutil.KustomizationID("apps", "other")
-	record, _ := l.Index.Lookup(generator)
-	record.Parent = owner
-	l.Index.Records[generator] = record
-	l.Index.Records[owner] = manifest.DiscoveryRecord{Parent: other}
-	l.Index.Records[other] = manifest.DiscoveryRecord{Parent: owner}
-
 	q := &entryQualification{loader: l}
 	a := &Admission{
 		input: input, path: root, store: st, loader: l, qualification: q,
@@ -224,7 +234,118 @@ spec:
 	walk := qualificationWalk{q: q, admission: a, reads: &reads}
 	assert.FatalIf(t, !walk.projectedApplication(projections[generator].Objects[0]),
 		"fixture projection does not reach the selected declaration")
-	assert.Equal(t, len(walk.projectedOperands(walk.projectedApplication)), 0)
+	operands := walk.projectedOperands(t.Context(), projections, walk.projectedApplication)
+	assert.FatalIf(t, len(operands) != 1, "expected generator operand, got %v", operands)
+	assert.Equal(t, operands[0].Identity, generator)
+
+	owner, other := testutil.KustomizationID("apps", "owner"), testutil.KustomizationID("apps", "other")
+	record, _ := l.Index.Lookup(generator)
+	record.Parent = owner
+	l.Index.Records[generator] = record
+	l.Index.Records[owner] = manifest.DiscoveryRecord{Parent: other}
+	l.Index.Records[other] = manifest.DiscoveryRecord{Parent: owner}
+	assert.Equal(t, len(walk.projectedOperands(t.Context(), projections, walk.projectedApplication)), 0)
+}
+
+func TestProjectedOperands_UnavailableProducerLeavesSharedAncestor(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	blocked := testutil.HelmReleaseID("apps", "blocked")
+	viable := testutil.HelmReleaseID("apps", "viable")
+	owner := testutil.KustomizationID("apps", "owner")
+	indexed := testutil.HelmReleaseID("apps", "indexed")
+	missing := testutil.HelmReleaseID("apps", "missing")
+	files := fstest.MapFS{
+		"blocked.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: blocked, namespace: apps}
+spec:
+  interval: 1h
+  chartRef: {kind: OCIRepository, name: chart}
+  dependsOn: [{name: missing}]
+`)},
+		"viable.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: viable, namespace: apps}
+spec:
+  interval: 1h
+  chartRef: {kind: OCIRepository, name: chart}
+  dependsOn: [{name: indexed}]
+`)},
+		"indexed.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: indexed, namespace: apps}
+spec:
+  interval: 1h
+  chartRef: {kind: OCIRepository, name: chart}
+`)},
+		"owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./owner\n"))},
+	}
+	st := store.New()
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: files}
+	st.AddObject(bootstrap)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+
+	l := loader.New(st)
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	t.Cleanup(l.Retire)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	st.DeleteObject(indexed)
+	st.UpdateStatus(missing, store.StatusInfo{Status: store.StatusReady})
+	assert.Equal(t, l.IsFileIndexed(indexed), true)
+	assert.Equal(t, l.IsFileIndexed(missing), false)
+	assert.Equal(t, st.GetDeclaration(indexed), nil)
+	assert.Equal(t, st.GetDeclaration(missing), nil)
+	for _, id := range []manifest.NamedResource{blocked, viable} {
+		record, found := l.Index.Lookup(id)
+		assert.FatalIf(t, !found, "producer %s was not indexed", id)
+		record.Parent = owner
+		l.Index.Records[id] = record
+	}
+	q := &entryQualification{loader: l}
+	a := &Admission{input: input, path: root, store: st, loader: l, qualification: q}
+	var reads store.ReadSet
+	reads.Init(st, manifest.BootstrapSourceID, nil)
+	defer reads.Retire()
+	walk := qualificationWalk{q: q, admission: a, reads: &reads}
+	waiter := depwait.Waiter{Store: &reads, Parent: blocked, Missing: l.Options.Missing}
+	gate := manifest.DependencyRef{NamedResource: missing}
+	assert.Equal(t, waiter.Classify(t.Context(), gate, manifest.DrainCascade).Kind, schedule.Terminal)
+	assert.FatalIf(
+		t,
+		!walk.unavailableProjection(t.Context(), blocked),
+		"ready status replaced the missing declaration",
+	)
+	assert.FatalIf(t, walk.unavailableProjection(t.Context(), viable), "file-indexed prerequisite blocked the producer")
+
+	orders := [][2]manifest.NamedResource{{blocked, viable}, {viable, blocked}}
+	var captured [2]store.ReadSet
+	for i, order := range orders {
+		captured[i].Init(st, manifest.BootstrapSourceID, nil)
+		t.Cleanup(captured[i].Retire)
+		walk.reads = &captured[i]
+		visits := projectedOperandVisits{
+			seen:    make(map[manifest.NamedResource]bool),
+			visited: make(map[manifest.NamedResource]bool),
+		}
+		var operands []selection.OccurrenceFacts
+		for _, producer := range order {
+			if operand, ok := walk.projectedOperand(t.Context(), producer, input.OriginPath(root), visits); ok {
+				operands = append(operands, operand)
+			}
+		}
+		assert.FatalIf(t, len(operands) != 1, "order %v selected %d operands, want one", order, len(operands))
+		assert.Equal(t, operands[0].Identity, owner)
+		assert.FatalIf(t, !captured[i].Valid(), "order %v started with invalid reads", order)
+	}
+	st.AddObject(&manifest.HelmRelease{Name: missing.Name, Namespace: missing.Namespace})
+	for i, order := range orders {
+		assert.FatalIf(t, captured[i].Valid(), "order %v missed the new prerequisite declaration", order)
+	}
 }
 
 func TestEntryQualification_NamedOperandsAdvanceInOrder(t *testing.T) {
@@ -333,85 +454,122 @@ func TestQualifySelectedEntry_IgnoresAnotherSource(t *testing.T) {
 	assert.Equal(t, len(a.entryOccurrences), 0)
 }
 
-func TestAdmission_EmittedEntrySourceAuthority(t *testing.T) {
+func TestEntryQualification_DirectSyncAuthority(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, path string
-		moved      bool
-		want       store.SourceProvider
+		name     string
+		declared bool
 	}{
-		{name: "entry", path: "entry", want: store.ProviderAlias},
-		{name: "unrelated", path: "unrelated", want: store.ProviderFetch},
-		{name: "moved", path: "entry", moved: true, want: store.ProviderAlias},
+		{name: "declared pair", declared: true},
+		{name: "unobserved pair"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			id := manifest.BootstrapSourceID
-			bootstrap, _ := id.BindLocal(root)
 			input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+			instance := &manifest.RawObject{
+				APIVersion: "fluxcd.controlplane.io/v1", Kind: "FluxInstance", Namespace: "apps", Name: "instance",
+				Spec: map[string]any{"sync": map[string]any{
+					"kind": manifest.KindOCIRepository, "name": "sync",
+					"url": "oci://fixture.invalid/repo", "ref": "latest", "path": "./entry",
+				}},
+			}
 			st := store.New()
-			st.AddObject(bootstrap)
-			st.SetArtifact(id, input)
-			a := &Admission{
-				input: input, path: filepath.Join(root, "entry"), store: st,
-				resolvedSources: &entrySourcePublisher{
-					bootstrap: bootstrap,
-					mutable: map[manifest.NamedResource]entryResolution{id: {
-						object:    bootstrap,
-						input:     input,
-						artifact:  input,
-						synthetic: true,
-						provider:  store.ProviderInput,
-					}},
-				},
+			if tc.declared {
+				st.AddObject(instance)
 			}
-			owner := &manifest.HelmRelease{Name: "generator", Namespace: "apps"}
-			source := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace}
-			source.URL = "https://fixture.invalid/generated"
-			entry := manifest.NewEntryKustomization(id, tc.path, owner.Named())
-			entry.Name, entry.Namespace = "sync", id.Namespace
-			st.AddObject(owner)
-			st.DeleteObject(id)
-			output := &store.Emission{Complete: true, Children: []store.Child{
-				{Obj: source, Generated: true, VisibleGeneration: true},
-				{Obj: entry, Generated: true, VisibleGeneration: true},
-			}}
-			var support store.ReadSet
-			support.Init(st, owner.Named(), nil)
-			defer support.Retire()
-			support.GetArtifact(id, store.ArtifactContent)
-			support.Bind(output)
-			st.RecordEmitted(owner.Named(), output, nil)
-
-			var before store.ReadSet
-			before.Init(st, id, nil)
-			defer before.Retire()
-			assert.Equal(t, before.GeneratedDocument(id), true)
-			resolved := a.classifySource(id, &sourceRequest{object: source, reads: &before})
-			assert.Equal(t, resolved.provider, tc.want)
-
-			st.SetArtifact(id, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
-			assert.Equal(t, support.Valid(), false)
-			var after store.ReadSet
-			after.Init(st, id, nil)
-			defer after.Retire()
-			assert.Equal(t, after.GeneratedDocument(id), true)
-			resolved = a.classifySource(id, &sourceRequest{object: source, reads: &after})
-			assert.Equal(t, resolved.provider, tc.want)
-			if tc.moved {
-				moved := *entry
-				moved.Path = "./unrelated"
-				st.AddObject(&moved)
-				var live store.ReadSet
-				live.Init(st, id, nil)
-				defer live.Retire()
-				assert.Equal(t, live.GeneratedDocument(id), true)
-				resolved = a.classifySource(id, &sourceRequest{object: source, reads: &live})
-				assert.Equal(t, resolved.provider, store.ProviderFetch)
-			}
+			var reads store.ReadSet
+			reads.Init(st, manifest.BootstrapSourceID, nil)
+			defer reads.Retire()
+			q := &entryQualification{}
+			admission := &Admission{input: input, path: filepath.Join(root, "entry"), store: st, qualification: q}
+			walk := qualificationWalk{q: q, admission: admission, reads: &reads, store: st}
+			matched, err := walk.visitGeneration(t.Context(), &applicationEvidence{object: instance})
+			assert.NoError(t, err)
+			assert.Equal(t, matched, tc.declared)
 		})
 	}
+}
+
+func TestAdmission_GenerationPairUsesSelectedSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{
+		"entry/instance.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: instance, namespace: apps}
+spec:
+  sync: {kind: OCIRepository, name: sync, url: oci://fixture.invalid/checkout, ref: latest, path: ./workload}
+`)},
+	}}
+	cfg := testConfig(t, Config{
+		Input: input, Store: store.New(), RepoRoot: root, Path: filepath.Join(root, "entry"),
+	})
+	d, err := Begin(t.Context(), cfg)
+	assert.NoError(t, err)
+	t.Cleanup(d.Close)
+	id := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      "FluxInstance",
+		Name:      "instance",
+		Namespace: "apps",
+	}
+	occurrence := d.loader.RootEvidence(id, nil).Occurrence
+	instance := occurrenceObject(&occurrence)
+	assert.FatalIf(t, instance == nil, "fixture did not index the FluxInstance")
+	app, _ := manifest.ApplicationFor(instance)
+
+	groups := make(map[manifest.NamedResource]*entrySourceGroup)
+	assert.NoError(t, d.addGenerationSources(groups, instance, &occurrence))
+	assert.FatalIf(t, groups[app.Source].sync == nil, "selected generated source lost its sync pair")
+	assert.Equal(t, groups[app.Source].sync.source, groups[app.Source].object)
+
+	other := &manifest.OCIRepository{
+		Name:      app.Source.Name,
+		Namespace: app.Source.Namespace,
+		URL:       "oci://fixture.invalid/other",
+	}
+	groups[app.Source] = &entrySourceGroup{object: other}
+	assert.NoError(t, d.addGenerationSources(groups, instance, &occurrence))
+	assert.Equal(t, groups[app.Source].object, manifest.BaseManifest(other))
+	assert.FatalIf(t, groups[app.Source].sync != nil, "competing declaration received the generated pair")
+}
+
+func TestPreparedEntryReach_CurrentSyncSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+	document := map[string]any{
+		"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindOCIRepository,
+		"metadata": map[string]any{"name": "sync", "namespace": "apps"},
+		"spec":     map[string]any{"url": "oci://fixture.invalid/repo"},
+	}
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	source := parsed.Object
+	app := manifest.NewEntryKustomization(source.Named(), "./outside", manifest.NamedResource{})
+	app.Name, app.Namespace = "sync", "apps"
+	reach := preparedEntryReach{
+		input: input, entry: filepath.Join(root, "entry"),
+		sources: map[manifest.NamedResource]entryResolution{source.Named(): {
+			object: source, input: input, projected: true,
+			sync: &syncSource{source: source, application: app},
+		}},
+	}
+	equivalent, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	assert.Equal(t, equivalent.Object == source, false)
+	children := []store.Child{{Obj: equivalent.Object, VisibleGeneration: true}}
+	application, _ := app.EntryApplication()
+	assert.Equal(t, reach.applicationPossible(&application, true, children), false)
+	disjointPair := application
+	disjointPair.Path = "./other"
+	assert.Equal(t, reach.applicationPossible(&disjointPair, true, children), true)
+	document["spec"] = map[string]any{"url": "oci://fixture.invalid/updated"}
+	changed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	children[0].Obj = changed.Object
+	assert.Equal(t, reach.applicationPossible(&application, true, children), true)
 }
 
 func TestPreparedEntryReach_GeneratedGitSource(t *testing.T) {

@@ -96,105 +96,6 @@ spec: {url: https://mirror.invalid/source}
 	assert.Equal(t, material == nil, true)
 }
 
-func TestAdmission_ProjectedEntrySourceAuthority(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, kind, path, remote string
-		local, entry             bool
-	}{
-		{name: "Git entry and self", kind: manifest.KindGitRepository, path: "entry/config", remote: "https://declared.invalid/source", local: true, entry: true},
-		{name: "Git entry without self", kind: manifest.KindGitRepository, path: "entry/config", remote: "https://other.invalid/source", local: true, entry: true},
-		{name: "Git self without entry", kind: manifest.KindGitRepository, path: "payload", remote: "https://declared.invalid/source", local: true},
-		{name: "OCI entry", kind: manifest.KindOCIRepository, path: "entry/config"},
-		{name: "Bucket entry", kind: manifest.KindBucket, path: "entry/config"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			testutil.WriteFile(t, root, "entry/config/kustomization.yaml", "resources: [flux.yaml, consumer.yaml]\n")
-			testutil.WriteFile(t, root, "entry/config/flux.yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
-kind: FluxInstance
-metadata: {name: flux, namespace: apps}
-spec:
-  sync:
-    name: entry
-    kind: %s
-    url: https://declared.invalid/source
-    ref: refs/heads/main
-    path: %s
-`, tc.kind, tc.path))
-			testutil.WriteFile(t, root, "entry/config/consumer.yaml", testutil.KustomizationYAML("consumer", "apps",
-				"  path: ./payload\n  sourceRef: {kind: "+tc.kind+", name: entry}\n"))
-			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
-			testutil.WriteFile(t, root, "payload/file", "working tree")
-			st := store.New()
-			result, err := Run(t.Context(), testConfig(t, Config{
-				Path: filepath.Join(root, "entry", "config"), RepoRoot: root, Store: st,
-				SelfURLs: []string{tc.remote},
-			}))
-			assert.NoError(t, err)
-			t.Cleanup(result.Close)
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "entry"}
-			child, material, _, err := result.Admission.Resolve(t.Context(), id, nil, nil)
-			assert.NoError(t, err)
-			resolution := result.Admission.resolvedSources.snapshot()[id]
-			assert.Equal(t, resolution.entry, tc.entry)
-			assert.Equal(t, resolution.provider == store.ProviderCommit, false)
-			assert.Equal(t, resolution.synthetic, false)
-			if tc.local {
-				assert.FatalIf(
-					t,
-					material == nil || material.FS == nil,
-					"projected entry source lost checkout authority",
-				)
-				if tc.name == "Git entry and self" {
-					assert.Equal(t, st.GetDeclaration(id) == child.Obj, true)
-					status, _ := st.GetStatus(id)
-					assert.Equal(t, status.Status, store.StatusReady)
-				}
-				data, readErr := fs.ReadFile(material.FS, "payload/file")
-				assert.NoError(t, readErr)
-				assert.Equal(t, string(data), "working tree")
-
-				return
-			}
-			assert.Equal(t, material == nil, true)
-			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
-			status, _ := st.GetStatus(id)
-			assert.Equal(t, status.Status == store.StatusReady, false)
-			declaration := resolution.object
-			assert.FatalIf(t, declaration == nil, "produced source lost its projected declaration")
-			assert.Equal(t, st.GetDeclaration(id) == nil, true)
-			for _, warning := range result.Admission.Warnings(st.Warnings()) {
-				assert.Equal(t, warning.Category == manifest.WarnBootstrapAliases, false)
-			}
-			for range 2 {
-				child, artifact, _, resolveErr := result.Admission.Resolve(
-					t.Context(),
-					id,
-					declaration,
-					aliasRequestReads(t, st, id),
-				)
-				assert.NoError(t, resolveErr)
-				assert.Equal(t, child.Obj == declaration, true)
-				assert.Equal(t, artifact == nil, true)
-			}
-			assert.Equal(t, manifest.Equal(result.Admission.resolvedSources.snapshot()[id].object, declaration), true)
-			published, err := result.Admission.Publish(
-				t.Context(),
-				id,
-				aliasRequestReads(t, st, id),
-				func(store.Child) (bool, error) {
-					t.Error("unsupported projection reached synthetic acceptance")
-					return true, nil
-				},
-			)
-			assert.NoError(t, err)
-			assert.Equal(t, published, false)
-		})
-	}
-}
-
 func TestAdmission_OCIEntryReference(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -497,14 +398,21 @@ spec:
 			assert.NoError(t, err)
 			t.Cleanup(session.Close)
 			a := session.finishAdmission(t.Context())
-			published, err := a.Publish(t.Context(), id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {
-				t.Error("planning producer evidence allowed synthetic source acceptance")
-				return true, nil
-			})
+			direct := producer == "direct"
+			published, err := a.Publish(
+				t.Context(),
+				id,
+				aliasRequestReads(t, st, id),
+				func(child store.Child) (bool, error) {
+					assert.Equal(t, direct, true)
+					assert.Equal(t, manifest.Equal(child.Obj, resolution.object), true)
+					return true, nil
+				},
+			)
 			assert.NoError(t, err)
-			assert.Equal(t, published, false)
-			assert.Equal(t, st.GetDeclaration(id) == nil, true)
-			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
+			assert.Equal(t, published, direct)
+			assert.Equal(t, st.GetDeclaration(id) != nil, direct)
+			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) != nil, direct)
 		})
 	}
 }

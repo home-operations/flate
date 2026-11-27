@@ -679,6 +679,97 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 	}
 }
 
+type entryPlannerSyncCase struct {
+	name, file, path string
+	mounted, reject  bool
+	want             bool
+}
+
+func TestEntryPlanner_SyncScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []entryPlannerSyncCase{
+		{name: "mounted", file: "other/instance.yaml", path: "./elsewhere", mounted: true, want: true},
+		{name: "rejected", file: "entry/instance.yaml", path: "./entry", reject: true},
+		{name: "replaced pair", file: "other/instance.yaml", path: "./elsewhere"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testEntryPlannerSyncScope(t, &tc)
+		})
+	}
+}
+
+func testEntryPlannerSyncScope(t *testing.T, tc *entryPlannerSyncCase) {
+	t.Helper()
+	root := t.TempDir()
+	input := &store.SourceArtifact{Provider: store.ProviderInput, LocalPath: root, FS: fstest.MapFS{}}
+	st := store.New()
+	cfg := testConfig(t, Config{Store: st, Input: input, RepoRoot: root, Path: filepath.Join(root, "entry")})
+	d := newDiscoverer(&cfg)
+	t.Cleanup(d.Close)
+	d.resolvedSources = &entrySourcePublisher{store: st, mutable: map[manifest.NamedResource]entryResolution{}}
+
+	var source manifest.BaseManifest = &manifest.OCIRepository{
+		Name: "sync", Namespace: "apps", URL: "oci://fixture.invalid/repo",
+	}
+	if !tc.mounted && !tc.reject {
+		source = &manifest.GitRepository{Name: "sync", Namespace: "apps", URL: "https://fixture.invalid/repo"}
+	}
+	id := source.Named()
+	app := manifest.NewEntryKustomization(id, tc.path, manifest.NamedResource{})
+	app.Name, app.Namespace = "sync", "apps"
+	previousApp := *app
+	previousApp.Path = "./entry"
+	previous := &syncSource{source: source, application: &previousApp}
+	mount := &store.SourceArtifact{Provider: store.ProviderAlias, LocalPath: t.TempDir(), LocalRoot: root, FS: input.FS}
+	d.resolvedSources.record(id, &entryResolution{
+		object: source, input: input, artifact: mount, entry: true, projected: true,
+		sync: previous, provider: store.ProviderAlias,
+	})
+	selected := selection.OccurrenceFacts{
+		Identity: id, Object: source, Declaration: selection.OccurrenceID{Source: root, File: tc.file},
+	}
+	if tc.mounted {
+		selected.Declaration.Source, selected.Mounted = mount.LocalPath, mount
+	}
+	application := selected
+	application.Identity, application.Object = app.Named(), app
+	scope := rootScope{occurrences: []selection.OccurrenceFacts{selected, application}}
+	if tc.reject {
+		other := &manifest.GitRepository{Name: "other", Namespace: "apps"}
+		st.AddObject(other)
+		st.SetArtifact(other.Named(), input)
+		narrow := manifest.NewEntryKustomization(other.Named(), "./entry/nested", manifest.NamedResource{})
+		narrow.Name, narrow.Namespace = "narrow", "apps"
+		scope.occurrences = append(scope.occurrences, selection.OccurrenceFacts{
+			Identity: narrow.Named(), Object: narrow,
+			Declaration: selection.OccurrenceID{Source: root, File: "entry/nested/ks.yaml"},
+		})
+	}
+	sourceChild := store.Child{Obj: source, VisibleGeneration: true}
+	planner := entryPlanner{
+		session: d,
+		inputs:  map[string]*store.SourceArtifact{selected.Declaration.Source: selected.Mounted},
+		objects: map[occurrenceKey]store.Child{
+			occurrenceIdentity(&selected):    sourceChild,
+			occurrenceIdentity(&application): {Obj: app, VisibleGeneration: true},
+		},
+	}
+	_, err := planner.source(t.Context(), &clusterRoot{}, &rootVisit{scope: &scope, occurrence: &application},
+		&manifest.Reference{NamedResource: id})
+	assert.Equal(t, errors.Is(err, errPendingSources), tc.want)
+	if !tc.want {
+		assert.NoError(t, err)
+	}
+	binding := d.resolvedSources.snapshot()[id]
+	assert.Equal(t, binding.artifact != nil, tc.want)
+	if tc.want {
+		assert.Equal(t, binding.sync, previous)
+	} else {
+		assert.Equal(t, binding.sync == nil, true)
+	}
+}
+
 func TestPlan_ExternalURLBootstrapSource(t *testing.T) {
 	t.Parallel()
 	for _, scan := range []string{".", "tenants/x"} {

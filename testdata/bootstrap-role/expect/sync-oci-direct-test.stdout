@@ -1,7 +1,9 @@
 
-  ⊘  Kustomization  flux-system/cluster  blocked by flux-system/flux-system (not found)
-  ⊘  Kustomization  flux-system/flux-instance  blocked by flux-system/flux-system (not found)
-  ⊘  Kustomization  flux-system/flux-operator  blocked by flux-system/flux-system (not found)
-  ⊘  Kustomization  flux-system/kustomize-mutating-webhook  blocked by flux-system/flux-system (not found)
+  ✗  Kustomization  flux-system/cluster  kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+  ✗  Kustomization  flux-system/flux-instance  kustomization path is not a directory: ./clusters/cluster-00/flux-system/flux-instance/app: resolve ./clusters/cluster-00/flux-system/flux-instance/app: stat clusters: file does not exist
+  ✗  Kustomization  flux-system/flux-operator  kustomization path is not a directory: ./clusters/cluster-00/flux-system/flux-operator/app: resolve ./clusters/cluster-00/flux-system/flux-operator/app: stat clusters: file does not exist
+  ✓  Kustomization  flux-system/flux-system
+  ✗  Kustomization  flux-system/kustomize-mutating-webhook  kustomization path is not a directory: ./clusters/cluster-00/flux-system/kustomize-mutating-webhook/app: resolve ./clusters/cluster-00/flux-system/kustomize-mutating-webhook/app: stat clusters: file does not exist
+  ✓  OCIRepository  flux-system/flux-system
 
-  ✗ 0 passed · 4 blocked   <DUR>
+  ✗ 2 passed · 4 failed   <DUR>

@@ -16,6 +16,15 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`artifact-redispatch/` reduces the ArtifactGenerator loop from `buroa/home-ops` at `efef17bfd5630ebaf6415ae9000b4e8f183a932a`.
+A local Helm chart emits the FluxInstance that applies the generator's package.
+The package adds the namespace to the generator declaration.
+The generator uses the checkout as its GitRepository source.
+It copies the captured app and a shared component into one ExternalArtifact.
+The consumer renders the two ConfigMaps.
+The test runs `build all` twice at concurrency 2, with a fresh cache each time.
+It compares complete output, diagnostics, and exit status against expectations derived from the fixture manifests.
+
 `rootless-aggregate/` covers the requested-path aggregate through `cli.Run`.
 Its cases retain plain files, native transformations, authored builder authority, and incompatible package errors.
 Each case compares complete streams and exit codes twice with two workers and one reused private cache.
@@ -791,9 +800,10 @@ Both sequence replays start with empty caches.
 | `artifact-reach/artifact-generator--copied-unrelated-path` | An unrelated Git path matches the artifact destination name. Both diffs stay empty and report no external source. | Each sequence runs twice at concurrency 2 and retains the cache. |
 | `artifact-reach/artifact-generator--copied-consumer-edit` | Consumer-only label edit: both sides execute the required generator. | Each sequence runs twice at concurrency 2 and retains the cache. |
 | `artifact-reach/artifact-generator--copied-reverse-committed` | Reverse diff uses the committed after input from the before checkout. | Two replays retain the cache at concurrency 2. |
+| `artifact-redispatch/artifact-generator--publication-converges` | `build all` renders the app and copied component ConfigMaps. Both runs compare complete streams and exit 0. | Each run starts with a fresh cache and uses two workers. |
 | `artifact-convergence/artifact-generator--consumed-input-convergence` | `build all`: entry patches replace the raw generator input and UID. The final consumer and ExternalArtifact appear once with the current metadata. | Two invocations share the default cache. Replays retain caches. |
 
-These scenarios are authored reductions of `xunholy/k8s-gitops` revision `2f2e6edc730457a3f45d7a73aad536afc683b5eb`.
+Except `artifact-redispatch/`, which reduces `buroa/home-ops` (see Layout), these scenarios are authored reductions of `xunholy/k8s-gitops` revision `2f2e6edc730457a3f45d7a73aad536afc683b5eb`.
 The reference path is `kubernetes/apps/base/flux-system/artifact-generator/artifactgenerator.yaml`.
 The reduction keeps the source, copy, artifact, and consumer relationships and replaces application payloads with local ConfigMaps.
 Merge, extract, missing input, bootstrap, pinned history, and convergence are authored variants of the existing flate regression tests.

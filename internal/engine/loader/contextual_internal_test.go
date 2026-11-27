@@ -24,11 +24,15 @@ import (
 type substitutionData struct {
 	manifest.Data
 
-	reads int
+	reads  int
+	onRead func()
 }
 
 func (d *substitutionData) Value(key string) (manifest.DataValue, error) {
 	d.reads++
+	if d.onRead != nil {
+		d.onRead()
+	}
 	return d.Data.Value(key)
 }
 

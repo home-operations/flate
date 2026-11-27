@@ -435,14 +435,16 @@ func (p *substitutionResolution) resolveValue(
 	}
 	p.resolving[owner] = true
 	defer delete(p.resolving, owner)
-	parent, known = p.inheritValues(ctx, owner, parent, value)
+	parent, unresolvedReferences, known := p.inheritValues(ctx, owner, parent, value)
 	if !known || !l.hydratePathReferences(ctx, parent, &p.hydrated) {
 		return value, false
 	}
 	if p.provider == nil {
 		p.provider = values.NewStoreProvider(l, manifest.NamedResource{})
 	}
-	resolved, known, needsInput := values.ResolveStaticValue(value, parent, p.provider, l.Options.Missing)
+	resolved, known, needsInput := values.ResolveStaticValue(
+		value, parent, p.provider, l.Options.Missing, unresolvedReferences,
+	)
 	p.needsInputs = p.needsInputs || needsInput
 	if known {
 		if p.resolved == nil {
@@ -453,36 +455,39 @@ func (p *substitutionResolution) resolveValue(
 	return resolved, known
 }
 
+//nolint:nonamedreturns // The names distinguish the two boolean results.
 func (p *substitutionResolution) inheritValues(
 	ctx context.Context,
 	owner manifest.NamedResource,
 	parent *manifest.Kustomization,
 	value string,
-) (*manifest.Kustomization, bool) {
+) (inherited *manifest.Kustomization, unresolvedReferences, known bool) {
 	record, _ := p.loader.Index.Lookup(owner)
 	if parent.PostBuild == nil || record.Parent == (manifest.NamedResource{}) || record.Parent == owner ||
 		parent.Labels[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue ||
 		parent.Annotations[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue {
-		return parent, true
+		return parent, false, true
 	}
 	var projected *manifest.Kustomization
 	resolve := func(value string) (string, bool) {
-		resolved, complete := p.resolveValue(ctx, record.Parent, value)
-		if complete && projected == nil {
+		if projected == nil {
 			projected = new(*parent)
 			projected.PostBuild = parent.PostBuild.DeepCopy()
 		}
-		return resolved, complete
+		return p.resolveValue(ctx, record.Parent, value)
 	}
+	skipped := 0
 	for i, ref := range parent.PostBuild.SubstituteFrom {
-		if !manifest.HasEnvsubstReference(ref.Name) {
-			continue
+		complete := true
+		if manifest.HasEnvsubstReference(ref.Name) {
+			ref.Name, complete = resolve(ref.Name)
 		}
-		resolved, complete := resolve(ref.Name)
-		if !complete {
-			return parent, false
+		switch {
+		case !complete:
+			skipped++
+		case projected != nil:
+			projected.PostBuild.SubstituteFrom[i-skipped] = ref
 		}
-		projected.PostBuild.SubstituteFrom[i].Name = resolved
 	}
 	var names map[string]struct{}
 	for key, inline := range parent.PostBuild.Substitute {
@@ -497,15 +502,20 @@ func (p *substitutionResolution) inheritValues(
 		}
 		resolved, complete := resolve(inline)
 		if !complete {
-			return parent, false
+			return parent, false, false
 		}
 		projected.PostBuild.Substitute[key] = resolved
 	}
-	if projected != nil {
-		p.catalogs[owner] = projected
-		return projected, true
+	if projected == nil {
+		return parent, false, true
 	}
-	return parent, true
+	// The next scalar must see the unresolved names in the authored references.
+	if skipped == 0 {
+		p.catalogs[owner] = projected
+	}
+	refs := projected.PostBuild.SubstituteFrom
+	projected.PostBuild.SubstituteFrom = refs[:len(refs)-skipped]
+	return projected, skipped != 0, true
 }
 
 func (p *substitutionResolution) projectSubstitutions(

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"slices"
 	"testing"
 
@@ -83,14 +84,30 @@ func TestUnownedProductionDeclaration_ProjectTargets(t *testing.T) {
 
 func TestSelfProduceBuilder_SubstitutedTargets(t *testing.T) {
 	t.Parallel()
+	readableParent := &kustomizev1.PostBuild{Substitute: map[string]string{"SETTINGS": "settings"}}
+	unreadableParent := &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{
+		{Kind: manifest.KindSecret, Name: "parent-settings"},
+	}}
 	for _, tc := range []substitutedTargetCase{
 		{name: "inline", inline: true, known: true},
 		{name: "readable ConfigMap", input: manifest.KindConfigMap, readable: true, known: true},
 		{name: "readable Secret", input: manifest.KindSecret, readable: true, known: true},
-		{name: "inherited reference", input: manifest.KindConfigMap, readable: true, known: true, inherited: true},
+		{name: "inherited reference", input: manifest.KindConfigMap, readable: true, known: true, parent: readableParent},
 		{name: "unknown", input: manifest.KindConfigMap},
-		{name: "unknown with default", input: manifest.KindSecret, defaultName: true},
+		{name: "unknown with default", input: manifest.KindSecret, target: "${BUCKET:-shared}"},
 		{name: "inline over unknown", input: manifest.KindSecret, inline: true, known: true},
+		{
+			name: "inline over unresolved name", input: manifest.KindConfigMap, inline: true, known: true,
+			parent: unreadableParent,
+		},
+		{
+			name: "inline over readable input", input: manifest.KindConfigMap, inline: true, readable: true, known: true,
+			inputValue: "other",
+		},
+		{
+			name: "partially known target", input: manifest.KindConfigMap, inline: true, parent: unreadableParent,
+			target: "${BUCKET}-${SUFFIX}", declaration: "declared", otherTargetSuffix: "-known",
+		},
 		{name: "literal declaration", inline: true, declaration: "declared", known: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,8 +175,10 @@ func TestSelfProduceBuilder_SubstitutionExclusions(t *testing.T) {
 
 type substitutedTargetCase struct {
 	name, input, declaration string
+	target, inputValue       string
+	otherTargetSuffix        string
 	inline, readable, known  bool
-	defaultName, inherited   bool
+	parent                   *kustomizev1.PostBuild
 }
 
 func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
@@ -176,9 +195,9 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 		owner.PostBuild.SubstituteFrom = []kustomizev1.SubstituteReference{{Kind: tc.input, Name: "settings"}}
 	}
 	var parent manifest.NamedResource
-	if tc.inherited {
+	if tc.parent != nil {
 		root := &manifest.Kustomization{Name: "root", Namespace: "apps"}
-		root.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"SETTINGS": "settings"}}
+		root.PostBuild = tc.parent
 		st.AddObject(root)
 		l.Index.Records[root.Named()] = manifest.DiscoveryRecord{Declaration: root}
 		parent = root.Named()
@@ -186,25 +205,23 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 	}
 	if tc.readable {
 		id := manifest.NamedResource{Kind: tc.input, Namespace: "apps", Name: "settings"}
+		inputValue := cmp.Or(tc.inputValue, "shared")
 		if tc.input == manifest.KindSecret {
 			st.AddObject(
 				&manifest.Secret{
 					Name:       id.Name,
 					Namespace:  id.Namespace,
 					Data:       nil,
-					StringData: map[string]any{"BUCKET": "shared"},
+					StringData: map[string]any{"BUCKET": inputValue},
 				},
 			)
 		} else {
 			st.AddObject(
-				&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"BUCKET": "shared"}},
+				&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"BUCKET": inputValue}},
 			)
 		}
 	}
-	name := "${BUCKET}"
-	if tc.defaultName {
-		name = "${BUCKET:-shared}"
-	}
+	name := cmp.Or(tc.target, "${BUCKET}")
 	declaration := name
 	if tc.declaration != "" {
 		declaration = tc.declaration
@@ -215,10 +232,10 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 	}
 	unused := owner.Clone()
 	unused.Name, unused.TargetNamespace = "unused", "apps"
-	unused.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"BUCKET": "unused"}}
+	unused.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"BUCKET": "unused", "SUFFIX": "known"}}
 	other := owner.Clone()
 	other.Name, other.TargetNamespace = "other-namespace", "other"
-	other.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"BUCKET": "shared"}}
+	other.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"BUCKET": "shared", "SUFFIX": "known"}}
 	owner.TargetNamespace = "apps"
 	builder := selfProduceBuilder{idx: l.Index, store: st}
 	for _, producer := range []*manifest.Kustomization{owner, unused, other} {
@@ -244,18 +261,25 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 		builder.recordProducer(&targets, nil)
 	}
 	assert.NoError(t, builder.finalizeTargets(t.Context(), l, nil))
-	if tc.inherited {
+	if tc.parent != nil {
 		assert.Equal(t, owner.PostBuild.SubstituteFrom[0].Name, "${SETTINGS}")
 	}
 	for id := range l.Index.Records {
 		assert.Equal(t, manifest.HasEnvsubstReference(id.Name), false)
 		assert.Equal(t, id.Name != "", true)
+		productions := l.Index.Records[id].Productions
+		for i := range productions {
+			production := &productions[i]
+			assert.FatalIf(t, id.Kind == manifest.KindSecret && !tc.known && production.Owner == owner.Named(),
+				"unexpected producer %s for %s", production.Owner, id)
+		}
 	}
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "shared"}
 	record, _ := l.Index.Lookup(target)
-	assert.Equal(t, slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+	assert.FatalIf(t, slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
 		return p.Owner == owner.Named()
-	}), tc.known)
+	}) != tc.known, "%s: expected producer %s present=%t, got %+v", target, owner.Named(), tc.known, record.Productions)
+	assert.FatalIf(t, len(record.Productions) > 1, "target %s has productions %+v", target, record.Productions)
 	for i := range record.Productions {
 		production := &record.Productions[i]
 		assert.Equal(t, production.Owner, owner.Named())
@@ -266,7 +290,7 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 	for _, expected := range []struct{ namespace, name, owner string }{
 		{"apps", "unused", "unused"}, {"other", "shared", "other-namespace"},
 	} {
-		target.Namespace, target.Name = expected.namespace, expected.name
+		target.Namespace, target.Name = expected.namespace, expected.name+tc.otherTargetSuffix
 		record, _ = l.Index.Lookup(target)
 		assert.FatalIf(
 			t,

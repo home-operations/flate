@@ -1,0 +1,5 @@
+apiVersion: builtin
+kind: ConfigMapGenerator
+metadata: {name: child}
+options: {disableNameSuffixHash: true}
+literals: [key=value]

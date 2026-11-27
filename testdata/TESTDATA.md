@@ -1961,6 +1961,25 @@ The Git package retains HEAD, index, status, and file-byte observations. Low-lev
 | `cache-lifecycle/source-prime-and-warm` | Prime a source cache, then reuse the same cache for the warm render and replay. | Reuse on replay. |
 | `source-errors/source-ref--held-error-scope-non-decode-error` | The loader package distinguishes a read error from a decode error. Unsupported readers remain not-run. | Package-only permission proof. |
 
+## GitRepository artifact link omissions
+
+`remote-base-artifact-links/` replays six cases from the Flux controller comparison.
+The local Git fixture transport supplies the source from a separate repository.
+The source commits contain links that Flux omits when it creates an artifact.
+The fixture removes the links from the source working tree so the catalog sees the extracted layout.
+The Git ref still contains the links that flate must omit.
+Each case compares complete stdout, stderr, and exit status through `cli.Run` with two workers.
+The first run starts with a cold cache. The second run reuses the same cache.
+
+| Case | Behavior |
+| --- | --- |
+| `remote-base-artifact-links/alternate-resources` | Build the child resource package from its alternate control. Fail when the parent generator reads the omitted control link. |
+| `remote-base-artifact-links/alternate-generators` | Build the child generator package from its alternate control. Fail when the parent generator reads the omitted control link. |
+| `remote-base-artifact-links/parent-resource` | Report the omitted child control link as a missing parent resource. |
+| `remote-base-artifact-links/child-resource` | Report the omitted child input link as a missing resource. |
+| `remote-base-artifact-links/child-generator` | Report the omitted child input link as a missing generator input. |
+| `remote-base-artifact-links/alternate-control-generators` | Render ConfigMap `child` with `key: value`, both ownership labels, and the generator origin `child/cm.yaml`. |
+
 ## Reach precision
 
 `reach-precision/` replaces the finite inputs of `TestRenderTrees_Reach` through `internal/testutil/testfixture.Materialize`.

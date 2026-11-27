@@ -28,6 +28,10 @@ func TestE2E_SourceCorpus(t *testing.T) {
 		{name: "source-errors", cases: []string{"oci-missing-tag", "oci-transport", "oci-changed-consumer-diff", "source-ref--held-error-across-namespaces-external-source", "source-ref--held-error-across-namespaces-working-tree-source", "source-ref--held-error-survives-namespace-inheritance-explicit-source-namespace", "source-ref--held-error-survives-namespace-inheritance-implicit-source-namespace", "source-ref--held-error-survives-namespace-inheritance-pinned-inherited-namespace", "source-ref--held-error-survives-namespace-inheritance-external-source-in-other-inherited-namespace", "source-ref--held-error-survives-namespace-inheritance-pinned-namespace-free-source", "source-ref--held-error-retained-by-empty-path", "source-ref--held-error-scope-oci", "source-ref--held-error-scope-bootstrap", "source-ref--held-error-scope-resolved-unavailable-tag", "source-ref--held-error-scope-non-matching-url", "source-ref--held-error-scope-two-held", "source-ref--held-error-scope-two-held-path-order"}},
 		{name: "machine-auth", cases: []string{"docker-native-store", "helm-native-store", "anonymous-registry", "malformed-native-registry-store", "aws-native-profile", "missing-certificate", "missing-proxy"}},
 		{name: "remote-inputs", cases: []string{"git-source", "remote-base-unrelated-symlink"}},
+		{name: "remote-base-artifact-links", cases: []string{
+			"alternate-resources", "alternate-generators", "parent-resource",
+			"child-resource", "child-generator", "alternate-control-generators",
+		}},
 		{name: "cache-lifecycle", cases: []string{"source-prime-and-warm"}},
 	} {
 		for _, name := range scenario.cases {

@@ -1,5 +1,5 @@
 
-  ✗  Kustomization  flux-system/owner  kustomize build ./incidental/nested: accumulating resources: accumulation err='accumulating resources from 'unreadable.yaml': resolve incidental/nested/unreadable.yaml: stat @@repo@@/incidental/nested/unreadable.yaml: permission denied': must build at directory: not a valid directory: resolve incidental/nested/unreadable.yaml: stat @@repo@@/incidental/nested/unreadable.yaml: permission denied
+  ✗  Kustomization  flux-system/owner  kustomize build ./incidental/nested: accumulating resources: accumulation err='accumulating resources from 'unreadable.yaml': resolve incidental/nested/unreadable.yaml: stat incidental/nested/unreadable.yaml: file does not exist': must build at directory: not a valid directory: resolve incidental/nested/unreadable.yaml: stat incidental/nested/unreadable.yaml: file does not exist
 <PERSISTENCE:|
   ⚠ warnings (1)
     [RenderPersistenceDisabled] render persistence is disabled: <PERSISTENCE_REASON>; source caching remains available

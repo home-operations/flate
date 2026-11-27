@@ -83,7 +83,23 @@ type statErrorFS struct {
 	err error
 }
 
-func (f statErrorFS) Stat(string) (fs.FileInfo, error) { return nil, f.err }
+func (f statErrorFS) Stat(string) (fs.FileInfo, error)  { return nil, f.err }
+func (f statErrorFS) Lstat(string) (fs.FileInfo, error) { return nil, f.err }
+
+func TestGitView_MissingNodeBackingError(t *testing.T) {
+	t.Parallel()
+
+	want := &fs.PathError{Op: "backing-lstat", Path: "physical-file", Err: fs.ErrPermission}
+	view := &gitView{mode: Source, current: statErrorFS{err: want}}
+	_, err := view.Lstat("missing")
+	assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+	got, ok := errors.AsType[*fs.PathError](err)
+	assert.FatalIf(t, !ok, "backing lookup error = %v", err)
+	assert.Equal(t, got, want)
+	assert.Equal(t, got.Op, "backing-lstat")
+	assert.Equal(t, got.Path, "physical-file")
+	assert.Equal(t, got.Err, fs.ErrPermission)
+}
 
 func testNewEntryPolicySizeErrors(t *testing.T) {
 	t.Helper()

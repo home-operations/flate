@@ -125,12 +125,6 @@ func (d *Session) loadAt(
 		return 0, nil
 	}
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) && input.artifact != nil && input.artifact.FS != nil {
-			name, _ := filepath.Rel(input.artifact.LocalPath, dir)
-			if _, statErr := fs.Stat(input.artifact.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
-				return 0, nil
-			}
-		}
 		return 0, err
 	}
 	*total += n
@@ -148,9 +142,8 @@ func (d *Session) loadSourcePath(
 		owner = manifest.NamedResource{}
 	}
 	return d.loadAt(ctx, dir, total, &sourceLoad{
-		owner:    owner,
-		work:     d.cfg.Work.Source(expansion.ks.EffectiveSourceID()).Record(manifest.WorkPreparation, dir),
-		artifact: expansion.source,
+		owner: owner,
+		work:  d.cfg.Work.Source(expansion.ks.EffectiveSourceID()).Record(manifest.WorkPreparation, dir),
 	})
 }
 
@@ -595,7 +588,6 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 }
 
 type sourceLoad struct {
-	owner    manifest.NamedResource
-	work     *manifest.WorkRecord
-	artifact *store.SourceArtifact
+	owner manifest.NamedResource
+	work  *manifest.WorkRecord
 }

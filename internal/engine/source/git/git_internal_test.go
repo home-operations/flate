@@ -72,8 +72,10 @@ func TestFetcher_PackedContent(t *testing.T) {
 func TestFetcher_SourceLinksOmitted(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{"hello.txt": "hi", "apps/cm.yaml": "kind: ConfigMap"})
-	for name, target := range map[string]string{"alias": "hello.txt", "dirlink": "apps", ".sourceignore": "hello.txt"} {
+	mustInitRepoWithFiles(t, src, map[string]string{
+		"hello.txt": "hi", "apps/cm.yaml": "kind: ConfigMap", "ignore-patterns": "apps/cm.yaml\n",
+	})
+	for name, target := range map[string]string{"alias": "hello.txt", "dirlink": "apps", ".sourceignore": "ignore-patterns"} {
 		{
 			err := os.Symlink(target, filepath.Join(src, name))
 			assert.NoError(t, err)
@@ -91,8 +93,12 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
+	data, err := fs.ReadFile(art.FS, "apps/cm.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "kind: ConfigMap")
+
 	for _, name := range []string{"alias", "dirlink", "dirlink/cm.yaml", ".sourceignore"} {
-		if file, openErr := art.FS.Open(name); !errors.Is(openErr, fs.ErrPermission) {
+		if file, openErr := art.FS.Open(name); !errors.Is(openErr, fs.ErrNotExist) {
 			if file != nil {
 				_ = file.Close()
 			}
@@ -100,11 +106,11 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 		}
 		{
 			_, statErr := fs.Stat(art.FS, name)
-			assert.ErrorIf(t, !errors.Is(statErr, fs.ErrPermission), "Stat(%s): %v", name, statErr)
+			assert.ErrorIf(t, !errors.Is(statErr, fs.ErrNotExist), "Stat(%s): %v", name, statErr)
 		}
 		{
 			_, readDirErr := fs.ReadDir(art.FS, name)
-			assert.ErrorIf(t, !errors.Is(readDirErr, fs.ErrPermission), "ReadDir(%s): %v", name, readDirErr)
+			assert.ErrorIf(t, !errors.Is(readDirErr, fs.ErrNotExist), "ReadDir(%s): %v", name, readDirErr)
 		}
 	}
 	entries, err := fs.ReadDir(art.FS, ".")

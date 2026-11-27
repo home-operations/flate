@@ -1,0 +1,6 @@
+apiVersion: builtin
+kind: ValueAddTransformer
+metadata: {name: loader}
+targets:
+  - fieldPath: data/loader
+    selector: {kind: ConfigMap}

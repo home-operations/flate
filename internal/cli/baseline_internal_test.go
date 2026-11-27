@@ -116,8 +116,7 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 			switch {
 			case route == "referenced link":
 
-				assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "apps/link.yaml") ||
-					!strings.Contains(stderr, "permission denied") ||
+				assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "stat apps/link.yaml: file does not exist") ||
 					strings.Contains(
 						stdout,
 						"name: decoy",
@@ -127,6 +126,39 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 
 				t.Fatalf("link-only comparison: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
+		})
+	}
+}
+
+//nolint:paralleltest // CLI invocations call setLogLevel, which replaces slog.Default and log output.
+func TestRun_BaseReferencedLinkExclusion(t *testing.T) {
+	for _, side := range []string{"original", "current"} {
+		t.Run(side, func(t *testing.T) {
+			root := writeFixture(t)
+			const resource = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: linked}\n"
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, link.yaml]\n")
+			testutil.WriteFile(t, root, "apps/target", resource)
+			link := filepath.Join(root, "apps", "link.yaml")
+			if side == "original" {
+				assert.NoError(t, os.Symlink("target", link))
+			} else {
+				testutil.WriteFile(t, root, "apps/link.yaml", resource)
+			}
+			repo := testutil.GitInit(t, root)
+			pin := testutil.GitCommitAll(t, repo, "base",
+				&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+			assert.NoError(t, os.Remove(link))
+			if side == "current" {
+				assert.NoError(t, os.Symlink("target", link))
+			} else {
+				testutil.WriteFile(t, root, "apps/link.yaml", resource)
+			}
+
+			result := runCLI(t, "diff", "ks", "--path", root, "--base", pin.String(),
+				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+			assert.FatalIf(t, result.code != 1 ||
+				!strings.Contains(result.stderr, "stat apps/link.yaml: file does not exist"),
+				"%s side: exit=%d stdout=%s stderr=%s", side, result.code, result.stdout, result.stderr)
 		})
 	}
 }

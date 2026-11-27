@@ -1,0 +1,709 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "8f1cf6ee839cef7cec8fec66340b06cfcf8a17a8",
+    "paths": [
+      "testdata/remote-inputs/repo/flux"
+    ],
+    "reductions": "Use the existing remote source layout with six source trees from the p7 Flux link fixtures and the p8 artifact consumer. The fixture transport serves the committed links without network access."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "remote",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://remote.fixture.invalid/source"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "consumer",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "alternate-resources",
+      "overlay": "alternate-resources",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "alternate-generators",
+      "overlay": "alternate-generators",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "parent-resource",
+      "overlay": "parent-resource",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "child-resource",
+      "overlay": "child-resource",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "child-generator",
+      "overlay": "child-generator",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "remote",
+      "name": "alternate-control-generators",
+      "overlay": "alternate-control-generators",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "alternate-resources",
+      "directory": "overlays/alternate-resources",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/kustomization.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "alternate-generators",
+      "directory": "overlays/alternate-generators",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/kustomization.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-resource",
+      "directory": "overlays/parent-resource",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/kustomization.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-resource",
+      "directory": "overlays/child-resource",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/input.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-generator",
+      "directory": "overlays/child-generator",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/input.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "alternate-control-generators",
+      "directory": "overlays/alternate-control-generators",
+      "operations": [
+        {
+          "symlink": {
+            "path": "remote/apps/base/child/kustomization.yaml",
+            "target": "../control.yaml"
+          }
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "alternate-resources",
+      "description": "Read the omitted control link as a generator input after loading child resources.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "alternate-resources"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "alternate-resources"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/kustomization.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/missing-control.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "alternate-generators",
+      "description": "Read the omitted control link as a generator input after loading child generators.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "alternate-generators"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "alternate-generators"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/kustomization.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/missing-control.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-resource",
+      "description": "Read the omitted control link as a parent resource.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "parent-resource"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "parent-resource"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/kustomization.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/parent-resource.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-resource",
+      "description": "Read an omitted link as a child resource.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "child-resource"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "child-resource"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/input.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/child-resource.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-generator",
+      "description": "Read an omitted link as a child generator input.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "child-generator"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "child-generator"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/input.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/child-generator.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "alternate-control-generators",
+      "description": "Render a generated ConfigMap from the remaining child control.",
+      "setup": [
+        {
+          "commit": "consumer"
+        },
+        {
+          "commit": "alternate-control-generators"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/fixture",
+            "commit": "alternate-control-generators"
+          }
+        },
+        {
+          "delete": "remote/apps/base/child/kustomization.yaml"
+        }
+      ],
+      "directory": "@@repo@@",
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level=error"
+            ],
+            "expect": {
+              "stdout": "expect/render.stdout",
+              "stderr": "expect/render.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/cluster/consumer.yaml",
+      "cases": [
+        "alternate-resources",
+        "alternate-generators",
+        "parent-resource",
+        "child-resource",
+        "child-generator",
+        "alternate-control-generators"
+      ],
+      "purpose": "Separate consumer and external Git source declarations."
+    },
+    {
+      "path": "overlays/alternate-resources/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "alternate-resources"
+      ],
+      "purpose": "Parent build control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/alternate-resources/remote/apps/base/control.yaml",
+      "cases": [
+        "alternate-resources"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/alternate-resources/remote/apps/base/child/kustomization.yml",
+      "cases": [
+        "alternate-resources"
+      ],
+      "purpose": "Alternate child control that survives source filtering."
+    },
+    {
+      "path": "overlays/alternate-resources/remote/apps/base/child/loader.yaml",
+      "cases": [
+        "alternate-resources"
+      ],
+      "purpose": "Child transformer referenced by the alternate control."
+    },
+    {
+      "path": "overlays/alternate-resources/remote/apps/base/child/cm.yaml",
+      "cases": [
+        "alternate-resources"
+      ],
+      "purpose": "Child ConfigMap or builtin generator declaration."
+    },
+    {
+      "path": "overlays/alternate-generators/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "alternate-generators"
+      ],
+      "purpose": "Parent build control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/alternate-generators/remote/apps/base/control.yaml",
+      "cases": [
+        "alternate-generators"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/alternate-generators/remote/apps/base/child/kustomization.yml",
+      "cases": [
+        "alternate-generators"
+      ],
+      "purpose": "Alternate child control that survives source filtering."
+    },
+    {
+      "path": "overlays/alternate-generators/remote/apps/base/child/loader.yaml",
+      "cases": [
+        "alternate-generators"
+      ],
+      "purpose": "Child transformer referenced by the alternate control."
+    },
+    {
+      "path": "overlays/alternate-generators/remote/apps/base/child/cm.yaml",
+      "cases": [
+        "alternate-generators"
+      ],
+      "purpose": "Child ConfigMap or builtin generator declaration."
+    },
+    {
+      "path": "overlays/parent-resource/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "parent-resource"
+      ],
+      "purpose": "Parent build control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/parent-resource/remote/apps/base/control.yaml",
+      "cases": [
+        "parent-resource"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/parent-resource/remote/apps/base/child/kustomization.yml",
+      "cases": [
+        "parent-resource"
+      ],
+      "purpose": "Alternate child control that survives source filtering."
+    },
+    {
+      "path": "overlays/parent-resource/remote/apps/base/child/cm.yaml",
+      "cases": [
+        "parent-resource"
+      ],
+      "purpose": "Child ConfigMap or builtin generator declaration."
+    },
+    {
+      "path": "overlays/child-resource/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "child-resource"
+      ],
+      "purpose": "Parent build control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/child-resource/remote/apps/base/control.yaml",
+      "cases": [
+        "child-resource"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/child-resource/remote/apps/base/child/kustomization.yaml",
+      "cases": [
+        "child-resource"
+      ],
+      "purpose": "Child build control that reads the omitted input.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/child-generator/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "child-generator"
+      ],
+      "purpose": "Parent build control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/child-generator/remote/apps/base/control.yaml",
+      "cases": [
+        "child-generator"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/child-generator/remote/apps/base/child/kustomization.yaml",
+      "cases": [
+        "child-generator"
+      ],
+      "purpose": "Child build control that reads the omitted input.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/alternate-control-generators/remote/apps/base/kustomization.yaml",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Parent build control."
+    },
+    {
+      "path": "overlays/alternate-control-generators/remote/apps/base/control.yaml",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Target of the committed link."
+    },
+    {
+      "path": "overlays/alternate-control-generators/remote/apps/base/child/kustomization.yml",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Alternate child control that survives source filtering."
+    },
+    {
+      "path": "overlays/alternate-control-generators/remote/apps/base/child/cm.yaml",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Child ConfigMap or builtin generator declaration."
+    },
+    {
+      "path": "expect/missing-control.stderr",
+      "cases": [
+        "alternate-resources",
+        "alternate-generators"
+      ],
+      "purpose": "Complete build failure diagnostic."
+    },
+    {
+      "path": "expect/parent-resource.stderr",
+      "cases": [
+        "parent-resource"
+      ],
+      "purpose": "Complete build failure diagnostic."
+    },
+    {
+      "path": "expect/child-resource.stderr",
+      "cases": [
+        "child-resource"
+      ],
+      "purpose": "Complete build failure diagnostic."
+    },
+    {
+      "path": "expect/child-generator.stderr",
+      "cases": [
+        "child-generator"
+      ],
+      "purpose": "Complete build failure diagnostic."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "alternate-resources",
+        "alternate-generators",
+        "parent-resource",
+        "child-resource",
+        "child-generator"
+      ],
+      "purpose": "Empty output on build failure."
+    },
+    {
+      "path": "expect/render.stdout",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Complete ConfigMap with ownership labels and generator origin."
+    },
+    {
+      "path": "expect/render.stderr",
+      "cases": [
+        "alternate-control-generators"
+      ],
+      "purpose": "Complete diagnostic stream for the successful build."
+    }
+  ]
+}

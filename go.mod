@@ -14,7 +14,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.12.0
-	github.com/controlplaneio-fluxcd/flux-operator v0.63.1
+	github.com/controlplaneio-fluxcd/flux-operator v0.64.0
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/distribution/reference v0.6.0
 	github.com/fluxcd/helm-controller/api v1.7.2
@@ -92,7 +92,7 @@ require (
 	github.com/exponent-io/jsonpath v0.0.0-20210407135951-1de76d718b3f // indirect
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
-	github.com/fluxcd/cli-utils v1.4.0 // indirect
+	github.com/fluxcd/cli-utils v1.5.0 // indirect
 	github.com/fluxcd/pkg/apis/acl v0.12.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
@@ -205,7 +205,7 @@ require (
 	k8s.io/component-base v0.37.3 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098 // indirect
-	k8s.io/kubectl v0.37.2 // indirect
+	k8s.io/kubectl v0.37.3 // indirect
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
 	sigs.k8s.io/controller-runtime v0.25.3 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect

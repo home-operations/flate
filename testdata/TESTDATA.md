@@ -1954,6 +1954,7 @@ The Git package retains HEAD, index, status, and file-byte observations. Low-lev
 | `machine-auth/missing-certificate` | missing certificate | Reset on replay. |
 | `machine-auth/missing-proxy` | missing proxy | Reset on replay. |
 | `remote-inputs/git-source` | git source | Reset on replay. |
+| `remote-inputs/remote-base-unrelated-symlink` | An unused root link leaves both remote bases renderable. An edit changes only the local ConfigMap in the diff. A cache hit returns the same output. | Reset on replay. |
 | `cache-lifecycle/source-prime-and-warm` | Prime a source cache, then reuse the same cache for the warm render and replay. | Reuse on replay. |
 | `source-errors/source-ref--held-error-scope-non-decode-error` | The loader package distinguishes a read error from a decode error. Unsupported readers remain not-run. | Package-only permission proof. |
 

@@ -1,0 +1,30 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: entry
+  namespace: apps
+spec:
+  interval: 1m
+  url: https://entry.fixture.invalid/repo.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: selected
+  namespace: apps
+spec:
+  path: ./workloads/selected
+  sourceRef:
+    kind: GitRepository
+    name: entry
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unchanged
+  namespace: apps
+spec:
+  path: ./workloads/unchanged
+  sourceRef:
+    kind: GitRepository
+    name: entry

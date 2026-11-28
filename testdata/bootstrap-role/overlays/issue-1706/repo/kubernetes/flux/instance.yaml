@@ -1,0 +1,10 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  distribution: {version: "2.9.6", registry: ghcr.io/fluxcd}
+  sync:
+    kind: OCIRepository
+    url: oci://registry.example.invalid/x/y
+    ref: latest
+    path: kubernetes/flux

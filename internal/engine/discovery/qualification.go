@@ -215,6 +215,7 @@ func (w *qualificationWalk) readApplication(
 			application.Source,
 			&sourceRequest{
 				object:    resolved.object,
+				sync:      evidence.source.sync,
 				reference: sourceReference(evidence.object, application.Source),
 				reads:     reads,
 				work:      reads.WorkScope(),

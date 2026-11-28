@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/cluster  kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+
+  ✗ 1 failed

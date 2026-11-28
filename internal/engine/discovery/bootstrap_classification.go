@@ -13,6 +13,7 @@ import (
 )
 
 type sourceRequest struct {
+	sync      *syncSource
 	object    manifest.BaseManifest
 	reference manifest.Reference
 	reads     *store.ReadSet
@@ -24,6 +25,7 @@ type sourceRequest struct {
 }
 
 type entrySourceGroup struct {
+	sync                *syncSource
 	reference           manifest.Reference
 	producers           []occurrenceKey
 	object              manifest.BaseManifest
@@ -87,10 +89,14 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	}
 	authored := candidate.selectDeclaration(a, id, request, &previous)
 	candidate.inheritEntry(&previous, request.scoped)
-	if !request.scoped && candidate.projected && !candidate.entry && !candidate.entryScoped {
-		candidate.entry = a.emittedEntrySource(id, candidate.object)
+	if request.sync != nil && request.sync.source == candidate.object {
+		candidate.sync = request.sync
 	}
 	if candidate.synthetic {
+		return candidate
+	}
+	if !request.scoped && candidate.needsEmittedSync(&previous) &&
+		a.classifyEmittedSource(id, &candidate, &previous, request.reads) {
 		return candidate
 	}
 	if candidate.projected && !authored && previous.reusesProjection(&candidate) {
@@ -99,11 +105,9 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 		}
 		return previous
 	}
-	// A pending projection without a checkout descriptor MUST wait for its producer.
+	// A pending projection MUST have an admitted sync pair or a checkout descriptor.
 	pending := candidate.projected && !authored && (request.scoped || len(request.producers) == 0)
-	source, hasDescriptor := candidate.object.(entrySource)
-	eligible := candidate.checkoutEligible(a.remotes, pending, hasDescriptor)
-	if pending && !eligible {
+	if pending && !candidate.classifyCheckout(id, a.remotes, true) {
 		candidate.provider, candidate.entry = a.projectedProvider(id, request), false
 		return candidate
 	}
@@ -113,49 +117,56 @@ func (a *Admission) classifySource(id manifest.NamedResource, request *sourceReq
 	case previous.reuseClassification(&candidate, request, a):
 		return previous
 	}
-	if eligible {
-		candidate.classifyCheckout(source)
+	if !pending {
+		candidate.classifyCheckout(id, a.remotes, false)
 	}
 	return candidate
 }
 
-func (a *Admission) emittedEntrySource(id manifest.NamedResource, declaration manifest.BaseManifest) bool {
-	owner := a.store.EmissionOwner(id)
-	output, _ := a.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
-	if output == nil || !output.Complete {
-		return false
-	}
-	// Replacing the checkout can invalidate its producer's reads before either declaration changes.
-	// The two declarations MUST still belong to the complete inventory.
-	source, entry := false, false
-	for i := range output.Children {
-		child := &output.Children[i]
-		source = source || child.Obj == declaration
-		if child.VisibleGeneration && !entry {
-			application, applies := runnableApplication(child.Obj)
-			entry = applies && application.Source == id &&
-				a.input.MatchesOrigin(a.path, a.input.ApplicationOrigin(application.Path)) &&
-				a.store.GetDeclaration(child.Obj.Named()) == child.Obj
-		}
-		if source && entry {
+func (r *entryResolution) needsEmittedSync(previous *entryResolution) bool {
+	unbound := r.sync == nil && (!r.entry || previous.sync.emitted())
+	return r.projected && !r.entryScoped && unbound
+}
+
+type checkoutRole uint8
+
+const (
+	checkoutAlias checkoutRole = iota
+	checkoutBootstrap
+	checkoutDefaultSync
+)
+
+func (r *entryResolution) classifyCheckout(id manifest.NamedResource, remotes []string, pending bool) bool {
+	r.checkout = checkoutAlias
+	if id == manifest.BootstrapSourceID {
+		r.checkout = checkoutBootstrap
+		if r.synthetic {
+			r.provider, r.artifact = store.ProviderInput, r.input
 			return true
 		}
 	}
-	return false
-}
-
-func (r *entryResolution) checkoutEligible(remotes []string, pending, hasDescriptor bool) bool {
-	return manifest.BootstrapSourceEligible(r.object, r.entry && (!pending || hasDescriptor), remotes)
-}
-
-func (r *entryResolution) classifyCheckout(source entrySource) {
+	source, hasDescriptor := r.object.(entrySource)
+	// A predicted sync MUST preserve checkout descriptors' own eligibility rules.
+	syncEntry := r.sync != nil && (!r.sync.predicted || !hasDescriptor)
+	entry := syncEntry || r.entry && (!pending || hasDescriptor)
+	if !r.synthetic && !manifest.BootstrapSourceEligible(r.object, entry, remotes) {
+		return false
+	}
+	r.entry = r.entry || syncEntry
 	r.provider = store.ProviderAlias
+	if r.checkout == checkoutAlias && r.sync != nil && !r.sync.predicted {
+		application := r.sync.application.Named()
+		if application.Name == application.Namespace {
+			r.checkout = checkoutDefaultSync
+		}
+	}
 	if source != nil {
 		_, r.git = source.BootstrapAlias(r.input.LocalPath)
 		if r.git.BootstrapPinned() {
 			r.provider = store.ProviderCommit
 		}
 	}
+	return true
 }
 
 func (r *entryResolution) requiresGitResolution() bool {
@@ -182,11 +193,20 @@ func (r *entryResolution) inheritEntry(previous *entryResolution, scoped bool) {
 	if !previous.sameDeclaration(r) {
 		return
 	}
+	if previous.sync != nil && !previous.sync.emitted() &&
+		(len(r.producers) == 0 || slices.Equal(r.producers, previous.producers)) {
+		r.sync, r.entry = previous.sync, r.entry || previous.entry
+		if len(r.producers) == 0 {
+			r.producers = previous.producers
+		}
+	}
 	if previous.entryScoped {
 		r.entryScoped, r.entry = true, previous.entry
 		return
 	}
-	r.entry = r.entry || previous.entry && (!previous.projected || previous.provider != store.ProviderFetch)
+	if !r.entry && previous.sync == nil && previous.entry {
+		r.entry = !previous.projected || previous.provider != store.ProviderFetch
+	}
 }
 
 func (r *entryResolution) sameDeclaration(candidate *entryResolution) bool {
@@ -252,7 +272,8 @@ func (r *entryResolution) bindCheckout(
 		return
 	}
 	r.object = bootstrap
-	r.synthetic, r.provider, r.artifact = true, store.ProviderInput, r.input
+	r.synthetic = true
+	r.classifyCheckout(manifest.BootstrapSourceID, nil, false)
 }
 
 func (r *entryResolution) authoredSource(
@@ -283,6 +304,9 @@ func (r *entryResolution) isProjected(
 }
 
 func (r *entryResolution) sameClassification(candidate *entryResolution) bool {
+	if !r.sync.equal(candidate.sync) {
+		return false
+	}
 	return r.object == candidate.object && r.entry == candidate.entry &&
 		r.entryScoped == candidate.entryScoped && r.projected == candidate.projected
 }
@@ -512,7 +536,8 @@ func (a *Admission) classifyMissingSource(
 		}
 		return *previous
 	case request.reference.ReadsSourceTree() && id.CanBindLocal():
-		candidate.synthetic, candidate.provider = true, store.ProviderAlias
+		candidate.synthetic = true
+		candidate.classifyCheckout(id, a.remotes, false)
 	}
 	return *candidate
 }
@@ -533,6 +558,10 @@ func (a *Admission) Provider(
 	artifact, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	resolution, accepted := a.resolvedSources.snapshot()[id]
 	composes := resolution.object != nil && resolution.object.Composition().Composed()
+	if !composes && resolution.sync.emitted() {
+		current := a.classifySource(id, &sourceRequest{reads: reads})
+		return current.provider
+	}
 	if artifact.Available() && (!composes || artifact.Extent == store.ExtentComposed) {
 		return artifact.Provider
 	}
@@ -781,37 +810,6 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 		if allowMissing || declared || d.cfg.Store.GetObject(ref) != nil {
 			reference := sourceReference(object, ref)
 			addEntrySource(groups, ref, child.Identity, &reference)
-		}
-	}
-	return nil
-}
-
-func (d *Session) addGenerationSources(
-	groups map[manifest.NamedResource]*entrySourceGroup, object manifest.BaseManifest,
-	occurrence *selection.OccurrenceFacts,
-) error {
-	output, err := d.admission().prepareGeneration(object, d.cfg.Work.Source(object.Named()))
-	if err != nil {
-		return err
-	}
-	evidence := selection.CaptureRoot(d.loader.RootEvidence(object.Named(), nil), d.loader.Store, d.loader.Index)
-	owner := selection.Root(evidence).Owner
-	for i := range output.Children {
-		child := &output.Children[i]
-		if !manifest.KindOf(child.Obj).IsSource() {
-			continue
-		}
-		id := child.Obj.Named()
-		group := entrySourceGroupFor(groups, id)
-		if group.object == nil {
-			group.object, group.document, group.projected = child.Obj, child.Doc, true
-			group.projectedFromParent = owner != (manifest.NamedResource{}) && !owner.ReportHidden()
-		}
-		group.required = true
-		for j := range output.Children {
-			if application, valid := runnableApplication(output.Children[j].Obj); valid && application.Source == id {
-				group.entry = group.entry || d.occurrenceReachesEntry(&application, occurrence)
-			}
 		}
 	}
 	return nil

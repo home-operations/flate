@@ -282,19 +282,18 @@ func (r *preparedEntryReach) applicationPossible(
 	if current.object != nil && !current.projected {
 		return true
 	}
-	for i := range children {
-		child := &children[i]
-		if child.Obj.Named() != app.Source {
-			continue
+	if source := generationSource(app, children); source != nil {
+		projected := entryResolution{object: source.Obj, input: r.input}
+		if current.sync != nil && manifest.Equal(current.sync.source, source.Obj) {
+			pair, valid := runnableApplication(current.sync.application)
+			if valid && pair.Source == app.Source && pair.Path == app.Path {
+				projected.sync = current.sync
+			}
 		}
-		projected := entryResolution{object: child.Obj, input: r.input}
-		source, hasDescriptor := projected.object.(entrySource)
-		if !projected.checkoutEligible(r.remotes, true, hasDescriptor) {
-			return true
-		}
-		projected.classifyCheckout(source)
-		return projected.requiresGitResolution() || r.sourceReaches(app, r.input, visible)
+		return !projected.classifyCheckout(app.Source, r.remotes, true) || projected.requiresGitResolution() ||
+			r.sourceReaches(app, r.input, visible)
 	}
+
 	return true
 }
 
@@ -346,12 +345,7 @@ func (w *qualificationWalk) projectedApplication(object manifest.BaseManifest) b
 		if !applies {
 			continue
 		}
-		var source manifest.BaseManifest
-		if i := slices.IndexFunc(output.Children, func(candidate store.Child) bool {
-			return candidate.Obj.Named() == application.Source
-		}); i >= 0 {
-			source = output.Children[i].Obj
-		}
+		source := generationSource(&application, output.Children)
 		if w.projectedRootReaches(child.Obj, source, child.VisibleGeneration) {
 			return true
 		}
@@ -359,15 +353,25 @@ func (w *qualificationWalk) projectedApplication(object manifest.BaseManifest) b
 	return false
 }
 
-func (w *qualificationWalk) projectedRootReaches(root, source manifest.BaseManifest, generated bool) bool {
+func (w *qualificationWalk) projectedRootReaches(root manifest.BaseManifest, source *store.Child, generated bool) bool {
 	application, _ := runnableApplication(root)
+	targets := w.admission.entryTargets
+	if w.projectedTargets != nil {
+		targets = w.projectedTargets
+	}
 	var input *store.SourceArtifact
 	switch {
 	case source != nil:
-		selected := w.admission.classifySource(application.Source, &sourceRequest{
-			object: source, reads: w.reads, scoped: true, projected: true,
+		request := sourceRequest{
+			object: source.Obj, reads: w.reads, scoped: true, projected: true,
 			entry: w.admission.reachesEntry(&application, nil),
-		})
+		}
+		// A template pair can select a producer for a located application.
+		// Until selection locates the application, the source needs checkout authority.
+		if len(targets) != 0 {
+			request.sync = &syncSource{source: source.Obj, application: root, predicted: true}
+		}
+		selected := w.admission.classifySource(application.Source, &request)
 		input = selected.artifact
 		if input == nil {
 			if selected.requiresGitResolution() {
@@ -390,10 +394,6 @@ func (w *qualificationWalk) projectedRootReaches(root, source manifest.BaseManif
 	// Named discovery can start before selection supplies the declaration coordinates.
 	if w.namedProjection && safepath.Contains(target, w.admission.input.OriginPath(w.admission.path)) {
 		return true
-	}
-	targets := w.admission.entryTargets
-	if w.projectedTargets != nil {
-		targets = w.projectedTargets
 	}
 	reach := entryReach{
 		entry: w.admission.input.OriginPath(w.admission.path), targets: targets,

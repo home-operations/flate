@@ -6,6 +6,8 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/change/inputprojection"
+	"github.com/home-operations/flate/internal/engine/depwait"
+	"github.com/home-operations/flate/internal/engine/schedule"
 	"github.com/home-operations/flate/internal/engine/selection"
 	"github.com/home-operations/flate/internal/engine/source/safepath"
 	"github.com/home-operations/flate/internal/engine/store"
@@ -14,7 +16,7 @@ import (
 
 func (w *qualificationWalk) advance(ctx context.Context, hadCandidates bool) error {
 	a, q := w.admission, w.q
-	w.prepareProjectedOperands()
+	w.prepareProjectedOperands(ctx)
 	if !q.closed && a.entryDemand && (len(q.packages) != 0 || len(q.active) != 0) {
 		if err := w.advanceOperands(ctx); err != nil {
 			return err
@@ -115,7 +117,7 @@ func (w *qualificationWalk) rankEntryOperands(
 	return ranked, nil
 }
 
-func (w *qualificationWalk) prepareProjectedOperands() {
+func (w *qualificationWalk) prepareProjectedOperands(ctx context.Context) {
 	a, q := w.admission, w.q
 	if len(a.entryTargets) != 0 {
 		a.entryChanged = slices.ContainsFunc(a.changedApplications, w.projectedApplication)
@@ -142,49 +144,93 @@ func (w *qualificationWalk) prepareProjectedOperands() {
 			return len(direct.projectedTargets) != 0 && direct.projectedApplication(object)
 		}
 	}
-	if operands := w.projectedOperands(qualifies); len(operands) != 0 {
+	projections := q.loader.SourceFacts(manifest.BootstrapSourceID, w.reads).Context.TemplateProjections
+	if len(projections) == 0 {
+		return
+	}
+	if operands := w.projectedOperands(ctx, projections, qualifies); len(operands) != 0 {
 		q.packages = [][]selection.OccurrenceFacts{operands}
 	}
 }
 
-func (w *qualificationWalk) projectedOperands(qualifies func(manifest.BaseManifest) bool) []selection.OccurrenceFacts {
+type projectedOperandVisits struct {
+	seen, visited map[manifest.NamedResource]bool
+}
+
+func (w *qualificationWalk) projectedOperands(
+	ctx context.Context,
+	projections map[manifest.NamedResource]manifest.TemplateProjection,
+	qualifies func(manifest.BaseManifest) bool,
+) []selection.OccurrenceFacts {
 	loader := w.q.loader
-	projections := loader.SourceFacts(manifest.BootstrapSourceID, w.reads).Context.TemplateProjections
-	if len(projections) == 0 {
-		return nil
-	}
 	entry := w.admission.input.OriginPath(w.admission.path)
 	var operands []selection.OccurrenceFacts
-	seen := make(map[manifest.NamedResource]bool)
-	visited := make(map[manifest.NamedResource]bool)
+	visits := projectedOperandVisits{
+		seen:    make(map[manifest.NamedResource]bool),
+		visited: make(map[manifest.NamedResource]bool),
+	}
 	for producer, projection := range projections {
 		if !slices.ContainsFunc(projection.Objects, qualifies) &&
 			(len(projection.Objects) == 0 || !w.projectedValuesMayChange(loader.CatalogObject(producer))) {
 			continue
 		}
-		clear(visited)
-		id := producer
-		for !visited[id] {
-			record, known := loader.Index.Lookup(id)
-			if !known || record.Parent == (manifest.NamedResource{}) || record.Parent.ReportHidden() {
-				break
-			}
-			visited[id] = true
-			id = record.Parent
+		if operand, ok := w.projectedOperand(ctx, producer, entry, visits); ok {
+			operands = append(operands, operand)
 		}
-		if visited[id] || seen[id] {
-			continue
-		}
-		seen[id] = true
-		occurrence, known := loader.Occurrence(id)
-		if !known || !occurrence.Located || occurrence.Mounted == nil ||
-			!containsDeclaration(entry, &occurrence.Declaration, occurrence.Mounted, nil) {
-			continue
-		}
-		operands = append(operands, occurrence)
 	}
 	slices.SortFunc(operands, func(a, b selection.OccurrenceFacts) int { return a.Identity.Compare(b.Identity) })
 	return operands
+}
+
+func (w *qualificationWalk) projectedOperand(
+	ctx context.Context, producer manifest.NamedResource, entry string, visits projectedOperandVisits,
+) (selection.OccurrenceFacts, bool) {
+	loader := w.q.loader
+	seen, visited := visits.seen, visits.visited
+	clear(visited)
+	id := producer
+	for !visited[id] {
+		record, known := loader.Index.Lookup(id)
+		if !known || record.Parent == (manifest.NamedResource{}) || record.Parent.ReportHidden() {
+			break
+		}
+		visited[id] = true
+		id = record.Parent
+	}
+	if visited[id] {
+		return selection.OccurrenceFacts{}, false
+	}
+	occurrence, known := loader.Occurrence(id)
+	if !known || !occurrence.Located || occurrence.Mounted == nil ||
+		!containsDeclaration(entry, &occurrence.Declaration, occurrence.Mounted, nil) {
+		return selection.OccurrenceFacts{}, false
+	}
+	if w.unavailableProjection(ctx, producer) || seen[id] {
+		return selection.OccurrenceFacts{}, false
+	}
+	seen[id] = true
+	return occurrence, true
+}
+
+// Only a located declaration can rule out a producer through its authored prerequisites.
+func (w *qualificationWalk) unavailableProjection(ctx context.Context, id manifest.NamedResource) bool {
+	l := w.q.loader
+	occurrence, known := l.Occurrence(id)
+	if !known || !occurrence.Located {
+		return false
+	}
+	waiter := depwait.Waiter{Store: w.reads, Parent: id, Missing: l.Options.Missing}
+	for ref := range occurrenceReferences(&occurrence) {
+		if ref.Use != "dependsOn" || l.IsFileIndexed(ref.NamedResource) {
+			continue
+		}
+		gate := ref.DependencyRef
+		gate.RequiresDeclaration = true
+		if waiter.Classify(ctx, gate, manifest.DrainCascade).Kind == schedule.DependencyFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *qualificationWalk) visitActiveOperands(ctx context.Context) (manifest.NamedResource, error) {

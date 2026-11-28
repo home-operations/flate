@@ -293,9 +293,11 @@ The source stays unavailable offline, and its consumers stay blocked.
 The case covers full test, full build, changed-only build, and forward diff.
 `bootstrap-role/sync-oci-reverse` reverses the same explicit Git revisions.
 `bootstrap-role/sync-oci-added` and `bootstrap-role/sync-oci-removed` retain the producer and its consumers on only one side.
-`bootstrap-role/sync-oci-direct` declares the FluxInstance directly and retains the same four unavailable-source consumers.
+`bootstrap-role/sync-oci-direct` declares the FluxInstance directly. The source resolves to the checkout, where the same four workload paths are missing.
 It covers full test, full build, changed-only build, and forward diff without an independent OCI declaration.
 `bootstrap-role/sync-oci-direct-reverse` compares the same explicit revisions in reverse.
+`bootstrap-role/issue-1706` renders a sibling workload from the repository root and the Flux directory.
+`bootstrap-role/issue-1706-added` and `bootstrap-role/issue-1706-removed` compare a ConfigMap edit with the sync declaration on only one side.
 Each invocation starts with an empty isolated cache and two workers.
 Two runs use fresh caches and two workers.
 

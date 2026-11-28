@@ -500,6 +500,8 @@ func (p *entryPlanner) source(
 		return nil, nil //nolint:nilnil // Unprepared predictions MUST NOT supply source material.
 	}
 
+	admission := p.session.admission()
+	before := p.session.resolvedSources.snapshot()[id]
 	group := entrySourceGroup{
 		scoped: true, required: true, reference: *reference, producers: producers,
 	}
@@ -520,16 +522,20 @@ func (p *entryPlanner) source(
 		group.projected = child.VisibleGeneration
 		if group.projected {
 			group.producers = append(group.producers, occurrenceIdentity(selected))
+			group.sync = p.scopedSyncSource(selected, &child, scope, scope == visit.scope)
 		}
 	}
-	admission := p.session.admission()
-	before := p.session.resolvedSources.snapshot()[id]
 	entry := entryUnscoped
 	if application.Source == id {
 		entry = p.scopedEntry(id, group.object, scope)
 	}
-	priorEntry := before.entry && before.object == group.object && before.input == admission.input
+	declaration := entryResolution{object: group.object, input: admission.input}
+	priorEntry := before.entry && before.sameDeclaration(&declaration) &&
+		(before.sync == nil || before.sync.equal(group.sync))
 	group.entry = entry == entryAccepted || entry == entryUnscoped && priorEntry
+	if entry == entryRejected {
+		group.sync = nil
+	}
 	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
 		return nil, err
 	}

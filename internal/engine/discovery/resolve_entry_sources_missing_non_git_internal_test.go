@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -624,11 +625,12 @@ func TestRun_ProducedBootstrapOCI(t *testing.T) {
 			)
 			assert.NoError(t, err)
 			t.Cleanup(result.Close)
-			assert.Equal(t, st.GetArtifact(sourceID, store.ArtifactContent) == nil, true)
+			artifact, _ := st.GetArtifact(sourceID, store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, artifact != nil, route == "indexed application")
 			sourceObject := st.GetDeclaration(sourceID)
 			if route == "indexed application" {
-				assert.Equal(t, sourceObject == nil, true)
-				sourceObject = result.Admission.resolvedSources.snapshot()[sourceID].object
+				assert.Equal(t, sourceObject, result.Admission.resolvedSources.snapshot()[sourceID].object)
+				assert.Equal(t, result.Admission.Provider(sourceID, nil, nil), store.ProviderAlias)
 			}
 			declaration, ok := sourceObject.(*manifest.OCIRepository)
 			assert.Equal(t, ok, true)
@@ -639,5 +641,90 @@ func TestRun_ProducedBootstrapOCI(t *testing.T) {
 				assert.Equal(t, warning.Category == manifest.WarnBootstrapAliases, false)
 			}
 		})
+	}
+}
+
+type syncAliasWarningSource struct {
+	kind, url, ref string
+}
+
+type syncAliasWarningCase struct {
+	namespace, sync, alias string
+	warning                []string
+}
+
+func TestRun_DeclaredSyncAliasWarning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []syncAliasWarningSource{
+		{kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster", ref: "latest"},
+		{kind: manifest.KindGitRepository, url: "https://fixture.invalid/cluster", ref: "refs/heads/main"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			for _, scenario := range []syncAliasWarningCase{
+				{namespace: "flux-system", sync: "flux-system", alias: "other-name"},
+				{namespace: "flux-system", sync: "named-sync", alias: "other-name", warning: []string{"named-sync", "other-name"}},
+				{namespace: "fleet", sync: "fleet", alias: "other-name"},
+				{namespace: "fleet", sync: "named-sync", alias: "fleet", warning: []string{"fleet", "named-sync"}},
+			} {
+				t.Run(scenario.namespace+"/"+scenario.sync, func(t *testing.T) {
+					t.Parallel()
+					testDeclaredSyncAliasWarning(t, &scenario, &tc)
+				})
+			}
+		})
+	}
+}
+
+func testDeclaredSyncAliasWarning(t *testing.T, scenario *syncAliasWarningCase, declared *syncAliasWarningSource) {
+	t.Helper()
+	root := t.TempDir()
+	kind := declared.kind
+	spec := "kind: " + kind + ", url: " + declared.url + ", ref: " + declared.ref + ", path: ./entry"
+	if scenario.sync != scenario.namespace {
+		spec += ", name: " + scenario.sync
+	}
+	testutil.WriteFile(t, root, "entry/instance.yaml", "apiVersion: fluxcd.controlplane.io/v1\n"+
+		"kind: FluxInstance\nmetadata: {name: flux, namespace: "+scenario.namespace+"}\nspec:\n"+
+		"  sync: {"+spec+"}\n")
+	for _, name := range []string{scenario.sync, scenario.alias} {
+		testutil.WriteFile(t, root, "entry/"+name+".yaml", testutil.KustomizationYAML(
+			name+"-apps", scenario.namespace, "  path: ./payload\n  sourceRef: {kind: "+kind+", name: "+name+"}\n",
+		))
+	}
+	testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
+	st := store.New()
+	result, err := Run(
+		t.Context(),
+		testConfig(t, Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}),
+	)
+	assert.NoError(t, err)
+	t.Cleanup(result.Close)
+	id := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      kind,
+		Namespace: scenario.namespace,
+		Name:      scenario.sync,
+	}
+	assert.Equal(t, result.Admission.Provider(id, nil, nil).WorkingTree(), true)
+	id.Name = scenario.alias
+	assert.Equal(t, result.Admission.Provider(id, nil, nil), store.ProviderAlias)
+	var want []string
+	for _, name := range scenario.warning {
+		id.Name = name
+		want = append(want, id.String())
+	}
+	if len(want) != 0 {
+		want = append(want, root)
+	}
+	for _, warnings := range [][]manifest.Warning{st.Warnings(), result.Admission.Warnings(st.Warnings())} {
+		var details []string
+		for i := range warnings {
+			if warnings[i].Category == manifest.WarnBootstrapAliases {
+				assert.Equal(t, warnings[i].Count, 1)
+				details = append(details, warnings[i].Detail...)
+			}
+		}
+		assert.FatalIf(t, !slices.Equal(details, want), "alias warning details = %v, want %v", details, want)
 	}
 }

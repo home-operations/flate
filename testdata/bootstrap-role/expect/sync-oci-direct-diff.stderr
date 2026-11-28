@@ -1,0 +1,9 @@
+
+  ✗  orig snapshot: Kustomization  flux-system/cluster  kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+
+  ✗  current snapshot: Kustomization  flux-system/cluster  kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/cluster: 0 objects withheld; diff suppressed (failed on both sides: orig: kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist; current: kustomization path is not a directory: ./apps/overlays/cluster-00: resolve ./apps/overlays/cluster-00: stat apps: file does not exist)
+
+  ✗ 2 failed

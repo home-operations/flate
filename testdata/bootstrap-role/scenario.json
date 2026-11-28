@@ -5,7 +5,7 @@
     "paths": [
       "pkg/discovery/bootstrap.go"
     ],
-    "reductions": "Minimal equivalent of issue #1529: an undeclared bootstrap source and ConfigMap hello. GitRepository, OCIRepository, and Bucket use the same Kustomization. The sync-oci cases reduce xunholy/k8s-gitops@2f2e6edc730457a3f45d7a73aad536afc683b5eb: the chart sync values become a FluxInstance inside an unavailable ResourceSet, and four consumers keep artifact-relative paths absent from the repository root. The sync-oci-direct cases declare the same FluxInstance directly and retain the unavailable source through the complete CLI lifecycle."
+    "reductions": "Minimal equivalent of issue #1529: an undeclared bootstrap source and ConfigMap hello. GitRepository, OCIRepository, and Bucket use the same Kustomization. The sync-oci cases reduce xunholy/k8s-gitops@2f2e6edc730457a3f45d7a73aad536afc683b5eb: the chart sync values become a FluxInstance inside an unavailable ResourceSet, and four consumers keep artifact-relative paths absent from the repository root. The sync-oci-direct cases declare the same FluxInstance directly and resolve it from the checkout and report missing workload paths."
   },
   "repositories": [
     {
@@ -102,6 +102,26 @@
       "parents": [
         "sync-oci-direct-base"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "issue-1706",
+      "overlay": "issue-1706",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "issue-1706-undeclared",
+      "overlay": "issue-1706-undeclared",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "issue-1706"
+      ]
     }
   ],
   "overlays": [
@@ -157,6 +177,19 @@
     {
       "name": "sync-oci-direct",
       "directory": "overlays/sync-oci-direct"
+    },
+    {
+      "name": "issue-1706",
+      "directory": "overlays/issue-1706"
+    },
+    {
+      "name": "issue-1706-undeclared",
+      "directory": "overlays/issue-1706-undeclared",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/flux/instance.yaml"
+        }
+      ]
     }
   ],
   "cases": [
@@ -697,7 +730,7 @@
     },
     {
       "name": "sync-oci-direct",
-      "description": "A directly declared FluxInstance keeps its OCI sync unavailable across test, build, changed-only build, and forward diff.",
+      "description": "A declared OCI sync uses the checkout in test, build and forward diff. Missing workload paths still fail.",
       "setup": [
         {
           "commit": "sync-oci-direct-head"
@@ -750,7 +783,7 @@
             },
             "expect": {
               "stdout": "expect/sync-oci-empty.stdout",
-              "stderr": "expect/sync-oci-changed.stderr",
+              "stderr": "expect/sync-oci-direct-build.stderr",
               "code": 1
             }
           }
@@ -776,7 +809,7 @@
             },
             "expect": {
               "stdout": "expect/sync-oci-empty.stdout",
-              "stderr": "expect/sync-oci-changed.stderr",
+              "stderr": "expect/sync-oci-direct-changed.stderr",
               "code": 1
             }
           }
@@ -804,7 +837,7 @@
             },
             "expect": {
               "stdout": "expect/sync-oci-empty.stdout",
-              "stderr": "expect/sync-oci-diff.stderr",
+              "stderr": "expect/sync-oci-direct-diff.stderr",
               "code": 1
             }
           }
@@ -847,8 +880,205 @@
             },
             "expect": {
               "stdout": "expect/sync-oci-empty.stdout",
-              "stderr": "expect/sync-oci-diff.stderr",
+              "stderr": "expect/sync-oci-direct-diff.stderr",
               "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "issue-1706",
+      "description": "The declared OCI sync supplies the sibling workload from either entry path.",
+      "setup": [
+        {
+          "commit": "issue-1706"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "issue-1706-added",
+      "description": "Both sources supply the same workload path with different ConfigMap values.",
+      "setup": [
+        {
+          "commit": "issue-1706"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:issue-1706-undeclared@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-added.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "issue-1706-removed",
+      "description": "Both sources supply the same workload path with different ConfigMap values.",
+      "setup": [
+        {
+          "commit": "issue-1706-undeclared"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "apps",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:issue-1706@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/issue-1706-removed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
             }
           }
         }
@@ -1041,9 +1271,7 @@
         "sync-oci",
         "sync-oci-reverse",
         "sync-oci-added",
-        "sync-oci-removed",
-        "sync-oci-direct",
-        "sync-oci-direct-reverse"
+        "sync-oci-removed"
       ],
       "purpose": "Offline OCI sync authority and complete CLI expectations."
     },
@@ -1063,9 +1291,7 @@
         "sync-oci",
         "sync-oci-reverse",
         "sync-oci-added",
-        "sync-oci-removed",
-        "sync-oci-direct",
-        "sync-oci-direct-reverse"
+        "sync-oci-removed"
       ],
       "purpose": "Offline OCI sync authority and complete CLI expectations."
     },
@@ -1208,7 +1434,92 @@
       "cases": [
         "sync-oci-direct"
       ],
-      "purpose": "Expect four blocked consumers for the direct FluxInstance OCI sync."
+      "purpose": "Expect a local sync source and four missing workload paths."
+    },
+    {
+      "path": "overlays/issue-1706/repo/kubernetes/flux/instance.yaml",
+      "cases": [
+        "issue-1706",
+        "issue-1706-added",
+        "issue-1706-removed"
+      ],
+      "purpose": "Declare the OCI sync source with the default name."
+    },
+    {
+      "path": "overlays/issue-1706/repo/kubernetes/flux/apps.yaml",
+      "cases": [
+        "issue-1706",
+        "issue-1706-added",
+        "issue-1706-removed"
+      ],
+      "purpose": "Reference the sync source from a sibling workload."
+    },
+    {
+      "path": "overlays/issue-1706/repo/kubernetes/apps/hello.yaml",
+      "cases": [
+        "issue-1706",
+        "issue-1706-added",
+        "issue-1706-removed"
+      ],
+      "purpose": "Provide the original workload value."
+    },
+    {
+      "path": "overlays/issue-1706-undeclared/repo/kubernetes/apps/hello.yaml",
+      "cases": [
+        "issue-1706-added",
+        "issue-1706-removed"
+      ],
+      "purpose": "Change one workload value on the undeclared side."
+    },
+    {
+      "path": "expect/issue-1706-test.stdout",
+      "cases": [
+        "issue-1706"
+      ],
+      "purpose": "Expect the selected workload to render successfully."
+    },
+    {
+      "path": "expect/issue-1706-build.stdout",
+      "cases": [
+        "issue-1706"
+      ],
+      "purpose": "Expect the rendered ConfigMap from the checkout."
+    },
+    {
+      "path": "expect/issue-1706-added.stdout",
+      "cases": [
+        "issue-1706-added"
+      ],
+      "purpose": "Expect the workload value with the declaration present."
+    },
+    {
+      "path": "expect/issue-1706-removed.stdout",
+      "cases": [
+        "issue-1706-removed"
+      ],
+      "purpose": "Expect the workload value with the declaration absent."
+    },
+    {
+      "path": "expect/sync-oci-direct-build.stderr",
+      "cases": [
+        "sync-oci-direct"
+      ],
+      "purpose": "Expect failures for absent paths in the local checkout."
+    },
+    {
+      "path": "expect/sync-oci-direct-changed.stderr",
+      "cases": [
+        "sync-oci-direct"
+      ],
+      "purpose": "Expect failures for absent paths in the local checkout."
+    },
+    {
+      "path": "expect/sync-oci-direct-diff.stderr",
+      "cases": [
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Expect failures for absent paths in the local checkout."
     }
   ]
 }

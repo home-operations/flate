@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/home-operations/flate/internal/engine/controllers/base"
@@ -15,13 +16,26 @@ import (
 )
 
 func constructTestSources(ctx context.Context, session *Session) error {
+	admission := session.Admission()
+	pending := session.PendingSources()
+	sources := session.resolvedSources.snapshot()
+	for _, id := range pending {
+		previous := sources[id]
+		if !previous.projected || previous.sync == nil || previous.sync.emitted() {
+			continue
+		}
+		var reads store.ReadSet
+		reads.Init(session.cfg.Store, id, nil)
+		classified := admission.classifySource(id, &sourceRequest{reads: &reads})
+		reads.Retire()
+		if previous.sameDeclaration(&classified) && !previous.sync.equal(classified.sync) {
+			return fmt.Errorf("sync pair was lost during construction inheritance for %s", id)
+		}
+	}
+
 	tasks := task.NewBounded(2)
 	controller := sourcectrl.New(session.cfg.Store, tasks, session.cfg.Cache)
-	controller.Configure(
-		sourcectrl.FetchOptions{Admission: session.Admission()},
-		cache.RetryConfig{},
-	)
-	pending := session.PendingSources()
+	controller.Configure(sourcectrl.FetchOptions{Admission: admission}, cache.RetryConfig{})
 	failures := make([]error, len(pending))
 	for i, id := range pending {
 		tasks.Go(ctx, "construct source", func(ctx context.Context) { failures[i] = controller.Construct(ctx, id) })

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v3"
+	"github.com/alecthomas/chroma/v3/lexers"
 	xhtml "golang.org/x/net/html"
 	"sigs.k8s.io/yaml"
 

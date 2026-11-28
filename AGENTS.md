@@ -16,6 +16,9 @@ Implementation owners live under `internal/engine/`. Konflate migrates with the 
   applies. The PR body follows the org template (Overview, Additional information, Requirements)
   and keeps its Requirements items. The AI disclosure there names each model that contributed,
   one line per model with its effort and what it did, and is the only place a PR mentions AI.
+- **Issues.** Before opening an issue, search the open and recently closed ones. Group related
+  findings (one cause, one layout, or one command) into a single issue with one reproduction,
+  instead of opening several issues in a row.
 - **Titles and commits.** PR titles are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
   such as `fix(schedule): ...`; they become the squash commit and drive release-please, so they
   never carry bead, workflow or run ids. Sign off commits (`git commit -s`).

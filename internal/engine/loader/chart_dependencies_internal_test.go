@@ -285,7 +285,7 @@ func TestReaderFinalizer_RepositoryProjection(t *testing.T) {
 				Builder:     "repo",
 				File:        "other-repository.yaml",
 			}
-			occurrence := compactOccurrence(release, manifest.TemplateProjection{})
+			occurrence := new(occurrenceFacts).compactOccurrence(release, manifest.TemplateProjection{})
 			occurrence.object = release
 			original := occurrence.facts
 			l.locations = map[manifest.NamedResource]authoredOccurrence{release.Named(): occurrence}

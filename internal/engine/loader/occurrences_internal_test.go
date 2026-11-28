@@ -667,7 +667,7 @@ func TestOccurrenceRoots_ProjectedSource(t *testing.T) {
 			t.Parallel()
 			object := &manifest.Kustomization{Name: "owner", Path: "./app"}
 			object.SourceRef.Kind, object.SourceRef.Name, object.SourceRef.Namespace = manifest.KindGitRepository, "repo", namespace
-			occurrence := compactOccurrence(object, manifest.TemplateProjection{})
+			occurrence := new(occurrenceFacts).compactOccurrence(object, manifest.TemplateProjection{})
 			occurrence.Identity, occurrence.Authored = object.Named(), object.Named()
 			l := New(store.New())
 			l.locations = map[manifest.NamedResource]authoredOccurrence{object.Named(): occurrence}
@@ -687,6 +687,16 @@ func TestOccurrenceRoots_ProjectedSource(t *testing.T) {
 			assert.Diff(t, roots, []string{"app"})
 			assert.Equal(t, &roots[0], &occurrence.facts.roots[0])
 			assert.Equal(t, l.locations[object.Named()].Identity, object.Named())
+
+			withoutCensus := New(store.New())
+			withoutCensus.Index.Records[id] = manifest.DiscoveryRecord{Declaration: object}
+			indexed, known := withoutCensus.Occurrence(id)
+			assert.Equal(t, known, true)
+			assert.Equal(t, indexed.Witness, nil)
+			indexedSource, indexedPath, indexedApplies := indexed.SourcePath()
+			assert.Equal(t, indexedApplies, true)
+			assert.Equal(t, indexedSource, want)
+			assert.Equal(t, indexedPath, "./app")
 		})
 	}
 }

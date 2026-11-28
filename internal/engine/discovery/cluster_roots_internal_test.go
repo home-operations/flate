@@ -638,14 +638,15 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 					Kind: manifest.KindGitRepository, Name: fleet.Name,
 				},
 			}
-			occurrences := []selection.OccurrenceFacts{{
-				Identity: owner.Named(), Catalog: owner, RequiresBuild: tc.requiresBuild,
-				Declaration: selection.OccurrenceID{Source: root, File: tc.file},
-			}}
 			cfg := testConfig(t, Config{Store: st, Input: input, Path: filepath.Join(root, "tenants", "x", "nested")})
 			d := newDiscoverer(&cfg)
 			t.Cleanup(d.Close)
 			admission := d.admission()
+			occurrence := d.loader.ProducerFacts(owner).Occurrence
+			occurrence.Object = nil
+			occurrence.RequiresBuild = tc.requiresBuild
+			occurrence.Declaration = selection.OccurrenceID{Source: root, File: tc.file}
+			occurrences := []selection.OccurrenceFacts{occurrence}
 
 			existing := &manifest.GitRepository{Name: "existing", Namespace: fleet.Namespace}
 			var binding *store.SourceArtifact
@@ -657,10 +658,9 @@ func TestEntryPlanner_BootstrapAuthority(t *testing.T) {
 				st.SetArtifact(existing.Named(), binding)
 				other := *owner
 				other.Name, other.SourceRef.Name = "existing", existing.Name
-				occurrences = append(occurrences, selection.OccurrenceFacts{
-					Identity: other.Named(), Object: &other,
-					Declaration: selection.OccurrenceID{Source: root, File: "tenants/x/existing.yaml"},
-				})
+				competing := d.loader.ProducerFacts(&other).Occurrence
+				competing.Declaration = selection.OccurrenceID{Source: root, File: "tenants/x/existing.yaml"}
+				occurrences = append(occurrences, competing)
 			}
 
 			planner := entryPlanner{session: d, scope: rootScope{occurrences: occurrences}}
@@ -732,8 +732,8 @@ func testEntryPlannerSyncScope(t *testing.T, tc *entryPlannerSyncCase) {
 	if tc.mounted {
 		selected.Declaration.Source, selected.Mounted = mount.LocalPath, mount
 	}
-	application := selected
-	application.Identity, application.Object = app.Named(), app
+	application := d.loader.ProducerFacts(app).Occurrence
+	application.Declaration, application.Mounted = selected.Declaration, selected.Mounted
 	scope := rootScope{occurrences: []selection.OccurrenceFacts{selected, application}}
 	if tc.reject {
 		other := &manifest.GitRepository{Name: "other", Namespace: "apps"}
@@ -741,10 +741,9 @@ func testEntryPlannerSyncScope(t *testing.T, tc *entryPlannerSyncCase) {
 		st.SetArtifact(other.Named(), input)
 		narrow := manifest.NewEntryKustomization(other.Named(), "./entry/nested", manifest.NamedResource{})
 		narrow.Name, narrow.Namespace = "narrow", "apps"
-		scope.occurrences = append(scope.occurrences, selection.OccurrenceFacts{
-			Identity: narrow.Named(), Object: narrow,
-			Declaration: selection.OccurrenceID{Source: root, File: "entry/nested/ks.yaml"},
-		})
+		occurrence := d.loader.ProducerFacts(narrow).Occurrence
+		occurrence.Declaration = selection.OccurrenceID{Source: root, File: "entry/nested/ks.yaml"}
+		scope.occurrences = append(scope.occurrences, occurrence)
 	}
 	sourceChild := store.Child{Obj: source, VisibleGeneration: true}
 	planner := entryPlanner{
@@ -755,8 +754,9 @@ func testEntryPlannerSyncScope(t *testing.T, tc *entryPlannerSyncCase) {
 			occurrenceIdentity(&application): {Obj: app, VisibleGeneration: true},
 		},
 	}
-	_, err := planner.source(t.Context(), &clusterRoot{}, &rootVisit{scope: &scope, occurrence: &application},
-		&manifest.Reference{NamedResource: id})
+	_, err := planner.source(t.Context(), &clusterRoot{}, &rootApplication{
+		visit: &rootVisit{scope: &scope, occurrence: &application}, application: manifest.EntryApplication{Source: id},
+	}, &manifest.Reference{NamedResource: id})
 	assert.Equal(t, errors.Is(err, errPendingSources), tc.want)
 	if !tc.want {
 		assert.NoError(t, err)

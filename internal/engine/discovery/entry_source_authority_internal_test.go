@@ -596,7 +596,7 @@ spec: {chart: {spec: {chart: app, sourceRef: {kind: HelmRepository, name: charts
 			assert.NoError(t, planner.prepareScope(t.Context(), &scope))
 			assert.Equal(t, len(planner.objects), 0)
 			assert.Equal(t, planner.parsed == parsed, true)
-			facts := d.loader.ProducerFacts(occurrenceObject(&scope.occurrences[0]))
+			facts := d.loader.ProducerFacts(scope.occurrences[0].EffectiveObject())
 			assert.Equal(t, facts.Derived, true)
 		})
 	}
@@ -700,15 +700,25 @@ spec:
 		}}
 		d.cfg.Store.SetArtifact(application.Source, material)
 		d.cfg.Store.UpdateStatus(application.Source, store.StatusInfo{Status: store.StatusReady})
-		children, followErr := planner.follow(t.Context(), &clusterRoot{}, &visit, false)
+		next, followErr := planner.follow(
+			t.Context(),
+			&clusterRoot{},
+			&rootApplication{
+				visit:       &visit,
+				object:      visit.occurrence.Object,
+				application: application,
+				state:       &rootVisitState{},
+			},
+		)
 		assert.NoError(t, followErr)
-		assert.FatalIf(t, len(children) != 1, "projected children: %+v", children)
-		assert.Equal(t, children[0].occurrence.Identity.Name, content)
-		assert.Equal(t, children[0].occurrence.Identity.Namespace, "apps")
-		assert.Equal(t, children[0].occurrence.Declaration.Source, material.LocalPath)
-		assert.Equal(t, children[0].occurrence.Declaration.File, "payload/producer.yaml")
+		assert.FatalIf(t, next == nil || len(next.occurrences) != 1, "projected scope: %+v", next)
+		child := &next.occurrences[0]
+		assert.Equal(t, child.Identity.Name, content)
+		assert.Equal(t, child.Identity.Namespace, "apps")
+		assert.Equal(t, child.Declaration.Source, material.LocalPath)
+		assert.Equal(t, child.Declaration.File, "payload/producer.yaml")
 		for _, name := range []string{"initial", "replacement"} {
-			_, producers := children[0].scope.source(manifest.NamedResource{
+			_, producers := next.source(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: name,
 			})
 			assert.Equal(t, len(producers) == 1, name == content)

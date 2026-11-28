@@ -477,7 +477,7 @@ func testRootEvidenceStaticClassificationCase(
 		authored := id
 		if tc.object != nil {
 			authored = tc.object.Named()
-			occurrence := compactOccurrence(tc.object, manifest.TemplateProjection{})
+			occurrence := new(occurrenceFacts).compactOccurrence(tc.object, manifest.TemplateProjection{})
 			occurrence.Declaration = occurrenceID{Source: root, File: "declaration.yaml"}
 			occurrence.object = tc.object
 			l.locations[authored] = occurrence

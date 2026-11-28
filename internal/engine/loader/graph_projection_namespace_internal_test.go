@@ -317,7 +317,7 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 			l := New(store.New())
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
-			occurrence := compactOccurrence(owner, projectedProducerForTest(owner))
+			occurrence := new(occurrenceFacts).compactOccurrence(owner, projectedProducerForTest(owner))
 			l.locations = map[manifest.NamedResource]authoredOccurrence{owner.Named(): occurrence}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
 				Authored: owner.Named(),

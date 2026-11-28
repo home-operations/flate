@@ -26,6 +26,7 @@ type OccurrenceFacts struct {
 	Source          manifest.NamedResource
 	Path            string
 	HasPath         bool
+	Application     bool
 	Namespaced      bool
 	Uncertain       bool
 	RequiresBuild   bool
@@ -51,24 +52,26 @@ type OccurrenceFacts struct {
 	Policy          *manifest.EmissionPolicy
 }
 
-// SourcePath resolves references in the occurrence's effective namespace.
-//
-//nolint:gocritic // The value receiver preserves the occurrence identity snapshot across namespace projection.
-func (o OccurrenceFacts) SourcePath() (manifest.NamedResource, string, bool) {
-	if o.Witness != nil {
-		return manifest.Resolve(o.Source, "", o.Identity.Namespace), o.Path, o.HasPath
-	}
+// SourcePath reads the source and path resolved by the loader.
+func (o *OccurrenceFacts) SourcePath() (manifest.NamedResource, string, bool) {
+	return o.Source, o.Path, o.HasPath
+}
+
+// EntryApplication requires application eligibility in addition to a source and path.
+func (o *OccurrenceFacts) EntryApplication() (manifest.EntryApplication, bool) {
+	return manifest.EntryApplication{Source: o.Source, Path: o.Path}, o.Application
+}
+
+// EffectiveObject preserves the borrowed object when its namespace already matches.
+func (o *OccurrenceFacts) EffectiveObject() manifest.BaseManifest {
 	object := o.Object
 	if object == nil {
 		object = o.Catalog
 	}
-	if object == nil {
-		return manifest.NamedResource{}, "", false
-	}
-	if o.Identity.Namespace != o.Authored.Namespace {
+	if object != nil && object.Named().Namespace != o.Identity.Namespace {
 		object = object.WithNamespace(o.Identity.Namespace)
 	}
-	return object.SourcePath()
+	return object
 }
 
 // PendingPackageProductions traverses discovered package ownership for a declaration that needs a build.
@@ -221,27 +224,28 @@ type RootEvidence struct {
 	BuiltCurrent      bool
 }
 
-//nolint:gocritic // References MUST use an immutable occurrence snapshot.
-func (o OccurrenceFacts) references(view manifest.ReferenceView, yield func(manifest.Reference) bool) bool {
-	if o.Witness == nil && !o.CatalogKnown && o.Refs == nil {
-		active := true
-		if o.Object != nil {
-			manifest.References(o.Object, view)(func(ref manifest.Reference) bool {
-				active = yield(ref)
-				return active
-			})
+// VisitReferences keeps reconciliation gates outside the relation view.
+func (o *OccurrenceFacts) VisitReferences(view manifest.ReferenceView, yield func(manifest.Reference) bool) bool {
+	indexed := o.Witness != nil || o.CatalogKnown || o.Refs != nil || o.ImplicitGate != nil
+	if !indexed {
+		for ref := range manifest.References(o.EffectiveObject(), view) {
+			if !yield(ref) {
+				return false
+			}
 		}
-		return active
+		return true
 	}
-	if view == manifest.ReferenceAll && o.ImplicitGate != nil && !yield(*o.ImplicitGate) {
-		return false
-	}
-	for i := range o.Refs {
-		ref := o.Refs[i]
+	visit := func(ref manifest.Reference) bool {
 		if ref.NamespaceDefault {
 			ref.Namespace = o.Identity.Namespace
 		}
-		if !yield(ref) {
+		return yield(ref)
+	}
+	if view == manifest.ReferenceAll && o.ImplicitGate != nil && !visit(*o.ImplicitGate) {
+		return false
+	}
+	for i := range o.Refs {
+		if !visit(o.Refs[i]) {
 			return false
 		}
 	}

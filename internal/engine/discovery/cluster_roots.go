@@ -53,7 +53,8 @@ type entryPlanner struct {
 	catalog            rootScope
 	catalogView        rootScope
 	coordinates        map[selection.OccurrenceID]bool
-	seen               map[occurrenceKey]bool
+	seen               map[occurrenceKey]rootVisitState
+	routes             map[rootRoute]struct{}
 
 	session     *Session
 	inputs      map[string]*store.SourceArtifact
@@ -102,16 +103,17 @@ func (p *entryPlanner) start(ctx context.Context, root *clusterRoot) error {
 		return err
 	}
 	seeds := root.seeds
-	p.queue = slices.Grow(p.queue[:0], len(seeds))
+	p.queue = p.queue[:0]
 	p.head = 0
 	clear(p.coordinates)
 	clear(p.seen)
+	clear(p.routes)
 	p.scope = rootScope{occurrences: seeds}
 	boundary := ""
 	input := p.session.cfg.Input
 	for i := range seeds {
 		seed := &seeds[i]
-		application, applies := manifest.ApplicationFor(occurrenceObject(seed))
+		application, applies := seed.EntryApplication()
 		if !applies {
 			continue
 		}
@@ -133,13 +135,9 @@ func (p *entryPlanner) start(ctx context.Context, root *clusterRoot) error {
 		return err
 	}
 	for i := range p.scope.occurrences {
-		seed := &p.scope.occurrences[i]
-		p.queue = append(
-			p.queue,
-			rootVisit{occurrence: seed, scope: &p.scope},
-		)
-		p.coordinates[seed.Declaration] = true
+		p.coordinates[p.scope.occurrences[i].Declaration] = true
 	}
+	p.enqueue(&p.scope)
 	return nil
 }
 
@@ -186,11 +184,53 @@ func (d *Session) unpinnedRoots(pending []clusterRoot) []clusterRoot {
 type rootVisit struct {
 	occurrence *selection.OccurrenceFacts
 	scope      *rootScope
+	first      bool
+}
+
+type rootApplication struct {
+	visit       *rootVisit
+	object      manifest.BaseManifest
+	application manifest.EntryApplication
+	state       *rootVisitState
+	origin      *selection.OccurrenceFacts
+}
+
+type rootVisitState struct {
+	index    int
+	initial  bool
+	prepared *preparedRootRoute
+}
+
+type rootRoute struct {
+	origin selection.OccurrenceID
+	source scopedSource
+	index  int
+}
+
+type rootTarget struct {
+	source    scopedSource
+	reference manifest.Reference
+	path      string
+	local     bool
+}
+
+type preparedRootRoute struct {
+	scope  rootScope
+	target rootTarget
+}
+
+type scopedSource struct {
+	input       *store.SourceArtifact
+	declaration selection.OccurrenceID
+	entry       entryScope
 }
 
 type rootScope struct {
 	occurrences []selection.OccurrenceFacts
 	parent      *rootScope
+	seed        *selection.OccurrenceFacts
+	targetInput *store.SourceArtifact
+	targets     []scopedEntryTarget
 }
 
 func (s *rootScope) objects() iter.Seq[*selection.OccurrenceFacts] {
@@ -205,160 +245,11 @@ func (s *rootScope) objects() iter.Seq[*selection.OccurrenceFacts] {
 	}
 }
 
-func occurrenceReferences(occurrence *selection.OccurrenceFacts) iter.Seq[manifest.Reference] {
-	return func(yield func(manifest.Reference) bool) {
-		for i := range occurrence.Refs {
-			ref := occurrence.Refs[i]
-			if ref.NamespaceDefault {
-				ref.Namespace = occurrence.Identity.Namespace
-			}
-			if !yield(ref) {
-				return
-			}
-		}
-	}
-}
-
-func (p *entryPlanner) reach(ctx context.Context, root *clusterRoot) error {
-	for p.head < len(p.queue) {
-		visit := p.queue[p.head]
-		key := occurrenceIdentity(visit.occurrence)
-		_, _, hasPath := visit.occurrence.SourcePath()
-		p.recordReach(root, &visit, hasPath)
-		if p.seen[key] {
-			p.queue[p.head] = rootVisit{}
-			p.head++
-			continue
-		}
-		if visit.occurrence.RequiresBuild || !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
-			root.Occurrences = append(root.Occurrences, *visit.occurrence)
-			p.seen[key] = true
-			p.queue[p.head] = rootVisit{}
-			p.head++
-			continue
-		}
-		object := occurrenceObject(visit.occurrence)
-		application, _ := manifest.ApplicationFor(object)
-		references := manifest.References(object, manifest.ReferenceRelations)
-		if visit.occurrence.Witness != nil {
-			references = occurrenceReferences(visit.occurrence)
-		}
-		for ref := range references {
-			if !ref.IsSource() || !ref.NamedResource.KindInfo().IsSource() || ref.NamedResource == application.Source {
-				continue
-			}
-			if _, sourceErr := p.source(ctx, root, &visit, &ref); sourceErr != nil {
-				return sourceErr
-			}
-		}
-		children, err := p.follow(ctx, root, &visit, p.coordinates[visit.occurrence.Declaration])
-		if err != nil {
-			return err
-		}
-		root.Occurrences = append(root.Occurrences, *visit.occurrence)
-		p.seen[key] = true
-		p.queue[p.head] = rootVisit{}
-		p.head++
-		p.queue = append(p.queue, children...)
-	}
-	return nil
-}
-
-func (p *entryPlanner) recordReach(root *clusterRoot, visit *rootVisit, hasPath bool) {
-	if len(p.roots) < 2 || visit.scope.parent == nil || !hasPath || visit.occurrence.RequiresBuild {
-		return
-	}
-	if root.reached == nil {
-		root.reached = map[selection.OccurrenceID]struct{}{}
-	}
-	root.reached[physicalDeclaration(visit.occurrence)] = struct{}{}
-}
-
-func (p *entryPlanner) follow(
-	ctx context.Context,
-	root *clusterRoot,
-	visit *rootVisit,
-	seed bool,
-) ([]rootVisit, error) {
-	occurrence := visit.occurrence
-	object := occurrenceObject(occurrence)
-	application, valid := runnableApplication(object)
-	if !valid {
-		return nil, nil
-	}
-	reference := sourceReference(object, application.Source)
-	reference.NamedResource = application.Source
-	input, err := p.source(ctx, root, visit, &reference)
-	if err != nil {
-		return nil, err
-	}
-	application.Path = filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(application.Path)))
-	qualifies := seed && p.bootstrapRoot(root, occurrence, input, &application)
-	absolute, local := p.followTarget(root, input, application.Path, seed)
-
-	if absolute == "" {
-		if qualifies {
-			root.qualifying = append(root.qualifying, physicalDeclaration(occurrence))
-		}
-		return nil, nil
-	}
-	total := 0
-	_, err = p.session.loadAt(ctx, absolute, &total, &sourceLoad{
-		work: p.session.cfg.Work.Source(application.Source).Record(manifest.WorkPreparation, absolute),
-	})
-	if err != nil {
-		return nil, err
-	}
-	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []selection.OccurrenceFacts{*occurrence})
-	if len(pinned.index.Claims) != 0 {
-		if root.pinned.Claims == nil {
-			root.pinned.Claims = map[string][]manifest.NamedResource{}
-		}
-		for prefix, ids := range pinned.index.Claims {
-			root.pinned.Claims[prefix] = append(root.pinned.Claims[prefix], ids...)
-		}
-	}
-	children, err := p.followOutput(ctx, input, visit, absolute)
-	if err != nil {
-		return nil, err
-	}
-	declaration := physicalDeclaration(occurrence)
-	if local && seed && slices.ContainsFunc(children, func(o selection.OccurrenceFacts) bool {
-		return physicalDeclaration(&o) == declaration
-	}) {
-		root.recordAnchor(application.Path, &reference)
-	}
-	scope := &rootScope{occurrences: children, parent: visit.scope}
-	if err := p.prepareScope(ctx, scope); err != nil {
-		return nil, err
-	}
-	if qualifies {
-		root.qualifying = append(root.qualifying, physicalDeclaration(occurrence))
-	}
-	next := make([]rootVisit, len(scope.occurrences))
-	for i := range scope.occurrences {
-		next[i] = rootVisit{occurrence: &scope.occurrences[i], scope: scope}
-	}
-	return next, nil
-}
-
-func (r *clusterRoot) recordAnchor(target string, reference *manifest.Reference) {
-	var source manifest.NamedResource
-	if reference.BindsSource() {
-		source = reference.NamedResource
-	}
-	i := slices.IndexFunc(r.anchors, func(anchor bootstrapAnchor) bool { return anchor.target == target })
-	if i < 0 {
-		r.anchors = append(r.anchors, bootstrapAnchor{target: target, source: source})
-	} else if r.anchors[i].source == (manifest.NamedResource{}) {
-		r.anchors[i].source = source
-	}
-}
-
 func (p *entryPlanner) followOutput(
-	ctx context.Context, input *store.SourceArtifact, visit *rootVisit, absolute string,
+	ctx context.Context, input *store.SourceArtifact, resolved *rootApplication, absolute string,
 ) ([]selection.OccurrenceFacts, error) {
-	object := occurrenceObject(visit.occurrence)
+	visit := resolved.visit
+	object := resolved.object
 	children, err := p.occurrences(ctx, input, object, absolute)
 	key := occurrenceIdentity(visit.occurrence)
 	key.input = p.inputs[visit.occurrence.Declaration.Source]
@@ -439,7 +330,7 @@ func (p *entryPlanner) prepareScope(ctx context.Context, scope *rootScope) error
 	var generated []selection.OccurrenceFacts
 	for i := range scope.occurrences {
 		occurrence := &scope.occurrences[i]
-		object := occurrenceObject(occurrence)
+		object := occurrence.EffectiveObject()
 		kind := manifest.KindOf(object)
 		sync, err := p.scopeGeneration(occurrence, object)
 		if err != nil {
@@ -484,20 +375,23 @@ func (p *entryPlanner) object(ctx context.Context, occurrence *selection.Occurre
 func (p *entryPlanner) source(
 	ctx context.Context,
 	root *clusterRoot,
-	visit *rootVisit,
+	resolved *rootApplication,
 	reference *manifest.Reference,
-) (*store.SourceArtifact, error) {
+) (scopedSource, error) {
 	id := reference.NamedResource
-	object := occurrenceObject(visit.occurrence)
-	application, _ := manifest.ApplicationFor(object)
+	visit := resolved.visit
 	scope := visit.scope
 	selected, producers := scope.source(id)
 	if selected == nil && len(producers) == 0 {
 		selected, producers = p.catalogSource(id)
 		scope = &p.catalogView
 	}
-	if selected != nil && selected.RequiresBuild {
-		return nil, nil //nolint:nilnil // Unprepared predictions MUST NOT supply source material.
+	var resolution scopedSource
+	if selected != nil {
+		resolution.declaration = selected.Declaration
+		if selected.RequiresBuild {
+			return resolution, nil
+		}
 	}
 
 	admission := p.session.admission()
@@ -516,7 +410,7 @@ func (p *entryPlanner) source(
 	case selected != nil:
 		child, err := p.object(ctx, selected)
 		if err != nil {
-			return nil, err
+			return resolution, err
 		}
 		group.object, group.document = child.Obj, child.Doc
 		group.projected = child.VisibleGeneration
@@ -526,7 +420,7 @@ func (p *entryPlanner) source(
 		}
 	}
 	entry := entryUnscoped
-	if application.Source == id {
+	if resolved.application.Source == id {
 		entry = p.scopedEntry(id, group.object, scope)
 	}
 	declaration := entryResolution{object: group.object, input: admission.input}
@@ -537,12 +431,14 @@ func (p *entryPlanner) source(
 		group.sync = nil
 	}
 	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
-		return nil, err
+		return resolution, err
 	}
 	binding := p.session.resolvedSources.snapshot()[id]
 	binding.producers = producers
 	binding.entryScoped = entry != entryUnscoped
-	return p.recordSource(root, id, &binding, before.artifact), nil
+	resolution.entry = entry
+	resolution.input = p.recordSource(root, id, &binding, before.artifact)
+	return resolution, nil
 }
 
 type occurrenceKey struct {
@@ -571,17 +467,6 @@ func physicalDeclaration(occurrence *selection.OccurrenceFacts) selection.Occurr
 	return declaration
 }
 
-func occurrenceObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifest {
-	object := occurrence.Object
-	if object == nil {
-		object = occurrence.Catalog
-	}
-	if object != nil && object.Named().Namespace != occurrence.Identity.Namespace {
-		object = object.WithNamespace(occurrence.Identity.Namespace)
-	}
-	return object
-}
-
 func (s *rootScope) source(id manifest.NamedResource) (*selection.OccurrenceFacts, []occurrenceKey) {
 	var selected *selection.OccurrenceFacts
 	var producers []occurrenceKey
@@ -591,7 +476,7 @@ func (s *rootScope) source(id manifest.NamedResource) (*selection.OccurrenceFact
 		}
 		targets := candidate.Targets
 		if candidate.NeedsCandidates {
-			targets = append(slices.Clone(targets), manifest.ProducerTargets(occurrenceObject(candidate), id)...)
+			targets = append(slices.Clone(targets), manifest.ProducerTargets(candidate.EffectiveObject(), id)...)
 		}
 		matches := func(target manifest.ProducerTarget) bool { return target.NamedResource == id }
 		if slices.ContainsFunc(targets, matches) || slices.ContainsFunc(
@@ -757,7 +642,11 @@ func (p *entryPlanner) prepareRoot(ctx context.Context, root *clusterRoot) error
 		key.input = input
 		p.objects[key] = *child
 		result = append(result, facts)
-		if register || !rootPreparationProducer(&facts) {
+		if register {
+			continue
+		}
+		_, generated := generatedEntryPath(&facts)
+		if !rootPreparationProducer(facts.Identity.KindInfo(), generated) {
 			continue
 		}
 		remaining--
@@ -779,57 +668,4 @@ func (p *entryPlanner) prepareRoot(ctx context.Context, root *clusterRoot) error
 	root.seeds = result
 	root.packageBuild = &plannedPackage{render: prepared.declarationRender, register: register || remaining != 0}
 	return ctx.Err()
-}
-
-func (p *entryPlanner) rootRequiresPreparation(root *clusterRoot, input *store.SourceArtifact) bool {
-	if p.session.cfg.Trees == nil {
-		return false
-	}
-	request := p.session.cfg.Selection
-	restricted := request.RestrictedPackageLookup()
-	for i := range root.seeds {
-		occurrence := &root.seeds[i]
-		if !occurrence.RequiresBuild {
-			continue
-		}
-		lookupOwner := restricted && occurrence.Identity.KindInfo().Structural && !request.Matches(occurrence.Identity)
-		if lookupOwner || p.directoryInventory && rootPreparationProducer(occurrence) {
-			if !generatesEntry(occurrence) {
-				return true
-			}
-			_, path, _ := occurrence.SourcePath()
-			name := filepath.ToSlash(filepath.Join(".", manifest.NormalizeClaimBase(path)))
-			if info, err := fs.Stat(input.FS, name); err == nil && info.IsDir() {
-				return true
-			}
-		}
-		application, valid := manifest.ApplicationFor(occurrenceObject(occurrence))
-		if !valid {
-			continue
-		}
-		if _, contains := configuredApplicationTarget(input, application.Path, occurrence); contains {
-			return true
-		}
-	}
-	return false
-}
-
-func rootProducerCount(occurrences []selection.OccurrenceFacts) int {
-	count := 0
-	for i := range occurrences {
-		if rootPreparationProducer(&occurrences[i]) {
-			count++
-		}
-	}
-	return count
-}
-
-func rootPreparationProducer(occurrence *selection.OccurrenceFacts) bool {
-	kind := occurrence.Identity.KindInfo()
-	return kind.Parent || kind.IsSource() || generatesEntry(occurrence)
-}
-
-func generatesEntry(occurrence *selection.OccurrenceFacts) bool {
-	_, _, applies := occurrence.SourcePath()
-	return applies && !occurrence.Identity.KindInfo().Runnable
 }

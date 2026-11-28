@@ -278,7 +278,7 @@ func TestClusterRoots_SourceConstruction(t *testing.T) {
 	assert.NoError(t, err)
 	planner := &entryPlanner{
 		session: d, inputs: map[string]*store.SourceArtifact{root: d.cfg.Input},
-		coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]bool{},
+		coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]rootVisitState{},
 		roots: []clusterRoot{{Path: "left", seeds: seeds}, {Path: "right", seeds: external}},
 	}
 	d.planner = planner
@@ -291,9 +291,11 @@ func TestClusterRoots_SourceConstruction(t *testing.T) {
 	assert.Equal(t, planner.roots[0].Occurrences[1].Declaration, seeds[1].Declaration)
 	raw := seeds[1].Identity
 	visit := rootVisit{occurrence: &seeds[2], scope: &planner.scope}
-	material, err := planner.source(t.Context(), &planner.roots[0], &visit, &manifest.Reference{NamedResource: raw})
+	source, err := planner.source(t.Context(), &planner.roots[0], &rootApplication{
+		visit: &visit, application: manifest.EntryApplication{Source: raw},
+	}, &manifest.Reference{NamedResource: raw})
 	assert.NoError(t, err)
-	assert.Equal(t, material == nil, true)
+	assert.Equal(t, source.input == nil, true)
 	_, acquired := d.resolvedSources.snapshot()[raw]
 	assert.Equal(t, acquired, false)
 	assert.Equal(t, st.GetArtifact(raw, store.ArtifactContent), nil)

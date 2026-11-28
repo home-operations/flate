@@ -46,7 +46,7 @@ func (c *admissionClosure) yieldReferences(
 	}
 	active := true
 	if authored {
-		active = occurrence.references(manifest.ReferenceRelations, yield)
+		active = occurrence.VisitReferences(manifest.ReferenceRelations, yield)
 	} else {
 		manifest.References(obj, manifest.ReferenceRelations)(func(ref manifest.Reference) bool {
 			active = yield(ref)
@@ -422,7 +422,7 @@ func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yie
 		return
 	}
 	if occurrence, ok := c.catalogOccurrence(id); ok {
-		occurrence.references(manifest.ReferenceRelations, yield)
+		occurrence.VisitReferences(manifest.ReferenceRelations, yield)
 		return
 	}
 

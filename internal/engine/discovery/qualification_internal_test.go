@@ -346,7 +346,7 @@ spec:
 	l.SourceRoot = root
 	configureSelection(t, l, selection.Request{Changed: true})
 	prepared := entryInputs{packagesToQualify: [][]selection.OccurrenceFacts{{
-		{Identity: later.Named(), Object: later}, {Identity: first.Named(), Object: first},
+		l.ProducerFacts(later).Occurrence, l.ProducerFacts(first).Occurrence,
 	}}}
 	t.Run("single operand", func(t *testing.T) {
 		t.Parallel()

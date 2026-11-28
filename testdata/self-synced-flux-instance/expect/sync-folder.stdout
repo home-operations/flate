@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  flux-system/flux-instance
+  ✓  Kustomization  flux-system/flux-system
+  ✓  Kustomization  network/sample
+
+  ✓ 3 passed   <DUR>

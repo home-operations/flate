@@ -22,7 +22,7 @@ func (l *Loader) indexAuthoredRecords() []authoredRecord {
 	}
 	for key := range l.scopes.contextual {
 		occurrence := l.scopes.contextual[key]
-		if occurrence.facts.uncertain || !occurrence.facts.retained {
+		if occurrence.facts.uncertain || !occurrence.facts.retained && !occurrence.hasPath {
 			continue
 		}
 		file := key.file

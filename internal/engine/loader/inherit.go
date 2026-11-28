@@ -503,8 +503,7 @@ func (l *Loader) recordNamespaces(rArg *manifest.DiscoveryRecord, forced string)
 }
 
 func (l *Loader) selfClaim(id, authored manifest.NamedResource) bool {
-	owner, _ := l.Index.Lookup(id)
-	return id == authored || owner.Authored == authored
+	return id == authored || l.Index.Records[id].Authored == authored
 }
 
 func (l *Loader) terminalInput(file string) bool {
@@ -531,7 +530,7 @@ func (l *Loader) authoredOccurrence(file string, id manifest.NamedResource) (par
 		}
 		if object.Obj != nil && object.outcome.Err == nil && object.Obj.Named() == id {
 			projection, _ := manifest.ProjectProducer(object.Obj, nil)
-			fact := compactOccurrence(object.Obj, projection)
+			fact := new(occurrenceFacts).compactOccurrence(object.Obj, projection)
 			fact.facts.substituteDisabled = object.substituteDisabled
 			origin := new(l.documents).localPath(file)
 			root := new(l.documents).mountedRoot(origin)

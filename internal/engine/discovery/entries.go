@@ -235,7 +235,8 @@ func (d *Session) plannedGeneratorPackages(
 		pkg := root.Path
 		if entry.target == "" && (root.packageBuild == nil || len(root.qualifying) == 0 ||
 			!slices.ContainsFunc(root.seeds, func(occurrence selection.OccurrenceFacts) bool {
-				return generatesEntry(&occurrence)
+				_, valid := generatedEntryPath(&occurrence)
+				return valid
 			})) {
 			continue
 		}
@@ -312,7 +313,7 @@ func (r *clusterRoot) qualificationPriority(changed bool) qualificationPriority 
 			continue
 		}
 		priority = qualificationOpaque
-		if obj := occurrenceObject(occurrence); obj != nil {
+		if obj := occurrence.EffectiveObject(); obj != nil {
 			if _, hint := manifest.ProjectProducer(obj, func(func([]byte) bool) {}); hint {
 				return qualificationHint
 			}
@@ -346,7 +347,7 @@ func (d *Session) loadPlan(ctx context.Context) error {
 }
 
 func clusterEntries(roots []clusterRoot, input *store.SourceArtifact, scan string) []Entry {
-	owned := ownedUnanchoredRoots(roots)
+	owned := ownedRoots(roots)
 	entries := map[string]Entry{}
 	for i := range roots {
 		root := &roots[i]
@@ -457,7 +458,20 @@ func (r *clusterRoot) clusterAnchor(inputRoot, scan string) bootstrapAnchor {
 	return bootstrapAnchor{target: r.Path}
 }
 
-func ownedUnanchoredRoots(roots []clusterRoot) []bool {
+func (r *clusterRoot) addPinnedClaims(claims map[string][]manifest.NamedResource) {
+	for prefix, ids := range claims {
+		if r.pinned.Claims == nil {
+			r.pinned.Claims = map[string][]manifest.NamedResource{}
+		}
+		for _, id := range ids {
+			if !slices.Contains(r.pinned.Claims[prefix], id) {
+				r.pinned.Claims[prefix] = append(r.pinned.Claims[prefix], id)
+			}
+		}
+	}
+}
+
+func ownedRoots(roots []clusterRoot) []bool {
 	// Source references and predictions cannot establish package ownership.
 	owners := map[selection.OccurrenceID]int{}
 	for i := range roots {
@@ -473,10 +487,13 @@ func ownedUnanchoredRoots(roots []clusterRoot) []bool {
 			}
 		}
 	}
+	// A synthetic alias can supply the checkout, but cannot protect seeds owned by another root.
 	owned := make([]bool, len(roots))
 	for i := range roots {
 		root := &roots[i]
-		if len(root.qualifying) == 0 || len(root.anchors) != 0 {
+		if len(root.qualifying) == 0 || slices.ContainsFunc(root.anchors, func(anchor bootstrapAnchor) bool {
+			return !root.sources[anchor.source].synthetic
+		}) {
 			continue
 		}
 		owned[i] = !slices.ContainsFunc(root.qualifying, func(declaration selection.OccurrenceID) bool {
@@ -676,12 +693,13 @@ func (d *Session) beginRootPlan(ctx context.Context) error {
 		session:            d,
 		inputs:             map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
 		coordinates:        map[selection.OccurrenceID]bool{},
-		seen:               map[occurrenceKey]bool{},
+		seen:               map[occurrenceKey]rootVisitState{},
 	}
 	for _, pkg := range packages {
 		for i := range pkg.Occurrences {
 			occurrence := pkg.Occurrences[i]
-			projected := occurrenceObject(&occurrence)
+			projected := occurrence.EffectiveObject()
+			// The catalog borrows finished path facts even when its manifest needs the effective namespace.
 			if occurrence.Object == nil {
 				occurrence.Catalog = projected
 			} else {

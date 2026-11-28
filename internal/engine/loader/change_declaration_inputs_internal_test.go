@@ -92,7 +92,9 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 						},
 					)
 					selected.loader.locations = map[manifest.NamedResource]authoredOccurrence{
-						provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
+						provider.Named(): new(
+							occurrenceFacts,
+						).compactOccurrence(provider, projectedProducerForTest(provider)),
 					}
 					selected.prepare(selection.PrepareRequest{Invocation: true}, false)
 					assert.Equal(t, selected.Reconcile(provider.Named()), true)

@@ -267,7 +267,8 @@ func (r *entryResolution) selectDeclaration(
 func (r *entryResolution) bindCheckout(
 	bootstrap manifest.BaseManifest, previous *entryResolution, scoped bool,
 ) {
-	if !scoped && previous.input == r.input && previous.object != nil && !previous.projected {
+	reusable := previous.input == r.input && previous.object != nil && !previous.projected
+	if reusable && !scoped {
 		*r = *previous
 		return
 	}
@@ -327,8 +328,7 @@ func (p *entryPlanner) scopedEntry(
 	}
 	admission := p.session.admission()
 	var target string
-	for occurrence := range scope.objects() {
-		candidate := admission.scopedCheckoutTarget(occurrence)
+	for candidate := range scope.checkoutTargets(admission) {
 		if candidate.application.Source == id && len(candidate.path) > len(target) {
 			target = candidate.path
 		}
@@ -337,12 +337,14 @@ func (p *entryPlanner) scopedEntry(
 		return entryUnscoped
 	}
 	// A broader target MUST NOT displace a narrower self-applying entry.
-	for occurrence := range scope.objects() {
-		candidate := admission.scopedCheckoutTarget(occurrence)
-		other := candidate.application
-		observed := admission.entryOrigin(&other, nil)
+	for candidate := range scope.checkoutTargets(admission) {
+		other := &candidate.application
+		if other.Source == id {
+			continue
+		}
+		observed := admission.entryOrigin(other, nil)
 		current := cmp.Or(observed, candidate.path)
-		if other.Source == id || current == "" || !safepath.Contains(target, current) {
+		if current == "" || !safepath.Contains(target, current) {
 			continue
 		}
 		narrower := current != target
@@ -354,7 +356,7 @@ func (p *entryPlanner) scopedEntry(
 		}
 		selected, _ := scope.source(other.Source)
 		if selected != nil && !selected.RequiresBuild &&
-			manifest.BootstrapSourceEligible(occurrenceObject(selected), narrower, admission.remotes) {
+			manifest.BootstrapSourceEligible(selected.EffectiveObject(), narrower, admission.remotes) {
 			return entryRejected
 		}
 	}
@@ -367,12 +369,12 @@ type scopedEntryTarget struct {
 }
 
 func (a *Admission) scopedCheckoutTarget(occurrence *selection.OccurrenceFacts) scopedEntryTarget {
-	object := occurrenceObject(occurrence)
-	application, valid := runnableApplication(object)
-	if !valid || !object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
+	object := occurrence.EffectiveObject()
+	application, valid := occurrence.EntryApplication()
+	if !valid || !manifest.KindOf(object).Runnable || !object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
 		return scopedEntryTarget{}
 	}
-	return scopedEntryTarget{application: application, path: a.checkoutTarget(&application, occurrence)}
+	return scopedEntryTarget{application: application, path: a.checkoutTarget(&application, occurrence, object)}
 }
 
 func (a *Admission) reachesEntry(
@@ -384,17 +386,17 @@ func (a *Admission) reachesEntry(
 	if a.input.MatchesOrigin(a.path, a.entryOrigin(application, nil)) {
 		return true
 	}
-	return occurrence != nil && a.input.MatchesOrigin(a.path, a.checkoutTarget(application, occurrence))
+	return occurrence != nil &&
+		a.input.MatchesOrigin(a.path, a.checkoutTarget(application, occurrence, occurrence.EffectiveObject()))
 }
 
 func (a *Admission) checkoutTarget(
-	application *manifest.EntryApplication, occurrence *selection.OccurrenceFacts,
+	application *manifest.EntryApplication, occurrence *selection.OccurrenceFacts, object manifest.BaseManifest,
 ) string {
 	if a.input == nil || occurrence.RequiresBuild || occurrence.Declaration.File == "" {
 		return ""
 	}
-	if object := occurrenceObject(occurrence); object == nil ||
-		!object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
+	if object == nil || !object.EmissionPolicy().MatchesNamespace(occurrence.Identity) {
 		return ""
 	}
 	target := a.input.ApplicationOrigin(application.Path)
@@ -789,9 +791,10 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 		if child.RequiresBuild {
 			continue
 		}
-		object := occurrenceObject(child)
+		object := child.EffectiveObject()
+		application, valid := child.EntryApplication()
 		if !child.Identity.KindInfo().Runnable {
-			if _, applies := manifest.ApplicationFor(object); applies {
+			if valid {
 				if err := d.addGenerationSources(groups, object, child); err != nil {
 					return err
 				}
@@ -799,7 +802,6 @@ func (d *Session) addPathSources(groups map[manifest.NamedResource]*entrySourceG
 			continue
 		}
 
-		application, valid := manifest.ApplicationFor(object)
 		if valid {
 			group := entrySourceGroupFor(groups, application.Source)
 			group.entry = group.entry || d.occurrenceReachesEntry(&application, child)

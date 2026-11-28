@@ -52,7 +52,9 @@ func TestResolveAuthored_CancellationDuringRound(t *testing.T) {
 	l.documents.compact = true
 	st.AddObject(&manifest.Kustomization{Name: "round", Namespace: "apps", Path: "./round"})
 	input.armed = func() bool { return l.construction > 0 }
-	stale := compactOccurrence(&manifest.Kustomization{Name: "stale", Namespace: "apps"}, manifest.TemplateProjection{})
+	stale := new(
+		occurrenceFacts,
+	).compactOccurrence(&manifest.Kustomization{Name: "stale", Namespace: "apps"}, manifest.TemplateProjection{})
 	l.scopes.contextual = map[occurrenceContext]authoredOccurrence{{file: filepath.Join(root, "stale.yaml")}: stale}
 	err := l.resolveAuthored(ctx, root)
 	assert.Equal(t, input.cancel == nil, true)

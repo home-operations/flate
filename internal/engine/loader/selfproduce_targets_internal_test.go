@@ -53,7 +53,7 @@ func TestUnownedProductionDeclaration_ProjectTargets(t *testing.T) {
 				APIVersion: manifest.SourceExtensionsDomain + "/v1beta1", Kind: manifest.KindArtifactGenerator,
 				Name: "generator", Namespace: "authored", Spec: tc.spec,
 			}
-			occurrence := compactOccurrence(raw, manifest.TemplateProjection{})
+			occurrence := new(occurrenceFacts).compactOccurrence(raw, manifest.TemplateProjection{})
 			occurrence.Identity.Namespace = bundle.Namespace
 			record := manifest.DiscoveryRecord{Authored: raw.Named(), Path: "generator.yaml", File: "generator.yaml"}
 			for _, mode := range []string{"live", "index-only"} {
@@ -246,7 +246,7 @@ func testSubstitutedTargetCase(t *testing.T, tc *substitutedTargetCase) {
 			record.Parent = parent
 			l.Index.Records[producer.Named()] = record
 		}
-		occurrence := compactOccurrence(external, manifest.TemplateProjection{})
+		occurrence := new(occurrenceFacts).compactOccurrence(external, manifest.TemplateProjection{})
 		targets := producerDeclaration{
 			fact: &occurrence, authored: external.Named(),
 			identity: manifest.Resolve(external.Named(), producer.TargetNamespace, ""),

@@ -22,19 +22,19 @@ func (pr *productionRecorder) record(b *selfProduceBuilder, l *Loader, childArg 
 }
 
 func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact *authoredOccurrence, version string) {
-	o := *fact
-	if !o.facts.indexed() {
+	if !fact.indexed() && !fact.Identity.CanDeclareGeneratedEntry() {
 		return
 	}
-	projected, err := l.projectOccurrence(&o, &pr.visit, version)
+	o, err := l.projectOccurrence(fact, &pr.visit, version)
 	if err != nil {
 		pr.projectionErr = err
 		return
 	}
-	o = projected
+	if !o.indexed() {
+		return
+	}
 	id := o.Identity
 	declaration := producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}
-	// Compact application lookup defaults the source in the visit namespace.
 	declaration.project(!o.facts.uncertain && declaration.hasApplicationOwner())
 	if o.facts.uncertain {
 		b.recordProducer(&declaration, nil)

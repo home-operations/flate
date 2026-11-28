@@ -268,7 +268,7 @@ func (r documentReader) censusFile(
 			manifest.ReleaseDoc(child.Doc)
 			return
 		}
-		o := compactOccurrence(child.Obj, projection)
+		o := new(occurrenceFacts).compactOccurrence(child.Obj, projection)
 		o.requiresBuild = child.collection
 		o.facts.collection = child.collection
 		o.facts.substituteDisabled = child.substituteDisabled

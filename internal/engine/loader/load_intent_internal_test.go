@@ -277,7 +277,7 @@ func TestSubstitutionResolution_FileCoverage(t *testing.T) {
 		Kind: "FluxInstance", APIVersion: manifest.FluxOperatorDomain + "/v1",
 		Name: "cluster", Namespace: "apps", Spec: map[string]any{"sync": probe},
 	}
-	fact := compactOccurrence(application, manifest.TemplateProjection{})
+	fact := new(occurrenceFacts).compactOccurrence(application, manifest.TemplateProjection{})
 	file := filepath.Join(l.SourceRoot, "application.yaml")
 	l.documents.cache[file] = document{
 		coverage: manifest.IncidentalDocuments, objects: []parsedObject{{fact: &fact}},

@@ -276,7 +276,7 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 				},
 			)
 			filter.loader.locations = map[manifest.NamedResource]authoredOccurrence{
-				provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
+				provider.Named(): new(occurrenceFacts).compactOccurrence(provider, projectedProducerForTest(provider)),
 			}
 			filter.prepare(selection.PrepareRequest{Invocation: true}, false)
 			var preparation *selection.Preparation

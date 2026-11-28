@@ -829,7 +829,7 @@ func TestDesiredAuthored_NamespacePredictionLifetime(t *testing.T) {
 	l.ensureScopes()
 	l.documents.read(filepath.Join(root, "apps", "storage"))
 	child := leafKS("child", "./leaf")
-	fact := compactOccurrence(child, manifest.TemplateProjection{})
+	fact := new(occurrenceFacts).compactOccurrence(child, manifest.TemplateProjection{})
 	file := filepath.Join(root, "apps", "storage", "app", "ks.yaml")
 	l.documents.cache[file] = document{objects: []parsedObject{{fact: &fact}}}
 	l.Index.Records[child.Named()] = manifest.DiscoveryRecord{

@@ -92,7 +92,7 @@ type Loader struct {
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
 	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
 	projections           manifest.ProducerProjections
-	producerFacts         [64]atomic.Pointer[map[manifest.BaseManifest]producerFact]
+	producerFacts         [64]atomic.Pointer[map[manifest.BaseManifest]*producerFact]
 	construction, derived uint64
 	indexDerived          bool
 	frozen                bool
@@ -525,7 +525,7 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string, reader *doc
 }
 
 func (l *Loader) recordOccurrence(path string, o *authoredOccurrence) {
-	if o.facts.uncertain || !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+	if o.facts.uncertain || !o.indexed() {
 		return
 	}
 	if !l.acceptObject(o.Identity) {

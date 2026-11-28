@@ -59,7 +59,7 @@ func TestQualifyOrderingOccurrences_Transformations(t *testing.T) {
 				Name: "reader", Namespace: "apps",
 				DependsOn: []kustomizev1.DependencyReference{{Name: "target"}},
 			}
-			occurrence := compactOccurrence(reader, manifest.TemplateProjection{})
+			occurrence := new(occurrenceFacts).compactOccurrence(reader, manifest.TemplateProjection{})
 			occurrence.Declaration = occurrenceID{Source: root, File: "reader.yaml"}
 			occurrence.requiresBuild = true
 			l.locations = map[manifest.NamedResource]authoredOccurrence{reader.Named(): occurrence}
